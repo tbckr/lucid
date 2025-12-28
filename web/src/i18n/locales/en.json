@@ -1,0 +1,53 @@
+{
+  "app_title": "Lucid Calendar",
+  "login": {
+    "title": "Login to Calendar",
+    "caldav_url": "CalDAV URL",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Login",
+    "error": "Login failed. Please check your credentials."
+  },
+  "calendar": {
+    "today": "Today",
+    "month": "Month",
+    "week": "Week",
+    "day": "Day",
+    "agenda": "Agenda",
+    "new_event": "New Event",
+    "event_title": "Event Title",
+    "start_time": "Start Time",
+    "end_time": "End Time",
+    "location": "Location",
+    "description": "Description",
+    "all_day": "All Day",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "recurring": "Recurring",
+    "no_events": "No events"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "new_task": "New Task",
+    "task_title": "Task Title",
+    "due_date": "Due Date",
+    "priority": "Priority",
+    "status": "Status",
+    "completed": "Completed",
+    "pending": "Pending"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "date_format": "Date Format",
+    "week_start": "Week Start",
+    "timezone": "Timezone"
+  },
+  "errors": {
+    "network_error": "Network error. Please check your connection.",
+    "server_error": "Server error. Please try again later.",
+    "validation_error": "Please check your input and try again."
+  }
+}

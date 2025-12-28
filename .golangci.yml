@@ -1,0 +1,39 @@
+version: '2'
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gosec
+    - govet
+    - staticcheck
+    - unused
+    - gocyclo
+    - gomnd
+    - ineffassign
+    - misspell
+    - nolintlint
+    - prealloc
+    - typecheck
+  disable:
+    - structcheck
+    - deadcode
+    - varcheck
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  gosec:
+    severity: medium
+  staticcheck:
+    checks:
+      - all
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

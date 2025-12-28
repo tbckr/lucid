@@ -1,0 +1,1 @@
+Use context7 for all code generation and API documentation questions.
