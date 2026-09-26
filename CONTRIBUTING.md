@@ -130,8 +130,13 @@ security fixes. `just outdated` lists what to review on every upgrade:
 **Automation:**
 
 - `vuln.yml`, daily and whenever the dependency manifests change:
-  `govulncheck` on `main` and on the latest release binary, and
-  `pnpm audit --prod` on the packages shipped in the bundle.
+  `govulncheck` on `main` and on the latest release binary,
+  `pnpm audit --prod` on the packages shipped in the bundle, and a check for
+  known malware (CWE-506) in every frontend package, devDependencies
+  included.
+- `release.yml` runs the tests and the frontend build, the only steps that
+  execute dependency code, in a job without write access; the job that
+  signs and publishes only consumes the result.
 - `latest-deps.yml`, weekly: tests against the newest direct dependencies,
   upgraded exactly like `just upgrade` does, inside a gVisor sandbox. It
   commits nothing; a failure means the next upgrade needs work.
@@ -158,6 +163,21 @@ vulnerability:
    Advisory (see [SECURITY.md](SECURITY.md)).
 4. Only if the finding does not apply to Lucid: list it under `audit.ignore`
    in `web/pnpm-workspace.yaml`, with a comment explaining why.
+
+**Malware** (the malware check in `vuln.yml` or `just vuln`) is an incident,
+not an upgrade. Build and test tools run on developer machines and in CI, so
+find out where the package ran before removing it:
+
+1. Find out since when the version is in the lockfile
+   (`git log -S '<package>@<version>' -- web/pnpm-lock.yaml`) and which
+   machines installed it since. A version that only reached
+   `latest-deps.yml` stayed inside its sandbox.
+2. Rotate every credential those machines could reach: npm and GitHub
+   tokens, SSH keys, cloud credentials.
+3. Check the releases built since then. If one may be affected, publish a
+   GitHub Security Advisory and cut a clean release.
+4. Remove the version: upgrade or downgrade the direct dependency, or pin
+   the transitive one to a clean version (the exception above).
 
 ## Security issues
 

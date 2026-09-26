@@ -90,11 +90,12 @@ lint-web: web-deps
 fmt:
     {{ GOLANGCI_LINT }} fmt ./...
 
-# Scan for known vulnerabilities: reachable Go code, shipped frontend packages
+# Scan for known vulnerabilities (reachable Go code, shipped frontend packages) and malware
 [group('quality')]
 vuln:
     {{ GO }} run golang.org/x/vuln/cmd/govulncheck@latest ./...
     {{ PNPM }} --dir web audit --prod
+    scripts/deps.sh malware
 
 # Run Playwright end-to-end tests
 [group('quality')]

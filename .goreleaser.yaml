@@ -7,6 +7,8 @@ version: 2
 
 project_name: lucid
 
+# release.yml skips these hooks (--skip=before) and runs them in a job without
+# write access, so no dependency code runs next to the signing identity.
 before:
   hooks:
     - go mod download

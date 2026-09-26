@@ -5,7 +5,13 @@
 #     scans main and the latest release binary; the binary carries the Go
 #     release it was built with, so standard library fixes that need a new
 #     Lucid release show up there.
-#   - pnpm audit --prod covers only the packages shipped in the bundle.
+#   - pnpm audit --prod covers only the packages shipped in the bundle: a
+#     vulnerability needs attacker input, and build and test tools only
+#     process our own code.
+#   - Malware is different: it does harm wherever it runs. Build tools run
+#     on developer machines and in CI, and they write the bundle, so known
+#     malware (CWE-506) fails the run for every package, devDependencies
+#     included.
 # ci.yml also runs govulncheck on every change to Go code.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
@@ -21,6 +27,7 @@ on:
       - web/package.json
       - web/pnpm-lock.yaml
       - web/pnpm-workspace.yaml
+      - scripts/deps.sh
       - .github/workflows/vuln.yml
   pull_request:
     paths:
@@ -29,6 +36,7 @@ on:
       - web/package.json
       - web/pnpm-lock.yaml
       - web/pnpm-workspace.yaml
+      - scripts/deps.sh
       - .github/workflows/vuln.yml
   schedule:
     - cron: "22 5 * * *" # daily, 05:22 UTC
@@ -98,7 +106,7 @@ jobs:
           run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary release/lucid
 
   pnpm-audit:
-    name: pnpm audit (shipped packages)
+    name: pnpm audit (vulnerabilities in shipped packages, malware in all)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -114,7 +122,10 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # Reads the lockfile only; nothing is installed. devDependencies never
-      # reach the bundle, so they are updated with the next upgrade instead.
-      - name: pnpm audit --prod (NFR-30)
+      # Both steps read the lockfile only; nothing is installed.
+      - name: Vulnerabilities in shipped packages (NFR-30)
         run: pnpm --dir web audit --prod
+
+      - name: Malware in any package, devDependencies included
+        if: ${{ !cancelled() }}
+        run: scripts/deps.sh malware

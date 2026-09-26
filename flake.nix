@@ -59,6 +59,7 @@
               go
               golangci-lint
               goreleaser
+              jq
               just
               nodejs_24
               pnpm_11

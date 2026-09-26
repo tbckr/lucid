@@ -1,7 +1,8 @@
 # Release pipeline (NFR-13/14/15, PRD phase 4 "Release Hardening").
 #
 # Triggered by pushing a SemVer tag (vMAJOR.MINOR.PATCH[-PRERELEASE]).
-# GoReleaser builds the binaries with the embedded frontend, archives,
+# A read-only job runs the tests and builds the frontend. GoReleaser then
+# builds the binaries with that frontend embedded, archives,
 # checksums, SBOMs (syft), multi-arch images on ghcr.io and signs the checksum
 # file and the images keylessly with cosign (GitHub OIDC). Afterwards SLSA
 # build provenance is attested and the published image is scanned with Trivy.
@@ -28,15 +29,16 @@ env:
   NODE_VERSION: "24"
 
 jobs:
-  goreleaser:
-    name: GoReleaser
+  # Everything that runs dependency code (the Go tests, pnpm install, the Vite
+  # build) happens here, without write access or an OIDC token: a compromised
+  # build tool cannot sign or publish. The job below only builds the Go
+  # binary, which runs no dependency code, and packages, signs and uploads.
+  build:
+    name: Tests and frontend build (read-only)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
-      contents: write # create the GitHub release
-      packages: write # push images to ghcr.io
-      id-token: write # cosign keyless signing + attestations
-      attestations: write # actions/attest-build-provenance
+      contents: read
     outputs:
       version: ${{ steps.semver.outputs.version }}
     steps:
@@ -53,7 +55,6 @@ jobs:
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          fetch-depth: 0 # changelog needs full history and tags
           persist-credentials: false
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
@@ -71,6 +72,53 @@ jobs:
 
       - name: Test before release
         run: go test -race ./...
+
+      # The same steps as the before hooks in .goreleaser.yaml, which the
+      # goreleaser job skips.
+      - name: Build the frontend (frozen lockfile, NFR-30)
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web build
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: web-dist
+          path: web/dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  goreleaser:
+    name: GoReleaser
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # create the GitHub release
+      packages: write # push images to ghcr.io
+      id-token: write # cosign keyless signing + attestations
+      attestations: write # actions/attest-build-provenance
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # changelog needs full history and tags
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false # never restore a cache into a release build
+
+      - name: Download the frontend build
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Verify modules
+        run: |
+          go mod download
+          go mod verify
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
@@ -91,7 +139,8 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # The build job ran the before hooks and built web/dist.
+          args: release --clean --skip=before
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -103,7 +152,7 @@ jobs:
       - name: Resolve image digest
         id: image
         run: |
-          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ steps.semver.outputs.version }}" \
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ needs.build.outputs.version }}" \
             --format '{{json .Manifest}}' | jq -r .digest)"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
@@ -116,7 +165,7 @@ jobs:
 
   scan-image:
     name: Container scan (Trivy)
-    needs: goreleaser
+    needs: [build, goreleaser]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -127,14 +176,14 @@ jobs:
 
       - name: Verify image signature
         run: |
-          cosign verify "${IMAGE}:${{ needs.goreleaser.outputs.version }}" \
+          cosign verify "${IMAGE}:${{ needs.build.outputs.version }}" \
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
       - name: Trivy scan (SARIF)
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
-          image-ref: ${{ env.IMAGE }}:${{ needs.goreleaser.outputs.version }}
+          image-ref: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH,MEDIUM
@@ -149,7 +198,7 @@ jobs:
       - name: Fail on critical/high vulnerabilities
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
-          image-ref: ${{ env.IMAGE }}:${{ needs.goreleaser.outputs.version }}
+          image-ref: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
           format: table
           exit-code: "1"
           severity: CRITICAL,HIGH

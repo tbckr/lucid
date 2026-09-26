@@ -185,8 +185,10 @@ Durations use Go syntax (`90s`, `15m`, `12h`). The REST API is documented in
   production builds.
 - **Supply chain.** Signed releases and images (cosign keyless), SBOMs,
   CI actions pinned to commit SHAs, daily `govulncheck` (also against the
-  latest release binary) and `pnpm audit` of the shipped packages, weekly CI
-  against the newest direct dependencies, CodeQL and container scanning.
+  latest release binary), `pnpm audit` of the shipped packages and a malware
+  check of all frontend packages, weekly CI against the newest direct
+  dependencies, a release job that runs no dependency code next to the
+  signing identity, CodeQL and container scanning.
 
 **Known limitation:** sessions live only in memory, so restarting Lucid logs
 everybody out. Setting a fixed `LUCID_SESSION_KEY` does not change that; it is
@@ -233,7 +235,7 @@ Other useful recipes (`just` lists all):
 | `just test` | Go tests (race detector) and Vitest unit tests |
 | `just cover` | Go coverage with the 80 % business-logic gate |
 | `just lint` | golangci-lint, ESLint and TypeScript type check |
-| `just vuln` | `govulncheck` and `pnpm audit` of the shipped packages |
+| `just vuln` | `govulncheck`, `pnpm audit` of the shipped packages, malware check of all packages |
 | `just outdated` | Direct dependencies with newer versions, platform versions to review |
 | `just upgrade` | Upgrade direct dependencies (see [CONTRIBUTING.md](CONTRIBUTING.md#updating-dependencies)) |
 | `just e2e` | Playwright end-to-end tests against the mock server |

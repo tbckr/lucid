@@ -6,6 +6,7 @@
 #                               included) and the platform versions to review
 #   upgrade [go|web|flake|all]  upgrade direct dependencies (default: all)
 #   go-support                  fail if the Go release in go.mod is unsupported
+#   malware                     fail on known malware in any frontend package
 #   nix-hashes                  recompute vendorHash and pnpmDeps.hash in
 #                               nix/package.nix (needs `nix build`)
 #
@@ -24,7 +25,7 @@ set -euo pipefail
 CDPATH='' cd -- "$(dirname -- "$0")/.."
 
 usage() {
-  sed -n '4,10s/^# \{0,1\}//p' "$0" >&2
+  sed -n '/^# Usage/,/^#$/{/^#$/d;s/^# \{0,1\}//;p}' "$0" >&2
   exit 2
 }
 
@@ -65,6 +66,28 @@ go_support() {
     return 1
   fi
   echo "Go $current (go.mod) is supported; supported: $supported."
+}
+
+# Unlike `pnpm audit --prod` this covers devDependencies too: build tools run
+# on developer machines and in CI, and they write the bundle. npm marks
+# malware advisories with CWE-506; their severity varies, so it is no filter.
+malware() {
+  local report found
+  # pnpm audit exits non-zero as soon as it reports anything.
+  report="$(pnpm --dir web audit --json)" || true
+  if ! jq -e '.advisories | type == "object"' >/dev/null 2>&1 <<<"$report"; then
+    printf '%s\n' "$report" >&2
+    echo "deps: pnpm audit returned no report" >&2
+    return 1
+  fi
+  found="$(jq -r '.advisories[] | select(.cwe | tostring | contains("CWE-506"))
+    | "\(.module_name)@\([.findings[].version] | unique | join(",")): \(.title) \(.url)"' <<<"$report")"
+  if [[ -n "$found" ]]; then
+    printf '%s\n' "$found" >&2
+    echo "Malware in the dependency tree: handle it as an incident (CONTRIBUTING.md)." >&2
+    return 1
+  fi
+  echo "No known malware in the frontend dependencies."
 }
 
 outdated() {
@@ -130,6 +153,7 @@ case "${1:-}" in
     esac
     ;;
   go-support) go_support ;;
+  malware) malware ;;
   nix-hashes) nix_hashes ;;
   *) usage ;;
 esac
