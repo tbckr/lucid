@@ -1,8 +1,9 @@
 # Release pipeline (NFR-13/14/15, PRD phase 4 "Release Hardening").
 #
 # Triggered by pushing a SemVer tag (vMAJOR.MINOR.PATCH[-PRERELEASE]).
-# A read-only job runs the tests and builds the frontend. GoReleaser then
-# builds the binaries with that frontend embedded, archives,
+# The full CI (ci.yml) checks the tagged commit while a read-only job builds
+# the frontend. Once both pass, GoReleaser builds the binaries with that
+# frontend embedded, archives,
 # checksums, SBOMs (syft), multi-arch images on ghcr.io and signs the checksum
 # file and the images keylessly with cosign (GitHub OIDC). The GitHub release
 # stays a draft until SLSA build provenance is attested; publishing it is the
@@ -35,12 +36,23 @@ env:
   GORELEASER_VERSION: v2.18.2
 
 jobs:
-  # Everything that runs dependency code (the Go tests, pnpm install, the Vite
-  # build) happens here, without write access or an OIDC token: a compromised
-  # build tool cannot sign or publish. The job below only builds the Go
-  # binary, which runs no dependency code, and packages, signs and uploads.
+  # The whole CI on exactly the tagged commit, however the tag was pushed.
+  # Its jobs restore caches; that is fine, since none of their output ends
+  # up in the release.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      pull-requests: read # requested by ci.yml's go-lint job
+
+  # Everything that runs dependency code (the tests in the ci job, pnpm
+  # install and the Vite build here) runs without write access or an OIDC
+  # token: a compromised build tool cannot sign or publish. The goreleaser
+  # job only builds the Go binary, which runs no dependency code, and
+  # packages, signs and uploads.
   build:
-    name: Tests and frontend build (read-only)
+    name: Frontend build (read-only)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -63,11 +75,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-          cache: false # never restore a cache into a release build
-
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           package_json_file: web/package.json
@@ -76,9 +83,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Test before release
-        run: go test -race ./...
-
       # The same steps as the before hooks in .goreleaser.yaml, which the
       # goreleaser job skips.
       - name: Build the frontend (frozen lockfile, NFR-30)
@@ -86,9 +90,11 @@ jobs:
           pnpm --dir web install --frozen-lockfile
           pnpm --dir web build
 
+      # Not web-dist: the ci job uploads that name into the same run, built
+      # with caches.
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: web-dist
+          name: release-web-dist
           path: web/dist
           include-hidden-files: true
           if-no-files-found: error
@@ -96,7 +102,7 @@ jobs:
 
   goreleaser:
     name: GoReleaser
-    needs: build
+    needs: [ci, build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -118,7 +124,7 @@ jobs:
       - name: Download the frontend build
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: web-dist
+          name: release-web-dist
           path: web/dist
 
       - name: Verify modules

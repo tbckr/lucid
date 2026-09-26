@@ -39,12 +39,17 @@ on:
       - .envrc
       - "nix/**"
   workflow_dispatch:
+  # release.yml runs this workflow on every release tag, where paths-ignore
+  # does not apply.
+  workflow_call:
 
 permissions:
   contents: read
 
+# A fixed prefix, not github.workflow: in a run called by release.yml,
+# github.workflow names the caller, and sharing its group would deadlock.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -309,9 +314,11 @@ jobs:
   # pull request or a push to main adds or updates. On a push the check runs
   # after the fact: a failure means main needs a follow-up commit. The policy
   # is in the config file; policy inputs set here would override it.
+  # Skipped for release tags (release.yml): a called workflow sees the
+  # caller's push event, but a new tag has no previous commit to compare.
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_type == 'branch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

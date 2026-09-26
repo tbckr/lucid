@@ -142,9 +142,10 @@ security fixes. `just outdated` lists what to review on every upgrade:
   devDependencies included (`.github/dependency-review-config.yml`). On a
   push the check runs after the fact, so a failure there needs a follow-up
   commit.
-- `release.yml` runs the tests and the frontend build, the only steps that
-  execute dependency code, in a job without write access; the job that
-  signs and publishes only consumes the result.
+- `release.yml` runs the full CI (`ci.yml`) on the tagged commit and the
+  frontend build, the only steps that execute dependency code, in jobs
+  without write access; the job that signs and publishes starts only once
+  both pass and only consumes the frontend build.
 - `latest-deps.yml`, weekly: tests against the newest direct dependencies,
   upgraded exactly like `just upgrade` does, inside a gVisor sandbox. It
   commits nothing; a failure means the next upgrade needs work.
