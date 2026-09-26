@@ -145,6 +145,16 @@ dev: _dev-hint mockdav dev-backend dev-web
 _dev-hint:
     @echo "Open http://localhost:5173 and log in with server http://{{ MOCKDAV_ADDR }}, user demo, password demo."
 
+# Tag and push a release (e.g. 1.2.0); release.yml builds, signs and publishes it
+[group('release')]
+release version:
+    scripts/release.sh stable {{ quote(version) }}
+
+# Tag and push a pre-release (e.g. 1.2.0-rc.1); moves neither latest nor the MAJOR/MINOR image tags
+[group('release')]
+prerelease version:
+    scripts/release.sh pre {{ quote(version) }}
+
 # Local GoReleaser snapshot (binaries + images, no publish/sign)
 [group('release')]
 snapshot:

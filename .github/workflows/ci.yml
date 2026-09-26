@@ -20,6 +20,7 @@ on:
       - "docs/**"
       - LICENSE
       - justfile
+      - scripts/release.sh
       - compose.yaml
       - flake.nix
       - flake.lock
@@ -31,6 +32,7 @@ on:
       - "docs/**"
       - LICENSE
       - justfile
+      - scripts/release.sh
       - compose.yaml
       - flake.nix
       - flake.lock

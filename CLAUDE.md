@@ -19,6 +19,8 @@ just fmt            # gofumpt + goimports via golangci-lint
 just cover          # Go coverage + scripts/coverage-gate.sh (>= 80 % over internal/...)
 just e2e            # Playwright
 just build          # web/dist + bin/lucid with embedded SPA
+just release 1.2.0  # tag + push v1.2.0 from a clean, pushed main; release.yml publishes (scripts/release.sh)
+just prerelease 1.2.0-rc.1  # same for a pre-release: no latest/MAJOR/MINOR image tags
 just outdated       # direct deps with newer versions + platform versions (scripts/deps.sh)
 just upgrade        # upgrade direct deps only, then `just nix-hashes` (needs nix build)
 ```
