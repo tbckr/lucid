@@ -5,10 +5,26 @@
 # "# vX.Y.Z" comment and keeps them updated.
 name: CI
 
+# Changes that touch only files no job reads (docs, dev tooling) skip CI.
+# Keep both lists in sync with codeql.yml. Caveat: a workflow skipped by
+# paths-ignore never reports its checks, so a required status check would
+# stay pending; switch to job-level filtering before making jobs required.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - justfile
+      - compose.yaml
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - justfile
+      - compose.yaml
   workflow_dispatch:
 
 permissions:

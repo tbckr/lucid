@@ -3,10 +3,24 @@
 # for already-released code are noticed (NFR-11).
 name: CodeQL
 
+# Same paths-ignore as ci.yml (see the caveat there); the weekly schedule
+# still scans the full tree.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - justfile
+      - compose.yaml
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - justfile
+      - compose.yaml
   schedule:
     - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
   workflow_dispatch:
