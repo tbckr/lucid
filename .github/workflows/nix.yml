@@ -1,8 +1,8 @@
 # Nix support (flake.nix): the package, the dev shell and the NixOS module.
 # Runs on Linux and macOS because the dev shell is meant for both.
 #
-# Actions are referenced by version tag here; Renovate
-# (helpers:pinGitHubActionDigests) rewrites them to full commit SHAs.
+# Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
+# Dependabot (.github/dependabot.yml) bumps them monthly.
 name: Nix
 
 # Unlike ci.yml, Nix file changes run here, and so does the justfile (the dev
@@ -41,12 +41,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
       # Also enables KVM on Linux runners, which the NixOS VM test needs.
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 

@@ -1,0 +1,21 @@
+# Dependabot only keeps the SHA-pinned GitHub Actions current: there is no
+# "test against latest" for them, and the release workflow can publish and
+# sign. Go and npm dependencies are upgraded by hand and vulnerabilities come
+# from vuln.yml (see "Updating dependencies" in CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Let new releases settle before they run in CI.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(actions)
+    labels:
+      - dependencies

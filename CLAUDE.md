@@ -19,9 +19,11 @@ just fmt            # gofumpt + goimports via golangci-lint
 just cover          # Go coverage + scripts/coverage-gate.sh (>= 80 % over internal/...)
 just e2e            # Playwright
 just build          # web/dist + bin/lucid with embedded SPA
+just outdated       # direct deps with newer versions + platform versions (scripts/deps.sh)
+just upgrade        # upgrade direct deps only, then `just nix-hashes` (needs nix build)
 ```
 
-Before a PR, run `just lint test cover`. CI also runs `go mod tidy -diff`, `govulncheck`, `pnpm audit`, CodeQL, E2E, and a check that fails the build if `web/dist` contains source maps.
+Before a PR, run `just lint test cover`. CI also runs `go mod tidy -diff`, `govulncheck`, CodeQL, E2E, and a check that fails the build if `web/dist` contains source maps. On a schedule, `vuln.yml` runs govulncheck (also on the latest release binary) and `pnpm audit --prod` daily, and `latest-deps.yml` tests the newest direct dependencies weekly in a gVisor sandbox. Actions are pinned to commit SHAs; Dependabot only bumps those.
 
 Nix (`flake.nix`, `nix/`): `nix develop`, or direnv via `.envrc`, provides every tool above. `nix flake check -L` builds the package, the dev shell and a nixfmt check, and on Linux boots the `services.lucid` NixOS module in a VM test (`nix/test.nix`). `nix fmt` formats the Nix files. The `Nix` workflow runs these on Linux and macOS.
 
@@ -74,7 +76,7 @@ RequestContext (must stay outermost) → Observe (logs/metrics) → SecurityHead
 
 - **REST API change:** update `internal/domain/domain.go` (the JSON types), `internal/httpapi`, `docs/API.md` (the contract), and `web/src/lib/api/schemas.ts` + `endpoints.ts`. For a new error code, also update the `ApiErrorCode` union / `KNOWN_CODES` in `client.ts`.
 - **New `LUCID_*` setting:** update `internal/config/config.go` and the configuration tables in both `README.md` and `docs/API.md`.
-- **Dependency change (`go.mod`/`go.sum`, `web/pnpm-lock.yaml`):** update `vendorHash` / `pnpmDeps.hash` in `nix/package.nix`, or the Nix build fails. Set the hash to `""` and copy the `got:` hash from `nix build .#lucid`.
+- **Dependency change (`go.mod`/`go.sum`, `web/pnpm-lock.yaml`):** update `vendorHash` / `pnpmDeps.hash` in `nix/package.nix` with `just nix-hashes`, or the Nix build fails. Upgrade direct dependencies only (`just upgrade`); never `go get -u`, `pnpm update` without `--depth 0` or `pnpm dedupe`, which rewrite transitive versions. The one exception, a targeted fix for a vulnerability, is described in `CONTRIBUTING.md` ("Updating dependencies").
 
 ## Conventions
 

@@ -23,7 +23,8 @@ just e2e     # Playwright
 ```
 
 Please run `just lint test cover` before opening a pull request; CI runs the
-same checks plus `govulncheck`, `pnpm audit`, CodeQL and the E2E suite.
+same checks plus `govulncheck`, CodeQL and the E2E suite. Dependency scans run
+separately, see [Updating dependencies](#updating-dependencies).
 
 ## Commit messages
 
@@ -88,9 +89,75 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
 - Update `docs/API.md` when the REST API changes and the README when
   configuration changes.
 - When `go.mod`/`go.sum` or `web/pnpm-lock.yaml` change, update `vendorHash`
-  or `pnpmDeps.hash` in `nix/package.nix`: set it to `""`, run
-  `nix build .#lucid` and copy the `got:` hash from the error.
+  and `pnpmDeps.hash` in `nix/package.nix` with `just nix-hashes` (needs a
+  machine that can run `nix build`).
 - CI must be green before merge.
+
+## Updating dependencies
+
+There is no update bot for Go and npm dependencies. They are upgraded on the
+project's own schedule, typically at the start of a release cycle:
+
+```sh
+just outdated     # direct dependencies with newer versions, platform versions
+just upgrade      # upgrade direct dependencies and flake.lock
+just nix-hashes   # recompute the hashes in nix/package.nix (needs nix build)
+just lint test vuln
+```
+
+Commit the result as a single `deps:` commit.
+
+**Only direct dependencies are upgraded.** A transitive dependency changes
+only where an upgraded direct dependency requires it; keeping its own
+dependencies current is that dependency's job. `just upgrade`
+(`scripts/deps.sh`) runs `go get <module>@latest` for each direct module and
+`pnpm update --depth 0`. Do not use `go get -u`, `pnpm update` without
+`--depth 0`, `pnpm dedupe` or lockfile maintenance: they rewrite transitive
+versions on their own.
+
+**Major versions** are a manual step: a new module path in Go,
+`pnpm --dir web update --latest <package>` in the frontend. They are not
+urgent in themselves, but nothing may stay on a line that no longer gets
+security fixes. `just outdated` lists what to review on every upgrade:
+
+- the Go release in `go.mod`: only the two newest Go releases get fixes, and
+  `latest-deps.yml` fails once ours drops out,
+- the nixpkgs branch in `flake.nix` (supported for about seven months),
+- Node.js in CI and `web/package.json`,
+- the distroless base image in the `Dockerfile`,
+- golangci-lint in `ci.yml` (pinned by hand).
+
+**Automation:**
+
+- `vuln.yml`, daily and whenever the dependency manifests change:
+  `govulncheck` on `main` and on the latest release binary, and
+  `pnpm audit --prod` on the packages shipped in the bundle.
+- `latest-deps.yml`, weekly: tests against the newest direct dependencies,
+  upgraded exactly like `just upgrade` does, inside a gVisor sandbox. It
+  commits nothing; a failure means the next upgrade needs work.
+- Dependabot only bumps the SHA-pinned GitHub Actions, monthly in one pull
+  request.
+- pnpm refuses versions younger than a day and versions whose publish
+  provenance got weaker (`web/pnpm-workspace.yaml`).
+
+**When a vulnerability scan fails**, treat the finding like a reported
+vulnerability:
+
+1. Assess the impact. `govulncheck` only reports code that is reachable; a
+   finding in the release binary means users run vulnerable code. A standard
+   library finding there only needs a new release, which picks up the latest
+   Go patch release.
+2. Fix it by upgrading the direct dependency. If the vulnerable package is
+   transitive and no fixed version of the direct dependency exists yet, raise
+   only that package, to the fixed version and not to the latest
+   (`go get example.org/mod@vX.Y.Z`, or an `overrides` entry in
+   `web/pnpm-workspace.yaml`), and report it upstream. This is the only
+   exception to the rule above; drop an override once the direct dependency
+   ships the fix.
+3. If users are affected, cut a patch release and publish a GitHub Security
+   Advisory (see [SECURITY.md](SECURITY.md)).
+4. Only if the finding does not apply to Lucid: list it under `audit.ignore`
+   in `web/pnpm-workspace.yaml`, with a comment explaining why.
 
 ## Security issues
 

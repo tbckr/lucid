@@ -10,3 +10,17 @@ allowBuilds: {}
 strictDepBuilds: true
 # Refuse to install on unsupported Node versions (see package.json engines).
 engineStrict: true
+
+# Policies for every newly resolved version, direct or transitive. pnpm also
+# re-checks the committed lockfile against them on every install.
+#
+# Skip versions published less than a day ago (pnpm's default age). Strict:
+# fail when only a younger version fits instead of adding an exclusion.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+# Refuse a version with weaker publish provenance than an earlier release,
+# the typical trace of a stolen publish token. Only versions younger than 30
+# days are checked: takeovers are caught within days, while older history
+# (backports, one-off manual releases) only produces false alarms.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 43200

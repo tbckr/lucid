@@ -13,11 +13,6 @@ COMMIT := env('COMMIT', `git rev-parse HEAD 2>/dev/null || echo none`)
 DATE := env('DATE', datetime_utc('%Y-%m-%dT%H:%M:%SZ'))
 LDFLAGS := '-s -w -X main.version=' + VERSION + ' -X main.commit=' + COMMIT + ' -X main.date=' + DATE
 
-# Kept a plain literal so the Renovate regex manager can bump it; override
-# with `just GOVULNCHECK_VERSION=… vuln`.
-# renovate: datasource=go depName=golang.org/x/vuln
-GOVULNCHECK_VERSION := 'v1.1.4'
-
 COVERAGE_OUT := env('COVERAGE_OUT', 'coverage.out')
 # The race detector needs cgo and a C compiler; use `just RACE= test` without.
 RACE := env('RACE', '-race')
@@ -95,16 +90,32 @@ lint-web: web-deps
 fmt:
     {{ GOLANGCI_LINT }} fmt ./...
 
-# Scan Go dependencies for known vulnerabilities, audit frontend deps
+# Scan for known vulnerabilities: reachable Go code, shipped frontend packages
 [group('quality')]
 vuln:
-    {{ GO }} run golang.org/x/vuln/cmd/govulncheck@{{ GOVULNCHECK_VERSION }} ./...
-    {{ PNPM }} --dir web audit --audit-level=high
+    {{ GO }} run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    {{ PNPM }} --dir web audit --prod
 
 # Run Playwright end-to-end tests
 [group('quality')]
 e2e: web-deps
     {{ PNPM }} --dir web e2e
+
+# Show direct dependencies with newer versions (majors too) and platform versions
+[group('deps')]
+outdated:
+    scripts/deps.sh outdated
+
+# Upgrade direct dependencies and flake.lock; transitive ones move only where required
+[group('deps')]
+upgrade:
+    scripts/deps.sh upgrade
+    @echo "Next: just nix-hashes (needs nix build), then just lint test vuln."
+
+# Recompute vendorHash and pnpmDeps.hash in nix/package.nix (needs nix build)
+[group('deps')]
+nix-hashes:
+    scripts/deps.sh nix-hashes
 
 # Run the mock CalDAV server (login demo/demo)
 [group('run')]

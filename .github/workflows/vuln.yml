@@ -1,0 +1,120 @@
+# Vulnerability scans (NFR-11/30), daily and whenever the dependency
+# manifests change. Only precise signals fail the run (see "Updating
+# dependencies" in CONTRIBUTING.md):
+#   - govulncheck reports only vulnerabilities whose code is reachable. It
+#     scans main and the latest release binary; the binary carries the Go
+#     release it was built with, so standard library fixes that need a new
+#     Lucid release show up there.
+#   - pnpm audit --prod covers only the packages shipped in the bundle.
+# ci.yml also runs govulncheck on every change to Go code.
+#
+# Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
+# Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Vulnerabilities
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - go.mod
+      - go.sum
+      - web/package.json
+      - web/pnpm-lock.yaml
+      - web/pnpm-workspace.yaml
+      - .github/workflows/vuln.yml
+  pull_request:
+    paths:
+      - go.mod
+      - go.sum
+      - web/package.json
+      - web/pnpm-lock.yaml
+      - web/pnpm-workspace.yaml
+      - .github/workflows/vuln.yml
+  schedule:
+    - cron: "22 5 * * *" # daily, 05:22 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  govulncheck:
+    name: govulncheck (main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  govulncheck-release:
+    name: govulncheck (latest release binary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [ -z "$tag" ]; then
+            echo "::notice::No release yet, nothing to scan."
+            exit 0
+          fi
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'lucid_*_linux_amd64.tar.gz' --dir release
+          tar -xzf release/lucid_*_linux_amd64.tar.gz -C release lucid
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Only runs govulncheck itself; the binary's Go version is read from
+      # its build info.
+      - if: steps.release.outputs.tag != ''
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - if: steps.release.outputs.tag != ''
+        uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary release/lucid
+
+  pnpm-audit:
+    name: pnpm audit (shipped packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Reads the lockfile only; nothing is installed. devDependencies never
+      # reach the bundle, so they are updated with the next upgrade instead.
+      - name: pnpm audit --prod (NFR-30)
+        run: pnpm --dir web audit --prod

@@ -8,6 +8,8 @@
 #
 # distroless/static: no shell, no package manager, CA certificates and tzdata
 # included. The :nonroot variant runs as UID/GID 65532 (NFR-21).
+# Referenced by tag, not digest: every release picks up the current image,
+# which holds almost no packages, and release.yml scans the result with Trivy.
 FROM gcr.io/distroless/static-debian12:nonroot
 
 ARG TARGETPLATFORM

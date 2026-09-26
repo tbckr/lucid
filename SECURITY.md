@@ -58,6 +58,16 @@ Out of scope:
 - vulnerabilities in the CalDAV server itself,
 - `cmd/lucid-mockdav`, which is a development tool and not shipped.
 
+## Vulnerabilities in dependencies
+
+Dependencies are scanned daily, including the binary of the latest release
+(see [Updating dependencies](CONTRIBUTING.md#updating-dependencies)). A
+vulnerability that affects Lucid is handled like a reported one, with a patch
+release and a GitHub Security Advisory. Scanner reports about dependencies
+are welcome when they show that Lucid is affected, for example with
+`govulncheck` output; a vulnerable version alone does not mean Lucid calls
+the vulnerable code.
+
 ## Verifying releases
 
 All release artifacts and container images are signed with cosign (keyless).

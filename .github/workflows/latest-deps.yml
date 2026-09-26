@@ -1,0 +1,98 @@
+# Early warning without updating (see "Updating dependencies" in
+# CONTRIBUTING.md): once a week, CI runs against the newest versions of the
+# direct dependencies, upgraded exactly like `just upgrade` does, and checks
+# that the Go release in go.mod still gets security fixes. Nothing is
+# committed; a failure means the next upgrade needs work.
+#
+# Fresh dependency code runs only inside a gVisor sandbox
+# (geomys/sandboxed-step) without access to the job's token or caches.
+#
+# Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
+# Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Latest dependencies
+
+on:
+  schedule:
+    - cron: "43 5 * * 1" # weekly, Monday 05:43 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  go:
+    name: Go (stable toolchain, latest direct dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          run: |
+            scripts/deps.sh upgrade go
+            git --no-pager diff -- go.mod
+            go test -shuffle=on ./...
+
+  go-support:
+    name: Go release in go.mod is supported
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - run: scripts/deps.sh go-support
+
+  web:
+    name: Frontend (latest direct dependencies within their ranges)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: web/package.json
+          # The sandbox only sees tools below the runner's tool cache.
+          dest: ${{ runner.tool_cache }}/pnpm
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Puts these ahead of any node or pnpm in the sandbox image.
+      - name: Locate node and pnpm
+        id: tools
+        run: echo "path=$(dirname "$(command -v node)"):$(dirname "$(command -v pnpm)")" >> "$GITHUB_OUTPUT"
+
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          env: |
+            TOOLS_PATH=${{ steps.tools.outputs.path }}
+          run: |
+            export PATH="$TOOLS_PATH:$PATH"
+            scripts/deps.sh upgrade web
+            git --no-pager diff -- web/package.json
+            pnpm --dir web lint
+            pnpm --dir web typecheck
+            pnpm --dir web test
+            pnpm --dir web build
