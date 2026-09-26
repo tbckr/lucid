@@ -301,6 +301,9 @@ jobs:
           path: bin/lucid
           retention-days: 7
 
+  # Vulnerabilities and licenses (OSI-approved only) of the dependencies a
+  # pull request adds or updates. The policy is in the config file; inputs
+  # set here would override it.
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
@@ -312,4 +315,4 @@ jobs:
           persist-credentials: false
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
-          fail-on-severity: high
+          config-file: ./.github/dependency-review-config.yml

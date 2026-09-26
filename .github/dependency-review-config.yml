@@ -1,0 +1,45 @@
+# Policy for the dependency review in ci.yml. It checks the dependencies a
+# pull request adds or updates: Go modules, npm packages and GitHub Actions.
+#
+# Vulnerabilities fail from high severity on, in runtime dependencies only.
+#
+# Licenses must be OSI-approved open source licenses. The check covers
+# devDependencies and GitHub Actions too, since it ignores fail-on-scopes.
+# The list holds the licenses in use and Lucid's own: a new license is a
+# decision for the pull request that brings it in (see "Updating
+# dependencies" in CONTRIBUTING.md). Dependencies without license data are reported but do
+# not fail the check.
+fail-on-severity: high
+
+allow-licenses:
+  - 0BSD
+  - Apache-2.0
+  - BlueOak-1.0.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  # Lucid's own license. Also matches GPL-3.0-or-later and GPL-2.0-or-later;
+  # GPL-2.0-only is incompatible with it and does not pass.
+  - GPL-3.0-only
+  - ISC
+  - MIT
+  - MIT-0
+  - MPL-2.0
+  - OFL-1.1
+  - Python-2.0
+  # Not a license: the patent grant that golang.org/x/* and
+  # google.golang.org/protobuf ship next to BSD-3-Clause. The dependency
+  # graph reports them as "BSD-3-Clause AND <this>".
+  - LicenseRef-scancode-google-patent-license-golang
+
+# Not OSI-approved, exempted per package (any version). All of them are data
+# or disclaimers in devDependencies and do not ship in the bundle.
+allow-dependencies-licenses:
+  # CC0-1.0: CSS data (css-tree) and the IANA language subtag registry
+  # (language-tags).
+  - pkg:npm/mdn-data
+  - pkg:npm/language-subtag-registry
+  # CC-BY-4.0: browser support data (browserslist).
+  - pkg:npm/caniuse-lite
+  # BSD-2-Clause AND BSD-2-Clause-Views: the second only adds a
+  # disclaimer (ajv, via ESLint).
+  - pkg:npm/uri-js
