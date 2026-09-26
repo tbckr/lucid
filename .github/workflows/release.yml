@@ -5,7 +5,7 @@
 # builds the binaries with that frontend embedded, archives,
 # checksums, SBOMs (syft), multi-arch images on ghcr.io and signs the checksum
 # file and the images keylessly with cosign (GitHub OIDC). Afterwards SLSA
-# build provenance is attested and the published image is scanned with Trivy.
+# build provenance is attested and the published image is scanned with Grype.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly. Pinning matters
@@ -164,7 +164,7 @@ jobs:
           push-to-registry: true
 
   scan-image:
-    name: Container scan (Trivy)
+    name: Container scan (Grype)
     needs: [build, goreleaser]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -180,27 +180,26 @@ jobs:
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-      - name: Trivy scan (SARIF)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+      - name: Grype scan (SARIF)
+        id: grype
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          image-ref: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH,MEDIUM
-          ignore-unfixed: true
+          image: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
+          output-format: sarif
+          fail-build: false
+          only-fixed: true
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          sarif_file: trivy-results.sarif
-          category: trivy-image
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-image
 
+      # Reuses the grype binary from the tool cache and the local DB.
       - name: Fail on critical/high vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          image-ref: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
-          format: table
-          exit-code: "1"
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          skip-setup-trivy: true
+          image: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
+          output-format: table
+          severity-cutoff: high
+          only-fixed: true
