@@ -8,7 +8,8 @@
 # file and the images keylessly with cosign (GitHub OIDC). The GitHub release
 # stays a draft until SLSA build provenance is attested; publishing it is the
 # last step, because an immutable release can no longer change. Afterwards
-# the published image is scanned with Grype.
+# the published image is scanned with Grype; vuln-release.yml rescans the
+# latest release daily.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly. Pinning matters

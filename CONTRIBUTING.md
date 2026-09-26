@@ -132,10 +132,14 @@ security fixes. `just outdated` lists what to review on every upgrade:
 **Automation:**
 
 - `vuln.yml`, daily and whenever the dependency manifests change:
-  `govulncheck` on `main` and on the latest release binary,
-  `pnpm audit --prod` on the packages shipped in the bundle, and a check for
-  known malware (CWE-506) in every frontend package, devDependencies
-  included.
+  `govulncheck` on `main`, `pnpm audit --prod` on the packages shipped in
+  the bundle, and a check for known malware (CWE-506) in every frontend
+  package, devDependencies included.
+- `vuln-release.yml`, daily: the latest release, which users keep running
+  after `main` has a fix. `govulncheck` on the binary, `pnpm audit --prod` on
+  the lockfile its frontend was built from (with the audit settings of
+  `main`), and Grype on the distroless base image packages of the container
+  image (`.github/grype-config.yml`).
 - The dependency review in `ci.yml`, on every pull request and every push to
   `main`: vulnerabilities and licenses of the Go modules, npm packages and
   GitHub Actions the change adds or updates. Only OSI-approved licenses pass,
@@ -157,10 +161,14 @@ security fixes. `just outdated` lists what to review on every upgrade:
 **When a vulnerability scan fails**, treat the finding like a reported
 vulnerability:
 
-1. Assess the impact. `govulncheck` only reports code that is reachable; a
-   finding in the release binary means users run vulnerable code. A standard
-   library finding there only needs a new release, which picks up the latest
-   Go patch release.
+1. Assess the impact. `govulncheck` only reports code that is reachable. A
+   finding in `vuln-release.yml` concerns what users run; if `vuln.yml` no
+   longer reports it, the fix is already on `main` and only needs a release.
+   The same goes for a standard library finding in the release binary, since
+   a new release picks up the latest Go patch release, and for a Grype
+   finding in the release image: it is in a package of the distroless base
+   image, and a new release picks up the current base image once distroless
+   ships the fix.
 2. Fix it by upgrading the direct dependency. If the vulnerable package is
    transitive and no fixed version of the direct dependency exists yet, raise
    only that package, to the fixed version and not to the latest

@@ -184,11 +184,12 @@ Durations use Go syntax (`90s`, `15m`, `12h`). The REST API is documented in
   protection, input validation, open-redirect protection, no source maps in
   production builds.
 - **Supply chain.** Signed releases and images (cosign keyless), SBOMs,
-  CI actions pinned to commit SHAs, daily `govulncheck` (also against the
-  latest release binary), `pnpm audit` of the shipped packages and a malware
-  check of all frontend packages, weekly CI against the newest direct
+  CI actions pinned to commit SHAs, daily `govulncheck` and `pnpm audit` of
+  the shipped packages on `main` and on the latest release, a malware check
+  of all frontend packages, weekly CI against the newest direct
   dependencies, a release job that runs no dependency code next to the
-  signing identity, CodeQL and container scanning.
+  signing identity, CodeQL, and Grype scans of the container image on every
+  release and daily for the latest one.
 
 **Known limitation:** sessions live only in memory, so restarting Lucid logs
 everybody out. Setting a fixed `LUCID_SESSION_KEY` does not change that; it is

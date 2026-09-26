@@ -60,8 +60,9 @@ Out of scope:
 
 ## Vulnerabilities in dependencies
 
-Dependencies are scanned daily, including the binary of the latest release
-(see [Updating dependencies](CONTRIBUTING.md#updating-dependencies)). A
+Dependencies are scanned daily, on `main` and in the latest release,
+including its binary and container image (see
+[Updating dependencies](CONTRIBUTING.md#updating-dependencies)). A
 vulnerability that affects Lucid is handled like a reported one, with a patch
 release and a GitHub Security Advisory. Scanner reports about dependencies
 are welcome when they show that Lucid is affected, for example with

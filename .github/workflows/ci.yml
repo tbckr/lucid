@@ -1,7 +1,7 @@
 # Continuous integration (NFR-05/06/10/11/12/28/30/31).
 #
-# Dependency audits run in vuln.yml, CI against the latest direct
-# dependencies in latest-deps.yml.
+# Dependency audits run in vuln.yml (main) and vuln-release.yml (latest
+# release), CI against the latest direct dependencies in latest-deps.yml.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly.

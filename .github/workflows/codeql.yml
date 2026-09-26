@@ -1,6 +1,7 @@
 # Static application security testing with CodeQL (Go, TypeScript, and the
 # workflows themselves), plus a weekly re-scan of the full tree with the
-# latest queries. Dependency vulnerabilities are scanned in vuln.yml.
+# latest queries. Dependency vulnerabilities are scanned in vuln.yml and
+# vuln-release.yml.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly.

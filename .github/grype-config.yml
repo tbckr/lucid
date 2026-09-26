@@ -1,0 +1,12 @@
+# Grype configuration for the daily scan of the latest release image in
+# vuln-release.yml. That scan exists for what no other check sees: the
+# packages of the distroless base image.
+#
+# The lucid binary in the image is left to govulncheck, which scans the same
+# build there but reports only reachable code. Grype would flag every
+# vulnerable Go module or Go release in it, reachable or not. The rule covers
+# the standard library too, which syft also reports as a go-module.
+ignore:
+  - package:
+      type: go-module
+    reason: covered by govulncheck on the release binary (vuln-release.yml)

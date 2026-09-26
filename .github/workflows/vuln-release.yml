@@ -1,0 +1,148 @@
+# Vulnerability scans of the latest release (NFR-11/30), daily. A fix on main
+# turns vuln.yml green while users still run the released version; these
+# jobs stay red until a release ships the fix. The same signals as in
+# vuln.yml fail the run (see "Updating dependencies" in CONTRIBUTING.md):
+#   - govulncheck on the release binary, which carries the Go release it was
+#     built with, so standard library fixes that need a new Lucid release
+#     show up here.
+#   - Grype on the release image, but only the packages of the distroless
+#     base image (.github/grype-config.yml): the binary in it is
+#     govulncheck's. The Dockerfile references the base image by tag, so a
+#     new release picks up its fixes; only high or critical vulnerabilities
+#     that have a fix fail the run.
+#   - pnpm audit --prod on the lockfile the release's frontend was built from
+#     (release.yml installs it frozen); the bundle itself carries no package
+#     metadata to scan. The audit settings, audit.ignore included, come from
+#     main: they hold the current assessment.
+# A commit does not change the release, so pushes and pull requests only run
+# this to test changes to its own configuration.
+#
+# Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
+# Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Vulnerabilities (latest release)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/grype-config.yml
+      - .github/workflows/vuln-release.yml
+  pull_request:
+    paths:
+      - .github/grype-config.yml
+      - .github/workflows/vuln-release.yml
+  schedule:
+    - cron: "52 5 * * *" # daily, 05:52 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/tbckr/lucid
+  NODE_VERSION: "24"
+
+jobs:
+  release:
+    name: Find the latest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      version: ${{ steps.latest.outputs.version }}
+    steps:
+      - id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [ -z "$tag" ]; then
+            echo "::notice::No release yet, nothing to scan."
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # The image tag: the version without the leading "v".
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  govulncheck:
+    name: govulncheck (release binary)
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'lucid_*_linux_amd64.tar.gz' --dir release
+          tar -xzf release/lucid_*_linux_amd64.tar.gz -C release lucid
+
+      # Only runs govulncheck itself; the binary's Go version is read from
+      # its build info.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary release/lucid
+
+  grype:
+    name: Grype (release image)
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ env.IMAGE }}:${{ needs.release.outputs.version }}
+          config: .github/grype-config.yml
+          output-format: table
+          severity-cutoff: high
+          only-fixed: true
+
+  pnpm-audit:
+    name: pnpm audit (release lockfile)
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # pnpm audit reads only the lockfile, prod and dev scopes included;
+      # package.json from main does not have to match it.
+      - name: Use the lockfile of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/contents/web/pnpm-lock.yaml?ref=${TAG}" \
+            -H 'Accept: application/vnd.github.raw+json' > web/pnpm-lock.yaml
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Vulnerabilities in shipped packages (NFR-30)
+        run: pnpm --dir web audit --prod

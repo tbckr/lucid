@@ -1,10 +1,7 @@
-# Vulnerability scans (NFR-11/30), daily and whenever the dependency
+# Vulnerability scans of main (NFR-11/30), daily and whenever the dependency
 # manifests change. Only precise signals fail the run (see "Updating
 # dependencies" in CONTRIBUTING.md):
-#   - govulncheck reports only vulnerabilities whose code is reachable. It
-#     scans main and the latest release binary; the binary carries the Go
-#     release it was built with, so standard library fixes that need a new
-#     Lucid release show up there.
+#   - govulncheck reports only vulnerabilities whose code is reachable.
 #   - pnpm audit --prod covers only the packages shipped in the bundle: a
 #     vulnerability needs attacker input, and build and test tools only
 #     process our own code.
@@ -12,7 +9,8 @@
 #     on developer machines and in CI, and they write the bundle, so known
 #     malware (CWE-506) fails the run for every package, devDependencies
 #     included.
-# ci.yml also runs govulncheck on every change to Go code.
+# ci.yml also runs govulncheck on every change to Go code; vuln-release.yml
+# scans the latest release.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly.
@@ -70,40 +68,6 @@ jobs:
       - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
         with:
           run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-  govulncheck-release:
-    name: govulncheck (latest release binary)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download the latest release
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
-            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
-          if [ -z "$tag" ]; then
-            echo "::notice::No release yet, nothing to scan."
-            exit 0
-          fi
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'lucid_*_linux_amd64.tar.gz' --dir release
-          tar -xzf release/lucid_*_linux_amd64.tar.gz -C release lucid
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      # Only runs govulncheck itself; the binary's Go version is read from
-      # its build info.
-      - if: steps.release.outputs.tag != ''
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version: stable
-          cache: false
-
-      - if: steps.release.outputs.tag != ''
-        uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
-        with:
-          run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary release/lucid
 
   pnpm-audit:
     name: pnpm audit (vulnerabilities in shipped packages, malware in all)
