@@ -1,0 +1,22 @@
+# Go
+/lucid
+/bin/
+/dist/
+coverage.out
+*.test
+
+# Frontend
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/coverage/
+web/test-results/
+web/playwright-report/
+*.tsbuildinfo
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+.env
+.env.*

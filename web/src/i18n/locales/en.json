@@ -1,0 +1,244 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading…",
+    "retry": "Try again",
+    "save": "Save"
+  },
+  "boot": {
+    "unreachableTitle": "Lucid can't be reached",
+    "crashTitle": "Something broke",
+    "crashBody": "Lucid hit an unexpected error while drawing this page. Reloading usually fixes it; your calendars are safe on your server.",
+    "reload": "Reload Lucid"
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Connect to your CalDAV server. Lucid never stores your calendars.",
+    "serverUrl": "Server address",
+    "serverHint": "A domain like example.com is enough; Lucid finds the calendar service.",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "privacy": "Your password is encrypted in the server-side session and is never sent to this browser again.",
+    "validation": {
+      "serverRequired": "Enter the address of your calendar server.",
+      "serverInvalid": "Enter a valid address, for example https://cloud.example.com.",
+      "usernameRequired": "Enter your username.",
+      "passwordRequired": "Enter your password."
+    }
+  },
+  "errors": {
+    "invalid_credentials": "The server rejected this username or password.",
+    "discovery_failed": "No calendar service was found at this address. Check the URL or enter the full CalDAV address.",
+    "forbidden_target": "This server address is on a blocked network. Ask your administrator to allow it.",
+    "rate_limited": "Too many attempts. Wait a moment and try again.",
+    "rate_limited_retry_one": "Too many attempts. Try again in {{count}} second.",
+    "rate_limited_retry_other": "Too many attempts. Try again in {{count}} seconds.",
+    "upstream_error": "Your calendar server didn't respond. Try again in a moment.",
+    "network": "Lucid can't reach its server. Check your connection.",
+    "invalid_input": "Some of the entered data is invalid.",
+    "invalid_input_detail": "Invalid input: {{detail}}",
+    "read_only": "This calendar is read-only.",
+    "conflict": "This item was changed elsewhere. Lucid reloaded the latest version.",
+    "not_found": "This item no longer exists. Lucid reloaded the calendar.",
+    "unauthenticated": "Your session expired. Sign in again.",
+    "eventsLoadFailed": "Some events couldn't be loaded.",
+    "generic": "Something went wrong. Try again."
+  },
+  "nav": {
+    "today": "Today",
+    "previous": "Previous period",
+    "next": "Next period",
+    "previousMonth": "Previous month",
+    "nextMonth": "Next month",
+    "toggleSidebar": "Show or hide the sidebar",
+    "skipToCalendar": "Skip to calendar"
+  },
+  "views": {
+    "label": "View",
+    "month": "Month",
+    "week": "Week",
+    "day": "Day",
+    "agenda": "Agenda"
+  },
+  "sidebar": {
+    "label": "Navigation and calendars",
+    "miniCalendar": "Date picker"
+  },
+  "calendars": {
+    "title": "Calendars",
+    "readOnly": "Read-only",
+    "empty": "No calendars on this account yet.",
+    "loadFailed": "Calendars couldn't be loaded."
+  },
+  "month": {
+    "more_one": "{{count}} more",
+    "more_other": "{{count}} more",
+    "openDay": "Open {{date}} in day view",
+    "cellLabel_zero": "{{date}}, no events",
+    "cellLabel_one": "{{date}}, {{count}} event",
+    "cellLabel_other": "{{date}}, {{count}} events"
+  },
+  "week": {
+    "expandAllDay": "Show all all-day events",
+    "collapseAllDay": "Show fewer all-day events",
+    "newAllDay": "New all-day event on {{date}}",
+    "newAt": "New event at {{time}}"
+  },
+  "agenda": {
+    "emptyTitle": "Nothing planned",
+    "empty_one": "There are no events in the next day.",
+    "empty_other": "There are no events in the next {{count}} days.",
+    "from": "from {{time}}",
+    "until": "until {{time}}"
+  },
+  "event": {
+    "new": "New event",
+    "create": "Create",
+    "createAction": "Create event",
+    "edit": "Edit event",
+    "delete": "Delete event",
+    "created": "Event created",
+    "saved": "Event saved",
+    "deleted": "Event deleted",
+    "dialogDescription": "Title, time, calendar and details of the event.",
+    "title": "Title",
+    "titlePlaceholder": "Add a title",
+    "untitled": "(No title)",
+    "allDay": "All day",
+    "allDayLabel": "{{title}}, all day",
+    "chipLabel": "{{title}}, {{time}}",
+    "when": "Date and time",
+    "starts": "Start",
+    "ends": "End",
+    "startTime": "Start time",
+    "endTime": "End time",
+    "timezoneHint": "Times are in {{tz}}.",
+    "calendar": "Calendar",
+    "chooseCalendar": "Choose a calendar",
+    "repeat": "Repeat",
+    "location": "Location",
+    "description": "Description",
+    "recurring": "Recurring event",
+    "seriesNotice": "This event repeats. Changes apply to every event in the series.",
+    "confirmDelete": "Delete this event?",
+    "confirmDeleteSeries": "This event repeats. Delete every event in the series?",
+    "corrupted": "Corrupted event",
+    "resize": "Change end time",
+    "noWritableCalendar": "None of your calendars accept new events.",
+    "unknownCalendar": "Unknown calendar"
+  },
+  "recurrence": {
+    "none": "Does not repeat",
+    "daily": "Every day",
+    "weekly": "Every week",
+    "monthly": "Every month",
+    "yearly": "Every year",
+    "custom": "Custom rule",
+    "customRule": "Custom rule: {{rule}}"
+  },
+  "dnd": {
+    "instructions": "Press space to pick up the event. Use the arrow keys to move it, space or enter to drop it, escape to cancel.",
+    "picked": "Picked up {{title}}.",
+    "over": "Over a new time.",
+    "notOver": "Not over a drop target.",
+    "dropped": "Event moved.",
+    "cancelled": "Move cancelled."
+  },
+  "tasks": {
+    "title": "Tasks",
+    "toggle": "Show or hide tasks",
+    "close": "Close tasks",
+    "add": "Add task",
+    "addPlaceholder": "Add a task",
+    "list": "Task list",
+    "hideCompleted": "Hide completed tasks",
+    "showCompleted": "Show completed tasks",
+    "empty": "No tasks yet. Add one above.",
+    "allDone": "All tasks are done.",
+    "noCalendars": "None of the visible calendars hold tasks.",
+    "complete": "Completed: {{title}}",
+    "today": "Today",
+    "tomorrow": "Tomorrow",
+    "yesterday": "Yesterday",
+    "progress": "{{done}} of {{total}} checklist items done",
+    "edit": "Edit task",
+    "editDescription": "Title, due date, priority and checklist of the task.",
+    "titleLabel": "Title",
+    "due": "Due date",
+    "dueTime": "Time",
+    "priority": "Priority",
+    "markCompleted": "Completed",
+    "notes": "Notes",
+    "checklist": "Checklist",
+    "addItem": "Add checklist item",
+    "itemDone": "{{text}} done",
+    "itemText": "Checklist item {{index}}",
+    "removeItem": "Remove {{text}}",
+    "delete": "Delete task",
+    "deleted": "Task deleted",
+    "confirmDelete": "Delete this task?"
+  },
+  "priority": {
+    "none": "None",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low"
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Stored in this browser. Automatic values follow your browser's language and region.",
+    "language": "Language",
+    "timeFormat": "Time format",
+    "weekStart": "Week starts on",
+    "defaultView": "Default view",
+    "theme": "Appearance",
+    "auto": "Automatic ({{value}})",
+    "12h": "12-hour (1:00 PM)",
+    "24h": "24-hour (13:00)",
+    "themeSystem": "Match system",
+    "themeLight": "Light",
+    "themeDark": "Dark"
+  },
+  "weekdays": {
+    "monday": "Monday",
+    "sunday": "Sunday",
+    "saturday": "Saturday"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "description": "Shortcuts work whenever no dialog is open.",
+    "today": "Go to today",
+    "next": "Next period",
+    "previous": "Previous period",
+    "month": "Month view",
+    "week": "Week view",
+    "day": "Day view",
+    "agenda": "Agenda view",
+    "create": "Create event",
+    "tasks": "Show or hide tasks",
+    "help": "Show shortcuts",
+    "moveEvent": "Move a focused event"
+  },
+  "offline": {
+    "label": "Offline",
+    "description": "Lucid can't reach its server. Changes are paused and resume when the connection is back."
+  },
+  "account": {
+    "menu": "Account {{user}}",
+    "logout": "Sign out"
+  },
+  "validation": {
+    "tooLong": "This is too long.",
+    "calendarRequired": "Choose a calendar.",
+    "date": "Enter a valid date.",
+    "time": "Enter a valid time.",
+    "endBeforeStart": "The end can't be before the start.",
+    "titleRequired": "Enter a title.",
+    "itemRequired": "Checklist items can't be empty.",
+    "tooManyItems": "A checklist can hold at most 200 items.",
+    "dateForTime": "Choose a date for this time."
+  }
+}

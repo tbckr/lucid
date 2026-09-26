@@ -1,0 +1,5 @@
+# The image only needs the prebuilt binary that GoReleaser places in the
+# build context (<os>/<arch>/lucid). Keep everything else out.
+**
+!linux/
+!Dockerfile

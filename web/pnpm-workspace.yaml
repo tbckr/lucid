@@ -1,0 +1,12 @@
+# pnpm settings for the Lucid frontend (NFR-30: supply-chain hardening).
+#
+# Dependency lifecycle scripts are blocked by default. None are currently
+# needed: Vite 8 (rolldown), Tailwind (oxide) and lightningcss ship prebuilt
+# platform binaries as optional dependencies. Add a package here only after
+# reviewing its install script.
+allowBuilds: {}
+# Fail the install if a dependency wants to run a build script that has not
+# been reviewed above, instead of silently skipping it.
+strictDepBuilds: true
+# Refuse to install on unsupported Node versions (see package.json engines).
+engineStrict: true

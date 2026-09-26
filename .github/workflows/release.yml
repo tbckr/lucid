@@ -1,0 +1,156 @@
+# Release pipeline (NFR-13/14/15, PRD phase 4 "Release Hardening").
+#
+# Triggered by pushing a SemVer tag (vMAJOR.MINOR.PATCH[-PRERELEASE]).
+# GoReleaser builds the binaries with the embedded frontend, archives,
+# checksums, SBOMs (syft), multi-arch images on ghcr.io and signs the checksum
+# file and the images keylessly with cosign (GitHub OIDC). Afterwards SLSA
+# build provenance is attested and the published image is scanned with Trivy.
+#
+# Actions are referenced by version tag; Renovate
+# (helpers:pinGitHubActionDigests) pins them to commit SHAs.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/tbckr/lucid
+  NODE_VERSION: "24"
+
+jobs:
+  goreleaser:
+    name: GoReleaser
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # create the GitHub release
+      packages: write # push images to ghcr.io
+      id-token: write # cosign keyless signing + attestations
+      attestations: write # actions/attest-build-provenance
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+    steps:
+      - name: Validate SemVer tag (NFR-14)
+        id: semver
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if ! [[ "$tag" =~ $re ]]; then
+            echo "::error::tag '$tag' is not a SemVer tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+            exit 1
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # changelog needs full history and tags
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false # never restore a cache into a release build
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Test before release
+        run: go test -race ./...
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v4
+
+      - uses: anchore/sbom-action/download-syft@v0
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest provenance of release archives
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-checksums: dist/checksums.txt
+
+      - name: Resolve image digest
+        id: image
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ steps.semver.outputs.version }}" \
+            --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest provenance of container image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+  scan-image:
+    name: Container scan (Trivy)
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
+    steps:
+      - uses: sigstore/cosign-installer@v4
+
+      - name: Verify image signature
+        run: |
+          cosign verify "${IMAGE}:${{ needs.goreleaser.outputs.version }}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Trivy scan (SARIF)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ needs.goreleaser.outputs.version }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image
+
+      - name: Fail on critical/high vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ needs.goreleaser.outputs.version }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          skip-setup-trivy: true

@@ -1,0 +1,43 @@
+# Example production deployment of Lucid.
+#
+# Lucid does not store data; the CalDAV server remains the source of truth.
+# TLS is mandatory (NFR-04): run Lucid behind a TLS-terminating reverse proxy
+# (Caddy, Traefik, nginx, ...) and only expose it to that proxy, or set
+# LUCID_TLS_CERT / LUCID_TLS_KEY to serve HTTPS directly.
+#
+# 1. Create lucid.env next to this file (keep it out of version control):
+#      LUCID_SESSION_KEY=<output of: openssl rand -base64 32>
+# 2. docker compose up -d
+services:
+  lucid:
+    image: ghcr.io/tbckr/lucid:latest # pin a version (e.g. :1.2.3) or a digest in production
+    restart: unless-stopped
+    # Bind to localhost only; the reverse proxy on the host forwards to it.
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - path: lucid.env
+        required: true
+    environment:
+      LUCID_ADDR: ":8080"
+      LUCID_LOG_LEVEL: info
+      # The reverse proxy sets X-Forwarded-For; only enable this when Lucid is
+      # reachable exclusively through that proxy.
+      LUCID_TRUST_PROXY_HEADERS: "true"
+      # Uncomment when your CalDAV server lives on a private network/LAN:
+      # LUCID_ALLOW_PRIVATE_NETWORKS: "true"
+      # or, more narrowly:
+      # LUCID_ALLOWED_CIDRS: "192.168.1.10/32"
+    # Hardening (NFR-21): non-root (set in the image), read-only root FS,
+    # no Linux capabilities, no privilege escalation.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lucid", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

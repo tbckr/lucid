@@ -1,0 +1,114 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'sonner/dist/styles.css';
+@import '@fontsource-variable/instrument-sans/index.css';
+@import '@fontsource-variable/bricolage-grotesque/index.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Lucid palette — "clear glass": cool paper, slate ink, one iris accent.
+ * Calendar colors carry the rest; the chrome stays quiet.
+ */
+:root {
+  --background: #f4f6f9; /* glass: app chrome */
+  --surface: #ffffff; /* paper: grid, cards */
+  --foreground: #18202e; /* ink */
+  --muted: #e9edf2;
+  --muted-foreground: #586273; /* 5.9:1 on paper */
+  --border: #dfe4ea;
+  --grid-line: #e7ebf0;
+  --input: #cfd6df;
+  --primary: #4a45d6; /* iris */
+  --primary-foreground: #ffffff;
+  --ring: #4a45d6;
+  --destructive: #c8313a;
+  --now: #e5484d; /* current-time line */
+  --outside: #f8f9fb; /* days outside the current month */
+  --overlay: rgb(16 20 28 / 0.4);
+  --shadow-color: 220 30% 20%;
+}
+
+.dark {
+  --background: #12161f;
+  --surface: #181d28;
+  --foreground: #e6e9ef;
+  --muted: #232a37;
+  --muted-foreground: #9aa3b2;
+  --border: #2a3140;
+  --grid-line: #242b38;
+  --input: #3a4354;
+  --primary: #8b87ff;
+  --primary-foreground: #12161f;
+  --ring: #8b87ff;
+  --destructive: #f2555a;
+  --now: #ff6b6f;
+  --outside: #151a24;
+  --overlay: rgb(0 0 0 / 0.55);
+  --shadow-color: 220 40% 2%;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-grid: var(--grid-line);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-now: var(--now);
+  --color-outside: var(--outside);
+  --color-overlay: var(--overlay);
+
+  --font-sans: 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', 'Instrument Sans Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-float:
+    0 1px 2px hsl(var(--shadow-color) / 0.08), 0 8px 24px -6px hsl(var(--shadow-color) / 0.18),
+    0 24px 48px -12px hsl(var(--shadow-color) / 0.12);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Radix/shadcn components draw their own ring. */
+  [data-slot]:focus-visible {
+    outline: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--input) transparent;
+}

@@ -1,0 +1,246 @@
+# golangci-lint v2 configuration for Lucid (NFR-10: strict static analysis).
+# Validate with: golangci-lint config verify
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    # correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - bodyclose
+    - noctx
+    - errorlint
+    - nilerr
+    - nilnil
+    - contextcheck
+    - durationcheck
+    - makezero
+    - rowserrcheck
+    - sqlclosecheck
+    - copyloopvar
+    - errchkjson
+    - exhaustive
+    - reassign
+    - wastedassign
+    - containedctx
+    - fatcontext
+    # security
+    - gosec
+    - depguard
+    # style / maintainability
+    - revive
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - usetesting
+    - intrange
+    - perfsprint
+    - predeclared
+    - sloglint
+    - nolintlint
+    - errname
+    - goprintffuncname
+    - mirror
+    # tests (NFR-06)
+    - thelper
+    - tparallel
+    - paralleltest
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # micro-optimisation, hurts readability
+        - shadow # too noisy with idiomatic `err` shadowing
+    errcheck:
+      # Unchecked assertions on internal invariants (e.g. container/list
+      # element values) are idiomatic and would need a nolint on every list access.
+      check-type-assertions: false
+      check-blank: false
+    gosec:
+      excludes:
+        - G104 # duplicate of errcheck
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          arguments: ["disableStutteringCheck"]
+        - name: increment-decrement
+        - name: var-naming
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true # interface implementations / handlers legitimately ignore params
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: defer
+        - name: unnecessary-stmt
+        - name: use-any
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam # pointer-vs-value is a design decision, not a bug
+        - paramTypeCombine
+        - unnamedResult
+        - whyNoLint # covered by nolintlint
+        - commentedOutCode
+        - octalLiteral
+    misspell:
+      locale: US
+      ignore-rules:
+        - cancelled # RFC 5545 STATUS:CANCELLED
+    staticcheck:
+      checks:
+        - all
+        - -ST1000 # package comments: covered by revive
+        - -ST1003 # naming: covered by revive var-naming
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001 # De Morgan rewrites are a matter of taste
+        - -QF1008 # explicit embedded-field selectors aid readability
+    exhaustive:
+      default-signifies-exhaustive: true
+    sloglint:
+      no-mixed-args: true
+      kv-only: false
+      attr-only: false
+      context: scope
+      static-msg: false
+      key-naming-case: snake
+      forbidden-keys:
+        - time
+        - level
+        - msg
+        - source
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    unparam:
+      check-exported: false
+    usestdlibvars:
+      http-method: true
+      http-status-code: true
+      time-weekday: true
+      time-month: true
+      time-layout: true
+    thelper:
+      test:
+        first: true
+        name: true
+        begin: true
+      benchmark:
+        first: true
+        name: true
+        begin: true
+      tb:
+        first: true
+        name: true
+        begin: true
+    depguard:
+      rules:
+        # PRD: tests use only the standard library `testing` package.
+        no-assertion-libs:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: github.com/stretchr/testify
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: github.com/onsi/gomega
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: github.com/onsi/ginkgo
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: github.com/onsi/ginkgo/v2
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: gotest.tools
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: github.com/matryer/is
+              desc: "use the standard library `testing` package (PRD: no external test dependencies)"
+            - pkg: github.com/google/go-cmp
+              desc: "compare with reflect.DeepEqual / slices / maps from the standard library"
+            - pkg: github.com/golang/mock
+              desc: "write small hand-rolled fakes instead of generated mocks"
+            - pkg: go.uber.org/mock
+              desc: "write small hand-rolled fakes instead of generated mocks"
+            - pkg: io/ioutil
+              desc: "deprecated: use io and os"
+            - pkg: math/rand$
+              desc: "use crypto/rand (or math/rand/v2 where non-cryptographic randomness is intended)"
+            - pkg: github.com/pkg/errors
+              desc: "use the standard library errors package with %w"
+
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      # Tests get some slack: fixtures, fake servers and table-driven tests.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+          - bodyclose
+          - containedctx
+          - unparam
+          - errchkjson
+          - makezero
+      # Test helper packages (mock CalDAV server for tests / E2E).
+      - path: internal/caldav/caldavtest/
+        linters:
+          - gosec
+          - errcheck
+          - unparam
+          - revive
+      - path: cmd/lucid-mockdav/
+        linters:
+          - gosec
+          - revive
+      # A context-free healthcheck/entrypoint is acceptable in main packages.
+      - path: cmd/
+        linters:
+          - contextcheck
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes:
+        - github.com/tbckr/lucid
+  exclusions:
+    generated: lax

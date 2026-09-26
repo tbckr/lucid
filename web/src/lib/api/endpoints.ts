@@ -1,0 +1,102 @@
+import { z } from 'zod'
+import { api, type ApiClient } from './client'
+import {
+  calendarSchema,
+  eventSchema,
+  parseList,
+  sessionSchema,
+  todoSchema,
+  type ApiEvent,
+  type Calendar,
+  type CorruptedItem,
+  type EventInput,
+  type Session,
+  type Todo,
+  type TodoInput,
+} from './schemas'
+
+const enc = encodeURIComponent
+
+export interface Credentials {
+  serverUrl: string
+  username: string
+  password: string
+}
+
+export interface EventList {
+  events: ApiEvent[]
+  corrupted: CorruptedItem[]
+}
+
+export interface TodoList {
+  todos: Todo[]
+  corrupted: CorruptedItem[]
+}
+
+const eventsEnvelope = z.object({ events: z.array(z.unknown()).nullish().transform((v) => v ?? []) })
+const todosEnvelope = z.object({ todos: z.array(z.unknown()).nullish().transform((v) => v ?? []) })
+const calendarsEnvelope = z.object({ calendars: z.array(calendarSchema).nullish().transform((v) => v ?? []) })
+
+/** Typed endpoint functions for docs/API.md. */
+export function createEndpoints(client: ApiClient) {
+  return {
+    getSession: (signal?: AbortSignal): Promise<Session> => client.fetchSession(signal),
+
+    async login(creds: Credentials): Promise<Session> {
+      const s = await client.request('/auth/login', { method: 'POST', body: creds, schema: sessionSchema })
+      client.setCsrfToken(s.csrfToken)
+      return s
+    },
+
+    async logout(): Promise<void> {
+      await client.request('/auth/logout', { method: 'POST' })
+      client.setCsrfToken(null)
+    },
+
+    async listCalendars(signal?: AbortSignal): Promise<Calendar[]> {
+      const res = await client.request('/calendars', { schema: calendarsEnvelope, ...(signal ? { signal } : {}) })
+      return res.calendars
+    },
+
+    async listEvents(calendarId: string, start: Date, end: Date, signal?: AbortSignal): Promise<EventList> {
+      const qs = `start=${enc(start.toISOString())}&end=${enc(end.toISOString())}`
+      const res = await client.request(`/calendars/${enc(calendarId)}/events?${qs}`, {
+        schema: eventsEnvelope,
+        ...(signal ? { signal } : {}),
+      })
+      const { items, corrupted } = parseList(eventSchema, res.events, calendarId)
+      return { events: items, corrupted }
+    },
+
+    createEvent: (calendarId: string, input: EventInput): Promise<ApiEvent> =>
+      client.request(`/calendars/${enc(calendarId)}/events`, { method: 'POST', body: input, schema: eventSchema }),
+
+    updateEvent: (eventId: string, etag: string, input: EventInput): Promise<ApiEvent> =>
+      client.request(`/events/${enc(eventId)}`, { method: 'PUT', body: input, etag, schema: eventSchema }),
+
+    deleteEvent: (eventId: string, etag: string): Promise<undefined> =>
+      client.request(`/events/${enc(eventId)}`, { method: 'DELETE', etag }),
+
+    async listTodos(calendarId: string, signal?: AbortSignal): Promise<TodoList> {
+      const res = await client.request(`/calendars/${enc(calendarId)}/todos`, {
+        schema: todosEnvelope,
+        ...(signal ? { signal } : {}),
+      })
+      const { items, corrupted } = parseList(todoSchema, res.todos, calendarId)
+      return { todos: items, corrupted }
+    },
+
+    createTodo: (calendarId: string, input: TodoInput): Promise<Todo> =>
+      client.request(`/calendars/${enc(calendarId)}/todos`, { method: 'POST', body: input, schema: todoSchema }),
+
+    updateTodo: (todoId: string, etag: string, input: TodoInput): Promise<Todo> =>
+      client.request(`/todos/${enc(todoId)}`, { method: 'PUT', body: input, etag, schema: todoSchema }),
+
+    deleteTodo: (todoId: string, etag: string): Promise<undefined> =>
+      client.request(`/todos/${enc(todoId)}`, { method: 'DELETE', etag }),
+  }
+}
+
+export type Endpoints = ReturnType<typeof createEndpoints>
+
+export const endpoints = createEndpoints(api)

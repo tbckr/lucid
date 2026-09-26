@@ -1,0 +1,244 @@
+{
+  "common": {
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "loading": "Wird geladen …",
+    "retry": "Erneut versuchen",
+    "save": "Speichern"
+  },
+  "boot": {
+    "unreachableTitle": "Lucid ist nicht erreichbar",
+    "crashTitle": "Etwas ist kaputtgegangen",
+    "crashBody": "Beim Anzeigen dieser Seite ist ein unerwarteter Fehler aufgetreten. Neu laden hilft meistens; deine Kalender liegen sicher auf deinem Server.",
+    "reload": "Lucid neu laden"
+  },
+  "login": {
+    "title": "Anmelden",
+    "subtitle": "Verbinde dich mit deinem CalDAV-Server. Lucid speichert deine Kalender nicht.",
+    "serverUrl": "Serveradresse",
+    "serverHint": "Eine Domain wie example.com genügt; Lucid findet den Kalenderdienst selbst.",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "submit": "Anmelden",
+    "submitting": "Anmeldung läuft …",
+    "privacy": "Dein Passwort wird verschlüsselt in der serverseitigen Sitzung gehalten und nie wieder an diesen Browser gesendet.",
+    "validation": {
+      "serverRequired": "Gib die Adresse deines Kalenderservers ein.",
+      "serverInvalid": "Gib eine gültige Adresse ein, zum Beispiel https://cloud.example.com.",
+      "usernameRequired": "Gib deinen Benutzernamen ein.",
+      "passwordRequired": "Gib dein Passwort ein."
+    }
+  },
+  "errors": {
+    "invalid_credentials": "Der Server hat Benutzername oder Passwort abgelehnt.",
+    "discovery_failed": "Unter dieser Adresse wurde kein Kalenderdienst gefunden. Prüfe die URL oder gib die vollständige CalDAV-Adresse ein.",
+    "forbidden_target": "Diese Serveradresse liegt in einem gesperrten Netz. Bitte deine Administration, sie freizugeben.",
+    "rate_limited": "Zu viele Versuche. Warte kurz und versuche es erneut.",
+    "rate_limited_retry_one": "Zu viele Versuche. Versuche es in {{count}} Sekunde erneut.",
+    "rate_limited_retry_other": "Zu viele Versuche. Versuche es in {{count}} Sekunden erneut.",
+    "upstream_error": "Dein Kalenderserver antwortet nicht. Versuche es gleich noch einmal.",
+    "network": "Lucid erreicht seinen Server nicht. Prüfe deine Verbindung.",
+    "invalid_input": "Einige Eingaben sind ungültig.",
+    "invalid_input_detail": "Ungültige Eingabe: {{detail}}",
+    "read_only": "Dieser Kalender ist schreibgeschützt.",
+    "conflict": "Dieser Eintrag wurde anderswo geändert. Lucid hat die aktuelle Version geladen.",
+    "not_found": "Diesen Eintrag gibt es nicht mehr. Lucid hat den Kalender neu geladen.",
+    "unauthenticated": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+    "eventsLoadFailed": "Einige Termine konnten nicht geladen werden.",
+    "generic": "Etwas ist schiefgelaufen. Versuche es erneut."
+  },
+  "nav": {
+    "today": "Heute",
+    "previous": "Vorheriger Zeitraum",
+    "next": "Nächster Zeitraum",
+    "previousMonth": "Vorheriger Monat",
+    "nextMonth": "Nächster Monat",
+    "toggleSidebar": "Seitenleiste ein- oder ausblenden",
+    "skipToCalendar": "Zum Kalender springen"
+  },
+  "views": {
+    "label": "Ansicht",
+    "month": "Monat",
+    "week": "Woche",
+    "day": "Tag",
+    "agenda": "Terminübersicht"
+  },
+  "sidebar": {
+    "label": "Navigation und Kalender",
+    "miniCalendar": "Datumsauswahl"
+  },
+  "calendars": {
+    "title": "Kalender",
+    "readOnly": "Schreibgeschützt",
+    "empty": "Dieses Konto hat noch keine Kalender.",
+    "loadFailed": "Kalender konnten nicht geladen werden."
+  },
+  "month": {
+    "more_one": "{{count}} weiterer",
+    "more_other": "{{count}} weitere",
+    "openDay": "{{date}} in der Tagesansicht öffnen",
+    "cellLabel_zero": "{{date}}, keine Termine",
+    "cellLabel_one": "{{date}}, {{count}} Termin",
+    "cellLabel_other": "{{date}}, {{count}} Termine"
+  },
+  "week": {
+    "expandAllDay": "Alle ganztägigen Termine zeigen",
+    "collapseAllDay": "Weniger ganztägige Termine zeigen",
+    "newAllDay": "Neuer ganztägiger Termin am {{date}}",
+    "newAt": "Neuer Termin um {{time}}"
+  },
+  "agenda": {
+    "emptyTitle": "Nichts geplant",
+    "empty_one": "Am nächsten Tag gibt es keine Termine.",
+    "empty_other": "In den nächsten {{count}} Tagen gibt es keine Termine.",
+    "from": "ab {{time}}",
+    "until": "bis {{time}}"
+  },
+  "event": {
+    "new": "Neuer Termin",
+    "create": "Erstellen",
+    "createAction": "Termin erstellen",
+    "edit": "Termin bearbeiten",
+    "delete": "Termin löschen",
+    "created": "Termin erstellt",
+    "saved": "Termin gespeichert",
+    "deleted": "Termin gelöscht",
+    "dialogDescription": "Titel, Zeit, Kalender und Details des Termins.",
+    "title": "Titel",
+    "titlePlaceholder": "Titel hinzufügen",
+    "untitled": "(Kein Titel)",
+    "allDay": "Ganztägig",
+    "allDayLabel": "{{title}}, ganztägig",
+    "chipLabel": "{{title}}, {{time}}",
+    "when": "Datum und Uhrzeit",
+    "starts": "Beginn",
+    "ends": "Ende",
+    "startTime": "Startzeit",
+    "endTime": "Endzeit",
+    "timezoneHint": "Zeiten in {{tz}}.",
+    "calendar": "Kalender",
+    "chooseCalendar": "Kalender wählen",
+    "repeat": "Wiederholen",
+    "location": "Ort",
+    "description": "Beschreibung",
+    "recurring": "Wiederkehrender Termin",
+    "seriesNotice": "Dieser Termin wiederholt sich. Änderungen gelten für alle Termine der Serie.",
+    "confirmDelete": "Diesen Termin löschen?",
+    "confirmDeleteSeries": "Dieser Termin wiederholt sich. Alle Termine der Serie löschen?",
+    "corrupted": "Beschädigter Termin",
+    "resize": "Endzeit ändern",
+    "noWritableCalendar": "Keiner deiner Kalender nimmt neue Termine an.",
+    "unknownCalendar": "Unbekannter Kalender"
+  },
+  "recurrence": {
+    "none": "Keine Wiederholung",
+    "daily": "Jeden Tag",
+    "weekly": "Jede Woche",
+    "monthly": "Jeden Monat",
+    "yearly": "Jedes Jahr",
+    "custom": "Eigene Regel",
+    "customRule": "Eigene Regel: {{rule}}"
+  },
+  "dnd": {
+    "instructions": "Drücke die Leertaste, um den Termin aufzunehmen. Verschiebe ihn mit den Pfeiltasten, lege ihn mit Leertaste oder Eingabe ab, Escape bricht ab.",
+    "picked": "{{title}} aufgenommen.",
+    "over": "Über einer neuen Zeit.",
+    "notOver": "Über keinem Ablageziel.",
+    "dropped": "Termin verschoben.",
+    "cancelled": "Verschieben abgebrochen."
+  },
+  "tasks": {
+    "title": "Aufgaben",
+    "toggle": "Aufgaben ein- oder ausblenden",
+    "close": "Aufgaben schließen",
+    "add": "Aufgabe hinzufügen",
+    "addPlaceholder": "Aufgabe hinzufügen",
+    "list": "Aufgabenliste",
+    "hideCompleted": "Erledigte Aufgaben ausblenden",
+    "showCompleted": "Erledigte Aufgaben zeigen",
+    "empty": "Noch keine Aufgaben. Füge oben eine hinzu.",
+    "allDone": "Alle Aufgaben sind erledigt.",
+    "noCalendars": "Keiner der sichtbaren Kalender enthält Aufgaben.",
+    "complete": "Erledigt: {{title}}",
+    "today": "Heute",
+    "tomorrow": "Morgen",
+    "yesterday": "Gestern",
+    "progress": "{{done}} von {{total}} Checklistenpunkten erledigt",
+    "edit": "Aufgabe bearbeiten",
+    "editDescription": "Titel, Fälligkeit, Priorität und Checkliste der Aufgabe.",
+    "titleLabel": "Titel",
+    "due": "Fällig am",
+    "dueTime": "Uhrzeit",
+    "priority": "Priorität",
+    "markCompleted": "Erledigt",
+    "notes": "Notizen",
+    "checklist": "Checkliste",
+    "addItem": "Checklistenpunkt hinzufügen",
+    "itemDone": "{{text}} erledigt",
+    "itemText": "Checklistenpunkt {{index}}",
+    "removeItem": "{{text}} entfernen",
+    "delete": "Aufgabe löschen",
+    "deleted": "Aufgabe gelöscht",
+    "confirmDelete": "Diese Aufgabe löschen?"
+  },
+  "priority": {
+    "none": "Keine",
+    "high": "Hoch",
+    "medium": "Mittel",
+    "low": "Niedrig"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "description": "Werden in diesem Browser gespeichert. Automatische Werte folgen Sprache und Region deines Browsers.",
+    "language": "Sprache",
+    "timeFormat": "Zeitformat",
+    "weekStart": "Woche beginnt am",
+    "defaultView": "Standardansicht",
+    "theme": "Darstellung",
+    "auto": "Automatisch ({{value}})",
+    "12h": "12 Stunden (1:00 PM)",
+    "24h": "24 Stunden (13:00)",
+    "themeSystem": "Wie System",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel"
+  },
+  "weekdays": {
+    "monday": "Montag",
+    "sunday": "Sonntag",
+    "saturday": "Samstag"
+  },
+  "shortcuts": {
+    "title": "Tastenkürzel",
+    "description": "Tastenkürzel funktionieren, solange kein Dialog geöffnet ist.",
+    "today": "Zu heute springen",
+    "next": "Nächster Zeitraum",
+    "previous": "Vorheriger Zeitraum",
+    "month": "Monatsansicht",
+    "week": "Wochenansicht",
+    "day": "Tagesansicht",
+    "agenda": "Terminübersicht",
+    "create": "Termin erstellen",
+    "tasks": "Aufgaben ein- oder ausblenden",
+    "help": "Tastenkürzel anzeigen",
+    "moveEvent": "Fokussierten Termin verschieben"
+  },
+  "offline": {
+    "label": "Offline",
+    "description": "Lucid erreicht seinen Server nicht. Änderungen pausieren und werden fortgesetzt, sobald die Verbindung zurück ist."
+  },
+  "account": {
+    "menu": "Konto {{user}}",
+    "logout": "Abmelden"
+  },
+  "validation": {
+    "tooLong": "Das ist zu lang.",
+    "calendarRequired": "Wähle einen Kalender.",
+    "date": "Gib ein gültiges Datum ein.",
+    "time": "Gib eine gültige Uhrzeit ein.",
+    "endBeforeStart": "Das Ende darf nicht vor dem Beginn liegen.",
+    "titleRequired": "Gib einen Titel ein.",
+    "itemRequired": "Checklistenpunkte dürfen nicht leer sein.",
+    "tooManyItems": "Eine Checkliste darf höchstens 200 Punkte enthalten.",
+    "dateForTime": "Wähle ein Datum für diese Uhrzeit."
+  }
+}
