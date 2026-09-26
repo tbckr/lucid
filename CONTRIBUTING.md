@@ -125,7 +125,9 @@ security fixes. `just outdated` lists what to review on every upgrade:
 - the nixpkgs branch in `flake.nix` (supported for about seven months),
 - Node.js in CI and `web/package.json`,
 - the distroless base image in the `Dockerfile`,
-- golangci-lint in `ci.yml` (pinned by hand).
+- golangci-lint in `ci.yml` (pinned by hand),
+- GoReleaser in `release.yml` and `ci.yml` (pinned by hand to an exact
+  version, because it runs in the job that publishes and signs).
 
 **Automation:**
 
@@ -134,10 +136,12 @@ security fixes. `just outdated` lists what to review on every upgrade:
   `pnpm audit --prod` on the packages shipped in the bundle, and a check for
   known malware (CWE-506) in every frontend package, devDependencies
   included.
-- The dependency review in `ci.yml`, on every pull request: vulnerabilities
-  and licenses of the Go modules, npm packages and GitHub Actions it adds or
-  updates. Only OSI-approved licenses pass, devDependencies included
-  (`.github/dependency-review-config.yml`).
+- The dependency review in `ci.yml`, on every pull request and every push to
+  `main`: vulnerabilities and licenses of the Go modules, npm packages and
+  GitHub Actions the change adds or updates. Only OSI-approved licenses pass,
+  devDependencies included (`.github/dependency-review-config.yml`). On a
+  push the check runs after the fact, so a failure there needs a follow-up
+  commit.
 - `release.yml` runs the tests and the frontend build, the only steps that
   execute dependency code, in a job without write access; the job that
   signs and publishes only consumes the result.
@@ -187,7 +191,7 @@ find out where the package ran before removing it:
 is not on the list in `.github/dependency-review-config.yml`:
 
 - If it is OSI-approved (the [SPDX license list](https://spdx.org/licenses/)
-  marks these), add it to `allow-licenses` in the same pull request.
+  marks these), add it to `allow-licenses` in the same change.
 - If it is not, prefer another dependency. Exempt the package under
   `allow-dependencies-licenses` only for data or disclaimers that do not
   restrict use, with a comment naming the license and why it is fine.

@@ -169,7 +169,12 @@ release:
     owner: tbckr
     name: lucid
   prerelease: auto
-  draft: false
+  # Immutable releases (a repository setting) lock the tag and the assets
+  # once a release is published. GoReleaser therefore only creates a draft,
+  # and release.yml publishes it as its last step, after the attestations.
+  # A re-run replaces the draft of a failed run instead of adding another.
+  draft: true
+  replace_existing_draft: true
   mode: replace
   footer: |
     ## Verifying this release

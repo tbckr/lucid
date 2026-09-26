@@ -270,6 +270,9 @@ publishes:
   signed with cosign and carrying an SBOM attestation,
 - GitHub build-provenance attestations for archives and images.
 
+The release is published only once all of this exists. Releases are
+immutable: after publication, neither the tag nor the assets can change.
+
 ### Verifying releases
 
 ```sh

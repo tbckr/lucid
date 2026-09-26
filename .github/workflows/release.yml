@@ -4,8 +4,10 @@
 # A read-only job runs the tests and builds the frontend. GoReleaser then
 # builds the binaries with that frontend embedded, archives,
 # checksums, SBOMs (syft), multi-arch images on ghcr.io and signs the checksum
-# file and the images keylessly with cosign (GitHub OIDC). Afterwards SLSA
-# build provenance is attested and the published image is scanned with Grype.
+# file and the images keylessly with cosign (GitHub OIDC). The GitHub release
+# stays a draft until SLSA build provenance is attested; publishing it is the
+# last step, because an immutable release can no longer change. Afterwards
+# the published image is scanned with Grype.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly. Pinning matters
@@ -27,6 +29,10 @@ concurrency:
 env:
   IMAGE: ghcr.io/tbckr/lucid
   NODE_VERSION: "24"
+  # An exact version, not a range: GoReleaser runs in the job that can
+  # publish and sign. Bumped by hand together with ci.yml (`just outdated`
+  # shows the latest release).
+  GORELEASER_VERSION: v2.18.2
 
 jobs:
   # Everything that runs dependency code (the Go tests, pnpm install, the Vite
@@ -138,7 +144,7 @@ jobs:
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: ${{ env.GORELEASER_VERSION }}
           # The build job ran the before hooks and built web/dist.
           args: release --clean --skip=before
         env:
@@ -162,6 +168,13 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
+
+      # GoReleaser created a draft (.goreleaser.yaml). Once published, an
+      # immutable release keeps its tag and assets, so this runs last.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
 
   scan-image:
     name: Container scan (Grype)

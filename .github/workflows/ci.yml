@@ -49,6 +49,8 @@ env:
   # Bumped by hand when upgrading dependencies (`just outdated` shows the
   # latest release).
   GOLANGCI_LINT_VERSION: v2.12.2
+  # The version release.yml releases with; keep both in sync.
+  GORELEASER_VERSION: v2.18.2
   NODE_VERSION: "24"
 
 jobs:
@@ -291,7 +293,7 @@ jobs:
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: ${{ env.GORELEASER_VERSION }}
           args: check
 
       - name: Upload binary
@@ -302,11 +304,12 @@ jobs:
           retention-days: 7
 
   # Vulnerabilities and licenses (OSI-approved only) of the dependencies a
-  # pull request adds or updates. The policy is in the config file; inputs
-  # set here would override it.
+  # pull request or a push to main adds or updates. On a push the check runs
+  # after the fact: a failure means main needs a follow-up commit. The policy
+  # is in the config file; policy inputs set here would override it.
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -316,3 +319,7 @@ jobs:
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
         with:
           config-file: ./.github/dependency-review-config.yml
+          # A push has no default refs. On pull requests both stay empty:
+          # explicit refs would take precedence over the pull request's own.
+          base-ref: ${{ github.event_name == 'push' && github.event.before || '' }}
+          head-ref: ${{ github.event_name == 'push' && github.sha || '' }}

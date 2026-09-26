@@ -102,6 +102,9 @@ outdated() {
   go_support || true
   echo "golangci-lint $(sed -nE 's/^ *GOLANGCI_LINT_VERSION: (v[0-9.]+).*/\1/p' .github/workflows/ci.yml) in ci.yml," \
     "latest $(go list -m -f '{{.Version}}' github.com/golangci/golangci-lint/v2@latest)"
+  echo "GoReleaser $(sed -nE 's/^ *GORELEASER_VERSION: (v[0-9.]+).*/\1/p' .github/workflows/release.yml) in release.yml," \
+    "$(sed -nE 's/^ *GORELEASER_VERSION: (v[0-9.]+).*/\1/p' .github/workflows/ci.yml) in ci.yml," \
+    "latest $(go list -m -f '{{.Version}}' github.com/goreleaser/goreleaser/v2@latest)"
   echo "nixpkgs $(sed -nE 's|.*github:NixOS/nixpkgs/([^"]+)".*|\1|p' flake.nix) in flake.nix"
   echo "Node.js $(sed -nE 's/^ *NODE_VERSION: "?([0-9]+)"?.*/\1/p' .github/workflows/ci.yml) in CI," \
     "$(sed -nE 's/^ *"node": "([^"]+)".*/\1/p' web/package.json) in web/package.json"

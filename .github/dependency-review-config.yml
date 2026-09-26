@@ -1,12 +1,13 @@
 # Policy for the dependency review in ci.yml. It checks the dependencies a
-# pull request adds or updates: Go modules, npm packages and GitHub Actions.
+# pull request or a push to main adds or updates: Go modules, npm packages
+# and GitHub Actions.
 #
 # Vulnerabilities fail from high severity on, in runtime dependencies only.
 #
 # Licenses must be OSI-approved open source licenses. The check covers
 # devDependencies and GitHub Actions too, since it ignores fail-on-scopes.
 # The list holds the licenses in use and Lucid's own: a new license is a
-# decision for the pull request that brings it in (see "Updating
+# decision for the change that brings it in (see "Updating
 # dependencies" in CONTRIBUTING.md). Dependencies without license data are reported but do
 # not fail the check.
 fail-on-severity: high
