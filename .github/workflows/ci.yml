@@ -296,19 +296,30 @@ jobs:
           curl -fsS http://127.0.0.1:8080/ | grep -qi '<script' \
             || { echo "::error::embedded frontend not served"; exit 1; }
 
-      - name: Validate GoReleaser config
-        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
-        with:
-          distribution: goreleaser
-          version: ${{ env.GORELEASER_VERSION }}
-          args: check
-
       - name: Upload binary
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: lucid-linux-amd64
           path: bin/lucid
           retention-days: 7
+
+  # Catches a broken .goreleaser.yaml on the pull request, not only after a
+  # release tag is pushed. `goreleaser check` only reads the config, so the
+  # job needs neither Go nor the frontend.
+  goreleaser-check:
+    name: GoReleaser (config check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
+          args: check
 
   # Vulnerabilities and licenses (OSI-approved only) of the dependencies a
   # pull request or a push to main adds or updates. On a push the check runs
