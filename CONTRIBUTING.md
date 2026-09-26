@@ -14,14 +14,14 @@ are translated through the i18n JSON files in `web/`.
 See [Development](README.md#development) in the README. In short:
 
 ```sh
-make dev     # mock CalDAV server (demo/demo) + backend + Vite dev server
-make test    # Go + frontend unit tests
-make lint    # golangci-lint, ESLint, tsc
-make cover   # Go coverage gate
-make e2e     # Playwright
+just dev     # mock CalDAV server (demo/demo) + backend + Vite dev server
+just test    # Go + frontend unit tests
+just lint    # golangci-lint, ESLint, tsc
+just cover   # Go coverage gate
+just e2e     # Playwright
 ```
 
-Please run `make lint test cover` before opening a pull request; CI runs the
+Please run `just lint test cover` before opening a pull request; CI runs the
 same checks plus `govulncheck`, `pnpm audit`, CodeQL and the E2E suite.
 
 ## Commit messages
@@ -54,7 +54,7 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
   credentials, session keys or tokens.
 - Code must pass `golangci-lint run` with the repository configuration
   (`.golangci.yml`) and be formatted with `gofumpt`/`goimports`
-  (`make fmt`). `//nolint` requires a specific linter and an explanation.
+  (`just fmt`). `//nolint` requires a specific linter and an explanation.
 
 ### Frontend (TypeScript/React)
 
@@ -75,7 +75,7 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
   `internal/caldav/caldavtest` and `net/http/httptest`.
 - Helpers call `t.Helper()`.
 - Business-logic packages (`internal/...`, excluding test helpers) must keep
-  **at least 80 % statement coverage** (`make cover`). New code should come
+  **at least 80 % statement coverage** (`just cover`). New code should come
   with tests; bug fixes with a regression test.
 - **Frontend:** Vitest for logic and components, Playwright for critical user
   flows (`web/e2e`), run against `cmd/lucid-mockdav`.

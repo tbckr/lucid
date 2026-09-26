@@ -162,12 +162,12 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 Requirements: Go (version from [`go.mod`](go.mod)), Node.js 22+ and
 [pnpm](https://pnpm.io/) (version pinned in `web/package.json`,
-`corepack enable` picks it up), GNU make, optionally
+`corepack enable` picks it up), [just](https://just.systems/) 1.42+, optionally
 [golangci-lint v2](https://golangci-lint.run/) and
 [GoReleaser v2](https://goreleaser.com/).
 
 ```sh
-make dev
+just dev
 ```
 
 starts three processes:
@@ -180,22 +180,22 @@ starts three processes:
    `/api` to the backend.
 
 Open <http://localhost:5173> and log in with server URL
-`http://127.0.0.1:5232`, user `demo` and password `demo`. The targets can also be run separately:
-`make mockdav`, `make dev-backend`, `make dev-web`.
+`http://127.0.0.1:5232`, user `demo` and password `demo`. The recipes can also be run separately:
+`just mockdav`, `just dev-backend`, `just dev-web`.
 
-Other useful targets (`make help` lists all):
+Other useful recipes (`just` lists all):
 
-| Target | Description |
+| Recipe | Description |
 |--------|-------------|
-| `make build` | Frontend + single binary with embedded frontend in `bin/lucid` |
-| `make build-go` | Go binary only (embeds whatever is in `web/dist`) |
-| `make test` | Go tests (race detector) and Vitest unit tests |
-| `make cover` | Go coverage with the 80 % business-logic gate |
-| `make lint` | golangci-lint, ESLint and TypeScript type check |
-| `make vuln` | `govulncheck` and `pnpm audit` |
-| `make e2e` | Playwright end-to-end tests against the mock server |
-| `make snapshot` | Local GoReleaser build of all binaries and images |
-| `make clean` | Remove build output |
+| `just build` | Frontend + single binary with embedded frontend in `bin/lucid` |
+| `just build-go` | Go binary only (embeds whatever is in `web/dist`) |
+| `just test` | Go tests (race detector) and Vitest unit tests |
+| `just cover` | Go coverage with the 80 % business-logic gate |
+| `just lint` | golangci-lint, ESLint and TypeScript type check |
+| `just vuln` | `govulncheck` and `pnpm audit` |
+| `just e2e` | Playwright end-to-end tests against the mock server |
+| `just snapshot` | Local GoReleaser build of all binaries and images |
+| `just clean` | Remove build output |
 
 `web/dist/.gitkeep` is committed so that `go build ./...` works without a
 frontend build; the binary then serves a placeholder page.
