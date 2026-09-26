@@ -6,6 +6,7 @@
 name: CI
 
 # Changes that touch only files no job reads (docs, dev tooling) skip CI.
+# Nix files are checked by nix.yml instead.
 # Keep both lists in sync with codeql.yml. Caveat: a workflow skipped by
 # paths-ignore never reports its checks, so a required status check would
 # stay pending; switch to job-level filtering before making jobs required.
@@ -18,6 +19,10 @@ on:
       - LICENSE
       - justfile
       - compose.yaml
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - "nix/**"
   pull_request:
     paths-ignore:
       - "**.md"
@@ -25,6 +30,10 @@ on:
       - LICENSE
       - justfile
       - compose.yaml
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - "nix/**"
   workflow_dispatch:
 
 permissions:

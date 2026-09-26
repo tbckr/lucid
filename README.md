@@ -91,6 +91,41 @@ Health endpoints: `GET /healthz` (liveness), `GET /readyz` (readiness).
 `lucid healthcheck` probes the local instance and exits non-zero on failure
 (used by the container `HEALTHCHECK`, since distroless has no shell or curl).
 
+### NixOS
+
+The repository is a Nix flake with the package, an overlay and a NixOS module.
+`services.lucid` runs Lucid as a hardened systemd service with a dynamic user,
+listening on `127.0.0.1:8080` for your reverse proxy:
+
+```nix
+{
+  inputs.lucid.url = "github:tbckr/lucid";
+
+  outputs =
+    { nixpkgs, lucid, ... }:
+    {
+      nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          lucid.nixosModules.default
+          {
+            services.lucid = {
+              enable = true;
+              settings.LUCID_TRUST_PROXY_HEADERS = true;
+              # Contains LUCID_SESSION_KEY=..., readable by root only.
+              environmentFile = "/run/secrets/lucid.env";
+            };
+          }
+        ];
+      };
+    };
+}
+```
+
+`settings` takes any variable from [Configuration](#configuration). Its values
+end up in the world-readable Nix store, so secrets belong in `environmentFile`.
+To try Lucid without installing it: `nix run github:tbckr/lucid`.
+
 ## Configuration
 
 Lucid is configured exclusively through environment variables (secrets never
@@ -165,6 +200,11 @@ Requirements: Go (version from [`go.mod`](go.mod)), Node.js 22+ and
 `corepack enable` picks it up), [just](https://just.systems/) 1.42+, optionally
 [golangci-lint v2](https://golangci-lint.run/) and
 [GoReleaser v2](https://goreleaser.com/).
+
+With [Nix](https://nixos.org/), `nix develop` provides all of these (plus
+Chromium for Playwright on Linux). With [direnv](https://direnv.net/) (ideally
+[nix-direnv](https://github.com/nix-community/nix-direnv)), `direnv allow`
+loads the dev shell whenever you enter the repository.
 
 ```sh
 just dev

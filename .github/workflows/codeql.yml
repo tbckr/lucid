@@ -14,6 +14,10 @@ on:
       - LICENSE
       - justfile
       - compose.yaml
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - "nix/**"
   pull_request:
     paths-ignore:
       - "**.md"
@@ -21,6 +25,10 @@ on:
       - LICENSE
       - justfile
       - compose.yaml
+      - flake.nix
+      - flake.lock
+      - .envrc
+      - "nix/**"
   schedule:
     - cron: "27 4 * * 1" # weekly, Monday 04:27 UTC
   workflow_dispatch:

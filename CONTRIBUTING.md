@@ -11,7 +11,8 @@ are translated through the i18n JSON files in `web/`.
 
 ## Getting started
 
-See [Development](README.md#development) in the README. In short:
+See [Development](README.md#development) in the README. With Nix and direnv,
+`direnv allow` loads a dev shell with every tool. In short:
 
 ```sh
 just dev     # mock CalDAV server (demo/demo) + backend + Vite dev server
@@ -86,6 +87,9 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
 - Describe what changed and why, and how you tested it.
 - Update `docs/API.md` when the REST API changes and the README when
   configuration changes.
+- When `go.mod`/`go.sum` or `web/pnpm-lock.yaml` change, update `vendorHash`
+  or `pnpmDeps.hash` in `nix/package.nix`: set it to `""`, run
+  `nix build .#lucid` and copy the `got:` hash from the error.
 - CI must be green before merge.
 
 ## Security issues

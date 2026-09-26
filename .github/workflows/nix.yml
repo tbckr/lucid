@@ -1,0 +1,78 @@
+# Nix support (flake.nix): the package, the dev shell and the NixOS module.
+# Runs on Linux and macOS because the dev shell is meant for both.
+#
+# Actions are referenced by version tag here; Renovate
+# (helpers:pinGitHubActionDigests) rewrites them to full commit SHAs.
+name: Nix
+
+# Unlike ci.yml, Nix file changes run here, and so does the justfile (the dev
+# shell job runs it). Source changes run too: they can break the Nix build,
+# and dependency bumps invalidate vendorHash / pnpmDeps.hash in nix/package.nix.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - compose.yaml
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+      - compose.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  flake:
+    name: Nix (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Also enables KVM on Linux runners, which the NixOS VM test needs.
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Builds the package (with the cmd/lucid tests and the NFR-31 source map
+      # gate), the dev shell and the formatting check; on Linux also boots
+      # the NixOS module test VM.
+      - name: Flake check
+        run: nix flake check --print-build-logs --keep-going
+
+      - name: Smoke test the package
+        run: |
+          nix build --print-build-logs .#lucid
+          ./result/bin/lucid --version
+          LUCID_ADDR=127.0.0.1:8080 ./result/bin/lucid &
+          pid=$!
+          trap 'kill "$pid"' EXIT
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:8080/readyz
+          # The embedded SPA must be served (not the placeholder).
+          curl -fsS http://127.0.0.1:8080/ | grep -qi '<script' \
+            || { echo "::error::embedded frontend not served"; exit 1; }
+
+      # The dev shell alone must be enough for the everyday recipes,
+      # including the race detector (cgo).
+      - name: Dev shell runs the justfile
+        run: nix develop --command just build lint-go test-go

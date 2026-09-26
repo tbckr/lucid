@@ -20,3 +20,8 @@ web/playwright-report/
 .DS_Store
 .env
 .env.*
+
+# Nix / direnv
+.direnv/
+result
+result-*

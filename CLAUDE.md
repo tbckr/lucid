@@ -23,6 +23,8 @@ just build          # web/dist + bin/lucid with embedded SPA
 
 Before a PR, run `just lint test cover`. CI also runs `go mod tidy -diff`, `govulncheck`, `pnpm audit`, CodeQL, E2E, and a check that fails the build if `web/dist` contains source maps.
 
+Nix (`flake.nix`, `nix/`): `nix develop`, or direnv via `.envrc`, provides every tool above. `nix flake check -L` builds the package, the dev shell and a nixfmt check, and on Linux boots the `services.lucid` NixOS module in a VM test (`nix/test.nix`). `nix fmt` formats the Nix files. The `Nix` workflow runs these on Linux and macOS.
+
 Single tests:
 
 ```sh
@@ -33,7 +35,7 @@ pnpm --dir web test -t 'test name'                         # Vitest by name
 pnpm --dir web e2e e2e/login.spec.ts                       # one Playwright spec
 ```
 
-Playwright (`web/playwright.config.ts`) starts its own servers: `go run ./cmd/lucid-mockdav`, plus `pnpm run build && go run ./cmd/lucid` on :8080. Outside CI it reuses servers that are already running. Specs run serially because the mock keeps state. On NixOS, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to a system Chromium.
+Playwright (`web/playwright.config.ts`) starts its own servers: `go run ./cmd/lucid-mockdav`, plus `pnpm run build && go run ./cmd/lucid` on :8080. Outside CI it reuses servers that are already running. Specs run serially because the mock keeps state. On NixOS, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to a system Chromium (the Nix dev shell does this).
 
 Vitest sets `TZ=Europe/Berlin`, a zone with DST, so date tests are deterministic. `src/lib/**` has its own 80 % coverage threshold (`pnpm --dir web test:coverage`).
 
@@ -72,6 +74,7 @@ RequestContext (must stay outermost) → Observe (logs/metrics) → SecurityHead
 
 - **REST API change:** update `internal/domain/domain.go` (the JSON types), `internal/httpapi`, `docs/API.md` (the contract), and `web/src/lib/api/schemas.ts` + `endpoints.ts`. For a new error code, also update the `ApiErrorCode` union / `KNOWN_CODES` in `client.ts`.
 - **New `LUCID_*` setting:** update `internal/config/config.go` and the configuration tables in both `README.md` and `docs/API.md`.
+- **Dependency change (`go.mod`/`go.sum`, `web/pnpm-lock.yaml`):** update `vendorHash` / `pnpmDeps.hash` in `nix/package.nix`, or the Nix build fails. Set the hash to `""` and copy the `got:` hash from `nix build .#lucid`.
 
 ## Conventions
 
