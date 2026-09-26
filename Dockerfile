@@ -9,8 +9,9 @@
 # distroless/static: no shell, no package manager, CA certificates and tzdata
 # included. The :nonroot variant runs as UID/GID 65532 (NFR-21).
 # Referenced by tag, not digest: every release picks up the current image,
-# which holds almost no packages. release.yml scans the result with Grype,
-# and vuln-release.yml scans the latest release image again every day.
+# which holds almost no packages. Grype scans this tag daily (vuln.yml), the
+# result on every release (release.yml) and the latest release image daily
+# (vuln-release.yml).
 FROM gcr.io/distroless/static-debian12:nonroot
 
 ARG TARGETPLATFORM

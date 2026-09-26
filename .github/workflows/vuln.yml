@@ -9,6 +9,10 @@
 #     on developer machines and in CI, and they write the bundle, so known
 #     malware (CWE-506) fails the run for every package, devDependencies
 #     included.
+#   - Grype on the distroless base image the Dockerfile references by tag,
+#     as the next release would ship it. The tag moves upstream, not with our
+#     commits, so only the daily and manual runs scan it. Only high or
+#     critical vulnerabilities that have a fix fail it.
 # ci.yml also runs govulncheck on every change to Go code; vuln-release.yml
 # scans the latest release.
 #
@@ -93,3 +97,34 @@ jobs:
       - name: Malware in any package, devDependencies included
         if: ${{ !cancelled() }}
         run: scripts/deps.sh malware
+
+  # Next to the Grype job in vuln-release.yml: a finding there that is gone
+  # here needs only a new release; one that shows up here too waits for
+  # distroless.
+  grype-base:
+    name: Grype (base image)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Base image from the Dockerfile
+        id: base
+        run: |
+          image="$(sed -nE 's/^FROM (.+)/\1/p' Dockerfile)"
+          if [ -z "$image" ]; then
+            echo "::error::no FROM line in the Dockerfile"
+            exit 1
+          fi
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: ${{ steps.base.outputs.image }}
+          config: .github/grype-config.yml
+          output-format: table
+          severity-cutoff: high
+          only-fixed: true

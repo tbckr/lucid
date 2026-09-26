@@ -8,8 +8,9 @@
 #   - Grype on the release image, but only the packages of the distroless
 #     base image (.github/grype-config.yml): the binary in it is
 #     govulncheck's. The Dockerfile references the base image by tag, so a
-#     new release picks up its fixes; only high or critical vulnerabilities
-#     that have a fix fail the run.
+#     new release picks up its fixes; vuln.yml scans that tag daily, so it
+#     shows whether distroless has shipped them yet. Only high or critical
+#     vulnerabilities that have a fix fail the run.
 #   - pnpm audit --prod on the lockfile the release's frontend was built from
 #     (release.yml installs it frozen); the bundle itself carries no package
 #     metadata to scan. The audit settings, audit.ignore included, come from

@@ -134,7 +134,9 @@ security fixes. `just outdated` lists what to review on every upgrade:
 - `vuln.yml`, daily and whenever the dependency manifests change:
   `govulncheck` on `main`, `pnpm audit --prod` on the packages shipped in
   the bundle, and a check for known malware (CWE-506) in every frontend
-  package, devDependencies included.
+  package, devDependencies included. Only in the daily run: Grype on the
+  distroless base image the `Dockerfile` references, as the next release
+  would ship it.
 - `vuln-release.yml`, daily: the latest release, which users keep running
   after `main` has a fix. `govulncheck` on the binary, `pnpm audit --prod` on
   the lockfile its frontend was built from (with the audit settings of
@@ -167,8 +169,9 @@ vulnerability:
    The same goes for a standard library finding in the release binary, since
    a new release picks up the latest Go patch release, and for a Grype
    finding in the release image: it is in a package of the distroless base
-   image, and a new release picks up the current base image once distroless
-   ships the fix.
+   image, and a new release picks up the current base image. If the base
+   image scan in `vuln.yml` still reports it, distroless has not shipped the
+   fix yet, and a new release would not help.
 2. Fix it by upgrading the direct dependency. If the vulnerable package is
    transitive and no fixed version of the direct dependency exists yet, raise
    only that package, to the fixed version and not to the latest

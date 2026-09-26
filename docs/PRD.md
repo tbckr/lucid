@@ -165,7 +165,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **NFR-13:** Release via **GoReleaser**.
 * **NFR-14:** SemVer Versioning.
 * **NFR-15:** **Supply Chain:** SBOM Generation & Artifact Signing (Cosign).
-* **NFR-16:** **Dependency Management:** Direct dependencies are upgraded on the project's own schedule (`just upgrade`); transitive ones change only where a direct dependency requires it, except to fix a vulnerability that affects Lucid. Daily vulnerability scans (govulncheck and `pnpm audit` of shipped packages on `main` and the latest release, Grype on the base image of the latest release image, a malware check of all frontend packages) and weekly CI against the newest direct dependencies replace update bots; Dependabot only bumps the SHA-pinned GitHub Actions.
+* **NFR-16:** **Dependency Management:** Direct dependencies are upgraded on the project's own schedule (`just upgrade`); transitive ones change only where a direct dependency requires it, except to fix a vulnerability that affects Lucid. Daily vulnerability scans (govulncheck and `pnpm audit` of shipped packages on `main` and the latest release, Grype on the base image of the latest release image and on the current base image, a malware check of all frontend packages) and weekly CI against the newest direct dependencies replace update bots; Dependabot only bumps the SHA-pinned GitHub Actions.
 
 ## **6\. Data Model (Interface Design)**
 
