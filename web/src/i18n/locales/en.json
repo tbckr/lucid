@@ -144,7 +144,8 @@
   "dnd": {
     "instructions": "Press space to pick up the event. Use the arrow keys to move it, space or enter to drop it, escape to cancel.",
     "picked": "Picked up {{title}}.",
-    "over": "Over a new time.",
+    "over": "New time: {{time}}.",
+    "unchanged": "Time unchanged.",
     "notOver": "Not over a drop target.",
     "dropped": "Event moved.",
     "cancelled": "Move cancelled."

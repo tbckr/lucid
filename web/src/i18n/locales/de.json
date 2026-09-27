@@ -144,7 +144,8 @@
   "dnd": {
     "instructions": "Drücke die Leertaste, um den Termin aufzunehmen. Verschiebe ihn mit den Pfeiltasten, lege ihn mit Leertaste oder Eingabe ab, Escape bricht ab.",
     "picked": "{{title}} aufgenommen.",
-    "over": "Über einer neuen Zeit.",
+    "over": "Neue Zeit: {{time}}.",
+    "unchanged": "Zeit unverändert.",
     "notOver": "Über keinem Ablageziel.",
     "dropped": "Termin verschoben.",
     "cancelled": "Verschieben abgebrochen."

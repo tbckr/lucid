@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { login, monthGrid } from './helpers'
 
 test('create, edit and delete an event', async ({ page }) => {
@@ -57,19 +57,32 @@ test('keyboard shortcuts switch views', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
 })
 
-test('dragging an event shows the target time before the drop', async ({ page }) => {
-  const title = `E2E drag ${Date.now()}`
+/** Create a one-hour event today in the day view, starting at `hour` (e.g. "1:00 PM"), and return its block. */
+async function createAt(page: Page, hour: string, title: string): Promise<Locator> {
   await login(page)
   await page.keyboard.press('d')
-
-  // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls. The top
-  // edge of the slot snaps to the full hour.
-  await page.getByRole('button', { name: / 1:00 PM$/ }).click({ position: { x: 20, y: 1 } })
+  // The top edge of the slot snaps to the full hour.
+  await page.getByRole('button', { name: new RegExp(` ${hour}$`) }).click({ position: { x: 20, y: 1 } })
   const dialog = page.getByRole('dialog', { name: 'New event' })
   await dialog.getByPlaceholder('Add a title').fill(title)
   await dialog.getByRole('button', { name: 'Create event' }).click()
   await expect(dialog).toBeHidden()
   const block = page.locator('[data-event-key]', { hasText: title })
+  await expect(block).toBeVisible()
+  return block
+}
+
+async function deleteEvent(page: Page, block: Locator, title: string): Promise<void> {
+  await block.click()
+  await page.getByRole('dialog', { name: title }).getByRole('button', { name: 'Delete event' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete event' }).click()
+  await expect(block).toHaveCount(0)
+}
+
+test('dragging an event shows the target time before the drop', async ({ page }) => {
+  const title = `E2E drag ${Date.now()}`
+  // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls.
+  const block = await createAt(page, '1:00 PM', title)
   await expect(block).toContainText('1 PM – 2 PM')
 
   // Move down one hour (48 px): the dragged copy shows the new time, and so does the saved event.
@@ -94,8 +107,27 @@ test('dragging an event shows the target time before the drop', async ({ page })
   await page.mouse.up()
   await expect(block).toContainText('2 PM – 3:30 PM')
 
-  await block.click()
-  await page.getByRole('dialog', { name: title }).getByRole('button', { name: 'Delete event' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete event' }).click()
-  await expect(block).toHaveCount(0)
+  await deleteEvent(page, block, title)
+})
+
+test('moving an event with the keyboard shows and announces the target time', async ({ page }) => {
+  const title = `E2E keyboard drag ${Date.now()}`
+  // From 1 PM, the moves cross the middle of the grid, where dnd-kit scrolls instead of
+  // moving. Fast key presses must not get lost while it scrolls.
+  const block = await createAt(page, '1:00 PM', title)
+  await expect(block).toContainText('1 PM – 2 PM')
+
+  // Space picks the event up; each arrow key moves it by 15 minutes (NFR-27).
+  await block.focus()
+  await page.keyboard.press('Space')
+  // The sensor listens for arrow keys only after the pick-up has settled.
+  await expect(page.getByRole('status').filter({ hasText: `Picked up ${title}.` })).toHaveCount(1)
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown')
+  await expect(block.filter({ hasText: '2 PM – 3 PM' })).toHaveCount(1)
+  await expect(page.getByRole('status').filter({ hasText: /^New time: .*, 2:00 PM – 3:00 PM\.$/ })).toHaveCount(1)
+  await page.keyboard.press('Enter')
+  await expect(block).toHaveCount(1)
+  await expect(block).toContainText('2 PM – 3 PM')
+
+  await deleteEvent(page, block, title)
 })
