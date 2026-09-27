@@ -16,8 +16,8 @@
       ];
       forAllSystems = f: lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
 
-      # Build metadata for `lucid --version`, like `git describe --always
-      # --dirty` in the justfile (a flake has no access to tags).
+      # Build metadata for `lucid --version`. The source in the store has no
+      # .git, so Go records no VCS data, and a flake has no access to tags.
       buildInfo = {
         version = self.shortRev or self.dirtyShortRev or "dev";
         commit = self.rev or self.dirtyRev or "none";

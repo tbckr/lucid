@@ -270,13 +270,12 @@ jobs:
           name: web-dist
           path: web/dist
 
+      # No version ldflags: the smoke test's --version shows what the binary
+      # reads from the build info Go records.
       - name: Build
         env:
           CGO_ENABLED: "0"
-        run: |
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=0.0.0-ci -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o bin/lucid ./cmd/lucid
+        run: go build -trimpath -ldflags "-s -w" -o bin/lucid ./cmd/lucid
 
       - name: Smoke test
         env:

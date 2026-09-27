@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func TestRunVersionAndFlags(t *testing.T) {
 		want    string
 		wantErr string
 	}{
-		{"version", []string{"--version"}, nil, "lucid dev (commit none", ""},
+		{"version", []string{"--version"}, nil, "lucid dev (commit none, committed unknown, go", ""},
 		{"help", []string{"-h"}, nil, "Usage: lucid", ""},
 		{"unknown flag", []string{"--nope"}, nil, "", "flag provided but not defined"},
 		{"extra arg", []string{"serve"}, nil, "", "unexpected argument"},
@@ -79,6 +80,72 @@ func TestRunVersionAndFlags(t *testing.T) {
 			}
 			if !strings.Contains(out.String(), tt.want) {
 				t.Errorf("output %q does not contain %q", out.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveBuildMeta(t *testing.T) {
+	t.Parallel()
+	vcs := func(version string, settings ...string) *debug.BuildInfo {
+		bi := &debug.BuildInfo{Main: debug.Module{Path: "github.com/tbckr/lucid", Version: version}}
+		for i := 0; i+1 < len(settings); i += 2 {
+			bi.Settings = append(bi.Settings, debug.BuildSetting{Key: settings[i], Value: settings[i+1]})
+		}
+		return bi
+	}
+	const (
+		rev  = "5427e01091e8d39d449e8ad23bc4bb717c277280"
+		when = "2026-09-27T12:00:00Z"
+	)
+	tests := []struct {
+		name string
+		ld   buildMeta
+		bi   *debug.BuildInfo
+		want buildMeta
+	}{
+		{
+			name: "ldflags win",
+			ld:   buildMeta{"1.2.0", "abc", "2026-01-01T00:00:00Z"},
+			bi:   vcs("v9.9.9", "vcs.revision", rev, "vcs.time", when),
+			want: buildMeta{"1.2.0", "abc", "2026-01-01T00:00:00Z"},
+		},
+		{
+			name: "go build on a release tag",
+			bi:   vcs("v1.2.0", "vcs.revision", rev, "vcs.time", when, "vcs.modified", "false"),
+			want: buildMeta{"1.2.0", rev, when},
+		},
+		{
+			name: "go build after a tag with local changes",
+			bi:   vcs("v1.2.1-0.20260927120000-5427e01091e8+dirty", "vcs.revision", rev, "vcs.time", when, "vcs.modified", "true"),
+			want: buildMeta{"1.2.1-0.20260927120000-5427e01091e8+dirty", rev, when},
+		},
+		{
+			name: "go install from the module proxy",
+			bi:   vcs("v1.2.0"),
+			want: buildMeta{"1.2.0", "none", "unknown"},
+		},
+		{
+			name: "go run",
+			bi:   vcs("(devel)"),
+			want: buildMeta{"dev", "none", "unknown"},
+		},
+		{
+			name: "only version from ldflags",
+			ld:   buildMeta{version: "0.0.0-ci"},
+			bi:   vcs("(devel)", "vcs.revision", rev, "vcs.time", when),
+			want: buildMeta{"0.0.0-ci", rev, when},
+		},
+		{
+			name: "no build info",
+			want: buildMeta{"dev", "none", "unknown"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolveBuildMeta(tt.ld, tt.bi); got != tt.want {
+				t.Errorf("resolveBuildMeta() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

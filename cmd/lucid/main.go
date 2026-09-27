@@ -6,6 +6,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,11 +38,40 @@ import (
 )
 
 // Set via -ldflags "-X main.version=... -X main.commit=... -X main.date=...".
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-)
+// Builds without them fall back to what Go records in the binary (see
+// resolveBuildMeta).
+var version, commit, date string
+
+// buildMeta describes the running binary for --version, the startup log and
+// lucid_build_info.
+type buildMeta struct{ version, commit, date string }
+
+// resolveBuildMeta fills the fields that ldflags left empty from bi, which Go
+// stamps into every binary: the main module version (the release tag, a
+// pseudo-version for later commits, "+dirty" for local changes; NFR-14),
+// the revision and the commit time. `go run` and builds outside a Git
+// checkout record no VCS data, so those fields end up "dev", "none" and
+// "unknown".
+func resolveBuildMeta(ld buildMeta, bi *debug.BuildInfo) buildMeta {
+	m := ld
+	if bi != nil {
+		if m.version == "" && bi.Main.Version != "(devel)" {
+			m.version = strings.TrimPrefix(bi.Main.Version, "v")
+		}
+		for _, s := range bi.Settings {
+			switch {
+			case s.Key == "vcs.revision" && m.commit == "":
+				m.commit = s.Value
+			case s.Key == "vcs.time" && m.date == "":
+				m.date = s.Value
+			}
+		}
+	}
+	m.version = cmp.Or(m.version, "dev")
+	m.commit = cmp.Or(m.commit, "none")
+	m.date = cmp.Or(m.date, "unknown")
+	return m
+}
 
 const (
 	shutdownTimeout = 20 * time.Second
@@ -79,8 +111,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
+	bi, _ := debug.ReadBuildInfo()
+	build := resolveBuildMeta(buildMeta{version, commit, date}, bi)
 	if *showVersion {
-		_, err := fmt.Fprintf(stdout, "lucid %s (commit %s, built %s, %s)\n", version, commit, date, runtime.Version())
+		_, err := fmt.Fprintf(stdout, "lucid %s (commit %s, committed %s, %s)\n", build.version, build.commit, build.date, runtime.Version())
 		return err
 	}
 
@@ -90,19 +124,19 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	}
 	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
-	return serve(ctx, &cfg, logger)
+	return serve(ctx, &cfg, logger, build)
 }
 
 // serve wires all components and runs the servers until ctx is canceled.
-func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
-	logger.InfoContext(ctx, "starting lucid", "version", version, "commit", commit, "date", date)
+func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build buildMeta) error {
+	logger.InfoContext(ctx, "starting lucid", "version", build.version, "commit", build.commit, "date", build.date)
 	warnInsecure(cfg, logger)
 
 	reg := prometheus.NewRegistry()
 	buildInfo := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "lucid_build_info", Help: "Build information of the running binary.",
 	}, []string{"version", "commit"})
-	buildInfo.WithLabelValues(version, commit).Set(1)
+	buildInfo.WithLabelValues(build.version, build.commit).Set(1)
 	reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),

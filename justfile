@@ -8,10 +8,9 @@ GO := env('GO', 'go')
 GOLANGCI_LINT := env('GOLANGCI_LINT', 'golangci-lint')
 GORELEASER := env('GORELEASER', 'goreleaser')
 
-VERSION := env('VERSION', `git describe --tags --always --dirty 2>/dev/null || echo dev`)
-COMMIT := env('COMMIT', `git rev-parse HEAD 2>/dev/null || echo none`)
-DATE := env('DATE', datetime_utc('%Y-%m-%dT%H:%M:%SZ'))
-LDFLAGS := '-s -w -X main.version=' + VERSION + ' -X main.commit=' + COMMIT + ' -X main.date=' + DATE
+# No version ldflags: `lucid --version` reads the tag, revision and commit
+# time that `go build` records from Git (see cmd/lucid/main.go).
+LDFLAGS := '-s -w'
 
 COVERAGE_OUT := env('COVERAGE_OUT', 'coverage.out')
 # The race detector needs cgo and a C compiler; use `just RACE= test` without.
