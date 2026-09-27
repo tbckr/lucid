@@ -11,6 +11,7 @@ import {
   type CollisionDetection,
   type DragEndEvent,
   type DragMoveEvent,
+  type DragOverEvent,
   type DragStartEvent,
   type KeyboardCoordinateGetter,
   type Modifier,
@@ -20,9 +21,8 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MOVE_EVENT_KEY, useMoveEvent, type MoveVars } from '@/hooks/queries'
 import { acceptsDrop, dropResult, SNAP_PX, type DragData, type DropData } from '@/lib/dnd'
-import { snapMinutes } from '@/lib/dates'
-import { PX_PER_MINUTE } from '@/lib/dnd'
-import { DndStateContext, type DndState } from './dndState'
+import { withTimes } from '@/lib/events'
+import { DndStateContext } from './dndState'
 
 function dragData(data: unknown): DragData | null {
   return data && typeof data === 'object' && 'type' in data ? (data as DragData) : null
@@ -120,7 +120,8 @@ export function CalendarDnd({
   const { t } = useTranslation()
   const move = useMoveEvent()
   const [active, setActive] = useState<{ id: string; data: DragData } | null>(null)
-  const [resize, setResize] = useState<DndState['resize']>(null)
+  /** What a drop right now would save; null while it would change nothing. */
+  const [target, setTarget] = useState<{ start: string; end: string } | null>(null)
 
   const pending = useMutationState({
     filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
@@ -157,20 +158,30 @@ export function CalendarDnd({
     if (d) setActive({ id: String(e.active.id), data: d })
   }
 
-  const onDragMove = (e: DragMoveEvent) => {
+  // Same computation as the drop, so the preview always shows what will be saved.
+  // Also on drag over: the column under the pointer can change after the move event.
+  const onDragMove = (e: DragMoveEvent | DragOverEvent) => {
     const d = dragData(e.active.data.current)
-    if (d?.type === 'resize') setResize({ key: d.event.key, minutes: snapMinutes(e.delta.y / PX_PER_MINUTE) })
+    if (!d) return
+    const next = dropResult(d, dropData(e.over?.data.current), e.delta.y)
+    setTarget((prev) => (prev?.start === next?.start && prev?.end === next?.end ? prev : next))
   }
 
   const onDragEnd = (e: DragEndEvent) => {
     setActive(null)
-    setResize(null)
+    setTarget(null)
     const d = dragData(e.active.data.current)
     if (!d) return
     const result = dropResult(d, dropData(e.over?.data.current), e.delta.y)
     if (result) move.mutate({ event: d.event, ...result })
   }
 
+  const preview = useMemo(
+    () => (active && target ? { ...active.data, event: withTimes(active.data.event, target) } : (active?.data ?? null)),
+    [active, target],
+  )
+  // Stays null while moving, so the context (read by every event) only changes on resize.
+  const resize = preview?.type === 'resize' ? preview.event : null
   const state = useMemo(() => ({ pendingKeys, resize, activeId: active?.id ?? null }), [pendingKeys, resize, active])
 
   return (
@@ -182,15 +193,16 @@ export function CalendarDnd({
         accessibility={{ announcements, screenReaderInstructions: { draggable: t('dnd.instructions') } }}
         onDragStart={onDragStart}
         onDragMove={onDragMove}
+        onDragOver={onDragMove}
         onDragEnd={onDragEnd}
         onDragCancel={() => {
           setActive(null)
-          setResize(null)
+          setTarget(null)
         }}
       >
         {children}
         <DragOverlay dropAnimation={null}>
-          {active && active.data.type !== 'resize' ? renderOverlay(active.data) : null}
+          {preview && preview.type !== 'resize' ? renderOverlay(preview) : null}
         </DragOverlay>
       </DndContext>
     </DndStateContext>

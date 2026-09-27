@@ -281,7 +281,9 @@ function DayColumn({
 
       {positioned.map((p) => {
         const e = p.event
-        const preview = resize?.key === e.key ? resize.minutes : 0
+        const resized = resize?.key === e.key ? resize : null
+        // A segment continuing into the next day keeps its height; only the last one grows.
+        const preview = resized && !p.clippedEnd ? (resized.endsAt.getTime() - e.endsAt.getTime()) / 60_000 : 0
         const top = p.startMin * PX_PER_MINUTE
         const height = Math.max(18, (p.endMin - p.startMin + preview) * PX_PER_MINUTE - 2)
         const width = (p.span / p.cols) * 100
@@ -290,7 +292,7 @@ function DayColumn({
         return (
           <EventBoundary key={e.key} className="absolute inset-x-1">
             <TimedBlock
-              event={e}
+              event={resized ?? e}
               colors={colorsOf(e.calendarId)}
               prefs={prefs}
               size={height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'}

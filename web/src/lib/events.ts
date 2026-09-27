@@ -93,3 +93,8 @@ export function movedTimes(
   const moved = shiftInterval(e.startsAt, e.endsAt, dayDelta, minuteDelta)
   return { start: moved.start.toISOString(), end: moved.end.toISOString() }
 }
+
+/** The event with new wire-format times, e.g. to preview a drag before it is saved. */
+export function withTimes(e: CalEvent, times: { start: string; end: string }): CalEvent {
+  return toCalEvent({ ...e, ...times })
+}

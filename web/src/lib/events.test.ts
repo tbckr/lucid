@@ -12,6 +12,7 @@ import {
   overlapsDay,
   overlapsRange,
   toCalEvent,
+  withTimes,
 } from './events'
 
 
@@ -98,5 +99,22 @@ describe('movedTimes', () => {
   it('moves all-day events by whole UTC dates', () => {
     const e = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-27T00:00:00Z' }))
     expect(movedTimes(e, -2, 0)).toEqual({ start: '2026-09-23T00:00:00.000Z', end: '2026-09-25T00:00:00.000Z' })
+  })
+})
+
+describe('withTimes', () => {
+  it('replaces the instants of timed events', () => {
+    const e = withTimes(toCalEvent(apiEvent()), { start: '2026-09-26T08:30:00.000Z', end: '2026-09-26T09:30:00.000Z' })
+    expect(e.start).toBe('2026-09-26T08:30:00.000Z')
+    expect(e.startsAt.toISOString()).toBe('2026-09-26T08:30:00.000Z')
+    expect(e.endsAt.toISOString()).toBe('2026-09-26T09:30:00.000Z')
+    expect(e.key).toBe('e1')
+  })
+
+  it('maps moved all-day dates to local midnight', () => {
+    const e = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-27T00:00:00Z' }))
+    const moved = withTimes(e, movedTimes(e, -2, 0))
+    expect(moved.startsAt).toEqual(new Date(2026, 8, 23))
+    expect(moved.endsAt).toEqual(new Date(2026, 8, 25))
   })
 })
