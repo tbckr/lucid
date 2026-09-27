@@ -1,7 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addMinutes, format, isSameDay } from 'date-fns'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
-import { useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDndState } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
@@ -9,7 +9,7 @@ import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
-import { atMinutes, dayKey, minutesOfDay, snapMinutes } from '@/lib/dates'
+import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalEvent } from '@/lib/events'
 import { formatHour, type FormatPrefs } from '@/lib/format'
@@ -258,21 +258,17 @@ function DayColumn({
   const positioned = useMemo(() => layoutDay(timedSegments(events, day)), [events, day])
   const today = isSameDay(day, now)
 
-  const onSlotClick = (hour: number) => (e: MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const offset = e.clientY - rect.top
-    const minutes = Math.min(23 * 60 + 45, hour * 60 + snapMinutes(Math.max(0, offset) / PX_PER_MINUTE, 15))
-    onCreate(atMinutes(day, minutes))
-  }
-
   return (
     <div ref={setNodeRef} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
+      {/* The whole hour lights up on hover, so a click anywhere in it starts the event at that hour. */}
       {HOURS.map((h) => (
         <button
           key={h}
           type="button"
           tabIndex={-1}
-          onClick={onSlotClick(h)}
+          onClick={() => {
+            onCreate(atMinutes(day, h * 60))
+          }}
           aria-label={t('week.newAt', { time: format(atMinutes(day, h * 60), 'PPPP p', { locale: prefs.locale }) })}
           className="block w-full cursor-default border-t border-grid outline-none first:border-t-0 hover:bg-muted/40"
           style={{ height: HOUR_HEIGHT }}
