@@ -42,8 +42,8 @@ import (
 // resolveBuildMeta).
 var version, commit, date string
 
-// buildMeta describes the running binary for --version, the startup log and
-// lucid_build_info.
+// buildMeta describes the running binary for --version, the startup log,
+// lucid_build_info and the version the SPA shows (GET /api/v1/session).
 type buildMeta struct{ version, commit, date string }
 
 // resolveBuildMeta fills the fields that ldflags left empty from bi, which Go
@@ -192,6 +192,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		LoginLimiter:      loginLimiter,
 		CookieInsecure:    cfg.CookieInsecure,
 		TrustProxyHeaders: cfg.TrustProxyHeaders,
+		Version:           build.version,
 	}
 	if cfg.MetricsAddr == "" {
 		opts.MetricsHandler = metricsHandler

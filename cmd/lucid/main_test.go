@@ -223,8 +223,25 @@ func TestRunServes(t *testing.T) {
 	if code, body := get(t, client, base+"/healthz"); code != http.StatusOK || !strings.Contains(body, "ok") {
 		t.Errorf("healthz: %d %q", code, body)
 	}
-	if code, body := get(t, client, base+"/api/v1/session"); code != http.StatusOK || !strings.Contains(body, "csrfToken") {
+	code, body := get(t, client, base+"/api/v1/session")
+	if code != http.StatusOK || !strings.Contains(body, "csrfToken") {
 		t.Errorf("session: %d %q", code, body)
+	}
+	// The SPA shows the same version as the startup log.
+	var sess, started struct {
+		Msg     string `json:"msg"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(body), &sess); err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.SplitSeq(logs.String(), "\n") {
+		if json.Unmarshal([]byte(line), &started) == nil && started.Msg == "starting lucid" {
+			break
+		}
+	}
+	if sess.Version == "" || sess.Version != started.Version {
+		t.Errorf("session version = %q, startup log version = %q", sess.Version, started.Version)
 	}
 	if code, body := get(t, client, base+"/metrics"); code != http.StatusOK ||
 		!strings.Contains(body, "lucid_http_requests_total") || !strings.Contains(body, "go_goroutines") ||

@@ -230,6 +230,10 @@
     "menu": "Konto {{user}}",
     "logout": "Abmelden"
   },
+  "about": {
+    "version": "Lucid {{version}}",
+    "source": "GitHub (Quellcode, öffnet in neuem Tab)"
+  },
   "validation": {
     "tooLong": "Das ist zu lang.",
     "calendarRequired": "Wähle einen Kalender.",

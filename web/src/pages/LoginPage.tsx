@@ -5,6 +5,7 @@ import { CircleAlertIcon } from 'lucide-react'
 import { startTransition, useActionState, useId } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { AppVersion } from '@/components/AppVersion'
 import { Logo } from '@/components/Logo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -133,6 +134,7 @@ export function LoginPage() {
             </Button>
           </form>
           <p className="mt-8 text-xs leading-relaxed text-muted-foreground">{t('login.privacy')}</p>
+          <AppVersion className="mt-3" />
         </div>
       </main>
     </div>

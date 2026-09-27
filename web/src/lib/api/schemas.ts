@@ -14,6 +14,8 @@ export const sessionSchema = z.object({
   username: z.string().optional(),
   serverUrl: z.string().optional(),
   csrfToken: z.string().min(1),
+  // Version of the running binary; optional so it can never block the login.
+  version: z.string().optional(),
 })
 export type Session = z.infer<typeof sessionSchema>
 

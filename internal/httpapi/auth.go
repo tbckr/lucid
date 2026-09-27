@@ -25,14 +25,16 @@ type sessionResponse struct {
 	Username      string `json:"username,omitempty"`
 	ServerURL     string `json:"serverUrl,omitempty"`
 	CSRFToken     string `json:"csrfToken"`
+	Version       string `json:"version,omitempty"`
 }
 
-func toSessionResponse(sess session.Session) sessionResponse {
+func (s *Server) sessionResponse(sess session.Session) sessionResponse {
 	return sessionResponse{
 		Authenticated: sess.Authenticated,
 		Username:      sess.Username,
 		ServerURL:     sess.ServerURL,
 		CSRFToken:     sess.CSRFToken,
+		Version:       s.version,
 	}
 }
 
@@ -96,7 +98,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		}
 		s.setCookie(w, sess)
 	}
-	middleware.WriteJSON(w, http.StatusOK, toSessionResponse(sess))
+	middleware.WriteJSON(w, http.StatusOK, s.sessionResponse(sess))
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +138,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sec.Log(r, middleware.EventLoginSucceeded, logAttrs...)
 	s.setCookie(w, sess)
-	middleware.WriteJSON(w, http.StatusOK, toSessionResponse(sess))
+	middleware.WriteJSON(w, http.StatusOK, s.sessionResponse(sess))
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

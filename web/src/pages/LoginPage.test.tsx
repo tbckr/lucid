@@ -20,7 +20,9 @@ async function fill(user: ReturnType<typeof userEvent.setup>, server: string, na
 
 describe('LoginPage', () => {
   it('validates fields before calling the API', async () => {
-    const fetch = vi.spyOn(globalThis, 'fetch')
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' })))
     const user = userEvent.setup()
     renderWithProviders(<LoginPage />)
     await fill(user, 'not a url', '', '')
@@ -28,7 +30,15 @@ describe('LoginPage', () => {
     expect(screen.getByText('Enter your username.')).toBeInTheDocument()
     expect(screen.getByText('Enter your password.')).toBeInTheDocument()
     expect(screen.getByLabelText('Server address')).toHaveAttribute('aria-invalid', 'true')
-    expect(fetch).not.toHaveBeenCalled()
+    expect(fetch.mock.calls.filter(([u]) => urlOf(u).endsWith('/auth/login'))).toHaveLength(0)
+  })
+
+  it('shows the server version', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't', version: '1.2.3' })),
+    )
+    renderWithProviders(<LoginPage />)
+    expect(await screen.findByText('Lucid 1.2.3')).toBeInTheDocument()
   })
 
   it('shows the API error for rejected credentials and clears the password', async () => {

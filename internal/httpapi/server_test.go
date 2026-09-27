@@ -75,6 +75,25 @@ func TestCookieInsecure(t *testing.T) {
 	}
 }
 
+func TestSessionReportsVersion(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, func(o *Options) { o.Version = "1.2.3" })
+	c := &client{}
+	for _, rq := range []req{
+		{method: http.MethodGet, path: "/api/v1/session"}, // anonymous: the login page shows it
+		{method: http.MethodPost, path: "/api/v1/auth/login", body: loginBody},
+		{method: http.MethodGet, path: "/api/v1/session"},
+	} {
+		w := h.do(t, c, rq)
+		var resp sessionResponse
+		decode(t, w, http.StatusOK, &resp)
+		if resp.Version != "1.2.3" {
+			t.Errorf("%s %s: version = %q, want 1.2.3", rq.method, rq.path, resp.Version)
+		}
+		c.csrf = resp.CSRFToken
+	}
+}
+
 func TestSessionCreateFails(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, func(o *Options) {

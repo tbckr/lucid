@@ -22,3 +22,16 @@ test('switching the language to German translates the UI and persists', async ({
   await page.getByRole('dialog', { name: 'Settings' }).getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
 })
+
+test('the login page and the settings show the version and link to the source code', async ({ page }) => {
+  // "dev" under `go run`, a release or pseudo-version for built binaries.
+  const version = /^Lucid \S+$/
+  await page.goto('/login')
+  await expect(page.getByText(version)).toBeVisible()
+
+  await login(page)
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  await expect(dialog.getByText(version)).toBeVisible()
+  await expect(dialog.getByRole('link', { name: /^GitHub/ })).toHaveAttribute('href', 'https://github.com/tbckr/lucid')
+})

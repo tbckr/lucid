@@ -58,6 +58,8 @@ type Options struct {
 	CookieInsecure bool
 	// TrustProxyHeaders takes the client IP from X-Forwarded-For.
 	TrustProxyHeaders bool
+	// Version of the running binary, reported by GET /api/v1/session.
+	Version string
 }
 
 // Server is the complete HTTP handler of Lucid.
@@ -67,6 +69,7 @@ type Server struct {
 	logger   *slog.Logger
 	sec      *middleware.Security
 	insecure bool
+	version  string
 	ready    atomic.Bool
 	handler  http.Handler
 }
@@ -85,6 +88,7 @@ func New(opts Options) (*Server, error) {
 		logger:   opts.Logger,
 		sec:      opts.Security,
 		insecure: opts.CookieInsecure,
+		version:  opts.Version,
 	}
 	s.ready.Store(true)
 

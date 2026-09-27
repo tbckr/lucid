@@ -49,10 +49,14 @@ Always `200`. Creates an anonymous session (and cookie) if none exists so the
 login request can carry a CSRF token.
 
 ```json
-{ "authenticated": true, "username": "tim", "serverUrl": "https://dav.example.com", "csrfToken": "..." }
+{ "authenticated": true, "username": "tim", "serverUrl": "https://dav.example.com", "csrfToken": "...", "version": "1.2.0" }
 ```
 
-When not logged in: `{ "authenticated": false, "csrfToken": "..." }`.
+When not logged in: `{ "authenticated": false, "csrfToken": "...", "version": "1.2.0" }`.
+
+`version` is the version of the running binary, as printed by `lucid --version`
+(`dev` for builds without version information). The SPA shows it on the login
+page and in the settings.
 
 ### `POST /api/v1/auth/login`
 

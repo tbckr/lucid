@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AppVersion } from '@/components/AppVersion'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -138,6 +139,7 @@ export function SettingsDialog() {
             </Select>
           </Field>
         </div>
+        <AppVersion className="border-t pt-4" />
       </DialogContent>
     </Dialog>
   )

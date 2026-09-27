@@ -53,6 +53,11 @@ describe('schemas', () => {
     expect(sessionSchema.safeParse({ authenticated: false }).success).toBe(false)
     expect(sessionSchema.parse({ authenticated: true, username: 'u', csrfToken: 't' }).username).toBe('u')
   })
+
+  it('keeps the server version and tolerates its absence', () => {
+    expect(sessionSchema.parse({ authenticated: false, csrfToken: 't', version: '1.2.3' }).version).toBe('1.2.3')
+    expect(sessionSchema.parse({ authenticated: false, csrfToken: 't' }).version).toBeUndefined()
+  })
 })
 
 describe('parseList', () => {
