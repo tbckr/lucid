@@ -184,6 +184,11 @@ describe('parseErrorResponse', () => {
     expect(err.code).toBe(code)
   })
 
+  it('keeps unsupported_component', async () => {
+    const err = await parseErrorResponse(jsonResponse(422, { error: { code: 'unsupported_component', message: 'm' } }))
+    expect(err.code).toBe('unsupported_component')
+  })
+
   it('maps unknown codes by status', async () => {
     const err = await parseErrorResponse(jsonResponse(409, { error: { code: 'weird', message: 'm' } }))
     expect(err.code).toBe('conflict')

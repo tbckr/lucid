@@ -72,18 +72,8 @@ func (s *service) ListCalendars(ctx context.Context) ([]domain.Calendar, error) 
 		if c.Color == "" {
 			c.Color = defaultColor(calPath)
 		}
-		if pr.SupportedComponents == nil || len(pr.SupportedComponents.Comps) == 0 {
-			c.SupportsEvents, c.SupportsTodos = true, true
-		} else {
-			for _, comp := range pr.SupportedComponents.Comps {
-				switch strings.ToUpper(comp.Name) {
-				case ical.CompEvent:
-					c.SupportsEvents = true
-				case ical.CompToDo:
-					c.SupportsTodos = true
-				}
-			}
-		}
+		c.SupportsEvents = supportsComp(pr.SupportedComponents, ical.CompEvent)
+		c.SupportsTodos = supportsComp(pr.SupportedComponents, ical.CompToDo)
 		if !c.SupportsEvents && !c.SupportsTodos {
 			continue
 		}
@@ -96,6 +86,15 @@ func (s *service) ListCalendars(ctx context.Context) ([]domain.Calendar, error) 
 		)
 	})
 	return cals, nil
+}
+
+// supportsComp reports whether a calendar with the supported component set cs
+// accepts comp. A missing or empty set means all components (RFC 4791 5.2.3).
+func supportsComp(cs *compSet, comp string) bool {
+	if cs == nil || len(cs.Comps) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(cs.Comps, func(c compName) bool { return strings.EqualFold(c.Name, comp) })
 }
 
 // normalizeColor converts "#RGB", "#RRGGBB" and "#RRGGBBAA" to lower-case

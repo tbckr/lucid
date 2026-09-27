@@ -532,6 +532,13 @@ func (b *backend) PutCalendarObject(_ context.Context, p string, cal *ical.Calen
 	if c.ReadOnly {
 		return nil, webdav.NewHTTPError(http.StatusForbidden, errors.New("calendar is read-only"))
 	}
+	// Like real servers, reject components outside the supported set
+	// (RFC 4791 CALDAV:supported-calendar-component precondition).
+	for _, child := range cal.Children {
+		if child.Name != ical.CompTimezone && !slices.ContainsFunc(c.Components, func(s string) bool { return strings.EqualFold(s, child.Name) }) {
+			return nil, webdav.NewHTTPError(http.StatusForbidden, fmt.Errorf("calendar does not support %s", child.Name))
+		}
+	}
 	existing := c.objects[p]
 	if opts != nil {
 		if opts.IfNoneMatch.IsWildcard() && existing != nil {

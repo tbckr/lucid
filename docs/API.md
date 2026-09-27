@@ -36,6 +36,7 @@ This is the contract between the frontend (`web/`) and the Go backend
   | 404    | `not_found`           | Calendar/event/todo does not exist             |
   | 409    | `conflict`            | ETag mismatch, reload and retry                |
   | 422    | `discovery_failed`    | No CalDAV service found at the given URL       |
+  | 422    | `unsupported_component` | Calendar does not accept this type (event/todo) |
   | 428    | `precondition_required` | `If-Match` header missing                    |
   | 429    | `rate_limited`        | Too many requests (`Retry-After` header set)   |
   | 502    | `upstream_error`      | CalDAV server error / unreachable              |
@@ -82,6 +83,10 @@ The session ID is rotated. Response `200`: same shape as `GET /session`
                    "readOnly": false, "supportsEvents": true, "supportsTodos": false } ] }
 ```
 
+`supportsEvents`/`supportsTodos` come from the calendar's
+`supported-calendar-component-set`; without it, both are `true`. Some servers
+create calendars that hold only events or only todos.
+
 ## Events
 
 ### `GET /api/v1/calendars/{calendarId}/events?start=<RFC3339>&end=<RFC3339>`
@@ -112,6 +117,8 @@ Body (`EventInput`):
 
 `201` with the created `Event` (not expanded; for recurring events the
 first occurrence).
+`422 unsupported_component` if the calendar does not accept events
+(`supportsEvents: false`).
 
 ### `PUT /api/v1/events/{eventId}` (header `If-Match`)
 
@@ -141,6 +148,8 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
 Body (`TodoInput`): `{ "title", "description", "checklist", "due", "dueAllDay", "priority", "status" }` → `201` `Todo`.
+`422 unsupported_component` if the calendar does not accept todos
+(`supportsTodos: false`).
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 

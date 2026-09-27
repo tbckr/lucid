@@ -280,9 +280,11 @@ func (a *anyChildren) has(space, local string) bool {
 }
 
 type compSet struct {
-	Comps []struct {
-		Name string `xml:"name,attr"`
-	} `xml:"urn:ietf:params:xml:ns:caldav comp"`
+	Comps []compName `xml:"urn:ietf:params:xml:ns:caldav comp"`
+}
+
+type compName struct {
+	Name string `xml:"name,attr"`
 }
 
 type privilegeSet struct {

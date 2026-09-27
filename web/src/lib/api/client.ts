@@ -9,6 +9,7 @@ export type ApiErrorCode =
   | 'invalid_credentials'
   | 'csrf_invalid'
   | 'read_only'
+  | 'unsupported_component'
   | 'not_found'
   | 'conflict'
   | 'discovery_failed'
@@ -28,6 +29,7 @@ const KNOWN_CODES = new Set<string>([
   'invalid_credentials',
   'csrf_invalid',
   'read_only',
+  'unsupported_component',
   'not_found',
   'conflict',
   'discovery_failed',

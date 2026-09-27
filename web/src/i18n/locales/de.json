@@ -41,6 +41,7 @@
     "invalid_input": "Einige Eingaben sind ungültig.",
     "invalid_input_detail": "Ungültige Eingabe: {{detail}}",
     "read_only": "Dieser Kalender ist schreibgeschützt.",
+    "unsupported_component": "Dieser Kalender nimmt diese Art von Eintrag nicht an. Wähle einen anderen Kalender.",
     "conflict": "Dieser Eintrag wurde anderswo geändert. Lucid hat die aktuelle Version geladen.",
     "not_found": "Diesen Eintrag gibt es nicht mehr. Lucid hat den Kalender neu geladen.",
     "unauthenticated": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",

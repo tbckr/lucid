@@ -34,6 +34,7 @@ describe('apiErrorMessage', () => {
     ['network', "can't reach"],
     ['invalid_input', 'invalid'],
     ['read_only', 'read-only'],
+    ['unsupported_component', "doesn't accept"],
     ['conflict', 'changed elsewhere'],
     ['not_found', 'no longer exists'],
     ['unauthenticated', 'session expired'],

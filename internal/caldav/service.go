@@ -189,8 +189,11 @@ func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject,
 // --- writes ---
 
 // checkWritable verifies that calPath is a calendar the user may write to.
-func (s *service) checkWritable(ctx context.Context, calPath string) error {
-	ms, _, err := s.t.propfind(ctx, s.urlFor(calPath), "0", []xml.Name{propResourceType, propPrivilegeSet}, false)
+// A non-empty comp must also be in its supported component set, so a new
+// object of the wrong type fails with a clear error instead of an upstream 403.
+// Updates pass "" so objects already stored in the calendar stay editable.
+func (s *service) checkWritable(ctx context.Context, calPath, comp string) error {
+	ms, _, err := s.t.propfind(ctx, s.urlFor(calPath), "0", []xml.Name{propResourceType, propPrivilegeSet, propSupportedComp}, false)
 	if err != nil {
 		return mapError(err)
 	}
@@ -203,6 +206,9 @@ func (s *service) checkWritable(ctx context.Context, calPath string) error {
 	}
 	if !canWrite(pr.PrivilegeSet) {
 		return domain.ErrReadOnly
+	}
+	if comp != "" && !supportsComp(pr.SupportedComponents, comp) {
+		return fmt.Errorf("%w: %s", domain.ErrUnsupportedComponent, comp)
 	}
 	return nil
 }

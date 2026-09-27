@@ -22,6 +22,9 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 	// ErrReadOnly means the target calendar cannot be written to.
 	ErrReadOnly = errors.New("read only")
+	// ErrUnsupportedComponent means the target calendar does not accept the
+	// component type (e.g. an event in a calendar that only holds todos).
+	ErrUnsupportedComponent = errors.New("component type not supported by calendar")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")
 	// ErrForbiddenTarget means the target address was rejected by SSRF protection.

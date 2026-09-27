@@ -376,6 +376,7 @@ func TestCreateEventErrors(t *testing.T) {
 		{"rrule with newline", e.cals["personal"], domain.EventInput{Title: "x", Start: ok.Start, End: ok.End, RRule: "FREQ=DAILY\nX"}, domain.ErrInvalidInput},
 		{"end before start", e.cals["personal"], domain.EventInput{Title: "x", Start: ok.End, End: ok.Start}, domain.ErrInvalidInput},
 		{"read-only calendar", e.cals["holidays"], ok, domain.ErrReadOnly},
+		{"todo-only calendar", e.cals["tasks"], ok, domain.ErrUnsupportedComponent},
 		{"unknown calendar", encodeID(e.mock.HomePath() + "nope/"), ok, domain.ErrNotFound},
 		{"calendar outside home", encodeID("/other/cal/"), ok, domain.ErrNotFound},
 		{"garbage id", "!!!", ok, domain.ErrNotFound},

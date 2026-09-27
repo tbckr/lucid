@@ -23,6 +23,8 @@ export function apiErrorMessage(t: TFunction, err: unknown): string {
       return err.message ? t('errors.invalid_input_detail', { detail: err.message }) : t('errors.invalid_input')
     case 'read_only':
       return t('errors.read_only')
+    case 'unsupported_component':
+      return t('errors.unsupported_component')
     case 'conflict':
       return t('errors.conflict')
     case 'not_found':

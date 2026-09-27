@@ -20,6 +20,7 @@ const (
 	codeUnauthenticated      = "unauthenticated"
 	codeInvalidCredentials   = "invalid_credentials" //nolint:gosec // G101: an error code, not a credential
 	codeReadOnly             = "read_only"
+	codeUnsupportedComponent = "unsupported_component"
 	codeNotFound             = "not_found"
 	codeConflict             = "conflict"
 	codeDiscoveryFailed      = "discovery_failed"
@@ -50,6 +51,9 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
 	case errors.Is(err, domain.ErrReadOnly):
 		middleware.WriteError(w, http.StatusForbidden, codeReadOnly, "calendar is read-only")
+	case errors.Is(err, domain.ErrUnsupportedComponent):
+		middleware.WriteError(w, http.StatusUnprocessableEntity, codeUnsupportedComponent,
+			"the calendar does not accept this type of item")
 	case errors.Is(err, domain.ErrNotFound):
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "not found")
 	case errors.Is(err, domain.ErrConflict):

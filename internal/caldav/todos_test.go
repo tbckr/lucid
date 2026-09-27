@@ -157,6 +157,8 @@ func TestTodosCRUD(t *testing.T) {
 	mustErr(t, err, domain.ErrInvalidInput)
 	_, err = e.svc.CreateTodo(ctx, e.cals["holidays"], domain.TodoInput{Title: "x"})
 	mustErr(t, err, domain.ErrReadOnly)
+	_, err = e.svc.CreateTodo(ctx, e.cals["personal"], domain.TodoInput{Title: "x"})
+	mustErr(t, err, domain.ErrUnsupportedComponent)
 	_, err = e.svc.CreateTodo(ctx, "bad", domain.TodoInput{Title: "x"})
 	mustErr(t, err, domain.ErrNotFound)
 	_, err = e.svc.ListTodos(ctx, "bad")

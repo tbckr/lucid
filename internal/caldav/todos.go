@@ -81,7 +81,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if err := in.Validate(); err != nil {
 		return domain.Todo{}, err
 	}
-	if err := s.checkWritable(ctx, calPath); err != nil {
+	if err := s.checkWritable(ctx, calPath, ical.CompToDo); err != nil {
 		return domain.Todo{}, err
 	}
 	now := s.p.now().UTC()
@@ -116,7 +116,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if err := in.Validate(); err != nil {
 		return domain.Todo{}, err
 	}
-	if err := s.checkWritable(ctx, calPath); err != nil {
+	if err := s.checkWritable(ctx, calPath, ""); err != nil {
 		return domain.Todo{}, err
 	}
 	cal, current, err := s.getObject(ctx, objPath)

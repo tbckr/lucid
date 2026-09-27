@@ -336,7 +336,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	if err != nil {
 		return domain.Event{}, err
 	}
-	if err := s.checkWritable(ctx, calPath); err != nil {
+	if err := s.checkWritable(ctx, calPath, ical.CompEvent); err != nil {
 		return domain.Event{}, err
 	}
 
@@ -373,7 +373,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if err != nil {
 		return domain.Event{}, err
 	}
-	if err := s.checkWritable(ctx, calPath); err != nil {
+	if err := s.checkWritable(ctx, calPath, ""); err != nil {
 		return domain.Event{}, err
 	}
 	cal, current, err := s.getObject(ctx, objPath)
@@ -438,7 +438,7 @@ func (s *service) deleteByID(ctx context.Context, id, etag string) error {
 	if err := requireETag(etag); err != nil {
 		return err
 	}
-	if err := s.checkWritable(ctx, calPath); err != nil {
+	if err := s.checkWritable(ctx, calPath, ""); err != nil {
 		return err
 	}
 	err = s.deleteObject(ctx, objPath, etag)
