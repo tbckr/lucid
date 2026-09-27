@@ -68,7 +68,7 @@ export default defineConfig([
     rules: { 'react-refresh/only-export-components': 'off' },
   },
   {
-    files: ['**/*.test.{ts,tsx}', 'src/test/**', 'e2e/**', '*.config.ts'],
+    files: ['**/*.test.{ts,tsx}', 'src/test/**', 'e2e/**', 'screenshots/**', '*.config.ts'],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',

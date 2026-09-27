@@ -52,6 +52,7 @@ Other useful recipes (`just` lists all):
 | `just outdated` | Direct dependencies with newer versions, platform versions to review |
 | `just upgrade` | Upgrade direct dependencies (see [Updating dependencies](#updating-dependencies)) |
 | `just e2e` | Playwright end-to-end tests against the mock server |
+| `just screenshots` | Regenerate the README screenshots in `docs/screenshots`; commit them when the UI changed |
 | `just snapshot` | Local GoReleaser build of all binaries and images |
 | `just clean` | Remove build output |
 

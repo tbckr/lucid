@@ -29,6 +29,10 @@ checklists, light and dark mode. Your data stays where it is. There is nothing
 to migrate and no database to run, just a single binary or container in front
 of your server.
 
+<p align="center">
+  <img src="docs/screenshots/month-light.png" alt="Lucid's month view with the task sidebar">
+</p>
+
 ## Features
 
 - **Calendar views:** month, week, day and agenda, with a color and a
@@ -50,6 +54,27 @@ of your server.
   target).
 - **Easy to run:** a single static binary or distroless container, a NixOS
   module, JSON logs, Prometheus metrics and health endpoints.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/week-dark.png" alt="Week view in dark mode"></td>
+    <td><img src="docs/screenshots/tasks.png" alt="Editing a task with a checklist"></td>
+  </tr>
+  <tr>
+    <td align="center">Week view in dark mode</td>
+    <td align="center">Tasks with checklists</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/event-dialog.png" alt="Details of an event"></td>
+    <td><img src="docs/screenshots/login.png" alt="Sign-in page"></td>
+  </tr>
+  <tr>
+    <td align="center">Event details</td>
+    <td align="center">Sign in with just your domain</td>
+  </tr>
+</table>
 
 ## How it works
 

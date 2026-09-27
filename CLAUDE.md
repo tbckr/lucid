@@ -18,6 +18,7 @@ just lint           # golangci-lint + eslint --max-warnings=0 + tsc
 just fmt            # gofumpt + goimports via golangci-lint
 just cover          # Go coverage + scripts/coverage-gate.sh (>= 80 % over internal/...)
 just e2e            # Playwright
+just screenshots    # README screenshots -> docs/screenshots (own mockdav :5233 + backend :8081, fixed date)
 just build          # web/dist + bin/lucid with embedded SPA
 just release        # tag + push the next version from the Conventional Commits since the last release, from a clean, pushed main; release.yml publishes (scripts/release.sh)
 just release 1.2.0  # same with an explicit version

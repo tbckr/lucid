@@ -10,6 +10,35 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 )
 
+func TestSeedTime(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 27, 18, 30, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, value string
+		want        time.Time
+		wantErr     bool
+	}{
+		{name: "unset uses now", value: "", want: now},
+		{name: "fixed date", value: "2026-03-11", want: time.Date(2026, 3, 11, 0, 0, 0, 0, time.UTC)},
+		{name: "not a date", value: "tomorrow", wantErr: true},
+		{name: "date with time", value: "2026-03-11T10:00:00Z", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := seedTime(tc.value, now)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("seedTime(%q) = %v, want an error", tc.value, got)
+				}
+				return
+			}
+			if err != nil || !got.Equal(tc.want) {
+				t.Fatalf("seedTime(%q) = %v, %v, want %v", tc.value, got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestSeed connects the real provider to the seeded mock server.
 func TestSeed(t *testing.T) {
 	t.Parallel()

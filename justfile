@@ -101,6 +101,11 @@ vuln:
 e2e: web-deps
     {{ PNPM }} --dir web e2e
 
+# Regenerate the README screenshots in docs/screenshots (fixed demo data and date)
+[group('docs')]
+screenshots: web-deps
+    {{ PNPM }} --dir web screenshots
+
 # Show direct dependencies with newer versions (majors too) and platform versions
 [group('deps')]
 outdated:

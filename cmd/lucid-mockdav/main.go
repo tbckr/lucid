@@ -2,7 +2,9 @@
 // local development and end-to-end tests.
 //
 // Login with user "demo" and password "demo". The server listens on
-// LUCID_MOCKDAV_ADDR (default 127.0.0.1:5232). Because it runs on a loopback
+// LUCID_MOCKDAV_ADDR (default 127.0.0.1:5232). The demo data lies around
+// today, or around LUCID_MOCKDAV_NOW (a date such as 2026-03-11) for
+// reproducible screenshots. Because it runs on a loopback
 // address over plain HTTP, Lucid must be started with
 //
 //	LUCID_ALLOW_PRIVATE_NETWORKS=true LUCID_COOKIE_INSECURE=true
@@ -40,8 +42,12 @@ func run() error {
 	if addr == "" {
 		addr = "127.0.0.1:5232"
 	}
+	now, err := seedTime(os.Getenv("LUCID_MOCKDAV_NOW"), time.Now())
+	if err != nil {
+		return err
+	}
 	mock := caldavtest.New(caldavtest.Options{Username: "demo", Password: "demo"})
-	if err := seed(mock, time.Now()); err != nil {
+	if err := seed(mock, now); err != nil {
 		return err
 	}
 
@@ -69,6 +75,18 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// seedTime returns the date in value (YYYY-MM-DD), or now if value is empty.
+func seedTime(value string, now time.Time) (time.Time, error) {
+	if value == "" {
+		return now, nil
+	}
+	t, err := time.Parse(time.DateOnly, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("LUCID_MOCKDAV_NOW: %w", err)
+	}
+	return t, nil
 }
 
 // seed adds demo calendars and objects around now.
