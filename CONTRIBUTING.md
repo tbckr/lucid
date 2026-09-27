@@ -11,16 +11,52 @@ are translated through the i18n JSON files in `web/`.
 
 ## Getting started
 
-See [Development](README.md#development) in the README. With Nix and direnv,
-`direnv allow` loads a dev shell with every tool. In short:
+Requirements: Go (version from [`go.mod`](go.mod)), Node.js 22+ and
+[pnpm](https://pnpm.io/) (version pinned in `web/package.json`,
+`corepack enable` picks it up), [just](https://just.systems/) 1.42+, optionally
+[golangci-lint v2](https://golangci-lint.run/) and
+[GoReleaser v2](https://goreleaser.com/).
+
+With [Nix](https://nixos.org/), `nix develop` provides all of these (plus
+Chromium for Playwright on Linux). With [direnv](https://direnv.net/) (ideally
+[nix-direnv](https://github.com/nix-community/nix-direnv)), `direnv allow`
+loads the dev shell whenever you enter the repository.
 
 ```sh
-just dev     # mock CalDAV server (demo/demo) + backend + Vite dev server
-just test    # Go + frontend unit tests
-just lint    # golangci-lint, ESLint, tsc
-just cover   # Go coverage gate
-just e2e     # Playwright
+just dev
 ```
+
+starts three processes:
+
+1. `cmd/lucid-mockdav` — an in-memory CalDAV server with demo data on
+   `http://127.0.0.1:5232` (username `demo`, password `demo`),
+2. the Lucid backend on `127.0.0.1:8080` in development mode
+   (`LUCID_COOKIE_INSECURE=true`, `LUCID_ALLOW_PRIVATE_NETWORKS=true`),
+3. the Vite dev server with hot reload on `http://localhost:5173`, proxying
+   `/api` to the backend.
+
+Open <http://localhost:5173> and log in with server URL
+`http://127.0.0.1:5232`, user `demo` and password `demo`. The recipes can also be run separately:
+`just mockdav`, `just dev-backend`, `just dev-web`.
+
+Other useful recipes (`just` lists all):
+
+| Recipe | Description |
+|--------|-------------|
+| `just build` | Frontend + single binary with embedded frontend in `bin/lucid` |
+| `just build-go` | Go binary only (embeds whatever is in `web/dist`) |
+| `just test` | Go tests (race detector) and Vitest unit tests |
+| `just cover` | Go coverage with the 80 % business-logic gate |
+| `just lint` | golangci-lint, ESLint and TypeScript type check |
+| `just vuln` | `govulncheck`, `pnpm audit` of the shipped packages, malware check of all packages |
+| `just outdated` | Direct dependencies with newer versions, platform versions to review |
+| `just upgrade` | Upgrade direct dependencies (see [Updating dependencies](#updating-dependencies)) |
+| `just e2e` | Playwright end-to-end tests against the mock server |
+| `just snapshot` | Local GoReleaser build of all binaries and images |
+| `just clean` | Remove build output |
+
+`web/dist/.gitkeep` is committed so that `go build ./...` works without a
+frontend build; the binary then serves a placeholder page.
 
 Please run `just lint test cover` before opening a pull request; CI runs the
 same checks plus `govulncheck`, CodeQL and the E2E suite. Dependency scans run
@@ -77,7 +113,8 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
   `internal/caldav/caldavtest` and `net/http/httptest`.
 - Helpers call `t.Helper()`.
 - Business-logic packages (`internal/...`, excluding test helpers) must keep
-  **at least 80 % statement coverage** (`just cover`). New code should come
+  **at least 80 % statement coverage** (`just cover`); CI enforces this with
+  [`scripts/coverage-gate.sh`](scripts/coverage-gate.sh). New code should come
   with tests; bug fixes with a regression test.
 - **Frontend:** Vitest for logic and components, Playwright for critical user
   flows (`web/e2e`), run against `cmd/lucid-mockdav`.
