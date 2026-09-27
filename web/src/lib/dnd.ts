@@ -17,6 +17,20 @@ export type DragData =
 /** Data attached to droppables. */
 export type DropData = { type: 'day'; day: Date } | { type: 'column'; day: Date }
 
+const SLOTS_PER_DAY = (24 * 60) / SNAP_MINUTES
+
+/**
+ * The span a drag in the empty time grid creates, in minutes since midnight:
+ * every 15-minute slot from the pressed one to the one under the pointer, in
+ * either direction and within the day.
+ */
+export function createRange(anchorMin: number, pointerMin: number): { startMin: number; endMin: number } {
+  const slot = (min: number) => Math.min(SLOTS_PER_DAY - 1, Math.max(0, Math.floor(min / SNAP_MINUTES)))
+  const a = slot(anchorMin)
+  const b = slot(pointerMin)
+  return { startMin: Math.min(a, b) * SNAP_MINUTES, endMin: (Math.max(a, b) + 1) * SNAP_MINUTES }
+}
+
 /** Which droppable type a draggable may land on. */
 export function acceptsDrop(drag: DragData['type'], drop: DropData['type']): boolean {
   if (drag === 'event') return drop === 'day'

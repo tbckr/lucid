@@ -33,3 +33,8 @@ window.matchMedia = (query: string) =>
     removeListener: () => undefined,
     dispatchEvent: () => false,
   }) as MediaQueryList
+
+// No real pointers in jsdom: capture is a no-op, tests send the moves to the pressed element.
+Element.prototype.setPointerCapture = () => undefined
+Element.prototype.releasePointerCapture = () => undefined
+Element.prototype.hasPointerCapture = () => false

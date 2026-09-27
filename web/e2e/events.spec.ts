@@ -79,6 +79,34 @@ async function deleteEvent(page: Page, block: Locator, title: string): Promise<v
   await expect(block).toHaveCount(0)
 }
 
+test('dragging in the empty grid creates an event over the covered slots', async ({ page }) => {
+  const title = `E2E drag create ${Date.now()}`
+  await login(page)
+  await page.keyboard.press('d')
+
+  // Press at 1:05 PM and drag into the 2:15 PM slot (0.8 px per minute): the preview shows the span.
+  const slot = page.getByRole('button', { name: / 1:00 PM$/ })
+  const box = (await slot.boundingBox())!
+  const x = box.x + box.width / 2
+  await page.mouse.move(x, box.y + 4)
+  await page.mouse.down()
+  await page.mouse.move(x, box.y + 30, { steps: 4 })
+  await page.mouse.move(x, box.y + 66, { steps: 4 })
+  const preview = page.getByText('1 PM – 2:30 PM', { exact: true })
+  await expect(preview).toBeVisible()
+  await page.mouse.up()
+  await expect(preview).toBeHidden()
+
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  await dialog.getByPlaceholder('Add a title').fill(title)
+  await dialog.getByRole('button', { name: 'Create event' }).click()
+  await expect(dialog).toBeHidden()
+  const block = page.locator('[data-event-key]', { hasText: title })
+  await expect(block).toContainText('1 PM – 2:30 PM')
+
+  await deleteEvent(page, block, title)
+})
+
 test('dragging an event shows the target time before the drop', async ({ page }) => {
   const title = `E2E drag ${Date.now()}`
   // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls.

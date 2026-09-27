@@ -1,5 +1,5 @@
 import { useDroppable } from '@dnd-kit/core'
-import { addMinutes, format, isSameDay } from 'date-fns'
+import { format, isSameDay } from 'date-fns'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -12,10 +12,11 @@ import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalEvent } from '@/lib/events'
-import { formatHour, type FormatPrefs } from '@/lib/format'
+import { formatHour, formatShortTime, type FormatPrefs } from '@/lib/format'
 import { layoutDay, layoutWeekRow, timedSegments } from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
+import { useDragCreate } from './useDragCreate'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
 const ALL_DAY_ROWS = 3
@@ -186,8 +187,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
               prefs={prefs}
               colorsOf={colorsOf}
               readOnly={readOnly}
-              onCreate={(start) => {
-                openEditor({ mode: 'create', defaults: { start, end: addMinutes(start, 60), allDay: false } })
+              onCreate={(start, end) => {
+                openEditor({ mode: 'create', defaults: { start, end, allDay: false } })
               }}
             />
           ))}
@@ -247,7 +248,7 @@ function DayColumn({
   prefs: FormatPrefs
   colorsOf: (id: string) => EventColors
   readOnly: (calendarId: string) => boolean
-  onCreate: (start: Date) => void
+  onCreate: (start: Date, end: Date) => void
 }) {
   const { t } = useTranslation()
   const { resize } = useDndState()
@@ -257,20 +258,25 @@ function DayColumn({
   })
   const positioned = useMemo(() => layoutDay(timedSegments(events, day)), [events, day])
   const today = isSameDay(day, now)
+  const { draft, slotProps } = useDragCreate((startMin, endMin) => {
+    onCreate(atMinutes(day, startMin), atMinutes(day, endMin))
+  })
 
   return (
     <div ref={setNodeRef} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
-      {/* The whole hour lights up on hover, so a click anywhere in it starts the event at that hour. */}
+      {/* The whole hour lights up on hover, so a click anywhere in it creates the event at that hour.
+          While dragging, only the preview shows what will be created. */}
       {HOURS.map((h) => (
         <button
           key={h}
           type="button"
           tabIndex={-1}
-          onClick={() => {
-            onCreate(atMinutes(day, h * 60))
-          }}
+          {...slotProps(h)}
           aria-label={t('week.newAt', { time: format(atMinutes(day, h * 60), 'PPPP p', { locale: prefs.locale }) })}
-          className="block w-full cursor-default border-t border-grid outline-none first:border-t-0 hover:bg-muted/40"
+          className={cn(
+            'block w-full cursor-default border-t border-grid outline-none first:border-t-0',
+            !draft && 'hover:bg-muted/40',
+          )}
           style={{ height: HOUR_HEIGHT }}
         />
       ))}
@@ -318,6 +324,22 @@ function DayColumn({
         >
           <span className="-ml-1.5 size-3 rounded-full bg-now" />
           <span className="h-0.5 flex-1 bg-now" />
+        </div>
+      )}
+
+      {draft && (
+        <div
+          className="tabular pointer-events-none absolute inset-x-1 z-40 overflow-hidden rounded-md border-l-[3px] border-primary bg-primary/15 px-1.5 py-0.5 text-xs leading-4 font-semibold text-primary"
+          style={{
+            top: draft.startMin * PX_PER_MINUTE,
+            height: Math.max(18, (draft.endMin - draft.startMin) * PX_PER_MINUTE - 2),
+          }}
+          aria-hidden
+        >
+          {/* Narrow columns wrap between the two times, never inside one ("2:30 PM"). */}
+          {[draft.startMin, draft.endMin]
+            .map((m) => formatShortTime(atMinutes(day, m), prefs).replaceAll(' ', '\u00a0'))
+            .join(' – ')}
         </div>
       )}
     </div>

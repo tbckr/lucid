@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { apiEvent } from '@/test/fixtures'
-import { acceptsDrop, dropResult, PX_PER_MINUTE } from './dnd'
+import { acceptsDrop, createRange, dropResult, PX_PER_MINUTE } from './dnd'
 import { toCalEvent } from './events'
 
 const timed = toCalEvent(apiEvent()) // 10:00-11:00 local on 2026-09-25
@@ -51,5 +51,19 @@ describe('dropResult', () => {
     expect(acceptsDrop('event', 'column')).toBe(false)
     expect(acceptsDrop('timed', 'column')).toBe(true)
     expect(acceptsDrop('resize', 'column')).toBe(true)
+  })
+})
+
+describe('createRange', () => {
+  // Minutes since midnight: 545 = 09:05, 620 = 10:20.
+  it.each([
+    ['dragging down', 545, 620, { startMin: 540, endMin: 630 }],
+    ['dragging up', 620, 545, { startMin: 540, endMin: 630 }],
+    ['a move within one slot', 545, 550, { startMin: 540, endMin: 555 }],
+    ['a slot boundary, which belongs to the slot below it', 540, 600, { startMin: 540, endMin: 615 }],
+    ['a pointer past midnight', 1430, 1500, { startMin: 1425, endMin: 1440 }],
+    ['a pointer above the day', 10, -30, { startMin: 0, endMin: 15 }],
+  ])('covers every 15-minute slot between press and pointer for %s', (_, anchor, pointer, want) => {
+    expect(createRange(anchor, pointer)).toEqual(want)
   })
 })
