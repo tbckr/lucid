@@ -1,6 +1,7 @@
-import { CheckIcon, ListTodoIcon, LockIcon } from 'lucide-react'
+import { CheckIcon, ListTodoIcon, LockIcon, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendars } from '@/hooks/queries'
 import { readableTextColor } from '@/lib/color'
 import { useSettings } from '@/stores/settings'
@@ -56,17 +57,29 @@ export function CalendarList() {
                   {visible && <CheckIcon className="size-3" strokeWidth={3.5} style={{ color: readableTextColor(c.color) }} />}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                {!c.supportsEvents && (
-                  <ListTodoIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('calendars.tasksOnly')} />
-                )}
-                {c.readOnly && (
-                  <LockIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('calendars.readOnly')} />
-                )}
+                {!c.supportsEvents && <StatusIcon icon={ListTodoIcon} label={t('calendars.tasksOnly')} />}
+                {c.readOnly && <StatusIcon icon={LockIcon} label={t('calendars.readOnly')} />}
               </label>
             </li>
           )
         })}
       </ul>
     </section>
+  )
+}
+
+/**
+ * Calendar property icon with its label as accessible name and hover tooltip.
+ * The icon is not focusable: it sits inside the toggle's <label>, and screen
+ * readers get the label through aria-label.
+ */
+function StatusIcon({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-label={label} />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
