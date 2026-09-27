@@ -65,7 +65,9 @@ separately, see [Updating dependencies](#updating-dependencies).
 ## Commit messages
 
 We use [Conventional Commits](https://www.conventionalcommits.org/). The
-release changelog is generated from them.
+release changelog and the next version are generated from them: a breaking
+change bumps MAJOR (MINOR while MAJOR is 0), `feat` bumps MINOR, and every
+other type PATCH.
 
 ```
 <type>(<optional scope>): <summary in imperative mood>
