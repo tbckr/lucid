@@ -71,6 +71,7 @@
   "calendars": {
     "title": "Calendars",
     "readOnly": "Read-only",
+    "tasksOnly": "Tasks only",
     "empty": "No calendars on this account yet.",
     "loadFailed": "Calendars couldn't be loaded."
   },

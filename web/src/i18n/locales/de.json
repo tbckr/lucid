@@ -71,6 +71,7 @@
   "calendars": {
     "title": "Kalender",
     "readOnly": "Schreibgeschützt",
+    "tasksOnly": "Nur Aufgaben",
     "empty": "Dieses Konto hat noch keine Kalender.",
     "loadFailed": "Kalender konnten nicht geladen werden."
   },
