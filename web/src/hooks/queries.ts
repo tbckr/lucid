@@ -108,9 +108,10 @@ export interface TodosResult {
   isLoading: boolean
 }
 
+/** Tasks of all todo calendars: the sidebar toggles only hide events (FR-05), not tasks. */
 export function useTodos(): TodosResult {
-  const { visible } = useVisibleCalendars()
-  const todoCalendars = visible.filter((c) => c.supportsTodos)
+  const { data: calendars = [] } = useCalendars()
+  const todoCalendars = calendars.filter((c) => c.supportsTodos)
   return useQueries({
     queries: todoCalendars.map((c) => ({
       queryKey: queryKeys.todos(c.id),

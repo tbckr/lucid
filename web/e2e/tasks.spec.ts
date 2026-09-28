@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login } from './helpers'
+import { calendarId, login } from './helpers'
 
 test('complete and reopen a task', async ({ page }) => {
   await login(page)
@@ -25,4 +25,12 @@ test('checklist items are shown and editable', async ({ page }) => {
   await expect(dialog.getByRole('textbox', { name: 'Checklist item 1' })).toHaveValue('2 liters')
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
+})
+
+test('hiding a task calendar in the sidebar keeps its tasks', async ({ page }) => {
+  await login(page)
+  const tasks = await calendarId(page, 'Tasks')
+  await page.locator('label').filter({ has: page.getByTestId(`calendar-toggle-${tasks}`) }).click()
+  await expect(page.getByTestId(`calendar-toggle-${tasks}`)).not.toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Completed: Buy milk' })).toBeVisible()
 })

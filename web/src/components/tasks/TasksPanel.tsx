@@ -18,7 +18,7 @@ type Row =
   | { type: 'todo'; key: string; todo: Todo; calendar: Calendar }
   | { type: 'corrupted'; key: string; item: CorruptedItem }
 
-/** Right sidebar with tasks of all visible todo calendars (FR-12..15). */
+/** Right sidebar with tasks of all todo calendars (FR-12..15). */
 export function TasksPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const { groups, isLoading } = useTodos()
