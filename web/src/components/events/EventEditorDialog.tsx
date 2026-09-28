@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
-import { useId, useMemo, type ReactNode } from 'react'
+import { useId, useMemo } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -40,10 +40,8 @@ import { RECURRENCE_PRESETS } from '@/lib/rrule'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
+import { EditorRow, quietField } from './EditorRow'
 import { TimeSelect } from './TimeSelect'
-
-// Location and description read as plain text until hovered or focused, like the details popover.
-const quietField = '-ml-2 w-[calc(100%+0.5rem)] border-transparent bg-transparent px-2 hover:border-input'
 
 /** Create/edit dialog for events (FR-09, FR-11). */
 export function EventEditorDialog() {
@@ -243,7 +241,7 @@ function EditorForm({
       </div>
 
       <div className="grid gap-3 px-4 pt-5 pb-2 sm:px-6">
-        <Row icon={<ClockIcon />}>
+        <EditorRow icon={<ClockIcon />}>
           <fieldset className="grid gap-2">
             <legend className="sr-only">{t('event.when')}</legend>
             {/* Narrow screens drop the visible Start/End labels, like mobile calendars; the order says it. */}
@@ -333,9 +331,9 @@ function EditorForm({
             </div>
             {otherZone && <p className="text-xs text-muted-foreground">{t('event.timezoneOther', { tz, from: otherZone })}</p>}
           </fieldset>
-        </Row>
+        </EditorRow>
 
-        <Row icon={<RepeatIcon />}>
+        <EditorRow icon={<RepeatIcon />}>
           <Label htmlFor={`${id}-repeat`} className="sr-only">
             {t('event.repeat')}
           </Label>
@@ -363,9 +361,9 @@ function EditorForm({
               {getValues('customRule')}
             </p>
           )}
-        </Row>
+        </EditorRow>
 
-        <Row icon={<MapPinIcon />}>
+        <EditorRow icon={<MapPinIcon />}>
           <Label htmlFor={`${id}-location`} className="sr-only">
             {t('event.location')}
           </Label>
@@ -376,9 +374,9 @@ function EditorForm({
             className={quietField}
             {...register('location')}
           />
-        </Row>
+        </EditorRow>
 
-        <Row icon={<AlignLeftIcon />}>
+        <EditorRow icon={<AlignLeftIcon />}>
           <Label htmlFor={`${id}-description`} className="sr-only">
             {t('event.description')}
           </Label>
@@ -388,7 +386,7 @@ function EditorForm({
             className={cn(quietField, 'max-h-48 min-h-9 resize-none')}
             {...register('description')}
           />
-        </Row>
+        </EditorRow>
       </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:px-6 sm:pb-5">
@@ -401,17 +399,5 @@ function EditorForm({
         </Button>
       </DialogFooter>
     </form>
-  )
-}
-
-/** A row with its icon hanging in the left column, as in the details popover. */
-function Row({ icon, children }: { icon: ReactNode; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[1.25rem_1fr] items-start gap-x-3">
-      <span className="flex h-9 items-center text-muted-foreground [&_svg]:size-4" aria-hidden>
-        {icon}
-      </span>
-      <div className="min-w-0">{children}</div>
-    </div>
   )
 }

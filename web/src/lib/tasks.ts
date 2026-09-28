@@ -58,7 +58,7 @@ export function selectTaskList<T extends { calendar: Pick<Calendar, 'id'> }>(lis
   return lists.find((l) => l.calendar.id === id) ?? lists[0]
 }
 
-export function isOverdue(todo: Todo, now: Date): boolean {
+export function isOverdue(todo: Pick<Todo, 'due' | 'dueAllDay' | 'status'>, now: Date): boolean {
   if (!todo.due || isDone(todo)) return false
   const due = new Date(todo.due)
   if (todo.dueAllDay) {

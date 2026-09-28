@@ -1,7 +1,8 @@
 import { format } from 'date-fns'
-import { ChevronDownIcon } from 'lucide-react'
+import { ChevronDownIcon, XIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { MiniMonth } from '@/components/layout/MiniMonth'
+import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { parseDayKey } from '@/lib/dates'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
@@ -10,9 +11,11 @@ import { cn } from '@/lib/utils'
 const dateRe = /^\d{4}-\d{2}-\d{2}$/
 
 /**
- * Date input of the event editor: a button with the date in the user's
- * format ("Wed, Mar 11") that opens a month to pick from. The button is named
- * by `labelledBy` plus its own text, e.g. "Start Wed, Mar 11".
+ * Date input of the event and task editors: a button with the date in the
+ * user's format ("Wed, Mar 11") that opens a month to pick from. The button is
+ * named by `labelledBy` plus its own text, e.g. "Start Wed, Mar 11". Without a
+ * value it reads as `placeholder`, as quiet as the other optional fields; with
+ * `onClear`, the month offers to remove the date.
  */
 export function DateField({
   id,
@@ -25,6 +28,9 @@ export function DateField({
   quiet,
   invalid,
   describedBy,
+  placeholder,
+  month,
+  onClear,
 }: {
   id: string
   /** "yyyy-MM-dd". */
@@ -39,6 +45,12 @@ export function DateField({
   quiet?: boolean
   invalid?: boolean
   describedBy?: string | undefined
+  /** Text without a value, e.g. "Add a date". */
+  placeholder?: string
+  /** Month the picker opens on without a value; defaults to `now`. */
+  month?: Date | undefined
+  /** Removes the date; shown below the month as `onClear.label`. */
+  onClear?: { label: string; clear: () => void } | undefined
 }) {
   const [open, setOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -55,12 +67,13 @@ export function DateField({
           className={cn(
             'tabular flex h-9 items-center gap-2 rounded-md border border-input bg-surface px-3 text-sm whitespace-nowrap transition-[color,box-shadow] outline-none hover:bg-muted/60 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40',
             quiet && 'text-muted-foreground',
+            !day && 'border-transparent bg-transparent text-muted-foreground hover:border-input hover:bg-transparent',
             // A button cannot be aria-invalid; the message it describes carries the error.
             invalid && 'border-destructive',
           )}
         >
-          {day ? formatPickerDate(day, prefs, now) : value}
-          <ChevronDownIcon className="size-4 opacity-60" aria-hidden />
+          {day ? formatPickerDate(day, prefs, now) : (placeholder ?? value)}
+          {day && <ChevronDownIcon className="size-4 opacity-60" aria-hidden />}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -75,7 +88,7 @@ export function DateField({
         }}
       >
         <MiniMonth
-          date={day ?? now}
+          date={day ?? month ?? now}
           now={now}
           range={null}
           prefs={prefs}
@@ -85,6 +98,23 @@ export function DateField({
             setOpen(false)
           }}
         />
+        {onClear && day && (
+          <div className="mt-2 border-t pt-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-muted-foreground"
+              onClick={() => {
+                onClear.clear()
+                setOpen(false)
+              }}
+            >
+              <XIcon aria-hidden />
+              {onClear.label}
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
