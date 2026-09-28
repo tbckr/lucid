@@ -1,5 +1,11 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { login, monthGrid } from './helpers'
+import { deleteTestEvents, login, monthGrid } from './helpers'
+
+// A failed test never reaches its own clean-up. Its event would stay on the server and
+// cover the slot that the retry clicks.
+test.afterEach(async ({ page }) => {
+  await deleteTestEvents(page)
+})
 
 test('create, edit and delete an event', async ({ page }) => {
   const title = `E2E review ${Date.now()}`

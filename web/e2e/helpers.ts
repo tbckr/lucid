@@ -12,6 +12,38 @@ export async function login(page: Page, redirect?: string): Promise<void> {
   await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
 }
 
+/**
+ * Delete, through the API, the events a spec left behind: every title a spec
+ * gives an event starts with "E2E ". Does nothing without a signed-in session.
+ */
+export async function deleteTestEvents(page: Page): Promise<void> {
+  const api = page.request
+  const sessionRes = await api.get('/api/v1/session')
+  await expect(sessionRes).toBeOK()
+  const session = (await sessionRes.json()) as { authenticated: boolean; csrfToken: string }
+  if (!session.authenticated) return
+
+  const calendarsRes = await api.get('/api/v1/calendars')
+  await expect(calendarsRes).toBeOK()
+  const { calendars } = (await calendarsRes.json()) as {
+    calendars: { id: string; readOnly: boolean; supportsEvents: boolean }[]
+  }
+  // The specs create events today; a week either way covers "the next full hour" at midnight.
+  const week = 7 * 24 * 3600 * 1000
+  const params = { start: new Date(Date.now() - week).toISOString(), end: new Date(Date.now() + week).toISOString() }
+  for (const calendar of calendars.filter((c) => c.supportsEvents && !c.readOnly)) {
+    const eventsRes = await api.get(`/api/v1/calendars/${calendar.id}/events`, { params })
+    await expect(eventsRes).toBeOK()
+    const { events } = (await eventsRes.json()) as { events: { id: string; etag: string; title: string }[] }
+    for (const event of events.filter((e) => e.title.startsWith('E2E '))) {
+      const res = await api.delete(`/api/v1/events/${event.id}`, {
+        headers: { 'X-CSRF-Token': session.csrfToken, 'If-Match': event.etag },
+      })
+      await expect(res).toBeOK()
+    }
+  }
+}
+
 /** The month grid of the main view. */
 export function monthGrid(page: Page) {
   return page.getByRole('grid')
