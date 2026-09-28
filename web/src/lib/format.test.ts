@@ -4,9 +4,12 @@ import { describe, expect, it } from 'vitest'
 import { visibleRange } from './dates'
 import { toCalEvent } from './events'
 import {
+  formatDuration,
   formatEventSpan,
   formatHour,
+  formatMonthDay,
   formatPeriodTitle,
+  formatPickerDate,
   formatShortTime,
   formatTime,
   loadDateLocale,
@@ -19,6 +22,36 @@ import { apiEvent } from '@/test/fixtures'
 
 const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const deDE: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
+
+describe('formatDuration', () => {
+  it.each([
+    [{ minutes: 0 }, '0 min', '0 Min.'],
+    [{ minutes: 45 }, '45 min', '45 Min.'],
+    [{ minutes: 60 }, '1 hr', '1 Std.'],
+    [{ minutes: 90 }, '1 hr 30 min', '1 Std., 30 Min.'],
+    [{ minutes: 26 * 60 }, '1 day 2 hr', '1 Tag, 2 Std.'],
+    [{ days: 1 }, '1 day', '1 Tag'],
+    [{ days: 3 }, '3 days', '3 Tage'],
+  ])('%o', (duration, en, german) => {
+    expect(formatDuration(duration, us)).toBe(en)
+    expect(formatDuration(duration, deDE)).toBe(german)
+  })
+})
+
+describe('date labels', () => {
+  const now = new Date(2026, 2, 11, 10)
+
+  it('names weekday, day and month, with the year only when it differs', () => {
+    expect(formatPickerDate(new Date(2026, 2, 11), us, now)).toBe('Wed, Mar 11')
+    expect(formatPickerDate(new Date(2026, 2, 11), deDE, now)).toBe('Mi., 11. März')
+    expect(formatPickerDate(new Date(2027, 0, 4), us, now)).toBe('Mon, Jan 4, 2027')
+  })
+
+  it('names the day of the year for yearly repeats', () => {
+    expect(formatMonthDay(new Date(2026, 2, 11), us)).toBe('March 11')
+    expect(formatMonthDay(new Date(2026, 2, 11), deDE)).toBe('11. März')
+  })
+})
 
 describe('locale loading', () => {
   it.each([

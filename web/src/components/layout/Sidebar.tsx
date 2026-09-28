@@ -38,16 +38,18 @@ export function Sidebar({
           {t('event.create')}
         </Button>
       </div>
-      <MiniMonth
-        date={date}
-        now={now}
-        range={range}
-        prefs={prefs}
-        onSelect={(d) => {
-          setDate(d)
-          onNavigate?.()
-        }}
-      />
+      <nav aria-label={t('sidebar.miniCalendar')} className="px-3">
+        <MiniMonth
+          date={date}
+          now={now}
+          range={range}
+          prefs={prefs}
+          onSelect={(d) => {
+            setDate(d)
+            onNavigate?.()
+          }}
+        />
+      </nav>
       <CalendarList />
     </div>
   )

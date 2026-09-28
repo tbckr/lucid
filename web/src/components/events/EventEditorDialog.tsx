@@ -1,11 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { InfoIcon } from 'lucide-react'
-import { useId, useMemo } from 'react'
+import { format } from 'date-fns'
+import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
+import { useId, useMemo, type ReactNode } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -19,20 +21,29 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useCreateEvent, useUpdateEvent, useVisibleCalendars } from '@/hooks/queries'
+import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Calendar } from '@/lib/api/schemas'
+import { parseDayKey } from '@/lib/dates'
 import {
   createFormValues,
   editFormValues,
   eventFormSchema,
+  formDuration,
   formToInput,
   shiftEnd,
   type EventFormValues,
 } from '@/lib/eventForm'
+import { formatDuration, formatMonthDay } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { RECURRENCE_PRESETS } from '@/lib/rrule'
+import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
+import { DateField } from './DateField'
 import { TimeSelect } from './TimeSelect'
+
+// Location and description read as plain text until hovered or focused, like the details popover.
+const quietField = '-ml-2 w-[calc(100%+0.5rem)] border-transparent bg-transparent px-2 hover:border-input'
 
 /** Create/edit dialog for events (FR-09, FR-11). */
 export function EventEditorDialog() {
@@ -50,7 +61,7 @@ export function EventEditorDialog() {
       }}
     >
       {editor && (
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="gap-0 p-0" showCloseButton={false}>
           <EditorForm
             key={editor.mode === 'edit' ? editor.event.key : 'create'}
             editor={editor}
@@ -79,7 +90,9 @@ function EditorForm({
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
+  const colorsOf = useCalendarColors()
   const tz = useMemo(() => browserTimeZone(), [])
+  const now = useMemo(() => new Date(), [])
   const create = useCreateEvent()
   const update = useUpdateEvent()
   const id = useId()
@@ -95,11 +108,15 @@ function EditorForm({
     reValidateMode: 'onChange',
   })
   const { register, control, handleSubmit, setValue, getValues, formState } = form
-  const [allDay, recurrence, startDate, startTime] = useWatch({
+  const [allDay, recurrence, calendarId, startDate, startTime, endDate, endTime] = useWatch({
     control,
-    name: ['allDay', 'recurrence', 'startDate', 'startTime'],
+    name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
   })
   const pending = create.isPending || update.isPending
+  const colors = colorsOf(calendarId)
+  const calendar = calendars.find((c) => c.id === calendarId)
+  const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
+  const start = parseDayKey(startDate)
 
   const onStartChange = (date: string, time: string) => {
     const next = shiftEnd(getValues(), date, time)
@@ -123,9 +140,23 @@ function EditorForm({
     return m ? t(m as 'validation.date') : undefined
   }
 
+  // The presets repeat on the start's weekday or date (FREQ only); say which.
+  const presetLabel = (r: (typeof RECURRENCE_PRESETS)[number]) => {
+    switch (r) {
+      case 'weekly':
+        return t('recurrence.weeklyOn', { weekday: format(start, 'EEEE', { locale: prefs.locale }) })
+      case 'monthly':
+        return t('recurrence.monthlyOn', { day: start.getDate() })
+      case 'yearly':
+        return t('recurrence.yearlyOn', { date: formatMonthDay(start, prefs) })
+      default:
+        return t(`recurrence.${r}`)
+    }
+  }
+
   if (calendars.length === 0 && !event) {
     return (
-      <>
+      <div className="grid gap-4 p-6">
         <DialogHeader>
           <DialogTitle>{t('event.new')}</DialogTitle>
           <DialogDescription>{t('event.noWritableCalendar')}</DialogDescription>
@@ -133,149 +164,193 @@ function EditorForm({
         <DialogFooter>
           <Button onClick={onDone}>{t('common.close')}</Button>
         </DialogFooter>
-      </>
+      </div>
     )
   }
 
+  const titleError = err('title')
   const endError = err('endDate')
+  const otherZone = !allDay && event?.timezone && event.timezone !== tz ? event.timezone : null
 
   return (
-    <form onSubmit={(e) => void onSubmit(e)} noValidate className="grid gap-5">
-      <DialogHeader>
-        <DialogTitle>{event ? t('event.edit') : t('event.new')}</DialogTitle>
+    <form onSubmit={(e) => void onSubmit(e)} noValidate>
+      {/* The event as it will appear in the calendar: its calendar's tint and bar. */}
+      <div
+        className="relative grid gap-2 border-l-4 pt-5 pr-14 pb-4 pl-11 transition-colors duration-200 sm:pl-[3.25rem]"
+        style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid }}
+      >
+        <DialogTitle className="sr-only">{event ? t('event.edit') : t('event.new')}</DialogTitle>
         <DialogDescription className="sr-only">{t('event.dialogDescription')}</DialogDescription>
-      </DialogHeader>
-
-      <div className="grid gap-1.5">
         <Label htmlFor={`${id}-title`} className="sr-only">
           {t('event.title')}
         </Label>
-        <Input
+        <input
           id={`${id}-title`}
           placeholder={t('event.titlePlaceholder')}
           autoComplete="off"
-          className="h-11 rounded-none border-0 border-b border-input bg-transparent px-0 font-display text-xl font-semibold shadow-none focus-visible:border-primary focus-visible:ring-0 md:text-xl"
-          aria-invalid={formState.errors.title ? true : undefined}
+          className="w-full border-b-2 border-transparent bg-transparent pb-0.5 font-display text-2xl leading-tight font-semibold tracking-tight outline-none placeholder:text-current placeholder:opacity-60 focus-visible:border-current aria-invalid:border-destructive"
+          aria-invalid={titleError ? true : undefined}
+          aria-describedby={titleError ? `${id}-title-error` : undefined}
           {...register('title')}
         />
-        {err('title') && <p className="text-sm text-destructive">{err('title')}</p>}
+        {titleError && (
+          <p id={`${id}-title-error`} className="text-sm font-medium text-destructive">
+            {titleError}
+          </p>
+        )}
+        {event ? (
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: colors.solid }} aria-hidden />
+            <span className="sr-only">{t('event.calendar')}: </span>
+            {calendar?.name ?? t('event.unknownCalendar')}
+          </p>
+        ) : (
+          <div className="flex">
+            <Label htmlFor={`${id}-calendar`} className="sr-only">
+              {t('event.calendar')}
+            </Label>
+            <Controller
+              control={control}
+              name="calendarId"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger
+                    id={`${id}-calendar`}
+                    className="-ml-2 h-8 w-auto border-transparent bg-transparent px-2 font-medium text-current hover:border-current/25 data-[placeholder]:text-current"
+                    aria-invalid={formState.errors.calendarId ? true : undefined}
+                  >
+                    <SelectValue placeholder={t('event.chooseCalendar')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {calendars.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        <span className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} aria-hidden />
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+          </div>
+        )}
+        {err('calendarId') && <p className="text-sm font-medium text-destructive">{err('calendarId')}</p>}
+        {event?.recurring && <p className="text-sm">{t('event.seriesNotice')}</p>}
+        <DialogClose className="absolute top-3 right-3 rounded-md p-1.5 transition-colors outline-none hover:bg-current/10 focus-visible:ring-[3px] focus-visible:ring-current/50 [&_svg]:size-4">
+          <XIcon aria-hidden />
+          <span className="sr-only">{t('common.close')}</span>
+        </DialogClose>
       </div>
 
-      <div className="grid gap-3">
-        <div className="flex items-center gap-2">
-          <Controller
-            control={control}
-            name="allDay"
-            render={({ field }) => (
-              <Switch id={`${id}-allday`} checked={field.value} onCheckedChange={field.onChange} />
-            )}
-          />
-          <Label htmlFor={`${id}-allday`}>{t('event.allDay')}</Label>
-        </div>
-
-        <fieldset className="grid gap-2">
-          <legend className="sr-only">{t('event.when')}</legend>
-          <div className="flex flex-wrap items-center gap-2">
-            <Label htmlFor={`${id}-start`} className="w-10 text-muted-foreground">
-              {t('event.starts')}
-            </Label>
-            <Input
-              id={`${id}-start`}
-              type="date"
-              className="tabular w-[10.5rem]"
-              value={startDate}
-              onChange={(e) => {
-                onStartChange(e.target.value, getValues('startTime'))
-              }}
-              required
-            />
-            {!allDay && (
-              <TimeSelect
-                value={startTime}
-                onChange={(v) => {
-                  onStartChange(getValues('startDate'), v)
+      <div className="grid gap-3 px-4 pt-5 pb-2 sm:px-6">
+        <Row icon={<ClockIcon />}>
+          <fieldset className="grid gap-2">
+            <legend className="sr-only">{t('event.when')}</legend>
+            {/* Narrow screens drop the visible Start/End labels, like mobile calendars; the order says it. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span id={`${id}-starts`} className="w-12 text-sm text-muted-foreground max-sm:sr-only">
+                {t('event.starts')}
+              </span>
+              <DateField
+                id={`${id}-start`}
+                labelledBy={`${id}-starts`}
+                label={t('event.startDate')}
+                value={startDate}
+                onChange={(d) => {
+                  onStartChange(d, getValues('startTime'))
                 }}
                 prefs={prefs}
-                aria-label={t('event.startTime')}
+                now={now}
               />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Label htmlFor={`${id}-end`} className="w-10 text-muted-foreground">
-              {t('event.ends')}
-            </Label>
-            <Input
-              id={`${id}-end`}
-              type="date"
-              className="tabular w-[10.5rem]"
-              aria-invalid={endError ? true : undefined}
-              aria-describedby={endError ? `${id}-end-error` : undefined}
-              {...register('endDate')}
-              required
-            />
-            {!allDay && (
+              {!allDay && (
+                <TimeSelect
+                  value={startTime}
+                  onChange={(v) => {
+                    onStartChange(getValues('startDate'), v)
+                  }}
+                  prefs={prefs}
+                  aria-label={t('event.startTime')}
+                />
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span id={`${id}-ends`} className="w-12 text-sm text-muted-foreground max-sm:sr-only">
+                {t('event.ends')}
+              </span>
               <Controller
                 control={control}
-                name="endTime"
+                name="endDate"
                 render={({ field }) => (
-                  <TimeSelect
+                  <DateField
+                    id={`${id}-end`}
+                    labelledBy={`${id}-ends`}
+                    label={t('event.endDate')}
                     value={field.value}
                     onChange={field.onChange}
                     prefs={prefs}
+                    now={now}
+                    quiet={field.value === startDate}
                     invalid={!!endError}
-                    aria-label={t('event.endTime')}
+                    describedBy={endError ? `${id}-end-error` : undefined}
                   />
                 )}
               />
+              {!allDay && (
+                <Controller
+                  control={control}
+                  name="endTime"
+                  render={({ field }) => (
+                    <TimeSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      prefs={prefs}
+                      invalid={!!endError}
+                      aria-label={t('event.endTime')}
+                    />
+                  )}
+                />
+              )}
+              {duration && !('days' in duration && duration.days === 1) && (
+                <span className="tabular pl-1 text-sm text-muted-foreground">{formatDuration(duration, prefs)}</span>
+              )}
+            </div>
+            {endError && (
+              <p id={`${id}-end-error`} className="text-sm text-destructive">
+                {endError}
+              </p>
             )}
-          </div>
-          {endError && (
-            <p id={`${id}-end-error`} className="text-sm text-destructive">
-              {endError}
-            </p>
-          )}
-          {!allDay && <p className="text-xs text-muted-foreground">{t('event.timezoneHint', { tz })}</p>}
-        </fieldset>
-      </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Controller
+                control={control}
+                name="allDay"
+                render={({ field }) => (
+                  <Switch id={`${id}-allday`} checked={field.value} onCheckedChange={field.onChange} />
+                )}
+              />
+              <Label htmlFor={`${id}-allday`} className="font-normal">
+                {t('event.allDay')}
+              </Label>
+            </div>
+            {otherZone && <p className="text-xs text-muted-foreground">{t('event.timezoneOther', { tz, from: otherZone })}</p>}
+          </fieldset>
+        </Row>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-calendar`}>{t('event.calendar')}</Label>
-          <Controller
-            control={control}
-            name="calendarId"
-            render={({ field }) => (
-              <Select value={field.value} onValueChange={field.onChange} disabled={!!event}>
-                <SelectTrigger id={`${id}-calendar`} aria-invalid={formState.errors.calendarId ? true : undefined}>
-                  <SelectValue placeholder={t('event.chooseCalendar')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {calendars.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      <span className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} aria-hidden />
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          />
-          {err('calendarId') && <p className="text-sm text-destructive">{err('calendarId')}</p>}
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${id}-repeat`}>{t('event.repeat')}</Label>
+        <Row icon={<RepeatIcon />}>
+          <Label htmlFor={`${id}-repeat`} className="sr-only">
+            {t('event.repeat')}
+          </Label>
           <Controller
             control={control}
             name="recurrence"
             render={({ field }) => (
               <Select value={field.value} onValueChange={field.onChange}>
-                <SelectTrigger id={`${id}-repeat`}>
+                <SelectTrigger id={`${id}-repeat`} className="w-auto min-w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {RECURRENCE_PRESETS.map((r) => (
                     <SelectItem key={r} value={r}>
-                      {t(`recurrence.${r}`)}
+                      {presetLabel(r)}
                     </SelectItem>
                   ))}
                   {recurrence === 'custom' && <SelectItem value="custom">{t('recurrence.custom')}</SelectItem>}
@@ -284,31 +359,39 @@ function EditorForm({
             )}
           />
           {recurrence === 'custom' && (
-            <p className="truncate text-xs text-muted-foreground" title={getValues('customRule')}>
+            <p className="truncate pt-1 text-xs text-muted-foreground" title={getValues('customRule')}>
               {getValues('customRule')}
             </p>
           )}
-        </div>
+        </Row>
+
+        <Row icon={<MapPinIcon />}>
+          <Label htmlFor={`${id}-location`} className="sr-only">
+            {t('event.location')}
+          </Label>
+          <Input
+            id={`${id}-location`}
+            autoComplete="off"
+            placeholder={t('event.addLocation')}
+            className={quietField}
+            {...register('location')}
+          />
+        </Row>
+
+        <Row icon={<AlignLeftIcon />}>
+          <Label htmlFor={`${id}-description`} className="sr-only">
+            {t('event.description')}
+          </Label>
+          <Textarea
+            id={`${id}-description`}
+            placeholder={t('event.addDescription')}
+            className={cn(quietField, 'max-h-48 min-h-9 resize-none')}
+            {...register('description')}
+          />
+        </Row>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-location`}>{t('event.location')}</Label>
-        <Input id={`${id}-location`} autoComplete="off" {...register('location')} />
-      </div>
-
-      <div className="grid gap-1.5">
-        <Label htmlFor={`${id}-description`}>{t('event.description')}</Label>
-        <Textarea id={`${id}-description`} rows={3} className="max-h-48" {...register('description')} />
-      </div>
-
-      {event?.recurring && (
-        <p className="flex items-start gap-2 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-          <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          {t('event.seriesNotice')}
-        </p>
-      )}
-
-      <DialogFooter>
+      <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:px-6 sm:pb-5">
         <Button type="button" variant="ghost" onClick={onDone}>
           {t('common.cancel')}
         </Button>
@@ -318,5 +401,17 @@ function EditorForm({
         </Button>
       </DialogFooter>
     </form>
+  )
+}
+
+/** A row with its icon hanging in the left column, as in the details popover. */
+function Row({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[1.25rem_1fr] items-start gap-x-3">
+      <span className="flex h-9 items-center text-muted-foreground [&_svg]:size-4" aria-hidden>
+        {icon}
+      </span>
+      <div className="min-w-0">{children}</div>
+    </div>
   )
 }

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { type EventInput } from './api/schemas'
 import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { type CalEvent } from './events'
+import { type Duration } from './format'
 import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
 
 const dateRe = /^\d{4}-\d{2}-\d{2}$/
@@ -132,11 +133,32 @@ export function shiftEnd(
   if (!timeRe.test(prev.startTime) || !timeRe.test(prev.endTime) || !timeRe.test(nextStartTime)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
   }
-  // Wall-clock arithmetic in a fixed offset (UTC) keeps the displayed duration.
-  const toMs = (d: string, t: string) => Date.parse(`${d}T${t}:00Z`)
-  const duration = Math.max(0, toMs(prev.endDate, prev.endTime) - toMs(prev.startDate, prev.startTime))
-  const end = new Date(toMs(nextStartDate, nextStartTime) + duration)
+  const duration = Math.max(0, wallClockMs(prev.endDate, prev.endTime) - wallClockMs(prev.startDate, prev.startTime))
+  const end = new Date(wallClockMs(nextStartDate, nextStartTime) + duration)
   return { endDate: end.toISOString().slice(0, 10), endTime: end.toISOString().slice(11, 16) }
+}
+
+// Wall-clock arithmetic in a fixed offset (UTC) keeps the displayed duration.
+function wallClockMs(date: string, time: string): number {
+  return Date.parse(`${date}T${time}:00Z`)
+}
+
+/**
+ * Length of the event as the form shows it: wall-clock minutes for timed
+ * events, days (the last one included) for all-day events. Null while a value
+ * is invalid or the end lies before the start.
+ */
+export function formDuration(
+  v: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'>,
+): Duration | null {
+  if (!dateRe.test(v.startDate) || !dateRe.test(v.endDate)) return null
+  if (v.allDay) {
+    const days = differenceInCalendarDays(parseDayKey(v.endDate), parseDayKey(v.startDate)) + 1
+    return days > 0 ? { days } : null
+  }
+  if (!timeRe.test(v.startTime) || !timeRe.test(v.endTime)) return null
+  const minutes = (wallClockMs(v.endDate, v.endTime) - wallClockMs(v.startDate, v.startTime)) / 60_000
+  return minutes >= 0 ? { minutes } : null
 }
 
 /** Time options in 15-minute steps (value "HH:mm"). */

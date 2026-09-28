@@ -3,6 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { atMinutes } from '@/lib/dates'
 import { timeOptions } from '@/lib/eventForm'
 import { formatTime, type FormatPrefs } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 const OPTIONS = timeOptions(15)
 
@@ -32,7 +33,12 @@ export function TimeSelect({
   const options = useMemo(() => (OPTIONS.includes(value) ? OPTIONS : [...OPTIONS, value].sort()), [value])
   return (
     <Select value={value} onValueChange={onChange} {...(disabled !== undefined ? { disabled } : {})}>
-      <SelectTrigger id={id} aria-label={ariaLabel} aria-invalid={invalid ? true : undefined} className="tabular w-[7.5rem]">
+      <SelectTrigger
+        id={id}
+        aria-label={ariaLabel}
+        aria-invalid={invalid ? true : undefined}
+        className={cn('tabular', prefs.hourCycle === '12h' ? 'w-[7rem]' : 'w-[5.75rem]')}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-64">

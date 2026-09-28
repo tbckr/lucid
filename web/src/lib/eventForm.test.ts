@@ -5,6 +5,7 @@ import {
   createFormValues,
   editFormValues,
   eventFormSchema,
+  formDuration,
   formToInput,
   shiftEnd,
   timeOptions,
@@ -126,6 +127,32 @@ describe('shiftEnd', () => {
   it('leaves invalid input alone', () => {
     expect(shiftEnd({ ...base, startDate: '' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
     expect(shiftEnd({ ...base, startTime: '' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
+  })
+})
+
+describe('formDuration', () => {
+  it('measures timed events in minutes, across midnight too', () => {
+    expect(formDuration(base)).toEqual({ minutes: 30 })
+    expect(formDuration({ ...base, startTime: '23:15', endDate: '2026-03-29', endTime: '01:00' })).toEqual({ minutes: 105 })
+  })
+
+  it('measures wall-clock time across a DST change', () => {
+    // Berlin skips 02:00-03:00 on 2026-03-29; the form still shows two hours.
+    expect(formDuration({ ...base, startDate: '2026-03-29', startTime: '01:00', endDate: '2026-03-29', endTime: '03:00' })).toEqual({
+      minutes: 120,
+    })
+  })
+
+  it('counts the days of all-day events, the last day included', () => {
+    expect(formDuration({ ...base, allDay: true })).toEqual({ days: 1 })
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-30' })).toEqual({ days: 3 })
+  })
+
+  it('has no duration while the end lies before the start or a value is invalid', () => {
+    expect(formDuration({ ...base, endTime: '08:00' })).toBeNull()
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-27' })).toBeNull()
+    expect(formDuration({ ...base, endDate: '' })).toBeNull()
+    expect(formDuration({ ...base, startTime: '9' })).toBeNull()
   })
 })
 

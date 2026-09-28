@@ -134,6 +134,43 @@ export function formatEventSpan(e: CalEvent, p: FormatPrefs, allDayLabel: string
   return `${format(e.startsAt, `PP, ${t}`, { locale: p.locale })} – ${format(e.endsAt, `PP, ${t}`, { locale: p.locale })}`
 }
 
+/** Length of an event: wall-clock minutes for timed events, days for all-day ones. */
+export type Duration = { minutes: number } | { days: number }
+
+function formatUnit(value: number, unit: 'day' | 'hour' | 'minute', p: FormatPrefs): string {
+  return new Intl.NumberFormat(p.tag, { style: 'unit', unit, unitDisplay: unit === 'day' ? 'long' : 'short' }).format(value)
+}
+
+/** Duration next to the end time, e.g. "1 hr 30 min" or "3 days". */
+export function formatDuration(d: Duration, p: FormatPrefs): string {
+  if ('days' in d) return formatUnit(d.days, 'day', p)
+  const days = Math.floor(d.minutes / (24 * 60))
+  const hours = Math.floor((d.minutes % (24 * 60)) / 60)
+  const minutes = d.minutes % 60
+  const parts = [
+    ...(days ? [formatUnit(days, 'day', p)] : []),
+    ...(hours ? [formatUnit(hours, 'hour', p)] : []),
+    ...(minutes ? [formatUnit(minutes, 'minute', p)] : []),
+  ]
+  if (parts.length === 0) return formatUnit(0, 'minute', p)
+  return new Intl.ListFormat(p.tag, { type: 'unit', style: 'narrow' }).format(parts)
+}
+
+/** Date on a date picker button, e.g. "Wed, Mar 11"; with the year when it is not the current one. */
+export function formatPickerDate(date: Date, p: FormatPrefs, now: Date): string {
+  return new Intl.DateTimeFormat(p.tag, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+  }).format(date)
+}
+
+/** Day and month without the year, e.g. "March 11" (yearly repeats). */
+export function formatMonthDay(date: Date, p: FormatPrefs): string {
+  return new Intl.DateTimeFormat(p.tag, { day: 'numeric', month: 'long' }).format(date)
+}
+
 /** Short weekday names in display order for the given week start. */
 export function weekdayNames(p: FormatPrefs, width: 'short' | 'narrow' = 'short'): string[] {
   const names: string[] = []
