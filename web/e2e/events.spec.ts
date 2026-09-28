@@ -61,8 +61,8 @@ test('keyboard shortcuts switch views', async ({ page }) => {
 async function createAt(page: Page, hour: string, title: string): Promise<Locator> {
   await login(page)
   await page.keyboard.press('d')
-  // A click anywhere in the hour slot starts the event at that full hour.
-  await page.getByRole('button', { name: new RegExp(` ${hour}$`) }).click()
+  // A click starts the event in the 15-minute block under the pointer: the top one is the full hour.
+  await page.getByRole('button', { name: new RegExp(` ${hour}$`) }).click({ position: { x: 20, y: 4 } })
   const dialog = page.getByRole('dialog', { name: 'New event' })
   await dialog.getByPlaceholder('Add a title').fill(title)
   await dialog.getByRole('button', { name: 'Create event' }).click()

@@ -34,21 +34,24 @@ describe('TimeGridView', () => {
     useUi.getState().openEditor(null)
   })
 
+  // jsdom lays nothing out, so every slot's top is 0 and clientY is the offset in the slot
+  // (0.8 px per minute): 4 px = 09:05, 24 px = 09:30, 44 px = 09:55, 64 px = 10:20.
+
   it.each([
-    ['top', 0],
-    ['middle', 24],
-    ['bottom', 44],
-  ])('creates a one-hour event at the full hour from a click at the %s of the slot', (_, clientY) => {
+    ['at the top of the slot', 0, 0],
+    ['half-way down', 24, 30],
+    ['near the bottom', 44, 45],
+    // Assistive tech clicks at clientY 0, above the slot.
+    ['without a pointer position', -100, 0],
+  ])('starts a one-hour event in the 15-minute block under a click %s', (_, clientY, minute) => {
     renderDay()
     fireEvent.click(screen.getByRole('button', { name: /9:00 AM$/ }), { clientY })
     expect(useUi.getState().editor).toEqual({
       mode: 'create',
-      defaults: { start: new Date(2026, 8, 25, 9), end: new Date(2026, 8, 25, 10), allDay: false },
+      defaults: { start: new Date(2026, 8, 25, 9, minute), end: new Date(2026, 8, 25, 10, minute), allDay: false },
     })
   })
 
-  // jsdom lays nothing out, so every slot's top is 0 and clientY is the offset in the slot:
-  // 4 px = 09:05, 64 px = 10:20 (0.8 px per minute).
   function pressAndMove(slot: HTMLElement, pointerType: string, fromY: number, toY: number) {
     fireEvent.pointerDown(slot, { pointerId: 1, pointerType, button: 0, clientX: 10, clientY: fromY })
     fireEvent.pointerMove(slot, { pointerId: 1, pointerType, clientX: 10, clientY: toY })
@@ -70,9 +73,10 @@ describe('TimeGridView', () => {
   })
 
   it.each([
-    ['a mouse press that moves less than 6 px', 'mouse', 8],
-    ['a touch, which scrolls the grid instead', 'touch', 64],
-  ])('keeps %s a click on the full hour', (_, pointerType, toY) => {
+    ['a mouse press that moves less than 6 px', 'mouse', 8, 0],
+    // Touch scrolls the grid, so it never drags.
+    ['a moving touch', 'touch', 30, 30],
+  ])('treats %s as a click', (_, pointerType, toY, minute) => {
     renderDay()
     const slot = screen.getByRole('button', { name: /9:00 AM$/ })
     pressAndMove(slot, pointerType, 4, toY)
@@ -80,7 +84,7 @@ describe('TimeGridView', () => {
     fireEvent.click(slot, { clientY: toY })
     expect(useUi.getState().editor).toEqual({
       mode: 'create',
-      defaults: { start: new Date(2026, 8, 25, 9), end: new Date(2026, 8, 25, 10), allDay: false },
+      defaults: { start: new Date(2026, 8, 25, 9, minute), end: new Date(2026, 8, 25, 10, minute), allDay: false },
     })
   })
 

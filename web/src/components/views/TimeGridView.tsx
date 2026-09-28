@@ -264,8 +264,6 @@ function DayColumn({
 
   return (
     <div ref={setNodeRef} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
-      {/* The whole hour lights up on hover, so a click anywhere in it creates the event at that hour.
-          While dragging, only the preview shows what will be created. */}
       {HOURS.map((h) => (
         <button
           key={h}
@@ -273,10 +271,7 @@ function DayColumn({
           tabIndex={-1}
           {...slotProps(h)}
           aria-label={t('week.newAt', { time: format(atMinutes(day, h * 60), 'PPPP p', { locale: prefs.locale }) })}
-          className={cn(
-            'block w-full cursor-default border-t border-grid outline-none first:border-t-0',
-            !draft && 'hover:bg-muted/40',
-          )}
+          className="block w-full cursor-default border-t border-grid outline-none first:border-t-0"
           style={{ height: HOUR_HEIGHT }}
         />
       ))}

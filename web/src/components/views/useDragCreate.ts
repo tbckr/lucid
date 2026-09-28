@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
 import { createRange, PX_PER_MINUTE } from '@/lib/dnd'
 
 /** Pointer travel before a press becomes a drag, as for moving events. */
@@ -19,14 +19,15 @@ export interface Draft {
 }
 
 /** Minutes since midnight under the pointer, for a handler on the slot of `hour`. */
-function minuteAt(hour: number, e: PointerEvent<HTMLElement>): number {
+function minuteAt(hour: number, e: MouseEvent<HTMLElement>): number {
   return hour * 60 + (e.clientY - e.currentTarget.getBoundingClientRect().top) / PX_PER_MINUTE
 }
 
 /**
- * Create events from the hour slots of a time-grid column: a click takes the
- * whole hour, a drag with mouse or pen the slots it covers (touch scrolls).
- * `draft` is the span to preview while dragging; Escape cancels.
+ * Create events from the hour slots of a time-grid column: a click starts a
+ * one-hour event in the 15-minute slot under the pointer, a drag with mouse or
+ * pen covers the slots it crosses (touch scrolls). `draft` is the span to
+ * preview while dragging; Escape cancels.
  */
 export function useDragCreate(onCreate: (startMin: number, endMin: number) => void) {
   const gesture = useRef<Gesture | null>(null)
@@ -80,12 +81,17 @@ export function useDragCreate(onCreate: (startMin: number, endMin: number) => vo
       gesture.current = null
       setDraft(null)
     },
-    onClick: () => {
+    onClick: (e: MouseEvent<HTMLElement>) => {
       if (gesture.current?.phase === 'done') {
         gesture.current = null
         return
       }
-      onCreate(hour * 60, hour * 60 + 60)
+      // Within the clicked hour: assistive tech clicks without a pointer position (clientY 0)
+      // and gets the hour the slot's label names.
+      const min = Math.min(hour * 60 + 59, Math.max(hour * 60, minuteAt(hour, e)))
+      // The slot a drag from here would start in.
+      const { startMin } = createRange(min, min)
+      onCreate(startMin, startMin + 60)
     },
   })
 
