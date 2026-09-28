@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { enUS } from 'date-fns/locale/en-US'
-import { todo } from '@/test/fixtures'
+import { calendar, todo } from '@/test/fixtures'
 import { type FormatPrefs } from './format'
 import {
   addChecklistItem,
@@ -12,6 +12,7 @@ import {
   priorityLevel,
   priorityValue,
   removeChecklistItem,
+  selectTaskList,
   sortTodos,
   todoToInput,
   toggleChecklistItem,
@@ -136,5 +137,21 @@ describe('status', () => {
   it('keeps the start date in the input', () => {
     const t = todo({ start: '2026-09-25T07:00:00Z', startAllDay: false })
     expect(todoToInput(t)).toMatchObject({ start: '2026-09-25T07:00:00Z', startAllDay: false })
+  })
+})
+
+describe('selectTaskList', () => {
+  const groups = [{ calendar: calendar({ id: 'a' }) }, { calendar: calendar({ id: 'b' }) }]
+
+  it('returns the list with the saved ID', () => {
+    expect(selectTaskList(groups, 'b')?.calendar.id).toBe('b')
+  })
+
+  it.each(['', 'gone'])('falls back to the first list for %j', (id) => {
+    expect(selectTaskList(groups, id)?.calendar.id).toBe('a')
+  })
+
+  it('returns nothing without lists', () => {
+    expect(selectTaskList<(typeof groups)[number]>([], 'a')).toBeUndefined()
   })
 })

@@ -162,6 +162,7 @@
     "add": "Add task",
     "addPlaceholder": "Add a task",
     "list": "Task list",
+    "openCount": "{{count}} open",
     "hideCompleted": "Hide completed tasks",
     "showCompleted": "Show completed tasks",
     "empty": "No tasks yet. Add one above.",

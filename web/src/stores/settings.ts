@@ -17,6 +17,8 @@ export interface SettingsState {
   /** Calendar IDs hidden in the sidebar (FR-05). */
   hiddenCalendars: string[]
   hideCompletedTasks: boolean
+  /** Calendar ID of the list shown in the task panel; the first list if empty or gone (FR-12). */
+  taskList: string
   tasksOpen: boolean
   /** Last server URL used for login (convenience, not a secret). */
   lastServerUrl: string
@@ -33,6 +35,7 @@ export const defaultSettings = {
   theme: 'system',
   hiddenCalendars: [],
   hideCompletedTasks: false,
+  taskList: '',
   tasksOpen: true,
   lastServerUrl: '',
 } satisfies Omit<SettingsState, 'update' | 'toggleCalendar'>

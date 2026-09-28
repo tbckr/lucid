@@ -38,3 +38,6 @@ window.matchMedia = (query: string) =>
 Element.prototype.setPointerCapture = () => undefined
 Element.prototype.releasePointerCapture = () => undefined
 Element.prototype.hasPointerCapture = () => false
+
+// Radix Select scrolls the selected option into view when it opens.
+Element.prototype.scrollIntoView = () => undefined

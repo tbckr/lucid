@@ -7,47 +7,46 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
-import { useCreateTodo, useTodos } from '@/hooks/queries'
+import { useCreateTodo, useTodos, type TodosResult } from '@/hooks/queries'
 import { type Calendar, type CorruptedItem, type Todo } from '@/lib/api/schemas'
-import { sortTodos } from '@/lib/tasks'
+import { isDone, selectTaskList, sortTodos } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 import { TaskRow } from './TaskRow'
 
 type Row =
-  | { type: 'header'; key: string; calendar: Calendar; open: number }
   | { type: 'todo'; key: string; todo: Todo; calendar: Calendar }
   | { type: 'corrupted'; key: string; item: CorruptedItem }
 
-/** Right sidebar with tasks of all todo calendars (FR-12..15). */
+/** Right sidebar with the tasks of one todo calendar, chosen from all of them (FR-12..15). */
 export function TasksPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
   const { groups, isLoading } = useTodos()
   const hideCompleted = useSettings((s) => s.hideCompletedTasks)
+  const taskList = useSettings((s) => s.taskList)
   const update = useSettings((s) => s.update)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const list = selectTaskList(groups, taskList)
 
   const rows = useMemo(() => {
-    const out: Row[] = []
-    for (const g of groups) {
-      const sorted = sortTodos(g.todos, hideCompleted)
-      const open = g.todos.filter((x) => x.status !== 'COMPLETED' && x.status !== 'CANCELLED').length
-      if (groups.length > 1) out.push({ type: 'header', key: `h:${g.calendar.id}`, calendar: g.calendar, open })
-      for (const todo of sorted) out.push({ type: 'todo', key: `t:${todo.id}`, todo, calendar: g.calendar })
-      for (const c of g.corrupted) out.push({ type: 'corrupted', key: `c:${c.key}`, item: c })
-    }
+    if (!list) return []
+    const out: Row[] = sortTodos(list.todos, hideCompleted).map((todo) => ({
+      type: 'todo',
+      key: `t:${todo.id}`,
+      todo,
+      calendar: list.calendar,
+    }))
+    for (const c of list.corrupted) out.push({ type: 'corrupted', key: `c:${c.key}`, item: c })
     return out
-  }, [groups, hideCompleted])
+  }, [list, hideCompleted])
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-safe yet
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (rows[i]?.type === 'header' ? 40 : 52),
+    estimateSize: () => 52,
     overscan: 8,
     getItemKey: (i) => rows[i]?.key ?? i,
   })
-
-  const calendars = groups.map((g) => g.calendar).filter((c) => !c.readOnly)
 
   return (
     <aside aria-labelledby="tasks-heading" className="flex h-full min-h-0 flex-col">
@@ -72,17 +71,26 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
         </Button>
       </div>
 
-      {calendars.length > 0 && <AddTask calendars={calendars} />}
+      {groups.length > 1 && list && (
+        <TaskListSelect
+          lists={groups}
+          value={list.calendar.id}
+          onChange={(id) => {
+            update({ taskList: id })
+          }}
+        />
+      )}
+      {list && !list.calendar.readOnly && <AddTask calendar={list.calendar} />}
 
       {isLoading && (
         <p className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
           <Spinner /> {t('common.loading')}
         </p>
       )}
-      {!isLoading && groups.length === 0 && (
+      {!isLoading && !list && (
         <p className="px-4 py-6 text-sm text-muted-foreground">{t('tasks.noCalendars')}</p>
       )}
-      {!isLoading && groups.length > 0 && rows.every((r) => r.type !== 'todo') && (
+      {!isLoading && list && rows.every((r) => r.type !== 'todo') && (
         <p className="px-4 py-6 text-sm text-muted-foreground">
           {hideCompleted ? t('tasks.allDone') : t('tasks.empty')}
         </p>
@@ -101,13 +109,6 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
                 className="absolute inset-x-0 top-0"
                 style={{ transform: `translateY(${item.start}px)` }}
               >
-                {row.type === 'header' && (
-                  <h3 className="flex items-center gap-2 px-4 pt-4 pb-1 text-xs font-semibold text-muted-foreground">
-                    <span className="size-2.5 rounded-full" style={{ backgroundColor: row.calendar.color }} aria-hidden />
-                    <span className="truncate">{row.calendar.name}</span>
-                    <span className="tabular ml-auto font-normal">{row.open}</span>
-                  </h3>
-                )}
                 {row.type === 'todo' && <TaskRow todo={row.todo} calendar={row.calendar} />}
                 {row.type === 'corrupted' && (
                   <div className="px-4 py-1">
@@ -123,20 +124,55 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
   )
 }
 
-function AddTask({ calendars }: { calendars: Calendar[] }) {
+/** Picks the task list shown in the panel; each entry counts its open tasks. */
+function TaskListSelect({
+  lists,
+  value,
+  onChange,
+}: {
+  lists: TodosResult['groups']
+  value: string
+  onChange: (id: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="px-3 pb-2">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="*:data-[slot=select-value]:flex-1" aria-label={t('tasks.list')}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {lists.map(({ calendar, todos }) => {
+            const open = todos.filter((x) => !isDone(x)).length
+            return (
+              <SelectItem key={calendar.id} value={calendar.id} className="*:[span]:last:flex-1">
+                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: calendar.color }} aria-hidden />
+                <span className="truncate">{calendar.name}</span>
+                <span className="tabular ml-auto text-muted-foreground" aria-hidden>
+                  {open}
+                </span>
+                <span className="sr-only">{t('tasks.openCount', { count: open })}</span>
+              </SelectItem>
+            )
+          })}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function AddTask({ calendar }: { calendar: Calendar }) {
   const { t } = useTranslation()
   const create = useCreateTodo()
   const [title, setTitle] = useState('')
-  const [calendarId, setCalendarId] = useState<string>('')
-  const target = calendars.find((c) => c.id === calendarId) ?? calendars[0]
 
   const submit = (e: SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
     const text = title.trim()
-    if (!text || !target) return
+    if (!text) return
     create.mutate(
       {
-        calendarId: target.id,
+        calendarId: calendar.id,
         input: {
           title: text,
           description: '',
@@ -158,7 +194,7 @@ function AddTask({ calendars }: { calendars: Calendar[] }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-2 px-3 pb-2">
+    <form onSubmit={submit} className="px-3 pb-2">
       <div className="flex items-center gap-1 rounded-lg border border-input bg-surface pr-1 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
         <label htmlFor="new-task" className="sr-only">
           {t('tasks.add')}
@@ -178,21 +214,6 @@ function AddTask({ calendars }: { calendars: Calendar[] }) {
           {create.isPending ? <Spinner /> : <PlusIcon aria-hidden />}
         </Button>
       </div>
-      {calendars.length > 1 && target && (
-        <Select value={target.id} onValueChange={setCalendarId}>
-          <SelectTrigger className="h-8 text-xs" aria-label={t('tasks.list')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {calendars.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                <span className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} aria-hidden />
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
     </form>
   )
 }

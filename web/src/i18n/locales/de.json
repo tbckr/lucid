@@ -162,6 +162,7 @@
     "add": "Aufgabe hinzufügen",
     "addPlaceholder": "Aufgabe hinzufügen",
     "list": "Aufgabenliste",
+    "openCount": "{{count}} offen",
     "hideCompleted": "Erledigte Aufgaben ausblenden",
     "showCompleted": "Erledigte Aufgaben zeigen",
     "empty": "Noch keine Aufgaben. Füge oben eine hinzu.",

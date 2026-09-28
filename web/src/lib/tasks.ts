@@ -1,5 +1,5 @@
 import { differenceInCalendarDays, format } from 'date-fns'
-import { type ChecklistItem, type Todo, type TodoInput, type TodoStatus } from './api/schemas'
+import { type Calendar, type ChecklistItem, type Todo, type TodoInput, type TodoStatus } from './api/schemas'
 import { utcDateToLocal } from './dates'
 import { formatTime, type FormatPrefs } from './format'
 
@@ -51,6 +51,11 @@ export function compareTodos(a: Todo, b: Todo): number {
 
 export function sortTodos(todos: Todo[], hideCompleted: boolean): Todo[] {
   return todos.filter((t) => !hideCompleted || !isDone(t)).sort(compareTodos)
+}
+
+/** The task list shown in the sidebar: the saved one, or the first if it is gone (FR-12). */
+export function selectTaskList<T extends { calendar: Pick<Calendar, 'id'> }>(lists: T[], id: string): T | undefined {
+  return lists.find((l) => l.calendar.id === id) ?? lists[0]
 }
 
 export function isOverdue(todo: Todo, now: Date): boolean {
