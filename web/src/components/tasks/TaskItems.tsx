@@ -23,7 +23,7 @@ interface TaskItemProps {
   readOnly: boolean
 }
 
-function useTaskItem(task: CalTask) {
+function useTaskItem(task: CalTask, onOpen?: () => void) {
   const { t } = useTranslation()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const { done, toggle } = useToggleTodo(task.todo)
@@ -31,6 +31,7 @@ function useTaskItem(task: CalTask) {
   const open = (e: MouseEvent) => {
     e.stopPropagation()
     openTaskEditor(task.todo)
+    onOpen?.()
   }
   return { t, title, done, toggle, open }
 }
@@ -94,8 +95,19 @@ function TaskCheck({
 }
 
 /** Task in a month cell or the "+N more" list: checkbox, time, title. */
-export function TaskChip({ task, colors, prefs, readOnly, className }: TaskItemProps & { className?: string }) {
-  const { t, title, done, toggle, open } = useTaskItem(task)
+export function TaskChip({
+  task,
+  colors,
+  prefs,
+  readOnly,
+  className,
+  onOpen,
+}: TaskItemProps & {
+  className?: string
+  /** Called after the title opened the task editor, e.g. to close a popover. */
+  onOpen?: () => void
+}) {
+  const { t, title, done, toggle, open } = useTaskItem(task, onOpen)
   return (
     <div
       data-task-key={task.key}
