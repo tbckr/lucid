@@ -157,6 +157,8 @@ type Todo struct {
 	Title       string          `json:"title"`
 	Description string          `json:"description,omitempty"` // without checklist lines
 	Checklist   []ChecklistItem `json:"checklist"`
+	Start       *time.Time      `json:"start,omitempty"` // DTSTART; with Due it spans the calendar views (FR-16)
+	StartAllDay bool            `json:"startAllDay"`
 	Due         *time.Time      `json:"due,omitempty"`
 	DueAllDay   bool            `json:"dueAllDay"`
 	Priority    int             `json:"priority"` // 0 = undefined, 1 = highest ... 9 = lowest
@@ -169,6 +171,8 @@ type TodoInput struct {
 	Title       string          `json:"title"`
 	Description string          `json:"description,omitempty"`
 	Checklist   []ChecklistItem `json:"checklist"`
+	Start       *time.Time      `json:"start,omitempty"`
+	StartAllDay bool            `json:"startAllDay"`
 	Due         *time.Time      `json:"due,omitempty"`
 	DueAllDay   bool            `json:"dueAllDay"`
 	Priority    int             `json:"priority"`
@@ -191,6 +195,15 @@ func (in TodoInput) Validate() error {
 		return invalid("priority must be between 0 and 9")
 	case len(in.Checklist) > MaxChecklistItems:
 		return invalid("too many checklist items")
+	}
+	// RFC 5545: DTSTART and DUE share a value type, and DUE is not before DTSTART.
+	if in.Start != nil && in.Due != nil {
+		switch {
+		case in.StartAllDay != in.DueAllDay:
+			return invalid("start and due must both be dates or both have a time")
+		case in.Start.After(*in.Due):
+			return invalid("start must not be after due")
+		}
 	}
 	switch in.Status {
 	case "", TodoNeedsAction, TodoInProcess, TodoCompleted, TodoCancelled:

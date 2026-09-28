@@ -167,6 +167,14 @@ func TestTodosCRUD(t *testing.T) {
 	mustErr(t, err, domain.ErrNotFound)
 	_, err = e.svc.UpdateTodo(ctx, reopened.ID, "", domain.TodoInput{Title: "x"})
 	mustErr(t, err, domain.ErrInvalidInput)
+	later := due.Add(time.Hour)
+	_, err = e.svc.CreateTodo(ctx, cal, domain.TodoInput{Title: "x", Start: &later, Due: &due})
+	mustErr(t, err, domain.ErrInvalidInput)
+	_, err = e.svc.CreateTodo(ctx, cal, domain.TodoInput{Title: "x", Start: &due, StartAllDay: true, Due: &later})
+	mustErr(t, err, domain.ErrInvalidInput)
+	same, err := e.svc.CreateTodo(ctx, cal, domain.TodoInput{Title: "x", Start: &due, Due: &due})
+	mustNoErr(t, err)
+	mustNoErr(t, e.svc.DeleteTodo(ctx, same.ID, same.ETag))
 
 	// An event ID passed to UpdateTodo is not found.
 	ev, err := e.svc.CreateEvent(ctx, e.cals["work"], domain.EventInput{Title: "e", Start: due, End: due})
@@ -201,5 +209,145 @@ func TestListTodosParsesForeignData(t *testing.T) {
 	}
 	if a := todos[0]; a.Status != domain.TodoNeedsAction || a.Due != nil || a.Checklist == nil {
 		t.Fatalf("unexpected todo %+v", a)
+	}
+}
+
+// sameTime reports whether a and b are both nil or the same instant.
+func sameTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+func TestListTodosReadsStart(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                   string
+		lines                  []string
+		start, due             *time.Time
+		startAllDay, dueAllDay bool
+	}{
+		{
+			name:  "utc",
+			lines: []string{"DTSTART:20250310T080000Z", "DUE:20250310T100000Z"},
+			start: ptr(date(2025, 3, 10, 8, 0)), due: ptr(date(2025, 3, 10, 10, 0)),
+		},
+		{
+			name:  "tzid",
+			lines: []string{"DTSTART;TZID=Europe/Berlin:20250310T090000"},
+			start: ptr(date(2025, 3, 10, 8, 0)),
+		},
+		{
+			name:  "date",
+			lines: []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250312"},
+			start: ptr(date(2025, 3, 10, 0, 0)), startAllDay: true, due: ptr(date(2025, 3, 12, 0, 0)), dueAllDay: true,
+		},
+		{
+			name:  "duration",
+			lines: []string{"DTSTART:20250310T080000Z", "DURATION:PT90M"},
+			start: ptr(date(2025, 3, 10, 8, 0)), due: ptr(date(2025, 3, 10, 9, 30)),
+		},
+		{
+			name:  "date duration",
+			lines: []string{"DTSTART;VALUE=DATE:20250310", "DURATION:P2D"},
+			start: ptr(date(2025, 3, 10, 0, 0)), startAllDay: true, due: ptr(date(2025, 3, 12, 0, 0)), dueAllDay: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			lines := append([]string{"BEGIN:VTODO", "UID:x", "DTSTAMP:20240101T000000Z", "SUMMARY:x"}, tc.lines...)
+			e.put(t, "tasks", "x.ics", append(lines, "END:VTODO")...)
+			todos, err := e.svc.ListTodos(t.Context(), e.cals["tasks"])
+			mustNoErr(t, err)
+			if len(todos) != 1 {
+				t.Fatalf("ListTodos = %+v; want one todo", todos)
+			}
+			got := todos[0]
+			if !sameTime(got.Start, tc.start) || got.StartAllDay != tc.startAllDay ||
+				!sameTime(got.Due, tc.due) || got.DueAllDay != tc.dueAllDay {
+				t.Errorf("start %v (all-day %v), due %v (all-day %v); want %v (%v), %v (%v)",
+					got.Start, got.StartAllDay, got.Due, got.DueAllDay, tc.start, tc.startAllDay, tc.due, tc.dueAllDay)
+			}
+		})
+	}
+}
+
+// Completing a todo from another client must not rewrite its dates: a
+// DTSTART with TZID anchors the recurrence across DST changes.
+func TestUpdateTodoKeepsUnchangedDates(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	ctx := t.Context()
+	id := e.put(t, "tasks", "r.ics", "BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Report",
+		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY", "END:VTODO")
+	todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+	mustNoErr(t, err)
+	r := todos[0]
+	_, err = e.svc.UpdateTodo(ctx, id, r.ETag, domain.TodoInput{
+		Title: r.Title, Checklist: r.Checklist, Start: r.Start, StartAllDay: r.StartAllDay,
+		Due: r.Due, DueAllDay: r.DueAllDay, Status: domain.TodoCompleted,
+	})
+	mustNoErr(t, err)
+	objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+	data, _ := e.mock.Object(objPath)
+	for _, want := range []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "STATUS:COMPLETED"} {
+		if !strings.Contains(data, want) {
+			t.Errorf("stored todo lacks %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestUpdateTodoWritesStart(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	ctx := t.Context()
+	stored := func(id string) string {
+		t.Helper()
+		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		data, _ := e.mock.Object(objPath)
+		return data
+	}
+
+	start, due := date(2025, 3, 10, 8, 0), date(2025, 3, 10, 10, 0)
+	created, err := e.svc.CreateTodo(ctx, e.cals["tasks"], domain.TodoInput{Title: "Slides", Start: &start, Due: &due})
+	mustNoErr(t, err)
+	if !sameTime(created.Start, &start) || created.StartAllDay {
+		t.Fatalf("unexpected created todo %+v", created)
+	}
+	for _, want := range []string{"DTSTART:20250310T080000Z", "DUE:20250310T100000Z"} {
+		if data := stored(created.ID); !strings.Contains(data, want) {
+			t.Errorf("stored todo lacks %q:\n%s", want, data)
+		}
+	}
+
+	cleared, err := e.svc.UpdateTodo(ctx, created.ID, created.ETag, domain.TodoInput{Title: "Slides", Due: &due})
+	mustNoErr(t, err)
+	if data := stored(created.ID); cleared.Start != nil || strings.Contains(data, "DTSTART") {
+		t.Errorf("start not cleared: %+v\n%s", cleared, data)
+	}
+
+	allDay := date(2025, 3, 10, 0, 0)
+	_, err = e.svc.UpdateTodo(ctx, created.ID, cleared.ETag, domain.TodoInput{Title: "Slides", Start: &allDay, StartAllDay: true})
+	mustNoErr(t, err)
+	if data := stored(created.ID); !strings.Contains(data, "DTSTART;VALUE=DATE:20250310") {
+		t.Errorf("stored todo lacks an all-day start:\n%s", data)
+	}
+
+	id := e.put(t, "tasks", "d.ics", "BEGIN:VTODO", "UID:d", "DTSTAMP:20240101T000000Z", "SUMMARY:Call",
+		"DTSTART:20250310T080000Z", "DURATION:PT1H", "END:VTODO")
+	todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+	mustNoErr(t, err)
+	var d domain.Todo
+	for _, x := range todos {
+		if x.ID == id {
+			d = x
+		}
+	}
+	_, err = e.svc.UpdateTodo(ctx, id, d.ETag, domain.TodoInput{Title: d.Title, Start: d.Start, Due: d.Due})
+	mustNoErr(t, err)
+	if data := stored(id); strings.Contains(data, "DURATION") || !strings.Contains(data, "DUE:20250310T090000Z") {
+		t.Errorf("DURATION not replaced by DUE:\n%s", data)
 	}
 }

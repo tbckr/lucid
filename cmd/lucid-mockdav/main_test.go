@@ -86,7 +86,7 @@ func TestSeed(t *testing.T) {
 			todos += len(ts)
 		}
 	}
-	if events < 10 || todos != 3 {
+	if events < 10 || todos != 5 {
 		t.Fatalf("events=%d todos=%d", events, todos)
 	}
 }

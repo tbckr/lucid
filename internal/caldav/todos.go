@@ -53,9 +53,20 @@ func todoFromComponent(o calObject, calendarID string, c *ical.Component) domain
 		Checklist:   checklist,
 		Status:      strings.ToUpper(cmp.Or(text(c.Props, ical.PropStatus), domain.TodoNeedsAction)),
 	}
+	start, startErr := parseDateProp(c.Props.Get(ical.PropDateTimeStart))
+	if startErr == nil {
+		st := start.t.UTC()
+		t.Start, t.StartAllDay = &st, start.allDay
+	}
 	if d, err := parseDateProp(c.Props.Get(ical.PropDue)); err == nil {
 		due := d.t.UTC()
 		t.Due, t.DueAllDay = &due, d.allDay
+	} else if p := c.Props.Get(ical.PropDuration); p != nil && startErr == nil {
+		// DUE and DURATION are exclusive (RFC 5545); report the end as due (FR-16).
+		if dur, err := parseDuration(p.Value); err == nil {
+			due := dur.addTo(start.t).UTC()
+			t.Due, t.DueAllDay = &due, start.allDay
+		}
 	}
 	if p := c.Props.Get(ical.PropPriority); p != nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(p.Value)); err == nil && n >= 0 && n <= 9 {
@@ -152,11 +163,10 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, joinChecklist(in.Description, in.Checklist))
 
-	if in.Due == nil {
-		c.Props.Del(ical.PropDue)
-	} else {
-		c.Props.Set(newDateProp(ical.PropDue, *in.Due, in.DueAllDay, nil))
-	}
+	setTodoDate(c.Props, ical.PropDateTimeStart, in.Start, in.StartAllDay)
+	setTodoDate(c.Props, ical.PropDue, in.Due, in.DueAllDay)
+	// A DURATION read before is written back as DUE.
+	c.Props.Del(ical.PropDuration)
 	if in.Priority == 0 {
 		c.Props.Del(ical.PropPriority)
 	} else {
@@ -177,6 +187,20 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	if p := c.Props.Get(ical.PropPercentComplete); p != nil && strings.TrimSpace(p.Value) == "100" {
 		c.Props.Del(ical.PropPercentComplete)
 	}
+}
+
+// setTodoDate sets or removes a date property. An unchanged value keeps the
+// stored property, so completing a task from another client does not rewrite
+// its TZID-anchored DTSTART/DUE to UTC.
+func setTodoDate(props ical.Props, name string, t *time.Time, allDay bool) {
+	if t == nil {
+		props.Del(name)
+		return
+	}
+	if d, err := parseDateProp(props.Get(name)); err == nil && d.allDay == allDay && d.t.Equal(*t) {
+		return
+	}
+	props.Set(newDateProp(name, *t, allDay, nil))
 }
 
 // checklistLine matches a Markdown task list item.

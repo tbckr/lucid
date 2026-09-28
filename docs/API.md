@@ -138,6 +138,7 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 ```json
 { "todos": [ { "id": "...", "calendarId": "...", "uid": "...", "etag": "...",
   "title": "Buy milk", "description": "", "checklist": [ { "text": "oat", "done": false } ],
+  "start": null, "startAllDay": false,
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
   "status": "NEEDS-ACTION", "completed": null } ] }
 ```
@@ -145,9 +146,16 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
 `NEEDS-ACTION | IN-PROCESS | COMPLETED | CANCELLED`.
 
+`start` is the todo's `DTSTART`. A todo with `DTSTART` and `DURATION` but no
+`DUE` reports `start + duration` as `due`. When both `start` and `due` are
+set, they must both be dates or both have a time, and `start` must not be
+after `due`; otherwise `400 invalid_input`. Writing a todo stores `due` as
+`DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
+the original property, including its `TZID`.
+
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
-Body (`TodoInput`): `{ "title", "description", "checklist", "due", "dueAllDay", "priority", "status" }` → `201` `Todo`.
+Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
 (`supportsTodos: false`).
 
