@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { useId, useMemo, useState, type ChangeEvent } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -68,7 +68,7 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
     resolver: zodResolver(taskFormSchema),
     defaultValues: taskToForm(todo, tz),
   })
-  const { register, control, handleSubmit, formState } = form
+  const { register, control, handleSubmit, formState, setValue } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
   const startDate = useWatch({ control, name: 'startDate' })
   const dueDate = useWatch({ control, name: 'dueDate' })
@@ -102,7 +102,17 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
         <div className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-start`}>{t('tasks.start')}</Label>
-            <Input id={`${id}-start`} type="date" className="tabular w-[10.5rem]" {...register('startDate')} />
+            <Input
+              id={`${id}-start`}
+              type="date"
+              className="tabular w-[10.5rem]"
+              {...register('startDate', {
+                // The time field is disabled without a date; drop its value too.
+                onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                  if (!e.target.value) setValue('startTime', '')
+                },
+              })}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-start-time`}>{t('tasks.startTime')}</Label>
@@ -121,7 +131,16 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
         <div className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-due`}>{t('tasks.due')}</Label>
-            <Input id={`${id}-due`} type="date" className="tabular w-[10.5rem]" {...register('dueDate')} />
+            <Input
+              id={`${id}-due`}
+              type="date"
+              className="tabular w-[10.5rem]"
+              {...register('dueDate', {
+                onChange: (e: ChangeEvent<HTMLInputElement>) => {
+                  if (!e.target.value) setValue('dueTime', '')
+                },
+              })}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor={`${id}-time`}>{t('tasks.dueTime')}</Label>
