@@ -196,15 +196,6 @@ func (in TodoInput) Validate() error {
 	case len(in.Checklist) > MaxChecklistItems:
 		return invalid("too many checklist items")
 	}
-	// RFC 5545: DTSTART and DUE share a value type, and DUE is not before DTSTART.
-	if in.Start != nil && in.Due != nil {
-		switch {
-		case in.StartAllDay != in.DueAllDay:
-			return invalid("start and due must both be dates or both have a time")
-		case in.Start.After(*in.Due):
-			return invalid("start must not be after due")
-		}
-	}
 	switch in.Status {
 	case "", TodoNeedsAction, TodoInProcess, TodoCompleted, TodoCancelled:
 	default:
@@ -214,6 +205,23 @@ func (in TodoInput) Validate() error {
 		if it.Text == "" || len(it.Text) > MaxTitleLen {
 			return invalid("invalid checklist item")
 		}
+	}
+	return nil
+}
+
+// ValidateDates checks that start and due form a valid pair: RFC 5545 wants
+// the same value type and DUE not before DTSTART (FR-16). It wraps
+// ErrInvalidInput. Updates skip it for dates the stored todo already has, so
+// todos from other clients can still be completed.
+func (in TodoInput) ValidateDates() error {
+	if in.Start == nil || in.Due == nil {
+		return nil
+	}
+	switch {
+	case in.StartAllDay != in.DueAllDay:
+		return invalid("start and due must both be dates or both have a time")
+	case in.Start.After(*in.Due):
+		return invalid("start must not be after due")
 	}
 	return nil
 }

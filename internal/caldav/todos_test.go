@@ -351,3 +351,43 @@ func TestUpdateTodoWritesStart(t *testing.T) {
 		t.Errorf("DURATION not replaced by DUE:\n%s", data)
 	}
 }
+
+// Todos from other clients may carry dates Lucid would not accept as input;
+// sending them back unchanged (e.g. to complete the todo) must still work.
+func TestUpdateTodoAcceptsUnchangedForeignDates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{"mixed types", []string{"DTSTART;VALUE=DATE:20250310", "DUE:20250312T170000Z"}},
+		{"start after due", []string{"DTSTART:20250312T170000Z", "DUE:20250310T090000Z"}},
+		{"negative duration", []string{"DTSTART:20250310T090000Z", "DURATION:-PT1H"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			ctx := t.Context()
+			lines := append([]string{"BEGIN:VTODO", "UID:f", "DTSTAMP:20240101T000000Z", "SUMMARY:Foreign"}, tc.lines...)
+			id := e.put(t, "tasks", "f.ics", append(lines, "END:VTODO")...)
+			todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+			mustNoErr(t, err)
+			f := todos[0]
+			done, err := e.svc.UpdateTodo(ctx, id, f.ETag, domain.TodoInput{
+				Title: f.Title, Checklist: f.Checklist, Start: f.Start, StartAllDay: f.StartAllDay,
+				Due: f.Due, DueAllDay: f.DueAllDay, Status: domain.TodoCompleted,
+			})
+			mustNoErr(t, err)
+			if done.Status != domain.TodoCompleted || !sameTime(done.Start, f.Start) {
+				t.Fatalf("unexpected todo %+v", done)
+			}
+
+			// Changing the dates still has to produce a valid pair.
+			later := f.Start.Add(24 * time.Hour)
+			_, err = e.svc.UpdateTodo(ctx, id, done.ETag, domain.TodoInput{
+				Title: f.Title, Start: &later, StartAllDay: false, Due: f.Start, DueAllDay: false,
+			})
+			mustErr(t, err, domain.ErrInvalidInput)
+		})
+	}
+}

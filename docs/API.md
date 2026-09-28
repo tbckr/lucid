@@ -149,7 +149,9 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 `start` is the todo's `DTSTART`. A todo with `DTSTART` and `DURATION` but no
 `DUE` reports `start + duration` as `due`. When both `start` and `due` are
 set, they must both be dates or both have a time, and `start` must not be
-after `due`; otherwise `400 invalid_input`. Writing a todo stores `due` as
+after `due`; otherwise `400 invalid_input`. An update that keeps the stored
+`start` and `due` skips this check, so todos from other clients can still be
+completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 

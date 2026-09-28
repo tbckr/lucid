@@ -92,6 +92,9 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if err := in.Validate(); err != nil {
 		return domain.Todo{}, err
 	}
+	if err := in.ValidateDates(); err != nil {
+		return domain.Todo{}, err
+	}
 	if err := s.checkWritable(ctx, calPath, ical.CompToDo); err != nil {
 		return domain.Todo{}, err
 	}
@@ -141,6 +144,11 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if c == nil {
 		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
+	if !sameDates(todoFromComponent(calObject{path: objPath}, "", c), in) {
+		if err := in.ValidateDates(); err != nil {
+			return domain.Todo{}, err
+		}
+	}
 	now := s.p.now().UTC()
 	applyTodoFields(c, in, now)
 	bumpChangeProps(c, now)
@@ -187,6 +195,19 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	if p := c.Props.Get(ical.PropPercentComplete); p != nil && strings.TrimSpace(p.Value) == "100" {
 		c.Props.Del(ical.PropPercentComplete)
 	}
+}
+
+// sameDates reports whether in carries the start and due cur already has.
+func sameDates(cur domain.Todo, in domain.TodoInput) bool {
+	return sameInstant(cur.Start, in.Start) && cur.StartAllDay == in.StartAllDay &&
+		sameInstant(cur.Due, in.Due) && cur.DueAllDay == in.DueAllDay
+}
+
+func sameInstant(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 // setTodoDate sets or removes a date property. An unchanged value keeps the
