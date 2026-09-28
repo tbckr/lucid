@@ -1,5 +1,6 @@
 import { addDays, differenceInCalendarDays, startOfDay } from 'date-fns'
 import { type ApiEvent, type CorruptedItem } from './api/schemas'
+import { type CalTask } from './calendarTasks'
 import { dayKey, localDateToUtc, shiftInterval, utcDateToLocal, type DateRange } from './dates'
 
 /** An event occurrence prepared for display: dates are local `Date`s. */
@@ -12,6 +13,9 @@ export interface CalEvent extends ApiEvent {
 }
 
 export type EventItem = CalEvent | CorruptedItem
+
+/** Anything placed in the calendar views: events and tasks with dates (FR-16). */
+export type CalItem = CalEvent | CalTask
 
 /** Display title, falling back to a placeholder for untitled events. */
 export function eventTitle(e: Pick<CalEvent, 'title'>, untitled: string): string {
@@ -40,7 +44,7 @@ export function lastDay(e: Pick<CalEvent, 'startsAt' | 'endsAt'>): Date {
 }
 
 /** Rendered as a spanning bar: all-day or crossing midnight. */
-export function isSpanning(e: CalEvent): boolean {
+export function isSpanning(e: Pick<CalItem, 'allDay' | 'startsAt' | 'endsAt'>): boolean {
   return e.allDay || differenceInCalendarDays(lastDay(e), firstDay(e)) > 0
 }
 
@@ -53,19 +57,20 @@ export function overlapsRange(e: Pick<CalEvent, 'startsAt' | 'endsAt'>, range: D
   return firstDay(e) < range.end && lastDay(e) >= startOfDay(range.start)
 }
 
-/** Stable display order: all-day first, then by start, longer first, then title. */
-export function compareEvents(a: CalEvent, b: CalEvent): number {
+/** Stable display order: all-day first, then by start, longer first, events before tasks, then title. */
+export function compareEvents(a: CalItem, b: CalItem): number {
   if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
   const byStart = a.startsAt.getTime() - b.startsAt.getTime()
   if (byStart !== 0) return byStart
   const byLen = b.endsAt.getTime() - b.startsAt.getTime() - (a.endsAt.getTime() - a.startsAt.getTime())
   if (byLen !== 0) return byLen
+  if (a.kind !== b.kind) return a.kind === 'event' ? -1 : 1
   return a.title.localeCompare(b.title)
 }
 
 /** Group events by local day key for the given days (multi-day events appear on each day). */
-export function groupByDay(events: CalEvent[], days: Date[]): Map<string, CalEvent[]> {
-  const map = new Map<string, CalEvent[]>()
+export function groupByDay<T extends CalItem>(events: T[], days: Date[]): Map<string, T[]> {
+  const map = new Map<string, T[]>()
   for (const d of days) map.set(dayKey(d), [])
   const sorted = [...events].sort(compareEvents)
   for (const e of sorted) {

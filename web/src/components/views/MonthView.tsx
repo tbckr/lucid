@@ -180,7 +180,7 @@ function WeekRow({
   labelFor,
 }: {
   rowRef: React.Ref<HTMLDivElement> | undefined
-  layout: WeekRowLayout
+  layout: WeekRowLayout<CalEvent>
   date: Date
   now: Date
   prefs: FormatPrefs
@@ -238,8 +238,8 @@ function DayCell({
   label,
 }: {
   day: Date
-  cell: CellLayout
-  bars: WeekRowLayout['bars']
+  cell: CellLayout<CalEvent>
+  bars: WeekRowLayout<CalEvent>['bars']
   inMonth: boolean
   isToday: boolean
   prefs: FormatPrefs

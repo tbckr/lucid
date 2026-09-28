@@ -1,13 +1,13 @@
 import { differenceInCalendarDays, startOfDay } from 'date-fns'
 import { dayKey, minutesOfDay } from './dates'
-import { compareEvents, firstDay, groupByDay, isSpanning, lastDay, overlapsDay, type CalEvent } from './events'
+import { compareEvents, firstDay, groupByDay, isSpanning, lastDay, overlapsDay, type CalItem } from './events'
 
 /* ------------------------------------------------------------------------ */
 /* Time grid (week/day): overlapping events side by side                    */
 /* ------------------------------------------------------------------------ */
 
-export interface TimedSegment {
-  event: CalEvent
+export interface TimedSegment<T extends CalItem = CalItem> {
+  event: T
   /** Minutes after local midnight, clamped to the day. */
   startMin: number
   endMin: number
@@ -16,7 +16,7 @@ export interface TimedSegment {
   clippedEnd: boolean
 }
 
-export interface PositionedSegment extends TimedSegment {
+export interface PositionedSegment<T extends CalItem = CalItem> extends TimedSegment<T> {
   /** Column index inside the overlap cluster. */
   col: number
   /** Number of columns of the cluster. */
@@ -28,9 +28,9 @@ export interface PositionedSegment extends TimedSegment {
 const DAY_MINUTES = 24 * 60
 
 /** Timed (non-spanning-bar) portions of events on `day`. */
-export function timedSegments(events: CalEvent[], day: Date): TimedSegment[] {
+export function timedSegments<T extends CalItem>(events: T[], day: Date): TimedSegment<T>[] {
   const d = startOfDay(day)
-  const out: TimedSegment[] = []
+  const out: TimedSegment<T>[] = []
   for (const e of events) {
     if (e.allDay || !overlapsDay(e, d)) continue
     const clippedStart = firstDay(e) < d
@@ -52,14 +52,14 @@ export function timedSegments(events: CalEvent[], day: Date): TimedSegment[] {
  *
  * `minDuration` keeps very short events from visually colliding.
  */
-export function layoutDay(segments: TimedSegment[], minDuration = 20): PositionedSegment[] {
+export function layoutDay<T extends CalItem>(segments: TimedSegment<T>[], minDuration = 20): PositionedSegment<T>[] {
   const sorted = [...segments].sort(
     (a, b) => a.startMin - b.startMin || b.endMin - a.endMin || compareEvents(a.event, b.event),
   )
-  const visualEnd = (s: TimedSegment) => Math.max(s.endMin, s.startMin + minDuration)
-  const result: PositionedSegment[] = []
+  const visualEnd = (s: TimedSegment<T>) => Math.max(s.endMin, s.startMin + minDuration)
+  const result: PositionedSegment<T>[] = []
 
-  let cluster: { seg: TimedSegment; col: number }[] = []
+  let cluster: { seg: TimedSegment<T>; col: number }[] = []
   let columnsEnd: number[] = []
   let clusterEnd = -1
 
@@ -101,8 +101,8 @@ export function layoutDay(segments: TimedSegment[], minDuration = 20): Positione
 /* Week rows (month view, all-day row): spanning bars in lanes + "+N more"  */
 /* ------------------------------------------------------------------------ */
 
-export interface BarSegment {
-  event: CalEvent
+export interface BarSegment<T extends CalItem = CalItem> {
+  event: T
   startCol: number
   /** Number of columns covered (>= 1). */
   span: number
@@ -112,21 +112,21 @@ export interface BarSegment {
   continuesAfter: boolean
 }
 
-export interface CellLayout {
+export interface CellLayout<T extends CalItem = CalItem> {
   day: Date
   /** Every event on this day (for the "+N more" popover). */
-  all: CalEvent[]
+  all: T[]
   /** Visible single-day events, rendered below the bar lanes. */
-  singles: CalEvent[]
+  singles: T[]
   /** Rows occupied by visible bars above the singles. */
   barRows: number
   /** Events hidden behind "+N more". */
   hidden: number
 }
 
-export interface WeekRowLayout {
-  bars: BarSegment[]
-  cells: CellLayout[]
+export interface WeekRowLayout<T extends CalItem = CalItem> {
+  bars: BarSegment<T>[]
+  cells: CellLayout<T>[]
 }
 
 /**
@@ -134,7 +134,7 @@ export interface WeekRowLayout {
  * a cell (Infinity = unlimited). When a day overflows, one row is reserved
  * for the "+N more" button and everything beyond is hidden.
  */
-export function layoutWeekRow(days: Date[], events: CalEvent[], capacity: number): WeekRowLayout {
+export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capacity: number): WeekRowLayout<T> {
   const n = days.length
   const first = days[0]
   if (n === 0 || first === undefined) return { bars: [], cells: [] }
@@ -152,7 +152,7 @@ export function layoutWeekRow(days: Date[], events: CalEvent[], capacity: number
 
   // Greedy lane assignment.
   const laneEnds: number[] = []
-  const placed: { event: CalEvent; sc: number; ec: number; lane: number }[] = []
+  const placed: { event: T; sc: number; ec: number; lane: number }[] = []
   for (const e of spanning) {
     const sc = Math.max(0, differenceInCalendarDays(firstDay(e), rowStart))
     const ec = Math.min(n - 1, differenceInCalendarDays(lastDay(e), rowStart))
@@ -167,7 +167,7 @@ export function layoutWeekRow(days: Date[], events: CalEvent[], capacity: number
   }
 
   const limits: number[] = []
-  const cells: CellLayout[] = days.map((day, c) => {
+  const cells: CellLayout<T>[] = days.map((day, c) => {
     const all = byDay.get(dayKey(day)) ?? []
     const covering = placed.filter((p) => p.sc <= c && p.ec >= c)
     const singles = all.filter((e) => !isSpanning(e))
@@ -187,7 +187,7 @@ export function layoutWeekRow(days: Date[], events: CalEvent[], capacity: number
   })
 
   // Split bars into runs of columns where their lane is visible.
-  const bars: BarSegment[] = []
+  const bars: BarSegment<T>[] = []
   for (const p of placed) {
     let runStart = -1
     for (let c = p.sc; c <= p.ec + 1; c++) {
@@ -221,12 +221,14 @@ export function cellCapacity(cellHeight: number, headerHeight: number, rowHeight
 /* Agenda                                                                   */
 /* ------------------------------------------------------------------------ */
 
-export type AgendaRow = { type: 'day'; day: Date; key: string } | { type: 'event'; day: Date; event: CalEvent; key: string }
+export type AgendaRow<T extends CalItem = CalItem> =
+  | { type: 'day'; day: Date; key: string }
+  | { type: 'event'; day: Date; event: T; key: string }
 
 /** Flatten events into day headers + event rows, skipping empty days. */
-export function agendaRows(events: CalEvent[], days: Date[]): AgendaRow[] {
+export function agendaRows<T extends CalItem>(events: T[], days: Date[]): AgendaRow<T>[] {
   const byDay = groupByDay(events, days)
-  const rows: AgendaRow[] = []
+  const rows: AgendaRow<T>[] = []
   for (const day of days) {
     const list = byDay.get(dayKey(day)) ?? []
     if (list.length === 0) continue

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { toCalTask } from './calendarTasks'
 import { dayKey, eachDay } from './dates'
-import { toCalEvent } from './events'
-import { apiEvent } from '@/test/fixtures'
+import { compareEvents, toCalEvent } from './events'
+import { apiEvent, todo } from '@/test/fixtures'
 import { agendaRows, cellCapacity, layoutDay, layoutWeekRow, timedSegments } from './layout'
 
 const local = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).toISOString()
@@ -148,5 +149,24 @@ describe('agendaRows', () => {
       'day 2026-09-26',
       'b',
     ])
+  })
+})
+
+describe('tasks among events', () => {
+  const task = (key: string, d: number, h: number) =>
+    toCalTask(todo({ id: key, title: key, due: new Date(2026, 8, d, h).toISOString() }))!
+
+  it('puts events before tasks with the same start and length', () => {
+    const event = timed('B', 23, 12, 0, 12, 30)
+    const sorted = [task('A', 23, 12), event].sort(compareEvents)
+    expect(sorted.map((e) => e.title)).toEqual(['B', 'A'])
+  })
+
+  it('counts tasks in "+N more"', () => {
+    const days = eachDay({ start: new Date(2026, 8, 20), end: new Date(2026, 8, 27) })
+    const { cells } = layoutWeekRow(days, [task('rent', 23, 12), timed('a', 23, 9, 0, 9, 30), timed('b', 23, 10, 0, 10, 30)], 2)
+    const wed = cells[3]!
+    expect(wed.hidden).toBe(2)
+    expect(wed.singles.map((e) => e.key)).toEqual(['a'])
   })
 })
