@@ -121,7 +121,8 @@ func seed(m *caldavtest.Server, now time.Time) error {
 		{tasks, "milk.ics", vtodo("demo-milk", "Buy milk", "DUE;VALUE=DATE:"+date(1), "PRIORITY:1", "DESCRIPTION:Oat milk\\n\\n- [ ] 2 liters\\n- [x] check fridge")},
 		{tasks, "taxes.ics", vtodo("demo-taxes", "File taxes", "DUE:"+utc(14, 17, 0), "PRIORITY:5", "STATUS:IN-PROCESS")},
 		{tasks, "plants.ics", vtodo("demo-plants", "Water plants", "STATUS:COMPLETED", "COMPLETED:"+utc(-1, 10, 0), "PERCENT-COMPLETE:100")},
-		{tasks, "slides.ics", vtodo("demo-slides", "Prepare slides", "DTSTART:"+utc(2, 8, 0), "DUE:"+utc(2, 10, 0))},
+		// Starts after the standup, so the week view has room for its title.
+		{tasks, "slides.ics", vtodo("demo-slides", "Prepare slides", "DTSTART:"+utc(2, 9, 0), "DUE:"+utc(2, 10, 0))},
 		{tasks, "landlord.ics", vtodo("demo-landlord", "Call the landlord", "DUE:"+utc(0, 15, 0))},
 	}
 	for _, o := range objects {

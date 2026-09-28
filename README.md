@@ -60,20 +60,26 @@ of your server.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/week-dark.png" alt="Week view in dark mode"></td>
+    <td><img src="docs/screenshots/calendar-tasks.png" alt="Week view with tasks in the calendar"></td>
     <td><img src="docs/screenshots/tasks.png" alt="Editing a task with a checklist"></td>
   </tr>
   <tr>
-    <td align="center">Week view in dark mode</td>
+    <td align="center">Tasks right in the calendar</td>
     <td align="center">Tasks with checklists</td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/week-dark.png" alt="Week view in dark mode"></td>
     <td><img src="docs/screenshots/event-dialog.png" alt="Details of an event"></td>
-    <td><img src="docs/screenshots/login.png" alt="Sign-in page"></td>
   </tr>
   <tr>
+    <td align="center">Week view in dark mode</td>
     <td align="center">Event details</td>
-    <td align="center">Sign in with just your domain</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/login.png" alt="Sign-in page" width="50%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">Sign in with just your domain</td>
   </tr>
 </table>
 

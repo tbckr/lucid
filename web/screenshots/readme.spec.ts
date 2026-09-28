@@ -48,6 +48,19 @@ test('week view, dark', async ({ page }) => {
   await shoot(page, 'week-dark')
 })
 
+test('tasks in the calendar', async ({ page }) => {
+  await login(page)
+  await page.keyboard.press('w')
+  // Without the task sidebar, the tasks show only in the calendar: an all-day
+  // bar, a block from start to due and a point at the due time. Without the
+  // calendar sidebar, the columns are wide enough for their titles.
+  await page.getByRole('button', { name: 'Close tasks' }).click()
+  await expect(page.getByRole('complementary', { name: 'Tasks' })).toBeHidden()
+  await page.getByRole('button', { name: 'Show or hide the sidebar' }).click()
+  await expect(page.getByRole('heading', { name: 'Calendars' })).toBeHidden()
+  await shoot(page, 'calendar-tasks')
+})
+
 test('tasks with a checklist', async ({ page }) => {
   await login(page)
   await page.getByTestId('task-row').filter({ hasText: 'Buy milk' }).getByRole('button', { name: /Buy milk/ }).click()
