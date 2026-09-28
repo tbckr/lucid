@@ -32,8 +32,12 @@ test('checklist items are shown and editable', async ({ page }) => {
 
 test('complete a task in the month view', async ({ page }) => {
   await login(page)
-  const inGrid = monthGrid(page).getByRole('checkbox', { name: 'Completed: Buy milk' })
-  const inList = taskList(page).getByRole('checkbox', { name: 'Completed: Buy milk' })
+  // Whichever seeded task falls into the grid: they are dated relative to today.
+  const inGrid = monthGrid(page).locator('[data-task-key]').getByRole('checkbox').first()
+  await expect(inGrid).toBeVisible()
+  const name = (await inGrid.getAttribute('aria-label')) ?? ''
+  const inList = taskList(page).getByRole('checkbox', { name, exact: true })
+  await expect(inList).toHaveAttribute('aria-checked', 'false')
   await inGrid.click()
   await expect(inList).toHaveAttribute('aria-checked', 'true')
 
@@ -55,5 +59,5 @@ test('hiding a task calendar in the sidebar keeps its tasks', async ({ page }) =
 test('agenda lists tasks', async ({ page }) => {
   await login(page)
   await page.keyboard.press('a')
-  await expect(page.getByTestId('agenda').getByRole('checkbox', { name: 'Completed: Call the landlord' })).toBeVisible()
+  await expect(page.getByTestId('agenda').locator('[data-task-key]').getByRole('checkbox').first()).toBeVisible()
 })
