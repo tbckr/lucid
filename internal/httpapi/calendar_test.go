@@ -312,3 +312,35 @@ func TestTodos(t *testing.T) {
 		t.Errorf("nil list must encode as []: %s", w.Body)
 	}
 }
+
+// Clients that predate `start` omit it; only an explicit null removes it (FR-16).
+func TestUpdateTodoStartPresence(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, body string
+		status     int
+		omitted    bool
+		start      bool
+	}{
+		{"omitted", `{"title":"x"}`, http.StatusOK, true, false},
+		{"null", `{"title":"x","start":null}`, http.StatusOK, false, false},
+		{"value", `{"title":"x","start":"2025-03-10T08:00:00Z"}`, http.StatusOK, false, true},
+		{"unknown field", `{"title":"x","bogus":1}`, http.StatusBadRequest, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.todos = []domain.Todo{{ID: "t1", Title: "x"}}
+			w := h.do(t, c, req{method: http.MethodPut, path: "/api/v1/todos/t1", body: tt.body, headers: map[string]string{"If-Match": `"t-etag"`}})
+			if tt.status != http.StatusOK {
+				expectError(t, w, tt.status, codeInvalidInput)
+				return
+			}
+			decode(t, w, http.StatusOK, nil)
+			if got := h.svc.gotTodo; got.StartOmitted != tt.omitted || (got.Start != nil) != tt.start {
+				t.Errorf("StartOmitted = %v, Start = %v; want %v, set %v", got.StartOmitted, got.Start, tt.omitted, tt.start)
+			}
+		})
+	}
+}

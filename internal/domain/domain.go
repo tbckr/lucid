@@ -4,8 +4,11 @@
 package domain
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -173,10 +176,38 @@ type TodoInput struct {
 	Checklist   []ChecklistItem `json:"checklist"`
 	Start       *time.Time      `json:"start,omitempty"`
 	StartAllDay bool            `json:"startAllDay"`
-	Due         *time.Time      `json:"due,omitempty"`
-	DueAllDay   bool            `json:"dueAllDay"`
-	Priority    int             `json:"priority"`
-	Status      string          `json:"status"` // empty means NEEDS-ACTION
+	// StartOmitted is set when a JSON body has no "start" at all: clients that
+	// predate it keep the stored DTSTART, only an explicit null removes it.
+	StartOmitted bool       `json:"-"`
+	Due          *time.Time `json:"due,omitempty"`
+	DueAllDay    bool       `json:"dueAllDay"`
+	Priority     int        `json:"priority"`
+	Status       string     `json:"status"` // empty means NEEDS-ACTION
+}
+
+// UnmarshalJSON decodes strictly (unknown fields are errors, as for every
+// request body) and records whether "start" was sent at all.
+func (in *TodoInput) UnmarshalJSON(b []byte) error {
+	type plain TodoInput // without this method, so decoding does not recurse
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	var p plain
+	if err := dec.Decode(&p); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return err
+	}
+	*in = TodoInput(p)
+	in.StartOmitted = true
+	for k := range fields {
+		// encoding/json matches field names case-insensitively.
+		if strings.EqualFold(k, "start") {
+			in.StartOmitted = false
+		}
+	}
+	return nil
 }
 
 // MaxChecklistItems bounds the checklist length.

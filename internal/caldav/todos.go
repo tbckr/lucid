@@ -144,7 +144,13 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if c == nil {
 		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
-	if !sameDates(todoFromComponent(calObject{path: objPath}, "", c), in) {
+	cur := todoFromComponent(calObject{path: objPath}, "", c)
+	// Keep DTSTART for clients that predate `start`, and for recurring todos:
+	// RFC 5545 requires DTSTART with RRULE (FR-16).
+	if in.StartOmitted || (in.Start == nil && c.Props.Get(ical.PropRecurrenceRule) != nil) {
+		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
+	}
+	if !sameDates(cur, in) {
 		if err := in.ValidateDates(); err != nil {
 			return domain.Todo{}, err
 		}

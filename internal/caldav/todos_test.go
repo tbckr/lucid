@@ -391,3 +391,52 @@ func TestUpdateTodoAcceptsUnchangedForeignDates(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateTodoKeepsStart(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		in    func(f domain.Todo) domain.TodoInput
+		keeps string
+	}{
+		{
+			// A client that predates `start` omits it.
+			name:  "omitted",
+			lines: []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE:20250312T170000Z"},
+			in: func(f domain.Todo) domain.TodoInput {
+				return domain.TodoInput{Title: f.Title, Due: f.Due, StartOmitted: true, Status: domain.TodoCompleted}
+			},
+			keeps: "DTSTART;TZID=Europe/Berlin:20250310T090000",
+		},
+		{
+			// RFC 5545 requires DTSTART with RRULE.
+			name:  "recurring",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			in: func(f domain.Todo) domain.TodoInput {
+				return domain.TodoInput{Title: f.Title}
+			},
+			keeps: "DTSTART:20250310T090000Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			ctx := t.Context()
+			lines := append([]string{"BEGIN:VTODO", "UID:k", "DTSTAMP:20240101T000000Z", "SUMMARY:Keep"}, tc.lines...)
+			id := e.put(t, "tasks", "k.ics", append(lines, "END:VTODO")...)
+			todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+			mustNoErr(t, err)
+			f := todos[0]
+			got, err := e.svc.UpdateTodo(ctx, id, f.ETag, tc.in(f))
+			mustNoErr(t, err)
+			if !sameTime(got.Start, f.Start) || got.StartAllDay != f.StartAllDay {
+				t.Errorf("start = %v; want %v", got.Start, f.Start)
+			}
+			objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+			if data, _ := e.mock.Object(objPath); !strings.Contains(data, tc.keeps) {
+				t.Errorf("stored todo lacks %q:\n%s", tc.keeps, data)
+			}
+		})
+	}
+}

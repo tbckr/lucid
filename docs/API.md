@@ -163,6 +163,11 @@ Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDa
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 
+The body replaces the todo's fields, with one exception for `start`: a body
+without `start` keeps the stored `DTSTART` (clients that predate the field),
+and `null` removes it unless the todo recurs (`RRULE`), which keeps its
+`DTSTART` as RFC 5545 requires.
+
 Setting `status` to `COMPLETED` sets `completed`; any other status clears it.
 
 ### `DELETE /api/v1/todos/{todoId}` (header `If-Match`) → `204`
