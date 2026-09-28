@@ -168,8 +168,10 @@
     "yesterday": "Gestern",
     "progress": "{{done}} von {{total}} Checklistenpunkten erledigt",
     "edit": "Aufgabe bearbeiten",
-    "editDescription": "Titel, Fälligkeit, Priorität und Checkliste der Aufgabe.",
+    "editDescription": "Titel, Beginn, Fälligkeit, Priorität und Checkliste der Aufgabe.",
     "titleLabel": "Titel",
+    "start": "Beginn",
+    "startTime": "Beginn um",
     "due": "Fällig am",
     "dueTime": "Uhrzeit",
     "priority": "Priorität",
@@ -246,6 +248,8 @@
     "titleRequired": "Gib einen Titel ein.",
     "itemRequired": "Checklistenpunkte dürfen nicht leer sein.",
     "tooManyItems": "Eine Checkliste darf höchstens 200 Punkte enthalten.",
-    "dateForTime": "Wähle ein Datum für diese Uhrzeit."
+    "dateForTime": "Wähle ein Datum für diese Uhrzeit.",
+    "startDueType": "Gib beiden Daten eine Uhrzeit oder keinem.",
+    "startAfterDue": "Der Beginn kann nicht nach der Fälligkeit liegen."
   }
 }

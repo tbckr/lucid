@@ -90,6 +90,8 @@ export function todoToInput(todo: Todo, patch: Partial<TodoInput> = {}): TodoInp
     title: todo.title,
     description: todo.description,
     checklist: todo.checklist,
+    start: todo.start ?? null,
+    startAllDay: todo.startAllDay,
     due: todo.due ?? null,
     dueAllDay: todo.dueAllDay,
     priority: todo.priority,

@@ -29,6 +29,8 @@ export function todo(p: Partial<Todo> = {}): Todo {
     title: 'Task',
     description: '',
     checklist: [],
+    start: null,
+    startAllDay: false,
     due: null,
     dueAllDay: false,
     priority: 0,

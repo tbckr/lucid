@@ -123,11 +123,18 @@ describe('status', () => {
       title: 'Task',
       description: '',
       checklist: [],
+      start: null,
+      startAllDay: false,
       due: '2026-09-25T00:00:00Z',
       dueAllDay: true,
       priority: 3,
       status: 'COMPLETED',
     })
     expect(todoToInput(todo()).due).toBeNull()
+  })
+
+  it('keeps the start date in the input', () => {
+    const t = todo({ start: '2026-09-25T07:00:00Z', startAllDay: false })
+    expect(todoToInput(t)).toMatchObject({ start: '2026-09-25T07:00:00Z', startAllDay: false })
   })
 })

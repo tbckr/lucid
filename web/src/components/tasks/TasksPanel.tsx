@@ -141,6 +141,8 @@ function AddTask({ calendars }: { calendars: Calendar[] }) {
           title: text,
           description: '',
           checklist: [],
+          start: null,
+          startAllDay: false,
           due: null,
           dueAllDay: false,
           priority: 0,

@@ -81,7 +81,7 @@ describe('endpoints', () => {
     const list = await api.listTodos('c1')
     expect(list.todos).toHaveLength(1)
     expect(list.corrupted).toHaveLength(1)
-    const input = { title: 'x', description: '', checklist: [], due: null, dueAllDay: false, priority: 0, status: 'NEEDS-ACTION' as const }
+    const input = { title: 'x', description: '', checklist: [], start: null, startAllDay: false, due: null, dueAllDay: false, priority: 0, status: 'NEEDS-ACTION' as const }
     await api.createTodo('c1', input)
     await api.updateTodo('t1', '"1"', input)
     await api.deleteTodo('t1', '"1"')

@@ -27,7 +27,7 @@ import { useUi } from '@/stores/ui'
 
 const LEVELS: PriorityLevel[] = ['none', 'high', 'medium', 'low']
 
-/** Edit a task: title, notes, due date, priority, checklist (FR-13, FR-14). */
+/** Edit a task: title, notes, start and due date, priority, checklist (FR-13, FR-14, FR-16). */
 export function TaskEditorDialog() {
   const todo = useUi((s) => s.taskEditor)
   const open = useUi((s) => s.openTaskEditor)
@@ -70,6 +70,7 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
   })
   const { register, control, handleSubmit, formState } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
+  const startDate = useWatch({ control, name: 'startDate' })
   const dueDate = useWatch({ control, name: 'dueDate' })
 
   const onSubmit = handleSubmit((values) => {
@@ -97,6 +98,25 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
           <Input id={`${id}-title`} autoComplete="off" aria-invalid={formState.errors.title ? true : undefined} {...register('title')} />
           {formState.errors.title && <p className="text-sm text-destructive">{msg(formState.errors.title.message)}</p>}
         </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${id}-start`}>{t('tasks.start')}</Label>
+            <Input id={`${id}-start`} type="date" className="tabular w-[10.5rem]" {...register('startDate')} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${id}-start-time`}>{t('tasks.startTime')}</Label>
+            <Input
+              id={`${id}-start-time`}
+              type="time"
+              step={300}
+              className="tabular w-[8rem]"
+              disabled={!startDate}
+              {...register('startTime')}
+            />
+          </div>
+        </div>
+        {formState.errors.startDate && <p className="-mt-3 text-sm text-destructive">{msg(formState.errors.startDate.message)}</p>}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1.5">

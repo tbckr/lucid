@@ -83,6 +83,8 @@ export const todoSchema = z.object({
   title: z.string(),
   description: z.string().optional().default(''),
   checklist: z.array(checklistItemSchema).nullish().transform((v) => v ?? []),
+  start: isoDateTime.nullish(),
+  startAllDay: z.boolean().optional().default(false),
   due: isoDateTime.nullish(),
   dueAllDay: z.boolean().optional().default(false),
   priority: z.number().int().min(0).max(9),
@@ -114,6 +116,8 @@ export interface TodoInput {
   title: string
   description: string
   checklist: ChecklistItem[]
+  start: string | null
+  startAllDay: boolean
   due: string | null
   dueAllDay: boolean
   priority: number

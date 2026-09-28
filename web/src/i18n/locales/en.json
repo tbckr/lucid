@@ -168,8 +168,10 @@
     "yesterday": "Yesterday",
     "progress": "{{done}} of {{total}} checklist items done",
     "edit": "Edit task",
-    "editDescription": "Title, due date, priority and checklist of the task.",
+    "editDescription": "Title, start and due date, priority and checklist of the task.",
     "titleLabel": "Title",
+    "start": "Start date",
+    "startTime": "Start time",
     "due": "Due date",
     "dueTime": "Time",
     "priority": "Priority",
@@ -246,6 +248,8 @@
     "titleRequired": "Enter a title.",
     "itemRequired": "Checklist items can't be empty.",
     "tooManyItems": "A checklist can hold at most 200 items.",
-    "dateForTime": "Choose a date for this time."
+    "dateForTime": "Choose a date for this time.",
+    "startDueType": "Give both dates a time, or neither.",
+    "startAfterDue": "The start can't be after the due date."
   }
 }
