@@ -59,4 +59,30 @@ describe('useCalendarTasks', () => {
       expect(result.current.map((x) => x.key)).toEqual(['task:t-a'])
     })
   })
+
+  it('keeps tasks within the range of todo calendars only', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/calendars')) {
+        return Promise.resolve(
+          jsonResponse(200, { calendars: [calendar({ id: 'a' }), calendar({ id: 'e', supportsTodos: false })] }),
+        )
+      }
+      const todos = [
+        todo({ id: 'in', calendarId: 'a', due: '2026-09-25T08:00:00Z' }),
+        todo({ id: 'later', calendarId: 'a', due: '2026-10-10T08:00:00Z' }),
+        todo({ id: 'undated', calendarId: 'a' }),
+      ]
+      return Promise.resolve(jsonResponse(200, { todos, corrupted: [] }))
+    })
+    const range = { start: new Date(2026, 8, 20), end: new Date(2026, 8, 27) }
+
+    const { result } = renderHook(() => useCalendarTasks(range), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.map((x) => x.key)).toEqual(['task:in'])
+    })
+    expect(fetch.mock.calls.map(([u]) => urlOf(u))).not.toContain('/api/v1/calendars/e/todos')
+  })
 })
+

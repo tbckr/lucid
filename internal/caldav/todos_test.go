@@ -249,6 +249,12 @@ func TestListTodosReadsStart(t *testing.T) {
 			start: ptr(date(2025, 3, 10, 8, 0)), due: ptr(date(2025, 3, 10, 9, 30)),
 		},
 		{
+			// Nominal days keep the wall-clock time across the DST change (30 Mar 2025).
+			name:  "tzid duration across dst",
+			lines: []string{"DTSTART;TZID=Europe/Berlin:20250329T090000", "DURATION:P1D"},
+			start: ptr(date(2025, 3, 29, 8, 0)), due: ptr(date(2025, 3, 30, 7, 0)),
+		},
+		{
 			name:  "date duration",
 			lines: []string{"DTSTART;VALUE=DATE:20250310", "DURATION:P2D"},
 			start: ptr(date(2025, 3, 10, 0, 0)), startAllDay: true, due: ptr(date(2025, 3, 12, 0, 0)), dueAllDay: true,
