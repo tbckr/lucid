@@ -134,6 +134,35 @@ export function formatEventSpan(e: CalEvent, p: FormatPrefs, allDayLabel: string
   return `${format(e.startsAt, `PP, ${t}`, { locale: p.locale })} – ${format(e.endsAt, `PP, ${t}`, { locale: p.locale })}`
 }
 
+/**
+ * Day and time of an event as one range in the app's date format, e.g.
+ * "Fri, Mar 13, 2:00 – 4:00 PM"; all-day events show only their days. With
+ * `timeZone`, the times are the ones in that zone.
+ */
+export function formatEventWhen(
+  e: Pick<CalEvent, 'allDay' | 'startsAt' | 'endsAt'>,
+  p: FormatPrefs,
+  now: Date,
+  timeZone?: string,
+): string {
+  const end = e.allDay ? new Date(e.endsAt.getTime() - 1) : e.endsAt
+  const otherYear = e.startsAt.getFullYear() !== now.getFullYear() || end.getFullYear() !== now.getFullYear()
+  return intlRange(e.startsAt, end, p.tag, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    ...(otherYear ? { year: 'numeric' } : {}),
+    ...(e.allDay
+      ? {}
+      : {
+          hour: 'numeric',
+          minute: '2-digit',
+          hourCycle: p.hourCycle === '12h' ? 'h12' : 'h23',
+          timeZone,
+        }),
+  })
+}
+
 /** Length of an event: wall-clock minutes for timed events, days for all-day ones. */
 export type Duration = { minutes: number } | { days: number }
 

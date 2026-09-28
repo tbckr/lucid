@@ -76,6 +76,16 @@ describe('EventEditorDialog', () => {
     ])
   })
 
+  it.each([
+    ['FREQ=WEEKLY;BYDAY=MO,TH', 'Every week on Monday and Thursday'],
+    ['FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO', 'FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO'],
+  ])('puts a custom rule into words where it can (%s)', async (rrule, text) => {
+    const event = toCalEvent(apiEvent({ recurring: true, rrule }))
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Custom rule')
+    expect(within(dialog).getByTitle(rrule)).toHaveTextContent(text)
+  })
+
   it('shows the series notice up front and the calendar as fixed when editing a series', async () => {
     const event = toCalEvent(apiEvent({ title: 'Gym', recurring: true, rrule: 'FREQ=WEEKLY' }))
     const { dialog } = await openEditor({ mode: 'edit', event })

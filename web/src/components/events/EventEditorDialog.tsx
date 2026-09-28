@@ -1,5 +1,4 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { format } from 'date-fns'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
 import { useId, useMemo } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
@@ -34,9 +33,9 @@ import {
   shiftEnd,
   type EventFormValues,
 } from '@/lib/eventForm'
-import { formatDuration, formatMonthDay } from '@/lib/format'
+import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
-import { RECURRENCE_PRESETS } from '@/lib/rrule'
+import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
@@ -138,19 +137,10 @@ function EditorForm({
     return m ? t(m as 'validation.date') : undefined
   }
 
-  // The presets repeat on the start's weekday or date (FREQ only); say which.
-  const presetLabel = (r: (typeof RECURRENCE_PRESETS)[number]) => {
-    switch (r) {
-      case 'weekly':
-        return t('recurrence.weeklyOn', { weekday: format(start, 'EEEE', { locale: prefs.locale }) })
-      case 'monthly':
-        return t('recurrence.monthlyOn', { day: start.getDate() })
-      case 'yearly':
-        return t('recurrence.yearlyOn', { date: formatMonthDay(start, prefs) })
-      default:
-        return t(`recurrence.${r}`)
-    }
-  }
+  // The presets repeat on the start's weekday or date (FREQ only); say which. A custom rule
+  // reads the same way where it can.
+  const repeatText = (rule: string) => describeRRule(rule, start, prefs, now, t)
+  const customRule = recurrence === 'custom' ? getValues('customRule') : ''
 
   if (calendars.length === 0 && !event) {
     return (
@@ -348,7 +338,7 @@ function EditorForm({
                 <SelectContent>
                   {RECURRENCE_PRESETS.map((r) => (
                     <SelectItem key={r} value={r}>
-                      {presetLabel(r)}
+                      {repeatText(buildRRule(r))}
                     </SelectItem>
                   ))}
                   {recurrence === 'custom' && <SelectItem value="custom">{t('recurrence.custom')}</SelectItem>}
@@ -356,9 +346,9 @@ function EditorForm({
               </Select>
             )}
           />
-          {recurrence === 'custom' && (
-            <p className="truncate pt-1 text-xs text-muted-foreground" title={getValues('customRule')}>
-              {getValues('customRule')}
+          {customRule && (
+            <p className="truncate pt-1 text-xs text-muted-foreground" title={customRule}>
+              {repeatText(customRule) ?? customRule}
             </p>
           )}
         </EditorRow>

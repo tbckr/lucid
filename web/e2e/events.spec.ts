@@ -39,8 +39,9 @@ test('create, edit and delete an event', async ({ page }) => {
 
   // Delete.
   await renamedChip.click()
-  await page.getByRole('dialog', { name: renamed }).getByRole('button', { name: 'Delete event' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete event' }).click()
+  const renamedDetails = page.getByRole('dialog', { name: renamed })
+  await renamedDetails.getByRole('button', { name: 'Delete event' }).click()
+  await renamedDetails.getByRole('alert').getByRole('button', { name: 'Delete event' }).click()
   await expect(main.locator('[data-event-key]', { hasText: renamed })).toHaveCount(0)
 
   // Still gone after a reload (server state, not just the cache).
@@ -80,8 +81,9 @@ async function createAt(page: Page, hour: string, title: string): Promise<Locato
 
 async function deleteEvent(page: Page, block: Locator, title: string): Promise<void> {
   await block.click()
-  await page.getByRole('dialog', { name: title }).getByRole('button', { name: 'Delete event' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete event' }).click()
+  const details = page.getByRole('dialog', { name: title })
+  await details.getByRole('button', { name: 'Delete event' }).click()
+  await details.getByRole('alert').getByRole('button', { name: 'Delete event' }).click()
   await expect(block).toHaveCount(0)
 }
 
