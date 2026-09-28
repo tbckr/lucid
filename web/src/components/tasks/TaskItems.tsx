@@ -201,52 +201,7 @@ export function TaskBlock({
       className={cn('absolute px-px', done && 'opacity-60')}
       style={{ ...style, color: colors.onTint }}
     >
-      <div
-        className={cn(
-          'relative flex size-full min-h-0 overflow-hidden rounded-md border-l-[3px] px-1.5 text-xs',
-          compact ? 'items-center gap-1 py-0' : 'items-start gap-1.5 py-1',
-        )}
-        style={{ backgroundColor: colors.tint, borderLeftColor: colors.solid }}
-      >
-        <TaskCheck
-          title={title}
-          done={done}
-          readOnly={readOnly}
-          onToggle={toggle}
-          color={colors.solid}
-          mark={colors.onSolid}
-          className={compact ? undefined : 'mt-px'}
-        />
-        <button
-          type="button"
-          onClick={open}
-          aria-label={titleLabel(t, task, title, prefs)}
-          className={cn(
-            'flex min-w-0 flex-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            compact ? 'flex-row items-center gap-1' : 'flex-col',
-          )}
-        >
-          <span className={cn('truncate font-semibold', done && 'line-through')}>{title}</span>
-          <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/** Task row in the agenda: time, checkbox, title. */
-export function TaskAgendaRow({ task, time, colors, readOnly }: Omit<TaskItemProps, 'prefs'> & { time: string }) {
-  const { t, title, done, toggle, open } = useTaskItem(task)
-  return (
-    <div
-      data-task-key={task.key}
-      data-calendar-id={task.calendarId}
-      className={cn(
-        'grid w-full grid-cols-[8.5rem_0.75rem_1fr] items-center gap-3 rounded-md px-2 py-2.5 text-sm hover:bg-muted max-sm:grid-cols-[6rem_0.75rem_1fr]',
-        done && 'opacity-60',
-      )}
-    >
-      <span className="tabular truncate text-muted-foreground">{time}</span>
+      {/* The whole block opens the task; the checkbox sits on top of it, left of the text. */}
       <TaskCheck
         title={title}
         done={done}
@@ -254,15 +209,52 @@ export function TaskAgendaRow({ task, time, colors, readOnly }: Omit<TaskItemPro
         onToggle={toggle}
         color={colors.solid}
         mark={colors.onSolid}
-        className="justify-self-center"
+        className={cn('absolute left-2.5 z-10', compact ? 'top-1/2 -translate-y-1/2' : 'top-[5px]')}
+      />
+      <button
+        type="button"
+        onClick={open}
+        aria-label={titleLabel(t, task, title, prefs)}
+        className={cn(
+          'flex size-full min-h-0 overflow-hidden rounded-md border-l-[3px] pr-1.5 pl-[1.625rem] text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
+          compact ? 'flex-row items-center gap-1 py-0' : 'flex-col py-1',
+        )}
+        style={{ backgroundColor: colors.tint, borderLeftColor: colors.solid }}
+      >
+        <span className={cn('truncate font-semibold', done && 'line-through')}>{title}</span>
+        <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Task row in the agenda: time, checkbox, title. The button spans the row with
+ * the same columns as event rows; the checkbox sits on top of the middle one.
+ */
+export function TaskAgendaRow({ task, time, colors, readOnly }: Omit<TaskItemProps, 'prefs'> & { time: string }) {
+  const { t, title, done, toggle, open } = useTaskItem(task)
+  return (
+    <div data-task-key={task.key} data-calendar-id={task.calendarId} className={cn('relative', done && 'opacity-60')}>
+      <TaskCheck
+        title={title}
+        done={done}
+        readOnly={readOnly}
+        onToggle={toggle}
+        color={colors.solid}
+        mark={colors.onSolid}
+        // Centre of the middle column: padding + first column + gap + half the column.
+        className="absolute top-1/2 left-[10.125rem] z-10 -translate-x-1/2 -translate-y-1/2 max-sm:left-[7.625rem]"
       />
       <button
         type="button"
         onClick={open}
         aria-label={task.allDay ? t('event.allDayLabel', { title }) : t('event.chipLabel', { title, time })}
-        className="min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="grid w-full grid-cols-[8.5rem_0.75rem_1fr] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-sm:grid-cols-[6rem_0.75rem_1fr]"
       >
-        <span className={cn('block truncate font-medium', done && 'line-through')}>{title}</span>
+        <span className="tabular truncate text-muted-foreground">{time}</span>
+        <span />
+        <span className={cn('truncate font-medium', done && 'line-through')}>{title}</span>
       </button>
     </div>
   )

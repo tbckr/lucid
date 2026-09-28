@@ -94,4 +94,24 @@ describe('task items', () => {
     )
     expect(container.querySelector('[data-task-key="task:t1"][data-calendar-id="c9"]')).not.toBeNull()
   })
+
+  it('opens the editor from anywhere on a grid block', async () => {
+    const t = task({ start: '2026-09-25T07:00:00Z' })
+    const user = userEvent.setup()
+    renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />)
+    // The tinted surface the user sees is the button itself, not a wrapper around it.
+    const surface = screen.getByRole('button', { name: /Pay rent/ })
+    expect(surface).toHaveStyle({ backgroundColor: colors.tint })
+    await user.click(surface)
+    expect(useUi.getState().taskEditor).toBe(t.todo)
+  })
+
+  it('opens the editor from the agenda time', async () => {
+    const t = task()
+    const user = userEvent.setup()
+    renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} readOnly={false} />)
+    await user.click(screen.getByText('10 AM'))
+    expect(useUi.getState().taskEditor).toBe(t.todo)
+  })
 })
+
