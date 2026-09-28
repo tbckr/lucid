@@ -148,8 +148,12 @@ test('moving an event with the keyboard shows and announces the target time', as
   // Space picks the event up; each arrow key moves it by 15 minutes (NFR-27).
   await block.focus()
   await page.keyboard.press('Space')
-  // The sensor listens for arrow keys only after the pick-up has settled.
   await expect(page.getByRole('status').filter({ hasText: `Picked up ${title}.` })).toHaveCount(1)
+  // dnd-kit's sensor listens for keys only from a timer queued at the pick-up; until then,
+  // arrow keys scroll the grid, which moves the event by 40 px each. The announcement does
+  // not wait for that timer, and a busy browser runs input before timers. Timers run in
+  // order, so once one queued now has fired, the sensor listens.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)))
   for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown')
   await expect(block.filter({ hasText: '2 PM – 3 PM' })).toHaveCount(1)
   await expect(page.getByRole('status').filter({ hasText: /^New time: .*, 2:00 PM – 3:00 PM\.$/ })).toHaveCount(1)
