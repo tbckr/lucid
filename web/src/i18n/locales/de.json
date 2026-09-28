@@ -231,7 +231,9 @@
     "24h": "24 Stunden (13:00)",
     "themeSystem": "Wie System",
     "themeLight": "Hell",
-    "themeDark": "Dunkel"
+    "themeDark": "Dunkel",
+    "completedTasks": "Erledigte Aufgaben",
+    "hideInCalendar": "Im Kalender ausblenden"
   },
   "weekdays": {
     "monday": "Montag",

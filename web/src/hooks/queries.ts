@@ -16,6 +16,7 @@ import { toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
+import { isDone } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
 export const queryKeys = {
@@ -136,11 +137,12 @@ function combineCalendarTasks(results: { data?: TodoList | undefined }[]): CalTa
 
 /**
  * Tasks of visible todo calendars as calendar entries within `range` (FR-05,
- * FR-16). Shares its queries with `useTodos`, so the task list and the views
- * update together.
+ * FR-16), without done ones if the user hides them there. Shares its queries
+ * with `useTodos`, so the task list and the views update together.
  */
 export function useCalendarTasks(range: DateRange): CalTask[] {
   const { visible } = useVisibleCalendars()
+  const hideCompleted = useSettings((s) => s.hideCompletedInCalendar)
   const todoCalendars = visible.filter((c) => c.supportsTodos)
   const tasks = useQueries({
     queries: todoCalendars.map((c) => ({
@@ -149,7 +151,10 @@ export function useCalendarTasks(range: DateRange): CalTask[] {
     })),
     combine: combineCalendarTasks,
   })
-  return useMemo(() => tasks.filter((t) => overlapsRange(t, range)), [tasks, range])
+  return useMemo(
+    () => tasks.filter((t) => (!hideCompleted || !isDone(t.todo)) && overlapsRange(t, range)),
+    [tasks, range, hideCompleted],
+  )
 }
 
 /* ------------------------------------------------------------------------ */

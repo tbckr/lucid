@@ -17,6 +17,8 @@ export interface SettingsState {
   /** Calendar IDs hidden in the sidebar (FR-05). */
   hiddenCalendars: string[]
   hideCompletedTasks: boolean
+  /** Hide completed and cancelled tasks in the calendar views, independent of the task panel (FR-16). */
+  hideCompletedInCalendar: boolean
   /** Calendar ID of the list shown in the task panel; the first list if empty or gone (FR-12). */
   taskList: string
   tasksOpen: boolean
@@ -35,6 +37,7 @@ export const defaultSettings = {
   theme: 'system',
   hiddenCalendars: [],
   hideCompletedTasks: false,
+  hideCompletedInCalendar: false,
   taskList: '',
   tasksOpen: true,
   lastServerUrl: '',

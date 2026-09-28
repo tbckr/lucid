@@ -4,6 +4,7 @@ import { AppVersion } from '@/components/AppVersion'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { VIEWS, type ViewKind } from '@/lib/dates'
 import { formattingTag } from '@/hooks/usePrefs'
 import { browserLocale, detectHourCycle, detectWeekStart, pickLanguage } from '@/lib/locale'
@@ -137,6 +138,21 @@ export function SettingsDialog() {
                 <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
               </SelectContent>
             </Select>
+          </Field>
+
+          <Field id={`${id}-completed`} label={t('settings.completedTasks')}>
+            <div className="flex items-center gap-2">
+              <Switch
+                id={`${id}-completed`}
+                checked={settings.hideCompletedInCalendar}
+                onCheckedChange={(v) => {
+                  settings.update({ hideCompletedInCalendar: v })
+                }}
+              />
+              <Label htmlFor={`${id}-completed`} className="font-normal">
+                {t('settings.hideInCalendar')}
+              </Label>
+            </div>
           </Field>
         </div>
         <AppVersion className="border-t pt-4" />

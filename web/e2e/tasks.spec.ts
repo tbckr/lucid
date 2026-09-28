@@ -46,6 +46,31 @@ test('complete a task in the month view', async ({ page }) => {
   await expect(inGrid).toHaveAttribute('aria-checked', 'false')
 })
 
+test('a completed task leaves the calendar when completed tasks are hidden there', async ({ page }) => {
+  await login(page)
+  const inGrid = monthGrid(page).locator('[data-task-key]').getByRole('checkbox').first()
+  await expect(inGrid).toBeVisible()
+  const name = (await inGrid.getAttribute('aria-label')) ?? ''
+  const task = monthGrid(page).getByRole('checkbox', { name, exact: true })
+
+  await page.getByRole('button', { name: 'Settings' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Settings' })
+  const hide = dialog.getByRole('switch', { name: /Hide in calendar/ })
+  await hide.click()
+  await expect(hide).toHaveAttribute('aria-checked', 'true')
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(task).toBeVisible()
+
+  await task.click()
+  await expect(task).toHaveCount(0)
+  const inList = taskList(page).getByRole('checkbox', { name, exact: true })
+  await expect(inList).toHaveAttribute('aria-checked', 'true')
+
+  // Reopened tasks come back; this also restores the seed state for other runs.
+  await inList.click()
+  await expect(task).toHaveAttribute('aria-checked', 'false')
+})
+
 test('hiding a task calendar in the sidebar keeps its tasks', async ({ page }) => {
   await login(page)
   const tasks = await calendarId(page, 'Tasks')

@@ -231,7 +231,9 @@
     "24h": "24-hour (13:00)",
     "themeSystem": "Match system",
     "themeLight": "Light",
-    "themeDark": "Dark"
+    "themeDark": "Dark",
+    "completedTasks": "Completed tasks",
+    "hideInCalendar": "Hide in calendar"
   },
   "weekdays": {
     "monday": "Monday",
