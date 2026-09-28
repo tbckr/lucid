@@ -5,11 +5,12 @@ import { useTranslation } from 'react-i18next'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, EventChip } from '@/components/events/EventItems'
+import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
 import { dayKey, monthGrid } from '@/lib/dates'
 import { type DropData } from '@/lib/dnd'
-import { type CalEvent } from '@/lib/events'
+import { type CalItem } from '@/lib/events'
 import { weekdayNames, type FormatPrefs } from '@/lib/format'
 import { cellCapacity, layoutWeekRow, type CellLayout, type WeekRowLayout } from '@/lib/layout'
 import { cn } from '@/lib/utils'
@@ -23,7 +24,7 @@ const ROW_PX = 22
 interface Props {
   date: Date
   now: Date
-  events: CalEvent[]
+  events: CalItem[]
   corrupted: CorruptedItem[]
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
@@ -180,7 +181,7 @@ function WeekRow({
   labelFor,
 }: {
   rowRef: React.Ref<HTMLDivElement> | undefined
-  layout: WeekRowLayout<CalEvent>
+  layout: WeekRowLayout
   date: Date
   now: Date
   prefs: FormatPrefs
@@ -238,8 +239,8 @@ function DayCell({
   label,
 }: {
   day: Date
-  cell: CellLayout<CalEvent>
-  bars: WeekRowLayout<CalEvent>['bars']
+  cell: CellLayout
+  bars: WeekRowLayout['bars']
   inMonth: boolean
   isToday: boolean
   prefs: FormatPrefs
@@ -301,47 +302,71 @@ function DayCell({
         </button>
       </div>
 
-      {bars.map((b) => (
-        <EventBoundary key={`${b.event.key}:${b.startCol}`} className="absolute inset-x-1">
-          <EventBar
-            event={b.event}
-            colors={colorsOf(b.event.calendarId)}
-            prefs={prefs}
-            continuesBefore={b.continuesBefore}
-            continuesAfter={b.continuesAfter}
-            drag={{
-              id: `bar:${b.event.key}:${key}`,
-              data: { type: 'event', event: b.event, originDay: day },
-              disabled: readOnly(b.event.calendarId),
-            }}
-            className="absolute z-10"
-            style={{
-              top: 30 + b.lane * 22,
-              left: 4,
-              width: `calc(${b.span * 100}% + ${b.span - 1}px - 8px)`,
-            }}
-          />
-        </EventBoundary>
-      ))}
+      {bars.map((b) => {
+        const e = b.event
+        const style = { top: 30 + b.lane * 22, left: 4, width: `calc(${b.span * 100}% + ${b.span - 1}px - 8px)` }
+        return (
+          <EventBoundary key={`${e.key}:${b.startCol}`} className="absolute inset-x-1">
+            {e.kind === 'task' ? (
+              <TaskBar
+                task={e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                readOnly={readOnly(e.calendarId)}
+                continuesBefore={b.continuesBefore}
+                continuesAfter={b.continuesAfter}
+                className="absolute z-10"
+                style={style}
+              />
+            ) : (
+              <EventBar
+                event={e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                continuesBefore={b.continuesBefore}
+                continuesAfter={b.continuesAfter}
+                drag={{
+                  id: `bar:${e.key}:${key}`,
+                  data: { type: 'event', event: e, originDay: day },
+                  disabled: readOnly(e.calendarId),
+                }}
+                className="absolute z-10"
+                style={style}
+              />
+            )}
+          </EventBoundary>
+        )
+      })}
 
       <div className="flex flex-col gap-0.5 px-1" style={{ paddingTop: cell.barRows * 22 }}>
         {cell.singles.map((e) => (
           <EventBoundary key={e.key}>
-            <EventChip
-              event={e}
-              colors={colorsOf(e.calendarId)}
-              prefs={prefs}
-              drag={{
-                id: `chip:${e.key}:${key}`,
-                data: { type: 'event', event: e, originDay: day },
-                disabled: readOnly(e.calendarId),
-              }}
-            />
+            {e.kind === 'task' ? (
+              <TaskChip task={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} />
+            ) : (
+              <EventChip
+                event={e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                drag={{
+                  id: `chip:${e.key}:${key}`,
+                  data: { type: 'event', event: e, originDay: day },
+                  disabled: readOnly(e.calendarId),
+                }}
+              />
+            )}
           </EventBoundary>
         ))}
         {corrupted.length > 0 && <CorruptedEvent reason={corrupted.map((c) => c.reason).join('\n')} />}
         {cell.hidden > 0 && (
-          <MoreEventsPopover day={day} events={cell.all} hidden={cell.hidden} prefs={prefs} colorsOf={colorsOf} />
+          <MoreEventsPopover
+            day={day}
+            events={cell.all}
+            hidden={cell.hidden}
+            prefs={prefs}
+            colorsOf={colorsOf}
+            readOnly={readOnly}
+          />
         )}
       </div>
     </div>

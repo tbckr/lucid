@@ -6,10 +6,11 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
+import { TaskAgendaRow } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
-import { type CorruptedItem } from '@/lib/api/schemas'
+import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
 import { eachDay, type DateRange } from '@/lib/dates'
-import { eventTitle, firstDay, lastDay, type CalEvent } from '@/lib/events'
+import { eventTitle, firstDay, lastDay, type CalItem } from '@/lib/events'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { agendaRows } from '@/lib/layout'
 import { cn } from '@/lib/utils'
@@ -19,14 +20,15 @@ import { defaultCreateTimes } from './createDefaults'
 interface Props {
   range: DateRange
   now: Date
-  events: CalEvent[]
+  events: CalItem[]
   corrupted: CorruptedItem[]
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
+  calendarOf: (calendarId: string) => Calendar | undefined
 }
 
-/** Virtualized list of upcoming events grouped by day (NFR-25). */
-export function AgendaView({ range, now, events, corrupted, prefs, colorsOf }: Props) {
+/** Virtualized list of upcoming events and tasks grouped by day (NFR-25, FR-16). */
+export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, calendarOf }: Props) {
   const { t } = useTranslation()
   const openDetail = useUi((s) => s.openDetail)
   const openEditor = useUi((s) => s.openEditor)
@@ -41,8 +43,9 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf }: P
     getItemKey: (i) => rows[i]?.key ?? i,
   })
 
-  const timeLabel = (e: CalEvent, day: Date): string => {
+  const timeLabel = (e: CalItem, day: Date): string => {
     if (e.allDay) return t('event.allDay')
+    if (e.kind === 'task' && e.point) return formatShortTime(e.startsAt, prefs)
     const starts = isSameDay(firstDay(e), day)
     const ends = isSameDay(lastDay(e), day)
     if (starts && ends) return `${formatShortTime(e.startsAt, prefs)} – ${formatShortTime(e.endsAt, prefs)}`
@@ -80,6 +83,8 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf }: P
         {virtualizer.getVirtualItems().map((item) => {
           const row = rows[item.index]
           if (!row) return null
+          const task = row.type === 'event' && row.event.kind === 'task' ? row.event : null
+          const event = row.type === 'event' && row.event.kind === 'event' ? row.event : null
           return (
             <li
               key={item.key}
@@ -102,38 +107,47 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf }: P
                     {format(row.day, 'EEEE, LLLL yyyy', { locale: prefs.locale })}
                   </span>
                 </h2>
-              ) : (
+              ) : task ? (
+                <EventBoundary>
+                  <TaskAgendaRow
+                    task={task}
+                    time={timeLabel(task, row.day)}
+                    colors={colorsOf(task.calendarId)}
+                    readOnly={calendarOf(task.calendarId)?.readOnly ?? true}
+                  />
+                </EventBoundary>
+              ) : event ? (
                 <EventBoundary>
                   <button
                     type="button"
-                    data-event-key={row.event.key}
-                    data-calendar-id={row.event.calendarId}
+                    data-event-key={event.key}
+                    data-calendar-id={event.calendarId}
                     onClick={(e) => {
-                      openDetail({ event: row.event, anchor: e.currentTarget })
+                      openDetail({ event, anchor: e.currentTarget })
                     }}
                     className="grid w-full grid-cols-[8.5rem_0.75rem_1fr] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-sm:grid-cols-[6rem_0.75rem_1fr]"
                   >
-                    <span className="tabular truncate text-muted-foreground">{timeLabel(row.event, row.day)}</span>
+                    <span className="tabular truncate text-muted-foreground">{timeLabel(event, row.day)}</span>
                     <span
                       className="size-3 rounded-full"
-                      style={{ backgroundColor: colorsOf(row.event.calendarId).solid }}
+                      style={{ backgroundColor: colorsOf(event.calendarId).solid }}
                       aria-hidden
                     />
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-medium">{eventTitle(row.event, t('event.untitled'))}</span>
-                      {row.event.recurring && (
+                      <span className="truncate font-medium">{eventTitle(event, t('event.untitled'))}</span>
+                      {event.recurring && (
                         <RepeatIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label={t('event.recurring')} />
                       )}
-                      {row.event.location && (
+                      {event.location && (
                         <span className="flex min-w-0 items-center gap-1 text-muted-foreground max-md:hidden">
                           <MapPinIcon className="size-3.5 shrink-0" aria-hidden />
-                          <span className="truncate">{row.event.location}</span>
+                          <span className="truncate">{event.location}</span>
                         </span>
                       )}
                     </span>
                   </button>
                 </EventBoundary>
-              )}
+              ) : null}
             </li>
           )
         })}

@@ -17,7 +17,7 @@ import { AgendaView } from '@/components/views/AgendaView'
 import { MonthView } from '@/components/views/MonthView'
 import { TimeGridView } from '@/components/views/TimeGridView'
 import { defaultCreateTimes } from '@/components/views/createDefaults'
-import { queryKeys, useEvents, useSession, useVisibleCalendars } from '@/hooks/queries'
+import { queryKeys, useCalendarTasks, useEvents, useSession, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useMediaQuery, WIDE_QUERY } from '@/hooks/useMediaQuery'
 import { useNow } from '@/hooks/useNow'
@@ -25,7 +25,7 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { useShortcuts } from '@/hooks/useShortcuts'
 import { endpoints } from '@/lib/api/endpoints'
 import { eachDay, stepDate, visibleRange } from '@/lib/dates'
-import { overlapsRange } from '@/lib/events'
+import { overlapsRange, type CalItem } from '@/lib/events'
 import { formatPeriodTitle } from '@/lib/format'
 import { navigate } from '@/lib/router'
 import { type ShortcutAction } from '@/lib/shortcuts'
@@ -54,6 +54,8 @@ export function CalendarPage() {
   const range = useMemo(() => visibleRange(view, date, prefs.weekStartsOn), [view, date, prefs.weekStartsOn])
   const { events: allEvents, corrupted, isFetching, errors } = useEvents(range)
   const events = useMemo(() => allEvents.filter((e) => overlapsRange(e, range)), [allEvents, range])
+  const tasks = useCalendarTasks(range)
+  const items = useMemo<CalItem[]>(() => [...events, ...tasks], [events, tasks])
   const colorsOf = useCalendarColors()
   const { byId } = useVisibleCalendars()
   const calendarOf = useCallback((id: string) => byId.get(id), [byId])
@@ -140,7 +142,7 @@ export function CalendarPage() {
           <MonthView
             date={date}
             now={now}
-            events={events}
+            events={items}
             corrupted={corrupted}
             prefs={prefs}
             colorsOf={colorsOf}
@@ -153,7 +155,7 @@ export function CalendarPage() {
           <TimeGridView
             days={eachDay(range)}
             now={now}
-            events={events}
+            events={items}
             corrupted={corrupted}
             prefs={prefs}
             colorsOf={colorsOf}
@@ -162,7 +164,15 @@ export function CalendarPage() {
         )
       case 'agenda':
         return (
-          <AgendaView range={range} now={now} events={events} corrupted={corrupted} prefs={prefs} colorsOf={colorsOf} />
+          <AgendaView
+            range={range}
+            now={now}
+            events={items}
+            corrupted={corrupted}
+            prefs={prefs}
+            colorsOf={colorsOf}
+            calendarOf={calendarOf}
+          />
         )
     }
   }

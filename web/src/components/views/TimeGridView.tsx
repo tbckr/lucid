@@ -7,11 +7,12 @@ import { useDndState } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
+import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
-import { type CalEvent } from '@/lib/events'
+import { type CalItem } from '@/lib/events'
 import { formatHour, formatShortTime, type FormatPrefs } from '@/lib/format'
 import { layoutDay, layoutWeekRow, timedSegments } from '@/lib/layout'
 import { cn } from '@/lib/utils'
@@ -23,14 +24,14 @@ const ALL_DAY_ROWS = 3
 const DAY_MS = 24 * 3600 * 1000
 
 /** Events shown in the all-day row: all-day or at least 24 hours long. */
-function inAllDayRow(e: CalEvent): boolean {
+function inAllDayRow(e: CalItem): boolean {
   return e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= DAY_MS
 }
 
 interface Props {
   days: Date[]
   now: Date
-  events: CalEvent[]
+  events: CalItem[]
   corrupted: CorruptedItem[]
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
@@ -129,24 +130,41 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
           >
             {allDay.bars
               .filter((b) => b.startCol === c)
-              .map((b) => (
-                <EventBoundary key={b.event.key} className="absolute inset-x-1">
-                  <EventBar
-                    event={b.event}
-                    colors={colorsOf(b.event.calendarId)}
-                    prefs={prefs}
-                    continuesBefore={b.continuesBefore}
-                    continuesAfter={b.continuesAfter}
-                    drag={{
-                      id: `allday:${b.event.key}:${dayKey(d)}`,
-                      data: { type: 'event', event: b.event, originDay: d },
-                      disabled: readOnly(b.event.calendarId),
-                    }}
-                    className="absolute z-10"
-                    style={{ top: 3 + b.lane * 22, left: 2, width: `calc(${b.span * 100}% + ${b.span - 1}px - 4px)` }}
-                  />
-                </EventBoundary>
-              ))}
+              .map((b) => {
+                const e = b.event
+                const style = { top: 3 + b.lane * 22, left: 2, width: `calc(${b.span * 100}% + ${b.span - 1}px - 4px)` }
+                return (
+                  <EventBoundary key={e.key} className="absolute inset-x-1">
+                    {e.kind === 'task' ? (
+                      <TaskBar
+                        task={e}
+                        colors={colorsOf(e.calendarId)}
+                        prefs={prefs}
+                        readOnly={readOnly(e.calendarId)}
+                        continuesBefore={b.continuesBefore}
+                        continuesAfter={b.continuesAfter}
+                        className="absolute z-10"
+                        style={style}
+                      />
+                    ) : (
+                      <EventBar
+                        event={e}
+                        colors={colorsOf(e.calendarId)}
+                        prefs={prefs}
+                        continuesBefore={b.continuesBefore}
+                        continuesAfter={b.continuesAfter}
+                        drag={{
+                          id: `allday:${e.key}:${dayKey(d)}`,
+                          data: { type: 'event', event: e, originDay: d },
+                          disabled: readOnly(e.calendarId),
+                        }}
+                        className="absolute z-10"
+                        style={style}
+                      />
+                    )}
+                  </EventBoundary>
+                )
+              })}
             {hidden > 0 && (
               <button
                 type="button"
@@ -243,7 +261,7 @@ function DayColumn({
 }: {
   day: Date
   now: Date
-  events: CalEvent[]
+  events: CalItem[]
   corrupted: CorruptedItem[]
   prefs: FormatPrefs
   colorsOf: (id: string) => EventColors
@@ -278,7 +296,7 @@ function DayColumn({
 
       {positioned.map((p) => {
         const e = p.event
-        const resized = resize?.key === e.key ? resize : null
+        const resized = e.kind === 'event' && resize?.key === e.key ? resize : null
         // A segment continuing into the next day keeps its height; only the last one grows.
         const preview = resized && !p.clippedEnd ? (resized.endsAt.getTime() - e.endsAt.getTime()) / 60_000 : 0
         const top = p.startMin * PX_PER_MINUTE
@@ -286,18 +304,24 @@ function DayColumn({
         const width = (p.span / p.cols) * 100
         const left = (p.col / p.cols) * 100
         const ro = readOnly(e.calendarId)
+        const size = height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'
+        const style = { top, height, left: `${left}%`, width: `calc(${width}% - 4px)`, zIndex: 10 + p.col }
         return (
           <EventBoundary key={e.key} className="absolute inset-x-1">
-            <TimedBlock
-              event={resized ?? e}
-              colors={colorsOf(e.calendarId)}
-              prefs={prefs}
-              size={height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'}
-              drag={{ id: `timed:${e.key}:${dayKey(day)}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
-              style={{ top, height, left: `${left}%`, width: `calc(${width}% - 4px)`, zIndex: 10 + p.col }}
-            >
-              <ResizeHandle event={e} disabled={ro || p.clippedEnd} />
-            </TimedBlock>
+            {e.kind === 'task' ? (
+              <TaskBlock task={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={ro} size={size} style={style} />
+            ) : (
+              <TimedBlock
+                event={resized ?? e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                size={size}
+                drag={{ id: `timed:${e.key}:${dayKey(day)}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
+                style={style}
+              >
+                <ResizeHandle event={e} disabled={ro || p.clippedEnd} />
+              </TimedBlock>
+            )}
           </EventBoundary>
         )
       })}

@@ -12,9 +12,10 @@ import { toast } from 'sonner'
 import { isApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
 import { type Calendar, type CorruptedItem, type EventInput, type Todo, type TodoInput } from '@/lib/api/schemas'
+import { toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
-import { toCalEvent, type CalEvent } from '@/lib/events'
+import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { useSettings } from '@/stores/settings'
 
 export const queryKeys = {
@@ -126,6 +127,29 @@ export function useTodos(): TodosResult {
       isLoading: results.some((r) => r.isLoading),
     }),
   })
+}
+
+/** Calendar entries of the loaded todos; module-level so `useQueries` reruns it only on new data. */
+function combineCalendarTasks(results: { data?: TodoList | undefined }[]): CalTask[] {
+  return results.flatMap((r) => (r.data?.todos ?? []).map(toCalTask).filter((t) => t !== null))
+}
+
+/**
+ * Tasks of visible todo calendars as calendar entries within `range` (FR-05,
+ * FR-16). Shares its queries with `useTodos`, so the task list and the views
+ * update together.
+ */
+export function useCalendarTasks(range: DateRange): CalTask[] {
+  const { visible } = useVisibleCalendars()
+  const todoCalendars = visible.filter((c) => c.supportsTodos)
+  const tasks = useQueries({
+    queries: todoCalendars.map((c) => ({
+      queryKey: queryKeys.todos(c.id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.listTodos(c.id, signal),
+    })),
+    combine: combineCalendarTasks,
+  })
+  return useMemo(() => tasks.filter((t) => overlapsRange(t, range)), [tasks, range])
 }
 
 /* ------------------------------------------------------------------------ */

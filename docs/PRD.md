@@ -87,6 +87,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **FR-13:** Checklist support.
 * **FR-14:** Due Date & Priority.
 * **FR-15:** Status Update (COMPLETED).
+* **FR-16:** Tasks with a date are shown in the calendar views and can be completed there.
 
 ### **4.5 Extended iCal Features**
 

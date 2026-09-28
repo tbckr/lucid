@@ -1,11 +1,13 @@
 import { DndContext } from '@dnd-kit/core'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it } from 'vitest'
+import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
+import { type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
-import { calendar } from '@/test/fixtures'
+import { calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TimeGridView } from './TimeGridView'
 
@@ -13,13 +15,13 @@ const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekS
 const colors = eventColors('#3b82f6', false)
 const cal = calendar()
 
-function renderDay() {
+function renderDay(events: CalItem[] = []) {
   return renderWithProviders(
     <DndContext>
       <TimeGridView
         days={[new Date(2026, 8, 25)]}
         now={new Date(2026, 8, 25, 12)}
-        events={[]}
+        events={events}
         corrupted={[]}
         prefs={prefs}
         colorsOf={() => colors}
@@ -97,5 +99,19 @@ describe('TimeGridView', () => {
     fireEvent.pointerUp(slot, { pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 64 })
     fireEvent.click(slot, { clientY: 64 })
     expect(useUi.getState().editor).toBeNull()
+  })
+
+  it('renders a point task in the grid', () => {
+    const { container } = renderDay([toCalTask(todo({ id: 't1', title: 'Call', due: '2026-09-25T08:00:00Z' }))!])
+    const block = container.querySelector('[data-task-key="task:t1"]')
+    expect(block).not.toBeNull()
+    expect(within(block as HTMLElement).getByRole('checkbox', { name: 'Completed: Call' })).toBeInTheDocument()
+    expect(within(block as HTMLElement).getByRole('button', { name: 'Call, 10 AM' })).toBeInTheDocument()
+  })
+
+  it('renders an all-day task in the all-day row', () => {
+    renderDay([toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!])
+    const cell = screen.getByRole('button', { name: /New all-day event/ }).parentElement!
+    expect(within(cell).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeInTheDocument()
   })
 })

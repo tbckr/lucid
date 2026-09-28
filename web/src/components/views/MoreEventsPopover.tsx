@@ -4,8 +4,9 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { EventBoundary } from '@/components/events/EventBoundary'
+import { TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
-import { eventTitle, type CalEvent } from '@/lib/events'
+import { eventTitle, type CalEvent, type CalItem } from '@/lib/events'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
 
@@ -42,16 +43,36 @@ function Row({
   )
 }
 
+/** An event row, or a task with its checkbox (FR-16). */
+function Entry({
+  item,
+  colors,
+  prefs,
+  readOnly,
+  onOpen,
+}: {
+  item: CalItem
+  colors: EventColors
+  prefs: FormatPrefs
+  readOnly: boolean
+  onOpen: (e: CalEvent) => void
+}) {
+  if (item.kind === 'task') return <TaskChip task={item} colors={colors} prefs={prefs} readOnly={readOnly} className="h-6" />
+  return <Row event={item} colors={colors} prefs={prefs} onOpen={onOpen} />
+}
+
 /** Virtualized list for busy days (NFR-25); mounted only while the popover is open. */
 function VirtualList({
   events,
   prefs,
   colorsOf,
+  readOnly,
   onOpen,
 }: {
-  events: CalEvent[]
+  events: CalItem[]
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
+  readOnly: (calendarId: string) => boolean
   onOpen: (e: CalEvent) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -76,7 +97,7 @@ function VirtualList({
               style={{ height: item.size, transform: `translateY(${item.start}px)` }}
             >
               <EventBoundary>
-                <Row event={e} colors={colorsOf(e.calendarId)} prefs={prefs} onOpen={onOpen} />
+                <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
               </EventBoundary>
             </li>
           )
@@ -93,12 +114,14 @@ export function MoreEventsPopover({
   hidden,
   prefs,
   colorsOf,
+  readOnly,
 }: {
   day: Date
-  events: CalEvent[]
+  events: CalItem[]
   hidden: number
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
+  readOnly: (calendarId: string) => boolean
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -128,13 +151,13 @@ export function MoreEventsPopover({
       <PopoverContent className="w-64 p-2" align="start" aria-label={format(day, 'PPPP', { locale: prefs.locale })}>
         <p className="px-1.5 pb-2 font-display text-sm font-semibold">{format(day, 'EEEE, PPP', { locale: prefs.locale })}</p>
         {virtual ? (
-          <VirtualList events={events} prefs={prefs} colorsOf={colorsOf} onOpen={onOpen} />
+          <VirtualList events={events} prefs={prefs} colorsOf={colorsOf} readOnly={readOnly} onOpen={onOpen} />
         ) : (
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
               <li key={e.key}>
                 <EventBoundary>
-                  <Row event={e} colors={colorsOf(e.calendarId)} prefs={prefs} onOpen={onOpen} />
+                  <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
                 </EventBoundary>
               </li>
             ))}

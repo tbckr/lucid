@@ -2,12 +2,14 @@ import { DndContext } from '@dnd-kit/core'
 import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { api } from '@/lib/api/client'
+import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
-import { toCalEvent } from '@/lib/events'
+import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
-import { apiEvent, calendar } from '@/test/fixtures'
+import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { MonthView } from './MonthView'
 
@@ -15,7 +17,7 @@ const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekS
 const colors = eventColors('#3b82f6', false)
 const cal = calendar()
 
-function renderMonth(events = [toCalEvent(apiEvent({ title: 'Standup' }))]) {
+function renderMonth(events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup' }))]) {
   return renderWithProviders(
     <DndContext>
       <MonthView
@@ -74,5 +76,21 @@ describe('MonthView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Standup, 10 AM' }))
     expect(useUi.getState().detail?.event.title).toBe('Standup')
     useUi.getState().openDetail(null)
+  })
+
+  it('renders tasks with a checkbox and does not create events from them', async () => {
+    api.setCsrfToken('tok')
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => undefined))
+    const rent = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
+    const call = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+    const user = userEvent.setup()
+    renderMonth([toCalEvent(apiEvent()), rent, call])
+    await user.click(screen.getByRole('checkbox', { name: 'Completed: Pay rent' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Completed: Call' }))
+    expect(useUi.getState().editor).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Call, 10 AM' }))
+    expect(useUi.getState().editor).toBeNull()
+    expect(useUi.getState().taskEditor).toBe(call.todo)
+    useUi.getState().openTaskEditor(null)
   })
 })
