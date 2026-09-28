@@ -81,7 +81,12 @@
     "openDay": "{{date}} in der Tagesansicht öffnen",
     "cellLabel_zero": "{{date}}, keine Termine",
     "cellLabel_one": "{{date}}, {{count}} Termin",
-    "cellLabel_other": "{{date}}, {{count}} Termine"
+    "cellLabel_other": "{{date}}, {{count}} Termine",
+    "eventCount_zero": "keine Termine",
+    "eventCount_one": "{{count}} Termin",
+    "eventCount_other": "{{count}} Termine",
+    "cellLabelTasks_one": "{{date}}, {{events}}, {{count}} Aufgabe",
+    "cellLabelTasks_other": "{{date}}, {{events}}, {{count}} Aufgaben"
   },
   "week": {
     "expandAllDay": "Alle ganztägigen Termine zeigen",

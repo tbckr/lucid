@@ -93,4 +93,12 @@ describe('MonthView', () => {
     expect(useUi.getState().taskEditor).toBe(call.todo)
     useUi.getState().openTaskEditor(null)
   })
+
+  it('counts tasks apart from events in the cell label', () => {
+    const rent = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
+    renderMonth([toCalEvent(apiEvent()), rent])
+    expect(screen.getByRole('gridcell', { name: 'Friday, September 25th, 2026, 1 event, 1 task' })).toBeInTheDocument()
+    expect(screen.getByRole('gridcell', { name: 'Saturday, September 26th, 2026, no events' })).toBeInTheDocument()
+  })
 })
+

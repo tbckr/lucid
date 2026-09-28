@@ -156,7 +156,13 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
               setDate(d)
               setView('day')
             }}
-            labelFor={(d, n) => t('month.cellLabel', { date: format(d, 'PPPP', { locale: prefs.locale }), count: n })}
+            labelFor={(d, items) => {
+              const date = format(d, 'PPPP', { locale: prefs.locale })
+              const tasks = items.filter((e) => e.kind === 'task').length
+              const events = items.length - tasks
+              if (tasks === 0) return t('month.cellLabel', { date, count: events })
+              return t('month.cellLabelTasks', { date, events: t('month.eventCount', { count: events }), count: tasks })
+            }}
           />
         ))}
       </div>
@@ -193,7 +199,7 @@ function WeekRow({
   onCreate: (day: Date) => void
   onFocusDay: (day: Date) => void
   onOpenDay: (day: Date) => void
-  labelFor: (day: Date, count: number) => string
+  labelFor: (day: Date, items: CalItem[]) => string
 }) {
   return (
     <div ref={rowRef} role="row" className="relative grid min-h-0 grid-cols-7 border-b border-grid last:border-b-0">
@@ -214,7 +220,7 @@ function WeekRow({
           onCreate={onCreate}
           onFocusDay={onFocusDay}
           onOpenDay={onOpenDay}
-          label={labelFor(cell.day, cell.all.length)}
+          label={labelFor(cell.day, cell.all)}
         />
       ))}
     </div>

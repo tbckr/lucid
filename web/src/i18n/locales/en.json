@@ -81,7 +81,12 @@
     "openDay": "Open {{date}} in day view",
     "cellLabel_zero": "{{date}}, no events",
     "cellLabel_one": "{{date}}, {{count}} event",
-    "cellLabel_other": "{{date}}, {{count}} events"
+    "cellLabel_other": "{{date}}, {{count}} events",
+    "eventCount_zero": "no events",
+    "eventCount_one": "{{count}} event",
+    "eventCount_other": "{{count}} events",
+    "cellLabelTasks_one": "{{date}}, {{events}}, {{count}} task",
+    "cellLabelTasks_other": "{{date}}, {{events}}, {{count}} tasks"
   },
   "week": {
     "expandAllDay": "Show all all-day events",
