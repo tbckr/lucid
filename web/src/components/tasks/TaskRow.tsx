@@ -1,11 +1,10 @@
 import { CheckIcon, FlagIcon, ListChecksIcon } from 'lucide-react'
-import { startTransition, useOptimistic } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useUpdateTodo } from '@/hooks/queries'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
+import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { type Calendar, type Todo } from '@/lib/api/schemas'
-import { checklistProgress, formatDue, isDone, isOverdue, priorityLevel, todoToInput, toggledStatus } from '@/lib/tasks'
+import { checklistProgress, formatDue, isOverdue, priorityLevel } from '@/lib/tasks'
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -33,26 +32,12 @@ export function TaskRow({ todo, calendar }: { todo: Todo; calendar: Calendar }) 
   const { t } = useTranslation()
   const prefs = usePrefs()
   const now = useNow()
-  const update = useUpdateTodo()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
-  // React 19: show the new state instantly while the request is in flight (FR-15).
-  const [done, setOptimisticDone] = useOptimistic(isDone(todo))
+  const { done, toggle } = useToggleTodo(todo)
   const due = formatDue(todo, now, prefs, { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') })
   const overdue = isOverdue(todo, now)
   const progress = checklistProgress(todo.checklist)
   const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0)
-
-  const toggle = () => {
-    const status = toggledStatus(todo)
-    startTransition(async () => {
-      setOptimisticDone(status === 'COMPLETED')
-      try {
-        await update.mutateAsync({ todo, input: todoToInput(todo, { status }) })
-      } catch {
-        // Reported by the mutation; the optimistic state reverts automatically.
-      }
-    })
-  }
 
   return (
     <div className="group flex items-start gap-3 px-3 py-1.5" data-testid="task-row" data-task-id={todo.id}>
