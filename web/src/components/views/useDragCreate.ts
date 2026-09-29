@@ -27,9 +27,12 @@ function minuteAt(hour: number, e: MouseEvent<HTMLElement>): number {
  * Create events from the hour slots of a time-grid column: a click starts a
  * one-hour event in the 15-minute slot under the pointer, a drag with mouse or
  * pen covers the slots it crosses (touch scrolls). `draft` is the span to
- * preview while dragging; Escape cancels.
+ * preview while dragging; Escape cancels. `onCreate` gets the slot the
+ * gesture ended on and whether it was a drag.
  */
-export function useDragCreate(onCreate: (startMin: number, endMin: number) => void) {
+export function useDragCreate(
+  onCreate: (startMin: number, endMin: number, source: { target: HTMLElement; ranged: boolean }) => void,
+) {
   const gesture = useRef<Gesture | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const dragging = draft !== null
@@ -72,7 +75,7 @@ export function useDragCreate(onCreate: (startMin: number, endMin: number) => vo
       }
       if (g.phase === 'dragging') {
         const { startMin, endMin } = createRange(g.anchorMin, minuteAt(hour, e))
-        onCreate(startMin, endMin)
+        onCreate(startMin, endMin, { target: e.currentTarget, ranged: true })
       }
       g.phase = 'done'
       setDraft(null)
@@ -91,7 +94,7 @@ export function useDragCreate(onCreate: (startMin: number, endMin: number) => vo
       const min = Math.min(hour * 60 + 59, Math.max(hour * 60, minuteAt(hour, e)))
       // The slot a drag from here would start in.
       const { startMin } = createRange(min, min)
-      onCreate(startMin, startMin + 60)
+      onCreate(startMin, startMin + 60, { target: e.currentTarget, ranged: false })
     },
   })
 

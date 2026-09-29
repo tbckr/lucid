@@ -100,12 +100,13 @@ test('dragging in the empty grid creates an event over the covered slots', async
   await page.mouse.down()
   await page.mouse.move(x, box.y + 30, { steps: 4 })
   await page.mouse.move(x, box.y + 66, { steps: 4 })
-  const preview = page.getByText('1 PM – 2:30 PM', { exact: true })
-  await expect(preview).toBeVisible()
+  await expect(page.getByText('1 PM – 2:30 PM', { exact: true })).toBeVisible()
   await page.mouse.up()
-  await expect(preview).toBeHidden()
 
+  // The create popover opens over the dragged span.
   const dialog = page.getByRole('dialog', { name: 'New event' })
+  await expect(dialog.getByRole('combobox', { name: 'Start time' })).toHaveText('1:00 PM')
+  await expect(dialog.getByRole('combobox', { name: 'End time' })).toHaveText('2:30 PM')
   await dialog.getByPlaceholder('Add a title').fill(title)
   await dialog.getByRole('button', { name: 'Create event' }).click()
   await expect(dialog).toBeHidden()
@@ -170,4 +171,18 @@ test('moving an event with the keyboard shows and announces the target time', as
   await expect(block).toContainText('2 PM – 3 PM')
 
   await deleteEvent(page, block, title)
+})
+
+test('a click beside the create popover only closes it', async ({ page }) => {
+  await login(page)
+  await page.keyboard.press('d')
+  await page.getByRole('button', { name: / 1:00 PM$/ }).click({ position: { x: 20, y: 4 } })
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  await expect(dialog).toBeVisible()
+
+  // Beside the popover, on the 4 PM slot: the page outside is inert while it is open.
+  const slot = (await page.locator('button[aria-label$=" 4:00 PM"]').boundingBox())!
+  await page.mouse.click(slot.x + slot.width - 20, slot.y + 4)
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
 })

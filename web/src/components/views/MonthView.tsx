@@ -35,7 +35,8 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
   const { t } = useTranslation()
   const setDate = useUi((s) => s.setDate)
   const setView = useUi((s) => s.setView)
-  const openEditor = useUi((s) => s.openEditor)
+  const openCreate = useUi((s) => s.openCreate)
+  const draftDay = useUi((s) => s.create?.preview?.start ?? null)
   const weeks = useMemo(() => monthGrid(date, prefs.weekStartsOn), [date, prefs.weekStartsOn])
   const names = weekdayNames(prefs)
 
@@ -89,8 +90,13 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
     if (!isSameMonth(target, date)) setDate(target)
   }
 
-  const create = (day: Date) => {
-    openEditor({ mode: 'create', defaults: defaultCreateTimes(day, now) })
+  // The popover points at the cell; a day's new entry starts like the "Create" button's (FR-09, FR-16).
+  const create = (day: Date, cell: HTMLElement) => {
+    openCreate({
+      origin: { ...defaultCreateTimes(day, now), granularity: 'day', ranged: false },
+      anchor: cell,
+      returnFocus: cell,
+    })
   }
 
   const onCellKeyDown = (e: KeyboardEvent<HTMLElement>, day: Date) => {
@@ -111,7 +117,7 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
       moveFocus(fn())
     } else if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      create(day)
+      create(day, e.currentTarget)
     }
   }
 
@@ -149,6 +155,7 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
             corruptedByDay={corruptedByDay}
             onCellKeyDown={onCellKeyDown}
             onCreate={create}
+            draftDay={draftDay}
             onFocusDay={(d) => {
               setFocusKey(dayKey(d))
             }}
@@ -182,6 +189,7 @@ function WeekRow({
   corruptedByDay,
   onCellKeyDown,
   onCreate,
+  draftDay,
   onFocusDay,
   onOpenDay,
   labelFor,
@@ -196,7 +204,9 @@ function WeekRow({
   focusKey: string
   corruptedByDay: Map<string, CorruptedItem[]>
   onCellKeyDown: (e: KeyboardEvent<HTMLElement>, day: Date) => void
-  onCreate: (day: Date) => void
+  onCreate: (day: Date, cell: HTMLElement) => void
+  /** Day of the create popover's entry. */
+  draftDay: Date | null
   onFocusDay: (day: Date) => void
   onOpenDay: (day: Date) => void
   labelFor: (day: Date, items: CalItem[]) => string
@@ -218,6 +228,7 @@ function WeekRow({
           corrupted={corruptedByDay.get(dayKey(cell.day)) ?? []}
           onKeyDown={onCellKeyDown}
           onCreate={onCreate}
+          draft={draftDay !== null && isSameDay(draftDay, cell.day)}
           onFocusDay={onFocusDay}
           onOpenDay={onOpenDay}
           label={labelFor(cell.day, cell.all)}
@@ -240,6 +251,7 @@ function DayCell({
   corrupted,
   onKeyDown,
   onCreate,
+  draft,
   onFocusDay,
   onOpenDay,
   label,
@@ -255,7 +267,8 @@ function DayCell({
   focused: boolean
   corrupted: CorruptedItem[]
   onKeyDown: (e: KeyboardEvent<HTMLElement>, day: Date) => void
-  onCreate: (day: Date) => void
+  onCreate: (day: Date, cell: HTMLElement) => void
+  draft: boolean
   onFocusDay: (day: Date) => void
   onOpenDay: (day: Date) => void
   label: string
@@ -274,19 +287,20 @@ function DayCell({
       data-day={key}
       aria-label={label}
       aria-current={isToday ? 'date' : undefined}
+      data-draft={draft ? '' : undefined}
       onKeyDown={(e) => {
         onKeyDown(e, day)
       }}
       onFocus={(e) => {
         if (e.target === e.currentTarget) onFocusDay(day)
       }}
-      onClick={() => {
-        onCreate(day)
+      onClick={(e) => {
+        onCreate(day, e.currentTarget)
       }}
       className={cn(
         'relative min-w-0 cursor-default border-r border-grid outline-none last:border-r-0 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
         !inMonth && 'bg-outside',
-        isOver && 'bg-primary/8',
+        (isOver || draft) && 'bg-primary/8',
       )}
     >
       <div className="flex h-[30px] items-center justify-between px-1.5 pt-1">

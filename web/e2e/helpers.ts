@@ -44,6 +44,35 @@ export async function deleteTestEvents(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Delete, through the API, the tasks a spec left behind: like the events,
+ * every title a spec gives a task starts with "E2E ".
+ */
+export async function deleteTestTasks(page: Page): Promise<void> {
+  const api = page.request
+  const sessionRes = await api.get('/api/v1/session')
+  await expect(sessionRes).toBeOK()
+  const session = (await sessionRes.json()) as { authenticated: boolean; csrfToken: string }
+  if (!session.authenticated) return
+
+  const calendarsRes = await api.get('/api/v1/calendars')
+  await expect(calendarsRes).toBeOK()
+  const { calendars } = (await calendarsRes.json()) as {
+    calendars: { id: string; readOnly: boolean; supportsTodos: boolean }[]
+  }
+  for (const calendar of calendars.filter((c) => c.supportsTodos && !c.readOnly)) {
+    const todosRes = await api.get(`/api/v1/calendars/${calendar.id}/todos`)
+    await expect(todosRes).toBeOK()
+    const { todos } = (await todosRes.json()) as { todos: { id: string; etag: string; title: string }[] }
+    for (const todo of todos.filter((t) => t.title.startsWith('E2E '))) {
+      const res = await api.delete(`/api/v1/todos/${todo.id}`, {
+        headers: { 'X-CSRF-Token': session.csrfToken, 'If-Match': todo.etag },
+      })
+      await expect(res).toBeOK()
+    }
+  }
+}
+
 /** The month grid of the main view. */
 export function monthGrid(page: Page) {
   return page.getByRole('grid')

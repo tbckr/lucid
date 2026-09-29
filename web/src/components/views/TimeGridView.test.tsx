@@ -1,11 +1,12 @@
 import { DndContext } from '@dnd-kit/core'
-import { fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it } from 'vitest'
 import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
+import { type CreatePreview } from '@/lib/quickCreate'
 import { useUi } from '@/stores/ui'
 import { calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -33,7 +34,7 @@ function renderDay(events: CalItem[] = []) {
 
 describe('TimeGridView', () => {
   afterEach(() => {
-    useUi.getState().openEditor(null)
+    useUi.getState().openCreate(null)
   })
 
   // jsdom lays nothing out, so every slot's top is 0 and clientY is the offset in the slot
@@ -47,11 +48,21 @@ describe('TimeGridView', () => {
     ['without a pointer position', -100, 0],
   ])('starts a one-hour event in the 15-minute block under a click %s', (_, clientY, minute) => {
     renderDay()
-    fireEvent.click(screen.getByRole('button', { name: /9:00 AM$/ }), { clientY })
-    expect(useUi.getState().editor).toEqual({
-      mode: 'create',
-      defaults: { start: new Date(2026, 8, 25, 9, minute), end: new Date(2026, 8, 25, 10, minute), allDay: false },
+    const slot = screen.getByRole('button', { name: /9:00 AM$/ })
+    fireEvent.click(slot, { clientY })
+    const create = useUi.getState().create
+    expect(create).toMatchObject({
+      origin: {
+        start: new Date(2026, 8, 25, 9, minute),
+        end: new Date(2026, 8, 25, 10, minute),
+        allDay: false,
+        granularity: 'time',
+        ranged: false,
+      },
+      span: { startMin: 540 + minute, endMin: 600 + minute },
     })
+    expect(create?.returnFocus).toBe(slot)
+    expect(create?.anchor).toBe(slot.parentElement)
   })
 
   function pressAndMove(slot: HTMLElement, pointerType: string, fromY: number, toY: number) {
@@ -68,9 +79,9 @@ describe('TimeGridView', () => {
     // The browser follows up with a click on the pressed slot; it must not replace the range.
     fireEvent.click(slot, { clientY: 64 })
     expect(screen.queryByText('9 AM – 10:30 AM')).not.toBeInTheDocument()
-    expect(useUi.getState().editor).toEqual({
-      mode: 'create',
-      defaults: { start: new Date(2026, 8, 25, 9), end: new Date(2026, 8, 25, 10, 30), allDay: false },
+    expect(useUi.getState().create).toMatchObject({
+      origin: { start: new Date(2026, 8, 25, 9), end: new Date(2026, 8, 25, 10, 30), allDay: false, ranged: true },
+      span: { startMin: 540, endMin: 630 },
     })
   })
 
@@ -84,9 +95,10 @@ describe('TimeGridView', () => {
     pressAndMove(slot, pointerType, 4, toY)
     fireEvent.pointerUp(slot, { pointerId: 1, pointerType, clientX: 10, clientY: toY })
     fireEvent.click(slot, { clientY: toY })
-    expect(useUi.getState().editor).toEqual({
-      mode: 'create',
-      defaults: { start: new Date(2026, 8, 25, 9, minute), end: new Date(2026, 8, 25, 10, minute), allDay: false },
+    expect(useUi.getState().create?.origin).toMatchObject({
+      start: new Date(2026, 8, 25, 9, minute),
+      end: new Date(2026, 8, 25, 10, minute),
+      ranged: false,
     })
   })
 
@@ -98,7 +110,7 @@ describe('TimeGridView', () => {
     expect(screen.queryByText('9 AM – 10:30 AM')).not.toBeInTheDocument()
     fireEvent.pointerUp(slot, { pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 64 })
     fireEvent.click(slot, { clientY: 64 })
-    expect(useUi.getState().editor).toBeNull()
+    expect(useUi.getState().create).toBeNull()
   })
 
   it('renders a point task in the grid', () => {
@@ -113,5 +125,63 @@ describe('TimeGridView', () => {
     renderDay([toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!])
     const cell = screen.getByRole('button', { name: /New all-day event/ }).parentElement!
     expect(within(cell).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeInTheDocument()
+  })
+  it('opens the popover for an all-day event from the all-day row', () => {
+    renderDay()
+    const cell = screen.getByRole('button', { name: /New all-day event/ })
+    fireEvent.click(cell)
+    const create = useUi.getState().create
+    expect(create?.origin).toMatchObject({ start: new Date(2026, 8, 25), allDay: true, granularity: 'day', ranged: false })
+    expect(create?.anchor).toBe(cell)
+    expect(create?.returnFocus).toBe(cell)
+  })
+
+  /** Open the popover at 09:00 and give it `preview`, as the popover does. */
+  function withPreview(preview: Partial<CreatePreview>) {
+    const slot = screen.getByRole('button', { name: /9:00 AM$/ })
+    act(() => {
+      fireEvent.click(slot, { clientY: 0 })
+      useUi.getState().setCreatePreview({
+        kind: 'event',
+        calendarId: 'c1',
+        title: 'Review',
+        start: new Date(2026, 8, 25, 10),
+        end: new Date(2026, 8, 25, 11),
+        allDay: false,
+        point: false,
+        ...preview,
+      })
+    })
+  }
+
+  it('draws the draft where the entry will land', () => {
+    const { container } = renderDay()
+    withPreview({})
+    const draft = container.querySelector<HTMLElement>('[data-draft]')!
+    expect(draft).toHaveTextContent('Review')
+    expect(draft).toHaveTextContent('10 AM – 11 AM')
+    expect(draft.style.top).toBe('480px')
+  })
+
+  it('draws a task draft with its time only', () => {
+    const { container } = renderDay()
+    withPreview({ kind: 'task', title: '', point: true, end: new Date(2026, 8, 25, 10, 30) })
+    const draft = container.querySelector<HTMLElement>('[data-draft]')!
+    expect(draft).toHaveTextContent('(No title)')
+    expect(draft).toHaveTextContent(/10 AM$/)
+  })
+
+  it('clips a draft that runs past midnight', () => {
+    const { container } = renderDay()
+    withPreview({ start: new Date(2026, 8, 25, 23, 30), end: new Date(2026, 8, 26, 0, 30) })
+    const draft = container.querySelector<HTMLElement>('[data-draft]')!
+    expect(draft.style.top).toBe('1128px')
+    expect(draft.style.height).toBe('22px')
+  })
+
+  it('highlights the day of an all-day draft', () => {
+    renderDay()
+    withPreview({ allDay: true, start: new Date(2026, 8, 25), end: new Date(2026, 8, 26) })
+    expect(screen.getByRole('button', { name: /New all-day event/ }).parentElement).toHaveAttribute('data-draft')
   })
 })

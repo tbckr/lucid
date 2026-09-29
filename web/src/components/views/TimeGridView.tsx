@@ -1,8 +1,9 @@
 import { useDroppable } from '@dnd-kit/core'
-import { format, isSameDay } from 'date-fns'
+import { addDays, format, isSameDay } from 'date-fns'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { DraftBlock } from '@/components/create/DraftBlock'
 import { useDndState } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
@@ -15,8 +16,9 @@ import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
 import { formatHour, formatShortTime, type FormatPrefs } from '@/lib/format'
 import { layoutDay, layoutWeekRow, timedSegments } from '@/lib/layout'
+import { type CreatePreview } from '@/lib/quickCreate'
 import { cn } from '@/lib/utils'
-import { useUi } from '@/stores/ui'
+import { useUi, type CreateState } from '@/stores/ui'
 import { useDragCreate } from './useDragCreate'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
@@ -42,7 +44,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   const { t } = useTranslation()
   const setDate = useUi((s) => s.setDate)
   const setView = useUi((s) => s.setView)
-  const openEditor = useUi((s) => s.openEditor)
+  const openCreate = useUi((s) => s.openCreate)
+  const preview = useUi((s) => s.create?.preview ?? null)
   const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -123,9 +126,14 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
             day={d}
             height={lanes * 22 + 6}
             label={t('week.newAllDay', { date: format(d, 'PPPP', { locale: prefs.locale }) })}
-            onCreate={(day) => {
+            draft={preview?.allDay === true && preview.start < addDays(d, 1) && preview.end > d}
+            onCreate={(day, target) => {
               const start = atMinutes(day, 0)
-              openEditor({ mode: 'create', defaults: { start, end: start, allDay: true } })
+              openCreate({
+                origin: { start, end: start, allDay: true, granularity: 'day', ranged: false },
+                anchor: target,
+                returnFocus: target,
+              })
             }}
           >
             {allDay.bars
@@ -205,9 +213,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
               prefs={prefs}
               colorsOf={colorsOf}
               readOnly={readOnly}
-              onCreate={(start, end) => {
-                openEditor({ mode: 'create', defaults: { start, end, allDay: false } })
-              }}
+              preview={preview}
+              onCreate={openCreate}
             />
           ))}
         </div>
@@ -220,13 +227,16 @@ function AllDayCell({
   day,
   height,
   label,
+  draft,
   onCreate,
   children,
 }: {
   day: Date
   height: number
   label: string
-  onCreate: (day: Date) => void
+  /** The create popover's all-day entry covers this day. */
+  draft: boolean
+  onCreate: (day: Date, target: HTMLElement) => void
   children: React.ReactNode
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -234,13 +244,18 @@ function AllDayCell({
     data: { type: 'day', day } satisfies DropData,
   })
   return (
-    <div ref={setNodeRef} className={cn('relative border-l border-grid', isOver && 'bg-primary/8')} style={{ height }}>
+    <div
+      ref={setNodeRef}
+      data-draft={draft ? '' : undefined}
+      className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8')}
+      style={{ height }}
+    >
       <button
         type="button"
         tabIndex={-1}
         aria-label={label}
-        onClick={() => {
-          onCreate(day)
+        onClick={(e) => {
+          onCreate(day, e.currentTarget)
         }}
         className="absolute inset-0 cursor-default outline-none"
       />
@@ -257,6 +272,7 @@ function DayColumn({
   prefs,
   colorsOf,
   readOnly,
+  preview,
   onCreate,
 }: {
   day: Date
@@ -266,18 +282,26 @@ function DayColumn({
   prefs: FormatPrefs
   colorsOf: (id: string) => EventColors
   readOnly: (calendarId: string) => boolean
-  onCreate: (start: Date, end: Date) => void
+  /** The entry of the create popover, drawn where it will land. */
+  preview: CreatePreview | null
+  onCreate: (state: Omit<CreateState, 'preview'>) => void
 }) {
   const { t } = useTranslation()
   const { resize } = useDndState()
-  const { setNodeRef, isOver } = useDroppable({
+  const { setNodeRef, node, isOver } = useDroppable({
     id: `col:${dayKey(day)}`,
     data: { type: 'column', day } satisfies DropData,
   })
   const positioned = useMemo(() => layoutDay(timedSegments(events, day)), [events, day])
   const today = isSameDay(day, now)
-  const { draft, slotProps } = useDragCreate((startMin, endMin) => {
-    onCreate(atMinutes(day, startMin), atMinutes(day, endMin))
+  const { draft, slotProps } = useDragCreate((startMin, endMin, { target, ranged }) => {
+    // The popover points at the new entry's slots in this column (FR-09, FR-16).
+    onCreate({
+      origin: { start: atMinutes(day, startMin), end: atMinutes(day, endMin), allDay: false, granularity: 'time', ranged },
+      anchor: node.current ?? target,
+      span: { startMin, endMin },
+      returnFocus: target,
+    })
   })
 
   return (
@@ -361,6 +385,8 @@ function DayColumn({
             .join(' – ')}
         </div>
       )}
+
+      {preview && <DraftBlock preview={preview} day={day} colors={colorsOf(preview.calendarId)} prefs={prefs} />}
     </div>
   )
 }

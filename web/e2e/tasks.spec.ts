@@ -1,8 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
-import { calendarId, login, monthGrid } from './helpers'
+import { calendarId, deleteTestTasks, login, monthGrid } from './helpers'
 
 /** The task sidebar; tasks with a date also appear in the calendar views. */
 const taskList = (page: Page) => page.getByTestId('tasks-list')
+
+// A failed test never reaches its own clean-up; remove the tasks the specs created.
+test.afterEach(async ({ page }) => {
+  await deleteTestTasks(page)
+})
 
 test('complete and reopen a task', async ({ page }) => {
   await login(page)
@@ -104,4 +109,42 @@ test('agenda lists tasks', async ({ page }) => {
   await login(page)
   await page.keyboard.press('a')
   await expect(page.getByTestId('agenda').locator('[data-task-key]').getByRole('checkbox').first()).toBeVisible()
+})
+
+/** Open the create popover at `hour` today in the day view and switch it to a task. */
+async function newTaskAt(page: Page, hour: string) {
+  await login(page)
+  await page.keyboard.press('d')
+  await page.getByRole('button', { name: new RegExp(` ${hour}$`) }).click({ position: { x: 20, y: 4 } })
+  await page.getByRole('dialog', { name: 'New event' }).getByRole('radio', { name: 'Task' }).click()
+  return page.getByRole('dialog', { name: 'New task' })
+}
+
+test('create a task from a click in the day view', async ({ page }) => {
+  const title = `E2E task ${Date.now()}`
+  const popover = await newTaskAt(page, '3:00 PM')
+  await expect(popover.getByText('Due', { exact: true })).toBeVisible()
+  await popover.getByPlaceholder('Add a title').fill(title)
+  await popover.getByRole('button', { name: 'Create task' }).click()
+  await expect(popover).toBeHidden()
+
+  // A point at its due time in the grid, and in the list under its day.
+  const block = page.getByRole('main').locator('[data-task-key]', { hasText: title })
+  await expect(block).toBeVisible()
+  await expect(block).toContainText('3 PM')
+  await expect(taskList(page)).toContainText(title)
+})
+
+test("more options opens the task editor with the popover's values", async ({ page }) => {
+  const title = `E2E more ${Date.now()}`
+  const popover = await newTaskAt(page, '4:00 PM')
+  await popover.getByPlaceholder('Add a title').fill(title)
+  await popover.getByRole('button', { name: 'More options' }).click()
+
+  const editor = page.getByRole('dialog', { name: 'New task' })
+  await expect(editor.getByPlaceholder('Add a title')).toHaveValue(title)
+  await expect(editor.getByRole('button', { name: /^Due / })).toBeVisible()
+  await editor.getByRole('button', { name: 'Create task' }).click()
+  await expect(editor).toBeHidden()
+  await expect(page.getByRole('main').locator('[data-task-key]', { hasText: title })).toBeVisible()
 })

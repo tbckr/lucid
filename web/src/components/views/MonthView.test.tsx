@@ -1,5 +1,5 @@
 import { DndContext } from '@dnd-kit/core'
-import { fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it, vi } from 'vitest'
@@ -56,7 +56,7 @@ describe('MonthView', () => {
     expect(screen.getByTestId('corrupted-event')).toBeInTheDocument()
   })
 
-  it('opens the create dialog state from a cell and moves focus with arrows', async () => {
+  it('opens the create popover from a cell and moves focus with arrows', async () => {
     const user = userEvent.setup()
     renderMonth()
     const today = screen.getByRole('gridcell', { name: /September 25th/ })
@@ -65,10 +65,34 @@ describe('MonthView', () => {
     const thu = screen.getByRole('gridcell', { name: /September 24th/ })
     expect(thu).toHaveFocus()
     await user.keyboard('{Enter}')
-    const editor = useUi.getState().editor
-    expect(editor?.mode).toBe('create')
-    if (editor?.mode === 'create') expect(editor.defaults.start.getDate()).toBe(24)
-    useUi.getState().openEditor(null)
+    const create = useUi.getState().create
+    expect(create?.origin).toMatchObject({ granularity: 'day', ranged: false })
+    expect(create?.origin.start.getDate()).toBe(24)
+    expect(create?.anchor).toBe(thu)
+    expect(create?.returnFocus).toBe(thu)
+    useUi.getState().openCreate(null)
+  })
+
+  it('highlights the day of the draft', () => {
+    renderMonth()
+    const thu = screen.getByRole('gridcell', { name: /September 24th/ })
+    act(() => {
+      fireEvent.click(thu)
+      useUi.getState().setCreatePreview({
+        kind: 'task',
+        calendarId: 'c1',
+        title: '',
+        start: new Date(2026, 8, 24),
+        end: new Date(2026, 8, 25),
+        allDay: true,
+        point: false,
+      })
+    })
+    expect(thu).toHaveAttribute('data-draft')
+    expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveAttribute('data-draft')
+    act(() => {
+      useUi.getState().openCreate(null)
+    })
   })
 
   it('opens event details on click', () => {
@@ -87,9 +111,9 @@ describe('MonthView', () => {
     renderMonth([toCalEvent(apiEvent()), rent, call])
     await user.click(screen.getByRole('checkbox', { name: 'Completed: Pay rent' }))
     await user.click(screen.getByRole('checkbox', { name: 'Completed: Call' }))
-    expect(useUi.getState().editor).toBeNull()
+    expect(useUi.getState().create).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Call, 10 AM' }))
-    expect(useUi.getState().editor).toBeNull()
+    expect(useUi.getState().create).toBeNull()
     expect(useUi.getState().detail?.item).toBe(call)
     useUi.getState().openDetail(null)
   })
