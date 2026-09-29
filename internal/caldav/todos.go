@@ -15,8 +15,8 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 )
 
-// ListTodos implements domain.CalendarService. Recurring todos are not
-// expanded; the master component is returned.
+// ListTodos implements domain.CalendarService. A recurring todo is listed
+// once, at its current occurrence (FR-17).
 func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.Todo, error) {
 	if s.err != nil {
 		return nil, s.err
@@ -32,7 +32,7 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 	todos := []domain.Todo{}
 	for _, o := range objs {
 		if c := mainComponent(o.cal, ical.CompToDo); c != nil {
-			todos = append(todos, todoFromComponent(o, calendarID, c))
+			todos = append(todos, todoFromObject(o, calendarID, c))
 		}
 	}
 	slices.SortStableFunc(todos, func(a, b domain.Todo) int {
@@ -41,7 +41,9 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 	return todos, nil
 }
 
-func todoFromComponent(o calObject, calendarID string, c *ical.Component) domain.Todo {
+// todoFromObject converts the todo c of o into a Todo. A recurring todo
+// reports its current and next occurrence (FR-16, FR-17).
+func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.Todo {
 	desc, checklist := splitChecklist(text(c.Props, ical.PropDescription))
 	t := domain.Todo{
 		ID:          encodeID(o.path),
@@ -77,6 +79,9 @@ func todoFromComponent(o calObject, calendarID string, c *ical.Component) domain
 		completed := d.t.UTC()
 		t.Completed = &completed
 	}
+	if s := newTodoSeries(o.cal, c); s != nil {
+		s.setSeries(&t)
+	}
 	return t
 }
 
@@ -111,7 +116,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if err != nil {
 		return domain.Todo{}, err
 	}
-	return todoFromComponent(o, calendarID, c), nil
+	return todoFromObject(o, calendarID, c), nil
 }
 
 // UpdateTodo implements domain.CalendarService. Unknown properties and
@@ -144,7 +149,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if c == nil {
 		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
-	cur := todoFromComponent(calObject{path: objPath}, "", c)
+	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
 	// Keep DTSTART for clients that predate `start`, and for recurring todos:
 	// RFC 5545 requires DTSTART with RRULE (FR-16).
 	if in.StartOmitted || (in.Start == nil && c.Props.Get(ical.PropRecurrenceRule) != nil) {
@@ -165,7 +170,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if err != nil {
 		return domain.Todo{}, err
 	}
-	return todoFromComponent(o, encodeID(calPath), c), nil
+	return todoFromObject(o, encodeID(calPath), c), nil
 }
 
 // DeleteTodo implements domain.CalendarService.

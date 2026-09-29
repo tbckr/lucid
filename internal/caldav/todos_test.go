@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -442,6 +443,175 @@ func TestUpdateTodoKeepsStart(t *testing.T) {
 			objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
 			if data, _ := e.mock.Object(objPath); !strings.Contains(data, tc.keeps) {
 				t.Errorf("stored todo lacks %q:\n%s", tc.keeps, data)
+			}
+		})
+	}
+}
+
+// sameNext reports whether a and b are both nil or carry the same dates.
+func sameNext(a, b *domain.TodoDates) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return sameTime(a.Start, b.Start) && sameTime(a.Due, b.Due)
+}
+
+// A recurring todo is reported at its current occurrence, with the next one
+// (FR-16, FR-17), however other clients recorded their progress in it.
+func TestListTodosRecurring(t *testing.T) {
+	t.Parallel()
+	base := []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"}
+	withBase := func(lines ...string) []string { return append(slices.Clone(base), lines...) }
+	for _, tc := range []struct {
+		name                   string
+		lines                  []string
+		overrides              [][]string
+		start, due             *time.Time
+		startAllDay, dueAllDay bool
+		next                   *domain.TodoDates
+		rrule                  string
+		fixedDays              bool
+		ruleUnsupported        bool
+	}{
+		{
+			name: "rolling weekly",
+			lines: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY",
+			},
+			start: ptr(date(2025, 3, 10, 8, 0)), due: ptr(date(2025, 3, 10, 10, 0)),
+			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 17, 8, 0)), Due: ptr(date(2025, 3, 17, 10, 0))},
+			rrule: "FREQ=WEEKLY",
+		},
+		{
+			name:  "due only",
+			lines: []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"},
+			due:   ptr(date(2025, 3, 10, 0, 0)), dueAllDay: true,
+			next:  &domain.TodoDates{Due: ptr(date(2025, 3, 11, 0, 0))},
+			rrule: "FREQ=DAILY",
+		},
+		{
+			name:  "fixed days",
+			lines: []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			start: ptr(date(2025, 3, 10, 0, 0)), startAllDay: true, due: ptr(date(2025, 3, 10, 0, 0)), dueAllDay: true,
+			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 13, 0, 0)), Due: ptr(date(2025, 3, 13, 0, 0))},
+			rrule: "FREQ=WEEKLY;BYDAY=MO,TH", fixedDays: true,
+		},
+		{
+			// The test clock (2025-03-01 12:00) is past the first occurrence.
+			name:  "overdue is oldest",
+			lines: []string{"DTSTART:20250301T090000Z", "RRULE:FREQ=DAILY"},
+			start: ptr(date(2025, 3, 1, 9, 0)),
+			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 2, 9, 0))},
+			rrule: "FREQ=DAILY",
+		},
+		{
+			name:  "thunderbird done",
+			lines: base,
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250311T090000Z", "STATUS:COMPLETED"},
+			},
+			start: ptr(date(2025, 3, 12, 9, 0)),
+			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))},
+			rrule: "FREQ=DAILY",
+		},
+		{
+			// 10:00 in Berlin is the 09:00 UTC occurrence.
+			name:      "override matched by instant",
+			lines:     base,
+			overrides: [][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20250310T100000", "STATUS:COMPLETED"}},
+			start:     ptr(date(2025, 3, 11, 9, 0)),
+			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 12, 9, 0))},
+			rrule:     "FREQ=DAILY",
+		},
+		{
+			name:      "moved override is current",
+			lines:     base,
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"}},
+			start:     ptr(date(2025, 3, 10, 15, 0)),
+			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 11, 9, 0))},
+			rrule:     "FREQ=DAILY",
+		},
+		{
+			name:      "exdate and cancelled",
+			lines:     withBase("EXDATE:20250310T090000Z"),
+			overrides: [][]string{{"RECURRENCE-ID:20250311T090000Z", "STATUS:CANCELLED"}},
+			start:     ptr(date(2025, 3, 12, 9, 0)),
+			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))},
+			rrule:     "FREQ=DAILY",
+		},
+		{
+			name:  "kde pending",
+			lines: withBase("X-KDE-LIBKCAL-DTRECURRENCE:20250314T090000Z"),
+			start: ptr(date(2025, 3, 14, 9, 0)),
+			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 15, 9, 0))},
+			rrule: "FREQ=DAILY",
+		},
+		{
+			name:  "count ends",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=1"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
+			rrule: "FREQ=DAILY;COUNT=1",
+		},
+		{
+			name:      "rdate only",
+			lines:     []string{"DTSTART:20250310T090000Z", "RDATE:20250315T090000Z"},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 15, 9, 0))},
+			fixedDays: true,
+		},
+		{
+			name:  "no occurrence left",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=1", "EXDATE:20250310T090000Z"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
+			rrule: "FREQ=DAILY;COUNT=1",
+		},
+		{
+			name:  "completed master",
+			lines: []string{"STATUS:COMPLETED", "RRULE:FREQ=DAILY", "DTSTART:20250310T090000Z"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
+			rrule: "FREQ=DAILY",
+		},
+		{
+			name:  "unsupported",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
+			rrule: "FREQ=DAILY;BYDAY=XX", fixedDays: true, ruleUnsupported: true,
+		},
+		{
+			name:            "no date",
+			lines:           []string{"RRULE:FREQ=DAILY"},
+			rrule:           "FREQ=DAILY",
+			ruleUnsupported: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			lines := append([]string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Series"}, tc.lines...)
+			lines = append(lines, "END:VTODO")
+			for _, o := range tc.overrides {
+				lines = append(lines, "BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z")
+				lines = append(append(lines, o...), "END:VTODO")
+			}
+			e.put(t, "tasks", "r.ics", lines...)
+			todos, err := e.svc.ListTodos(t.Context(), e.cals["tasks"])
+			mustNoErr(t, err)
+			if len(todos) != 1 {
+				t.Fatalf("ListTodos = %+v; want one todo", todos)
+			}
+			got := todos[0]
+			if !got.Recurring || got.RRule != tc.rrule || got.FixedDays != tc.fixedDays || got.RuleUnsupported != tc.ruleUnsupported {
+				t.Errorf("recurring %v, rrule %q, fixedDays %v, ruleUnsupported %v; want true, %q, %v, %v",
+					got.Recurring, got.RRule, got.FixedDays, got.RuleUnsupported, tc.rrule, tc.fixedDays, tc.ruleUnsupported)
+			}
+			if !sameTime(got.Start, tc.start) || got.StartAllDay != tc.startAllDay ||
+				!sameTime(got.Due, tc.due) || got.DueAllDay != tc.dueAllDay {
+				t.Errorf("start %v (all-day %v), due %v (all-day %v); want %v (%v), %v (%v)",
+					got.Start, got.StartAllDay, got.Due, got.DueAllDay, tc.start, tc.startAllDay, tc.due, tc.dueAllDay)
+			}
+			if !sameNext(got.Next, tc.next) {
+				t.Errorf("next = %+v; want %+v", got.Next, tc.next)
 			}
 		})
 	}
