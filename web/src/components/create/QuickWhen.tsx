@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DateField } from '@/components/events/DateField'
 import { TimeSelect } from '@/components/events/TimeSelect'
@@ -35,6 +35,14 @@ export function QuickWhen({
 }) {
   const { t } = useTranslation()
   const id = useId()
+  // An end or due date on another day shows as a field, and stays once shown: set back to
+  // the start's day, it would vanish under the focus.
+  const endDiffers = event.endDate !== event.startDate
+  const dueDiffers = task.startDate !== '' && task.dueDate !== '' && task.dueDate !== task.startDate
+  const [shown, setShown] = useState({ end: endDiffers, due: dueDiffers })
+  if ((endDiffers && !shown.end) || (dueDiffers && !shown.due)) {
+    setShown({ end: shown.end || endDiffers, due: shown.due || dueDiffers })
+  }
   const tint = 'tint' as const
   // Every part has the fields' padding, so the text of each line starts under the title's.
   const line = 'tabular -ml-1.5 flex flex-wrap items-center text-base font-medium'
@@ -63,7 +71,7 @@ export function QuickWhen({
           <span className="px-1.5">{t('event.allDay')}</span>
         ) : (
           // A range ending on another day may break at its dash; others wrap as a whole.
-          <span className={cn(range, event.endDate !== event.startDate && 'flex-wrap')}>
+          <span className={cn(range, shown.end && 'flex-wrap')}>
             <TimeSelect
               value={event.startTime}
               onChange={(v) => {
@@ -74,7 +82,7 @@ export function QuickWhen({
               tone={tint}
             />
             <span aria-hidden>–</span>
-            {event.endDate !== event.startDate && (
+            {shown.end && (
               <DateField
                 id={`${id}-end`}
                 labelledBy={`${id}-ends`}
@@ -128,7 +136,7 @@ export function QuickWhen({
           now={now}
           tone={tint}
         />
-        <span className={cn(range, task.dueDate !== task.startDate && 'flex-wrap')}>
+        <span className={cn(range, shown.due && 'flex-wrap')}>
           {task.startTime && (
             <TimeSelect
               value={task.startTime}
@@ -141,7 +149,7 @@ export function QuickWhen({
             />
           )}
           <span aria-hidden>–</span>
-          {task.dueDate !== task.startDate && (
+          {shown.due && (
             <DateField
               id={`${id}-due`}
               labelledBy={`${id}-due-label`}

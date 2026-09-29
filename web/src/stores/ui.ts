@@ -36,8 +36,6 @@ export interface CreateState {
   span?: { startMin: number; endMin: number }
   /** Element that gets the focus back on close. */
   returnFocus: HTMLElement
-  /** Written by the popover, drawn by the views. */
-  preview: CreatePreview | null
 }
 
 export interface DetailState {
@@ -54,6 +52,11 @@ interface UiState {
   editor: EditorState
   detail: DetailState | null
   create: CreateState | null
+  /**
+   * The create popover's entry as the views draw it; written by the popover.
+   * Kept beside `create`, so writing it does not render the popover again.
+   */
+  createPreview: CreatePreview | null
   taskEditor: TaskEditorState
   settingsOpen: boolean
   shortcutsOpen: boolean
@@ -65,7 +68,7 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void
   openEditor: (editor: EditorState) => void
   openDetail: (detail: DetailState | null) => void
-  openCreate: (state: Omit<CreateState, 'preview'> | null) => void
+  openCreate: (state: CreateState | null) => void
   setCreatePreview: (preview: CreatePreview | null) => void
   openTaskEditor: (state: TaskEditorState) => void
   setSettingsOpen: (open: boolean) => void
@@ -82,34 +85,35 @@ export const useUi = create<UiState>()((set) => ({
   editor: null,
   detail: null,
   create: null,
+  createPreview: null,
   taskEditor: null,
   settingsOpen: false,
   shortcutsOpen: false,
   backendReachable: true,
 
   setView: (view) => {
-    set({ view, detail: null, create: null })
+    set({ view, detail: null, create: null, createPreview: null })
   },
   setDate: (date) => {
-    set({ date, detail: null, create: null })
+    set({ date, detail: null, create: null, createPreview: null })
   },
   setSidebarOpen: (sidebarOpen) => {
     set({ sidebarOpen })
   },
   openEditor: (editor) => {
-    set({ editor, detail: null, create: null })
+    set({ editor, detail: null, create: null, createPreview: null })
   },
   openDetail: (detail) => {
     set({ detail })
   },
   openCreate: (state) => {
-    set({ create: state && { ...state, preview: null }, detail: null })
+    set({ create: state, createPreview: null, detail: null })
   },
   setCreatePreview: (preview) => {
-    set((s) => (s.create ? { create: { ...s.create, preview } } : {}))
+    set((s) => (s.create ? { createPreview: preview } : {}))
   },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor, detail: null, create: null })
+    set({ taskEditor, detail: null, create: null, createPreview: null })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

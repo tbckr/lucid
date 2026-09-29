@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { useShortcuts } from '@/hooks/useShortcuts'
@@ -39,10 +40,18 @@ interface Options {
   /** Hold the calendar list back until `release` is called. */
   later?: boolean
   origin?: CreateOrigin
+  /** Profiles the popover's renders. */
+  onRender?: ProfilerOnRenderCallback
 }
 
 /** Open the popover as a click in a day column (or `origin`) would, and render it. */
-async function openPopover({ calendars = [personal, work, tasks], post, later = false, origin = click }: Options = {}) {
+async function openPopover({
+  calendars = [personal, work, tasks],
+  post,
+  later = false,
+  origin = click,
+  onRender,
+}: Options = {}) {
   api.setCsrfToken('tok')
   let release: () => void = () => undefined
   const listed = new Promise<void>((resolve) => {
@@ -69,7 +78,13 @@ async function openPopover({ calendars = [personal, work, tasks], post, later = 
   })
   const { queryClient } = renderWithProviders(
     <>
-      <CreatePopover />
+      {onRender ? (
+        <Profiler id="create" onRender={onRender}>
+          <CreatePopover />
+        </Profiler>
+      ) : (
+        <CreatePopover />
+      )}
       <Shortcuts />
     </>,
   )
@@ -172,6 +187,20 @@ describe('CreatePopover', () => {
     expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
   })
 
+  it('creates once however the form is sent again while it waits', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openPopover({ post: () => new Promise<Response>(() => undefined) })
+    await user.keyboard('X{Enter}')
+    await posted(fetch)
+    // A second submission that no disabled button holds back.
+    await act(async () => {
+      dialog.querySelector('form')!.requestSubmit()
+      // The mutation calls fetch asynchronously.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+
   it('leaves shortcut letters to the title', async () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()
@@ -227,7 +256,7 @@ describe('CreatePopover', () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()
     await user.keyboard('Rev')
-    expect(useUi.getState().create?.preview).toMatchObject({
+    expect(useUi.getState().createPreview).toMatchObject({
       kind: 'event',
       calendarId: 'c1',
       title: 'Rev',
@@ -237,7 +266,7 @@ describe('CreatePopover', () => {
       point: false,
     })
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
-    expect(useUi.getState().create?.preview).toMatchObject({ kind: 'task', calendarId: 'c3', start: click.start, point: true })
+    expect(useUi.getState().createPreview).toMatchObject({ kind: 'task', calendarId: 'c3', start: click.start, point: true })
   })
 
   it('has no switch when only events can be created', async () => {
@@ -306,5 +335,43 @@ describe('CreatePopover', () => {
     await user.click(screen.getByRole('option', { name: '2:00 PM' }))
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('2:00 PM')
+  })
+  it('shows the end date of an event that runs past midnight, and keeps it while it is edited', async () => {
+    const user = userEvent.setup()
+    const late = { ...click, start: new Date(2026, 8, 30, 23, 30), end: new Date(2026, 9, 1, 0, 30) }
+    const { dialog } = await openPopover({ origin: late })
+    const end = within(dialog).getByRole('button', { name: /^End Thu, Oct 1/ })
+    await user.click(end)
+    await user.click(within(screen.getByRole('dialog', { name: 'End date' })).getByRole('button', { name: /September 30th/ }))
+    // Back on the start's day: the field stays where the focus is.
+    const same = within(dialog).getByRole('button', { name: /^End Wed, Sep 30/ })
+    await waitFor(() => {
+      expect(same).toHaveFocus()
+    })
+  })
+  it('keeps changed times when switching to a task and back', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openPopover()
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.click(screen.getByRole('option', { name: '2:00 PM' }))
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    const dueTime = within(dialog).getByRole('combobox', { name: 'Due time' })
+    expect(dueTime).toHaveTextContent('2:00 PM')
+    await user.click(dueTime)
+    await user.click(screen.getByRole('option', { name: '4:00 PM' }))
+    // Back as an event: at the task's time, with the event's length.
+    await user.click(within(dialog).getByRole('radio', { name: 'Event' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('4:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveTextContent('5:00 PM')
+  })
+  it('renders once per keystroke of the title', async () => {
+    const onRender = vi.fn<ProfilerOnRenderCallback>()
+    const user = userEvent.setup()
+    await openPopover({ onRender })
+    await user.keyboard('R')
+    onRender.mockClear()
+    // Writing the preview for the views must not render the popover a second time.
+    await user.keyboard('e')
+    expect(onRender).toHaveBeenCalledTimes(1)
   })
 })

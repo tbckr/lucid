@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { atMinutes } from '@/lib/dates'
-import { onTint } from './EditorRow'
 import { timeOptions } from '@/lib/eventForm'
 import { formatTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { onTint } from './EditorRow'
 
 const OPTIONS = timeOptions(15)
 // Radix Select items cannot have an empty value; this one stands for "no time".

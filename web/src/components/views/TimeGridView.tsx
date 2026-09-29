@@ -45,8 +45,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
   // Times, not the preview: typing its title must not re-render the grid, only the draft (ColumnDraft).
-  const allDayStart = useUi((s) => (s.create?.preview?.allDay ? s.create.preview.start.getTime() : null))
-  const allDayEnd = useUi((s) => (s.create?.preview?.allDay ? s.create.preview.end.getTime() : null))
+  const allDayStart = useUi((s) => (s.createPreview?.allDay ? s.createPreview.start.getTime() : null))
+  const allDayEnd = useUi((s) => (s.createPreview?.allDay ? s.createPreview.end.getTime() : null))
   const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -281,7 +281,7 @@ function DayColumn({
   prefs: FormatPrefs
   colorsOf: (id: string) => EventColors
   readOnly: (calendarId: string) => boolean
-  onCreate: (state: Omit<CreateState, 'preview'>) => void
+  onCreate: (state: CreateState) => void
 }) {
   const { t } = useTranslation()
   const { resize } = useDndState()
@@ -390,7 +390,7 @@ function DayColumn({
 
 /** The create popover's entry in a day column: the only part of the grid that follows each keystroke of its title. */
 function ColumnDraft({ day, colorsOf, prefs }: { day: Date; colorsOf: (id: string) => EventColors; prefs: FormatPrefs }) {
-  const preview = useUi((s) => s.create?.preview ?? null)
+  const preview = useUi((s) => s.createPreview)
   if (!preview) return null
   return <DraftBlock preview={preview} day={day} colors={colorsOf(preview.calendarId)} prefs={prefs} />
 }

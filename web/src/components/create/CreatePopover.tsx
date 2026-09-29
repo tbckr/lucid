@@ -130,6 +130,8 @@ function CreateForm({ create }: { create: CreateState }) {
 
   const submit = (e: SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault()
+    // One entry per click: Enter or a script may send the form again while it waits.
+    if (pending) return
     setSubmitted(true)
     if (!result.success || !target) return
     if (kind === 'event') {

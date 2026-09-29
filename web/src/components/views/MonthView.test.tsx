@@ -113,7 +113,7 @@ describe('MonthView', () => {
     // Typing the title builds a new preview on the same day: the grid stays as it is.
     const before = chipRenders.count
     act(() => {
-      const p = useUi.getState().create!.preview!
+      const p = useUi.getState().createPreview!
       useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Rent' })
     })
     expect(chipRenders.count).toBe(before)

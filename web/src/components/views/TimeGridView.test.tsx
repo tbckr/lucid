@@ -204,7 +204,7 @@ describe('TimeGridView', () => {
     const before = blockRenders.count
     act(() => {
       // The popover builds a new preview, with new dates, on every keystroke.
-      const p = useUi.getState().create!.preview!
+      const p = useUi.getState().createPreview!
       useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Re' })
     })
     expect(container.querySelector('[data-draft]')).toHaveTextContent('Re')
