@@ -1,3 +1,5 @@
+import { PX_PER_MINUTE } from './dnd'
+
 export interface Box {
   x: number
   y: number
@@ -46,4 +48,14 @@ export function lastKnownBox(anchor: { isConnected: boolean; getBoundingClientRe
     if (anchor.isConnected || !last) last = anchor.getBoundingClientRect()
     return last
   }
+}
+
+/**
+ * The part of a time-grid day column that `startMin` to `endMin` cover, so a
+ * popover points at a slot rather than the whole day. A span into the next day
+ * ends at midnight, at the bottom of the column.
+ */
+export function spanBox(column: Box, startMin: number, endMin: number): Box {
+  const end = Math.min(endMin, 24 * 60)
+  return { x: column.x, y: column.y + startMin * PX_PER_MINUTE, width: column.width, height: (end - startMin) * PX_PER_MINUTE }
 }

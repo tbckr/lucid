@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { splitLinks } from '@/lib/links'
-import { detailPlacement, lastKnownBox } from '@/lib/placement'
+import { detailPlacement, lastKnownBox, type Box } from '@/lib/placement'
 
 /*
  * Parts of the details popovers of events (FR-09) and tasks (FR-16): the
@@ -14,28 +14,36 @@ import { detailPlacement, lastKnownBox } from '@/lib/placement'
 
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight })
 
-/** Popover content at the item's block; focus goes to `initialFocus` and back to the block on close. */
+/**
+ * Popover content at the item's block; focus goes to `initialFocus` and back
+ * to the block (or `returnFocus`) on close. `measure` points it at a part of
+ * `anchor`, such as the slot of a new event in a day column.
+ */
 export function DetailContent({
   anchor,
+  measure,
+  returnFocus,
   label,
   initialFocus,
   children,
 }: {
   anchor: HTMLElement
+  measure?: (() => Box) | undefined
+  returnFocus?: HTMLElement | undefined
   label: string
   initialFocus: () => HTMLElement | null
   children: ReactNode
 }) {
   // Radix measures the anchor again on scroll and resize; the side stays the one it opened on.
   const { side, virtualRef } = useMemo(() => {
-    const box = lastKnownBox(anchor)
+    const box = measure ?? lastKnownBox(anchor)
     return {
       side: detailPlacement(box(), viewport()).side,
       virtualRef: {
         current: { getBoundingClientRect: () => DOMRect.fromRect(detailPlacement(box(), viewport()).rect) },
       },
     }
-  }, [anchor])
+  }, [anchor, measure])
   return (
     <>
       <PopoverAnchor virtualRef={virtualRef} />
@@ -50,7 +58,8 @@ export function DetailContent({
         }}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
-          if (anchor.isConnected) anchor.focus()
+          const target = returnFocus ?? anchor
+          if (target.isConnected) target.focus()
         }}
       >
         {children}

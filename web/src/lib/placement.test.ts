@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detailPlacement, lastKnownBox } from './placement'
+import { detailPlacement, lastKnownBox, spanBox } from './placement'
 
 const desktop = { width: 1280, height: 800 }
 const phone = { width: 390, height: 800 }
@@ -41,5 +41,18 @@ describe('lastKnownBox', () => {
     anchor.isConnected = false
     anchor.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0 })
     expect(box()).toEqual({ x: 10, y: 120, width: 30, height: 40 })
+  })
+})
+
+describe('spanBox', () => {
+  // A day column scrolled 200 px up; 0.8 px per minute.
+  const column = { x: 100, y: -200, width: 150, height: 1152 }
+
+  it('covers the minutes in the column', () => {
+    expect(spanBox(column, 600, 660)).toEqual({ x: 100, y: 280, width: 150, height: 48 })
+  })
+
+  it('ends at midnight for a span into the next day', () => {
+    expect(spanBox(column, 1410, 1470)).toEqual({ x: 100, y: 928, width: 150, height: 24 })
   })
 })
