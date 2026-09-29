@@ -149,7 +149,7 @@ describe('TaskDetailsPopover', () => {
     })
     expect(await within(dialog).findByRole('heading', { name: 'Pay rent and bills' })).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Edit task' }))
-    expect(useUi.getState().taskEditor).toEqual(now)
+    expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: now })
     expect(useUi.getState().detail).toBeNull()
   })
 })

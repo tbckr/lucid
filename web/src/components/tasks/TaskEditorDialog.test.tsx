@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Calendar, type Todo } from '@/lib/api/schemas'
-import { useUi } from '@/stores/ui'
+import { useUi, type TaskCreateDefaults } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TaskEditorDialog } from './TaskEditorDialog'
@@ -18,13 +18,42 @@ async function openTask(t: Todo, list: Calendar = calendar()) {
     return Promise.resolve(jsonResponse(200, { ...t, etag: '"2"' }))
   })
   act(() => {
-    useUi.getState().openTaskEditor(t)
+    useUi.getState().openTaskEditor({ mode: 'edit', todo: t })
   })
   const { queryClient } = renderWithProviders(<TaskEditorDialog />)
   await waitFor(() => {
     expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
   })
   return { fetch, dialog: await screen.findByRole('dialog', { name: 'Edit task' }) }
+}
+
+/** Open the editor for a new task and wait until the lists are loaded. */
+async function openNew(defaults: TaskCreateDefaults, lists: Calendar[] = [calendar()]) {
+  api.setCsrfToken('tok')
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) =>
+    Promise.resolve(
+      urlOf(input).endsWith('/calendars')
+        ? jsonResponse(200, { calendars: lists })
+        : jsonResponse(201, todo({ title: defaults.title, calendarId: defaults.calendarId })),
+    ),
+  )
+  act(() => {
+    useUi.getState().openTaskEditor({ mode: 'create', defaults })
+  })
+  const { queryClient } = renderWithProviders(<TaskEditorDialog />)
+  await waitFor(() => {
+    expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
+  })
+  return { fetch, dialog: await screen.findByRole('dialog', { name: 'New task' }) }
+}
+
+const slides: TaskCreateDefaults = {
+  title: 'Slides',
+  calendarId: 'c1',
+  startDate: '',
+  startTime: '',
+  dueDate: '2026-09-30',
+  dueTime: '10:15',
 }
 
 /** Body of the PUT the editor sent. */
@@ -176,5 +205,40 @@ describe('TaskEditorDialog', () => {
     expect(within(dialog).getByRole('checkbox', { name: 'Completed' })).toBeDisabled()
     expect(within(dialog).queryByRole('button', { name: 'Save' })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: 'Delete task' })).toBeNull()
+  })
+  it('creates a task in the chosen list with the given dates', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openNew(slides)
+    expect(within(dialog).getByPlaceholderText('Add a title')).toHaveValue('Slides')
+    expect(within(dialog).queryByRole('button', { name: 'Delete task' })).toBeNull()
+    expect(within(dialog).queryByRole('checkbox', { name: 'Completed' })).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+    })
+    const [input, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+    expect(urlOf(input)).toMatch(/\/calendars\/c1\/todos$/)
+    expect(bodyOf(init)).toMatchObject({
+      title: 'Slides',
+      start: null,
+      due: '2026-09-30T08:15:00.000Z',
+      dueAllDay: false,
+      status: 'NEEDS-ACTION',
+    })
+    await waitFor(() => {
+      expect(useUi.getState().taskEditor).toBeNull()
+    })
+  })
+
+  it('offers only lists that take new tasks', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openNew(slides, [
+      calendar(),
+      calendar({ id: 'c2', name: 'Shared', readOnly: true }),
+      calendar({ id: 'c3', name: 'Work', supportsTodos: false }),
+    ])
+    await user.click(within(dialog).getByRole('combobox', { name: 'Task list' }))
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Personal'])
   })
 })

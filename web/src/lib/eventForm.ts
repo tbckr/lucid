@@ -41,14 +41,14 @@ export type EventFormValues = z.infer<typeof eventFormSchema>
 
 /** Initial values for creating an event. */
 export function createFormValues(
-  defaults: { start: Date; end: Date; allDay: boolean },
+  defaults: { start: Date; end: Date; allDay: boolean; title?: string | undefined },
   calendarId: string,
   timeZone: string,
 ): EventFormValues {
   const s = utcToZoned(defaults.start, timeZone)
   const e = utcToZoned(defaults.end, timeZone)
   return {
-    title: '',
+    title: defaults.title ?? '',
     calendarId,
     allDay: defaults.allDay,
     startDate: s.date,

@@ -2,13 +2,25 @@ import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
 import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
+import { type TaskWhen } from '@/lib/quickCreate'
 import { useSettings } from './settings'
 
 export interface CreateDefaults {
   start: Date
   end: Date
   allDay: boolean
+  /** Carried over from the create popover. */
+  title?: string
+  calendarId?: string
 }
+
+/** A new task handed over from the create popover (FR-16). */
+export interface TaskCreateDefaults extends TaskWhen {
+  title: string
+  calendarId: string
+}
+
+export type TaskEditorState = { mode: 'edit'; todo: Todo } | { mode: 'create'; defaults: TaskCreateDefaults } | null
 
 export type EditorState =
   | { mode: 'create'; defaults: CreateDefaults }
@@ -28,7 +40,7 @@ interface UiState {
   sidebarOpen: boolean
   editor: EditorState
   detail: DetailState | null
-  taskEditor: Todo | null
+  taskEditor: TaskEditorState
   settingsOpen: boolean
   shortcutsOpen: boolean
   /** Backend reachable (updated by API client + /healthz polling). */
@@ -39,7 +51,7 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void
   openEditor: (editor: EditorState) => void
   openDetail: (detail: DetailState | null) => void
-  openTaskEditor: (todo: Todo | null) => void
+  openTaskEditor: (state: TaskEditorState) => void
   setSettingsOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
   setBackendReachable: (reachable: boolean) => void

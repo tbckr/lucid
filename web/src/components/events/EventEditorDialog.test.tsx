@@ -63,6 +63,12 @@ describe('EventEditorDialog', () => {
     })
   })
 
+  it('opens with the title and calendar it was given', async () => {
+    const { dialog } = await openEditor({ mode: 'create', defaults: { ...create.defaults, title: 'Review', calendarId: 'c2' } })
+    expect(within(dialog).getByPlaceholderText('Add a title')).toHaveValue('Review')
+    expect(within(dialog).getByRole('combobox', { name: 'Calendar' })).toHaveTextContent('Work')
+  })
+
   it('names the repeat presets after the start date', async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor(create)

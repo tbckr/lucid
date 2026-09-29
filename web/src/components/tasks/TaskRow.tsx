@@ -58,7 +58,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
       <button
         type="button"
         onClick={() => {
-          openTaskEditor(todo)
+          openTaskEditor({ mode: 'edit', todo })
         }}
         className="-mx-1.5 min-w-0 flex-1 rounded-md px-1.5 py-1 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
       >

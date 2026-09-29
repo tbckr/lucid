@@ -159,7 +159,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
             deleteLabel={t('tasks.delete')}
             confirm={t('tasks.confirmDelete')}
             onEdit={() => {
-              openTaskEditor(todo)
+              openTaskEditor({ mode: 'edit', todo })
             }}
             onDelete={() => {
               del.mutate(todo)

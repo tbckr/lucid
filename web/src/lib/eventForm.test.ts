@@ -83,6 +83,12 @@ describe('formToInput', () => {
 })
 
 describe('initial values', () => {
+  it('takes a title over into the create values', () => {
+    const start = new Date(2026, 8, 25, 14, 0)
+    expect(createFormValues({ start, end: start, allDay: false, title: 'Review' }, 'c1', TZ).title).toBe('Review')
+    expect(createFormValues({ start, end: start, allDay: false }, 'c1', TZ).title).toBe('')
+  })
+
   it('creates timed and all-day defaults', () => {
     const start = new Date(2026, 8, 25, 14, 0)
     const end = new Date(2026, 8, 25, 15, 0)

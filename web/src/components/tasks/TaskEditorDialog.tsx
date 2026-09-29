@@ -3,6 +3,7 @@ import { AlignLeftIcon, CheckIcon, ClockIcon, FlagIcon, ListChecksIcon, PlusIcon
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { TimeSelect } from '@/components/events/TimeSelect'
@@ -11,20 +12,21 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { useDeleteTodo, useUpdateTodo, useVisibleCalendars } from '@/hooks/queries'
+import { useCreateTodo, useDeleteTodo, useUpdateTodo, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
-import { type Todo } from '@/lib/api/schemas'
 import { parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
+import { taskForm, writableFor } from '@/lib/quickCreate'
 import { formToTodoInput, taskFormSchema, taskToForm, type TaskFormValues } from '@/lib/taskForm'
 import { isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
-import { useUi } from '@/stores/ui'
+import { useUi, type TaskEditorState } from '@/stores/ui'
 
 const LEVELS: PriorityLevel[] = ['none', 'low', 'medium', 'high']
 
@@ -43,22 +45,25 @@ const DATES = {
 
 type Which = keyof typeof DATES
 
-/** Edit a task: title, notes, start and due date, priority, checklist (FR-13, FR-14, FR-15, FR-16). */
+/**
+ * Edit a task: title, notes, start and due date, priority, checklist (FR-13,
+ * FR-14, FR-15, FR-16). Also creates one handed over from the create popover.
+ */
 export function TaskEditorDialog() {
-  const todo = useUi((s) => s.taskEditor)
+  const state = useUi((s) => s.taskEditor)
   const open = useUi((s) => s.openTaskEditor)
   return (
     <Dialog
-      open={todo !== null}
+      open={state !== null}
       onOpenChange={(o) => {
         if (!o) open(null)
       }}
     >
-      {todo && (
+      {state && (
         <DialogContent className="gap-0 p-0" showCloseButton={false}>
           <TaskForm
-            key={todo.id}
-            todo={todo}
+            key={state.mode === 'edit' ? state.todo.id : 'create'}
+            state={state}
             onDone={() => {
               open(null)
             }}
@@ -69,17 +74,21 @@ export function TaskEditorDialog() {
   )
 }
 
-function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
+function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDone: () => void }) {
   const { t } = useTranslation()
   const id = useId()
   const prefs = usePrefs()
   const now = useNow()
-  const colors = useCalendarColors()(todo.calendarId)
+  const todo = state.mode === 'edit' ? state.todo : undefined
+  const [calendarId, setCalendarId] = useState(state.mode === 'edit' ? state.todo.calendarId : state.defaults.calendarId)
+  const colors = useCalendarColors()(calendarId)
   const tz = useMemo(() => browserTimeZone(), [])
-  const { byId } = useVisibleCalendars()
-  const list = byId.get(todo.calendarId)
-  const readOnly = list?.readOnly ?? false
+  const { all, byId } = useVisibleCalendars()
+  const lists = useMemo(() => writableFor('task', all), [all])
+  const list = byId.get(calendarId)
+  const readOnly = todo ? (list?.readOnly ?? false) : false
   const update = useUpdateTodo()
+  const create = useCreateTodo()
   const del = useDeleteTodo()
   const [newItem, setNewItem] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -89,7 +98,7 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
-    defaultValues: taskToForm(todo, tz),
+    defaultValues: state.mode === 'edit' ? taskToForm(state.todo, tz) : taskForm(state.defaults.title, state.defaults),
   })
   const { register, control, handleSubmit, formState, setValue, getValues } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
@@ -117,8 +126,21 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
   }
 
   const onSubmit = handleSubmit((v) => {
-    update.mutate({ todo, input: formToTodoInput(v, tz, todo) }, { onSuccess: onDone })
+    if (todo) {
+      update.mutate({ todo, input: formToTodoInput(v, tz, todo) }, { onSuccess: onDone })
+      return
+    }
+    create.mutate(
+      { calendarId, input: formToTodoInput(v, tz) },
+      {
+        onSuccess: () => {
+          toast.success(t('tasks.created'))
+          onDone()
+        },
+      },
+    )
   })
+  const pending = update.isPending || create.isPending
 
   const setDate = (which: Which, date: string) => {
     const f = DATES[which]
@@ -204,31 +226,40 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
     >
       {/* The task as it appears in its list: the list's tint and bar, and the round check that completes it. */}
       <div
-        className="relative grid grid-cols-[1.25rem_1fr] items-start gap-x-3 border-l-4 pt-5 pr-14 pb-4 pl-3 sm:pl-5"
+        className="relative grid grid-cols-[1.25rem_1fr] items-start gap-x-3 border-l-4 pt-5 pr-14 pb-4 pl-3 transition-colors duration-200 sm:pl-5"
         style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid }}
       >
-        <DialogTitle className="sr-only">{t('tasks.edit')}</DialogTitle>
-        <DialogDescription className="sr-only">{t('tasks.editDescription')}</DialogDescription>
-        <Controller
-          control={control}
-          name="completed"
-          render={({ field }) => (
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={field.value}
-              aria-label={t('tasks.markCompleted')}
-              disabled={readOnly}
-              onClick={() => {
-                field.onChange(!field.value)
-              }}
-              className="mt-1 flex size-6 items-center justify-center justify-self-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-current/50 disabled:opacity-50"
-              style={{ borderColor: colors.solid, backgroundColor: field.value ? colors.solid : 'transparent' }}
-            >
-              {field.value && <CheckIcon className="size-4" strokeWidth={3.5} style={{ color: colors.onSolid }} aria-hidden />}
-            </button>
-          )}
-        />
+        <DialogTitle className="sr-only">{todo ? t('tasks.edit') : t('tasks.new')}</DialogTitle>
+        <DialogDescription className="sr-only">{todo ? t('tasks.editDescription') : t('tasks.newDescription')}</DialogDescription>
+        {/* A new task shows the check as its shape only: there is nothing to complete yet. */}
+        {todo ? (
+          <Controller
+            control={control}
+            name="completed"
+            render={({ field }) => (
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={field.value}
+                aria-label={t('tasks.markCompleted')}
+                disabled={readOnly}
+                onClick={() => {
+                  field.onChange(!field.value)
+                }}
+                className="mt-1 flex size-6 items-center justify-center justify-self-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-current/50 disabled:opacity-50"
+                style={{ borderColor: colors.solid, backgroundColor: field.value ? colors.solid : 'transparent' }}
+              >
+                {field.value && <CheckIcon className="size-4" strokeWidth={3.5} style={{ color: colors.onSolid }} aria-hidden />}
+              </button>
+            )}
+          />
+        ) : (
+          <span
+            className="mt-1 size-6 justify-self-center rounded-full border-2 transition-colors"
+            style={{ borderColor: colors.solid }}
+            aria-hidden
+          />
+        )}
         <div className="grid min-w-0 gap-2">
           <Label htmlFor={`${id}-title`} className="sr-only">
             {t('tasks.titleLabel')}
@@ -251,11 +282,35 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
               {titleError}
             </p>
           )}
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <span className="size-2.5 rounded-full" style={{ backgroundColor: colors.solid }} aria-hidden />
-            <span className="sr-only">{t('tasks.list')}: </span>
-            {list?.name ?? t('event.unknownCalendar')}
-          </p>
+          {todo ? (
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <span className="size-2.5 rounded-full" style={{ backgroundColor: colors.solid }} aria-hidden />
+              <span className="sr-only">{t('tasks.list')}: </span>
+              {list?.name ?? t('event.unknownCalendar')}
+            </p>
+          ) : (
+            <div className="flex">
+              <Label htmlFor={`${id}-list`} className="sr-only">
+                {t('tasks.list')}
+              </Label>
+              <Select value={calendarId} onValueChange={setCalendarId}>
+                <SelectTrigger
+                  id={`${id}-list`}
+                  className="-ml-2 h-8 w-auto border-transparent bg-transparent px-2 font-medium text-current hover:border-current/25 data-[placeholder]:text-current"
+                >
+                  <SelectValue placeholder={t('tasks.chooseList')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {lists.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      <span className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} aria-hidden />
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {readOnly && <p className="text-sm">{t('tasks.readOnlyNotice')}</p>}
         </div>
         <DialogClose className="absolute top-3 right-3 rounded-md p-1.5 transition-colors outline-none hover:bg-current/10 focus-visible:ring-[3px] focus-visible:ring-current/50 [&_svg]:size-4">
@@ -403,7 +458,7 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
                 variant="destructive"
                 disabled={del.isPending}
                 onClick={() => {
-                  del.mutate(todo, { onSuccess: onDone })
+                  if (todo) del.mutate(todo, { onSuccess: onDone })
                 }}
               >
                 {del.isPending && <Spinner />}
@@ -413,7 +468,7 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
           </div>
         ) : (
           <>
-            {readOnly ? (
+            {readOnly || !todo ? (
               <span />
             ) : (
               <Button
@@ -434,9 +489,9 @@ function TaskForm({ todo, onDone }: { todo: Todo; onDone: () => void }) {
                 {readOnly ? t('common.close') : t('common.cancel')}
               </Button>
               {!readOnly && (
-                <Button type="submit" disabled={update.isPending}>
-                  {update.isPending && <Spinner />}
-                  {t('common.save')}
+                <Button type="submit" disabled={pending || !calendarId}>
+                  {pending && <Spinner />}
+                  {todo ? t('common.save') : t('tasks.createAction')}
                 </Button>
               )}
             </div>

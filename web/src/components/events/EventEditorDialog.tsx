@@ -100,7 +100,7 @@ function EditorForm({
     defaultValues:
       editor.mode === 'edit'
         ? editFormValues(editor.event, tz)
-        : createFormValues(editor.defaults, defaultCalendarId, tz),
+        : createFormValues(editor.defaults, editor.defaults.calendarId ?? defaultCalendarId, tz),
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   })
