@@ -186,3 +186,22 @@ test('a click beside the create popover only closes it', async ({ page }) => {
   await expect(dialog).toBeHidden()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
+
+test('a click on another event while details are open shows its details', async ({ page }) => {
+  await login(page)
+  // Standup (weekdays) and Gym (Mondays, Thursdays) are in every week of the demo data.
+  await page.keyboard.press('w')
+  const main = page.getByRole('main')
+  await main.locator('[data-event-key]', { hasText: 'Standup' }).first().click()
+  await expect(page.getByRole('dialog', { name: 'Standup' })).toBeVisible()
+
+  await main.locator('[data-event-key]', { hasText: 'Gym' }).first().click()
+  const gym = page.getByRole('dialog', { name: 'Gym' })
+  await expect(gym).toBeVisible()
+  // The Standup details return the focus from a timer queued as they close; once one
+  // queued now has fired, that focus has come and gone.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)))
+  await expect(gym).toBeVisible()
+  await expect(gym.getByRole('button', { name: 'Edit event' })).toBeFocused()
+  await expect(page.getByRole('dialog')).toHaveCount(1)
+})

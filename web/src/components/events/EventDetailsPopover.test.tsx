@@ -19,6 +19,7 @@ async function openDetails(p: Partial<ApiEvent>) {
   const { queryClient } = renderWithProviders(
     <>
       <button type="button">Block</button>
+      <button type="button">Other block</button>
       <EventDetailsPopover />
     </>,
   )
@@ -114,5 +115,21 @@ describe('EventDetailsPopover', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Edit event' }))
     expect(useUi.getState().editor).toMatchObject({ mode: 'edit', event: { title: 'Quarterly review' } })
     expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('stays open with the details of another event clicked while it is open', async () => {
+    await openDetails({})
+    // The block's click stops before Radix dismisses the popover: its details only swap in.
+    const other = screen.getByRole('button', { name: 'Other block' })
+    const standup = toCalEvent(apiEvent({ id: 'e2', key: 'e2', title: 'Standup' }))
+    act(() => {
+      other.focus()
+      useUi.getState().openDetail({ item: standup, anchor: other })
+    })
+    const dialog = await screen.findByRole('dialog', { name: 'Standup' })
+    // The first details return the focus a tick after they close; it must not leave the new ones.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(useUi.getState().detail?.item).toBe(standup)
+    expect(within(dialog).getByRole('button', { name: 'Edit event' })).toHaveFocus()
   })
 })

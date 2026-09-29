@@ -58,6 +58,10 @@ export function DetailContent({
         }}
         onCloseAutoFocus={(e) => {
           e.preventDefault()
+          // Radix returns the focus a tick after the close. By then, a popover that
+          // opened in this one's place has the focus and would close if it left.
+          const focused = document.activeElement
+          if (focused && focused !== document.body) return
           const target = returnFocus ?? anchor
           if (target.isConnected) target.focus()
         }}
