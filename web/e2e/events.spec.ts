@@ -193,6 +193,68 @@ test('a click beside the create popover only closes it', async ({ page }) => {
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
+test('dragging the draft of the create popover changes the times it creates', async ({ page }) => {
+  const title = `E2E draft drag ${Date.now()}`
+  await login(page)
+  await page.keyboard.press('w')
+  // On the first day of the week, so the next one is beside it. The page outside the popover
+  // is inert for Playwright's actions, so the drags use the mouse.
+  await page.locator('button[aria-label$=" 1:00 PM"]').first().click({ position: { x: 20, y: 4 } })
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  const startDate = dialog.getByRole('button', { name: /^Start / })
+  const startTime = dialog.getByRole('combobox', { name: 'Start time' })
+  const endTime = dialog.getByRole('combobox', { name: 'End time' })
+  await expect(endTime).toHaveText('2:00 PM')
+  const firstDay = (await startDate.textContent())!
+  const draft = page.locator('[data-draft]')
+
+  // Down one hour (48 px), as an event moves.
+  let box = (await draft.boundingBox())!
+  let x = box.x + box.width / 2
+  await page.mouse.move(x, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(x, box.y + 20, { steps: 4 })
+  await page.mouse.move(x, box.y + 58, { steps: 4 })
+  await page.mouse.up()
+  await expect(startTime).toHaveText('2:00 PM')
+  await expect(endTime).toHaveText('3:00 PM')
+
+  // Into the next day's column; the popover goes along.
+  box = (await draft.boundingBox())!
+  const popover = (await dialog.boundingBox())!
+  await page.mouse.move(x, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(x + 10, box.y + 10, { steps: 4 })
+  x += box.width + 8
+  await page.mouse.move(x, box.y + 10, { steps: 4 })
+  await page.mouse.up()
+  await expect(startDate).not.toHaveText(firstDay)
+  await expect(startTime).toHaveText('2:00 PM')
+  await expect.poll(async () => (await draft.boundingBox())!.x).toBeGreaterThan(box.x + box.width / 2)
+  await expect.poll(async () => (await dialog.boundingBox())!.x).toBeGreaterThan(popover.x + box.width / 2)
+
+  // The bottom edge down 30 minutes (24 px): the draft grows while it is dragged.
+  box = (await draft.boundingBox())!
+  await page.mouse.move(x, box.y + box.height - 3)
+  await page.mouse.down()
+  await page.mouse.move(x, box.y + box.height + 7, { steps: 4 })
+  await page.mouse.move(x, box.y + box.height + 21, { steps: 4 })
+  await expect(draft).toContainText('2 PM – 3:30 PM')
+  await page.mouse.up()
+  await expect(endTime).toHaveText('3:30 PM')
+
+  // The title kept the focus through the drags.
+  await expect(dialog.getByPlaceholder('Add a title')).toBeFocused()
+  await page.keyboard.type(title)
+  await page.keyboard.press('Enter')
+  await expect(dialog).toBeHidden()
+  const block = page.locator('[data-event-key]', { hasText: title })
+  await expect(block).toContainText('2 PM – 3:30 PM')
+  expect((await block.boundingBox())!.x).toBeGreaterThan(box.x - box.width / 2)
+
+  await deleteEvent(page, block, title)
+})
+
 test('a click on another event while details are open shows its details', async ({ page }) => {
   await login(page)
   // Standup (weekdays) and Gym (Mondays, Thursdays) are in every week of the demo data.

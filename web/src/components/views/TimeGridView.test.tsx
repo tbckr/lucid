@@ -2,12 +2,13 @@ import { DndContext, type DragStartEvent } from '@dnd-kit/core'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
 import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
-import { toCalEvent, type CalItem } from '@/lib/events'
+import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
-import { type CreatePreview } from '@/lib/quickCreate'
+import { previewOf, type CreateKind, type EventWhen, type TaskWhen } from '@/lib/quickCreate'
 import { useUi } from '@/stores/ui'
 import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -174,27 +175,25 @@ describe('TimeGridView', () => {
     expect(create?.returnFocus).toBe(cell)
   })
 
-  /** Open the popover at 09:00 and give it `preview`, as the popover does. */
-  function withPreview(preview: Partial<CreatePreview>) {
+  /** Open the popover at 09:00 and give it the preview of `when`, as the popover does. */
+  function withPreview(kind: CreateKind, when: EventWhen | TaskWhen, title = 'Review') {
     const slot = screen.getByRole('button', { name: /9:00 AM$/ })
     act(() => {
       fireEvent.click(slot, { clientY: 0 })
-      useUi.getState().setCreatePreview({
-        kind: 'event',
-        calendarId: 'c1',
-        title: 'Review',
-        start: new Date(2026, 8, 25, 10),
-        end: new Date(2026, 8, 25, 11),
-        allDay: false,
-        point: false,
-        ...preview,
-      })
+      useUi.getState().setCreatePreview(previewOf(kind, when, 'c1', title, 'Europe/Berlin'))
     })
   }
+  const at = (startTime: string, endTime: string, endDate = '2026-09-25'): EventWhen => ({
+    allDay: false,
+    startDate: '2026-09-25',
+    startTime,
+    endDate,
+    endTime,
+  })
 
   it('draws the draft where the entry will land', () => {
     const { container } = renderDay()
-    withPreview({})
+    withPreview('event', at('10:00', '11:00'))
     const draft = container.querySelector<HTMLElement>('[data-draft]')!
     expect(draft).toHaveTextContent('Review')
     expect(draft).toHaveTextContent('10 AM – 11 AM')
@@ -203,7 +202,7 @@ describe('TimeGridView', () => {
 
   it('draws a task draft with its time only', () => {
     const { container } = renderDay()
-    withPreview({ kind: 'task', title: '', point: true, end: new Date(2026, 8, 25, 10, 30) })
+    withPreview('task', { startDate: '', startTime: '', dueDate: '2026-09-25', dueTime: '10:00' }, '')
     const draft = container.querySelector<HTMLElement>('[data-draft]')!
     expect(draft).toHaveTextContent('(No title)')
     expect(draft).toHaveTextContent(/10 AM$/)
@@ -211,25 +210,94 @@ describe('TimeGridView', () => {
 
   it('clips a draft that runs past midnight', () => {
     const { container } = renderDay()
-    withPreview({ start: new Date(2026, 8, 25, 23, 30), end: new Date(2026, 8, 26, 0, 30) })
+    withPreview('event', at('23:30', '00:30', '2026-09-26'))
     const draft = container.querySelector<HTMLElement>('[data-draft]')!
     expect(draft.style.top).toBe('1128px')
     expect(draft.style.height).toBe('22px')
   })
 
+  /** Let go of what a press picked up: dnd-kit swallows clicks until 50 ms after a pointer drag. */
+  async function release() {
+    fireEvent.pointerUp(document)
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+  }
+
+  it('picks up the draft to move it, keeping the focus in the popover (FR-10)', async () => {
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    const { container } = renderDay([], onDragStart)
+    withPreview('event', at('10:00', '11:00'))
+    const draft = container.querySelector<HTMLElement>('[data-draft]')!
+    // Hidden from assistive tech, whose users set the times in the popover (NFR-27).
+    expect(draft).not.toHaveAttribute('tabindex')
+    // A press that took the focus would take it from the popover's title.
+    expect(fireEvent.mouseDown(draft)).toBe(false)
+    fireEvent.pointerDown(draft, { isPrimary: true, button: 0 })
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: 'timed',
+      event: useUi.getState().createPreview,
+      originDay: new Date(2026, 8, 25),
+      draft: true,
+    })
+    await release()
+  })
+
+  it('draws out the end of an event draft (FR-10)', async () => {
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    const { container } = renderDay([], onDragStart)
+    withPreview('event', at('10:00', '11:00'))
+    const draft = container.querySelector<HTMLElement>('[data-draft]')!
+    fireEvent.pointerDown(within(draft).getByRole('button', { name: 'Change end time', hidden: true }), { isPrimary: true, button: 0 })
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: 'resize',
+      event: useUi.getState().createPreview,
+      draft: true,
+    })
+    await release()
+  })
+
+  it('has no end to draw out on a task draft or on the part of a draft before midnight', () => {
+    const { container } = renderDay()
+    withPreview('task', { startDate: '2026-09-25', startTime: '10:00', dueDate: '2026-09-25', dueTime: '12:00' })
+    const draft = () => container.querySelector<HTMLElement>('[data-draft]')!
+    expect(within(draft()).queryByRole('button', { hidden: true })).toBeNull()
+    withPreview('event', at('23:30', '00:30', '2026-09-26'))
+    expect(within(draft()).queryByRole('button', { hidden: true })).toBeNull()
+  })
+
+  it('grows the draft while its end is drawn out', () => {
+    const draft = previewOf('event', at('10:00', '11:00'), 'c1', 'Review', 'Europe/Berlin')!
+    const { container } = renderWithProviders(
+      <DndContext>
+        <DndStateContext value={{ pendingKeys: new Set(), resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent, activeId: null }}>
+          <TimeGridView
+            days={[new Date(2026, 8, 25)]}
+            now={new Date(2026, 8, 25, 12)}
+            events={[]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>,
+    )
+    withPreview('event', at('10:00', '11:00'))
+    expect(container.querySelector<HTMLElement>('[data-draft]')!.style.height).toBe('94px')
+  })
+
   it('highlights the day of an all-day draft', () => {
     renderDay()
-    withPreview({ allDay: true, start: new Date(2026, 8, 25), end: new Date(2026, 8, 26) })
+    withPreview('event', { ...at('09:00', '10:00'), allDay: true })
     expect(screen.getByRole('button', { name: /New all-day event/ }).parentElement).toHaveAttribute('data-draft')
   })
   it('re-draws only the draft while its title is typed', () => {
     const { container } = renderDay([toCalEvent(apiEvent({ start: '2026-09-25T12:00:00Z', end: '2026-09-25T13:00:00Z' }))])
-    withPreview({ title: 'R' })
+    withPreview('event', at('10:00', '11:00'), 'R')
     const before = blockRenders.count
     act(() => {
       // The popover builds a new preview, with new dates, on every keystroke.
       const p = useUi.getState().createPreview!
-      useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Re' })
+      useUi.getState().setCreatePreview({ ...p, startsAt: new Date(p.startsAt), endsAt: new Date(p.endsAt), title: 'Re' })
     })
     expect(container.querySelector('[data-draft]')).toHaveTextContent('Re')
     expect(blockRenders.count).toBe(before)

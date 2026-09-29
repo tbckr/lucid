@@ -1,14 +1,14 @@
 import { type Calendar } from './api/schemas'
 import { toCalTask } from './calendarTasks'
-import { utcDateToLocal } from './dates'
-import { createFormValues, eventFormSchema, formToInput, shiftEnd, type EventFormValues } from './eventForm'
-import { formToTodoInput, taskFormSchema, type TaskFormValues } from './taskForm'
+import { createFormValues, editFormValues, eventFormSchema, formToInput, shiftEnd, type EventFormValues } from './eventForm'
+import { toCalEvent, type CalItem } from './events'
+import { formToTodoInput, taskFormSchema, taskToForm, type TaskFormValues } from './taskForm'
 
 /*
  * Rules of the popover that creates an event or a task from a click in the
  * calendar (FR-09, FR-16): the values a click starts with, what survives a
- * switch between the two kinds, which calendar takes the entry, and the
- * preview the views draw.
+ * switch between the two kinds, which calendar takes the entry, the preview
+ * the views draw, and the times a drag of that preview gives the entry.
  */
 
 export type CreateKind = 'event' | 'task'
@@ -26,22 +26,17 @@ export interface CreateOrigin {
 export type EventWhen = Pick<EventFormValues, 'allDay' | 'startDate' | 'startTime' | 'endDate' | 'endTime'>
 export type TaskWhen = Pick<TaskFormValues, 'startDate' | 'startTime' | 'dueDate' | 'dueTime'>
 
-/** The entry as the views draw it while the popover is open. */
-export interface CreatePreview {
-  kind: CreateKind
-  calendarId: string
-  title: string
-  start: Date
-  /** Exclusive end (all-day: local midnight after the last day). */
-  end: Date
-  allDay: boolean
-  /** A task with a single time. */
-  point: boolean
+/** When the entry happens, as an event and as a task: the popover keeps both for a switch of the kind. */
+export interface CreateWhen {
+  event: EventWhen
+  task: TaskWhen
 }
 
 // Placeholders for fields the preview does not depend on, so their rules never hide it.
 const ANY_TITLE = '-'
 const ANY_CALENDAR = '-'
+// The preview is no item of a calendar yet.
+const DRAFT_ID = 'draft'
 
 /** The event a click starts: the editor's create values (one hour, or all-day). */
 export function eventWhen(origin: CreateOrigin, timeZone: string): EventWhen {
@@ -188,28 +183,39 @@ export function taskForm(title: string, when: TaskWhen): TaskFormValues {
   return { title, description: '', startDate, startTime, dueDate, dueTime, priority: 0, completed: false, checklist: [] }
 }
 
-/** Where the entry will land, or null while the values are invalid. */
+/**
+ * Where the entry will land, as the item the views draw and drag (FR-10), or
+ * null while the values are invalid.
+ */
 export function previewOf(
   kind: CreateKind,
   when: EventWhen | TaskWhen,
   calendarId: string,
   title: string,
   timeZone: string,
-): CreatePreview | null {
+): CalItem | null {
+  const draft = { id: DRAFT_ID, calendarId, uid: '', etag: '' }
   if (kind === 'event') {
     const values = eventForm('', ANY_CALENDAR, when as EventWhen)
     if (!eventFormSchema.safeParse(values).success) return null
     const input = formToInput(values, timeZone)
-    const allDay = values.allDay
-    const start = allDay ? utcDateToLocal(input.start) : new Date(input.start)
-    const end = allDay ? utcDateToLocal(input.end) : new Date(input.end)
-    return { kind, calendarId, title, start, end, allDay, point: false }
+    return toCalEvent({ ...input, ...draft, title, key: DRAFT_ID, recurring: false, recurrenceId: null })
   }
   // The task as the calendar places it (FR-16): a point, a span or a day.
   const values = taskForm(ANY_TITLE, when as TaskWhen)
   if (!taskFormSchema.safeParse(values).success) return null
-  const input = formToTodoInput(values, timeZone)
-  const task = toCalTask({ ...input, title, id: 'draft', calendarId, uid: '', etag: '', completed: null })
-  if (!task) return null
-  return { kind, calendarId, title, start: task.startsAt, end: task.endsAt, allDay: task.allDay, point: task.point }
+  return toCalTask({ ...formToTodoInput(values, timeZone), ...draft, title, completed: null })
+}
+
+/**
+ * The entry's times where a drag of its preview in the calendar put it
+ * (FR-09, FR-10): an event's start and end, a task's dates as it has them.
+ */
+export function draggedWhen(item: CalItem, timeZone: string): Partial<CreateWhen> {
+  if (item.kind === 'event') {
+    const { allDay, startDate, startTime, endDate, endTime } = editFormValues(item, timeZone)
+    return { event: { allDay, startDate, startTime, endDate, endTime } }
+  }
+  const { startDate, startTime, dueDate, dueTime } = taskToForm(item.todo, timeZone)
+  return { task: { startDate, startTime, dueDate, dueTime } }
 }

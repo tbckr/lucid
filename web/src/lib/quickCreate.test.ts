@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { calendar } from '@/test/fixtures'
 import { TASK_POINT_MINUTES } from './calendarTasks'
+import { PX_PER_MINUTE, dropResult, withDrop } from './dnd'
 import { eventFormSchema, formToInput } from './eventForm'
+import { type CalEvent, type CalItem } from './events'
 import {
   chooseCalendar,
   draftOf,
+  draggedWhen,
   eventForm,
   eventFromTask,
   eventWhen,
@@ -271,23 +274,24 @@ describe('payloads', () => {
 })
 
 describe('previewOf', () => {
-  it('previews an event', () => {
-    expect(previewOf('event', clickWhen, 'c1', 'Review', TZ)).toEqual({
+  it('previews an event as the item it will be', () => {
+    expect(previewOf('event', clickWhen, 'c1', 'Review', TZ)).toMatchObject({
       kind: 'event',
       calendarId: 'c1',
       title: 'Review',
-      start: new Date(2026, 8, 30, 10, 15),
-      end: new Date(2026, 8, 30, 11, 15),
+      startsAt: new Date(2026, 8, 30, 10, 15),
+      endsAt: new Date(2026, 8, 30, 11, 15),
       allDay: false,
-      point: false,
+      recurring: false,
     })
   })
 
   it('previews a task due at a time as a point', () => {
     expect(previewOf('task', due('2026-09-30', '10:15'), 'c3', '', TZ)).toMatchObject({
       kind: 'task',
-      start: new Date(2026, 8, 30, 10, 15),
-      end: new Date(2026, 8, 30, 10, 15 + TASK_POINT_MINUTES),
+      calendarId: 'c3',
+      startsAt: new Date(2026, 8, 30, 10, 15),
+      endsAt: new Date(2026, 8, 30, 10, 15 + TASK_POINT_MINUTES),
       allDay: false,
       point: true,
     })
@@ -295,8 +299,8 @@ describe('previewOf', () => {
 
   it('previews a task due on a day as all-day', () => {
     expect(previewOf('task', due('2026-09-30', ''), 'c3', 'Call', TZ)).toMatchObject({
-      start: new Date(2026, 8, 30),
-      end: new Date(2026, 9, 1),
+      startsAt: new Date(2026, 8, 30),
+      endsAt: new Date(2026, 9, 1),
       allDay: true,
       point: false,
     })
@@ -304,8 +308,8 @@ describe('previewOf', () => {
 
   it('previews an all-day event through its last day', () => {
     expect(previewOf('event', { ...clickWhen, allDay: true }, 'c1', '', TZ)).toMatchObject({
-      start: new Date(2026, 8, 30),
-      end: new Date(2026, 9, 1),
+      startsAt: new Date(2026, 8, 30),
+      endsAt: new Date(2026, 9, 1),
       allDay: true,
     })
   })
@@ -313,5 +317,58 @@ describe('previewOf', () => {
   it('has no preview for invalid values', () => {
     expect(previewOf('event', { ...clickWhen, endTime: '09:00' }, 'c1', '', TZ)).toBeNull()
     expect(previewOf('task', due('', ''), 'c3', 'Call', TZ)).toBeNull()
+  })
+})
+
+describe('draggedWhen', () => {
+  // The draft of the popover as the time grid shows it, dragged as CalendarDnd drags it.
+  const wed = new Date(2026, 8, 30)
+  const thu = new Date(2026, 9, 1)
+  const draft = (kind: 'event' | 'task', when: EventWhen | TaskWhen) => previewOf(kind, when, 'c2', 'Review', TZ)!
+  const moved = (item: CalItem, day: Date, minutes: number) => {
+    const drag = { type: 'timed', event: item, originDay: wed, draft: true } as const
+    return withDrop(drag, dropResult(drag, { type: 'column', day }, minutes * PX_PER_MINUTE)!).event
+  }
+  const resized = (item: CalEvent, minutes: number) => {
+    const drag = { type: 'resize', event: item, draft: true } as const
+    return withDrop(drag, dropResult(drag, null, minutes * PX_PER_MINUTE)!).event
+  }
+
+  it('moves an event, keeping its length', () => {
+    expect(draggedWhen(moved(draft('event', clickWhen), wed, 45), TZ)).toEqual({
+      event: { allDay: false, startDate: '2026-09-30', startTime: '11:00', endDate: '2026-09-30', endTime: '12:00' },
+    })
+  })
+
+  it('moves an event to another day', () => {
+    expect(draggedWhen(moved(draft('event', clickWhen), thu, -30), TZ)).toEqual({
+      event: { allDay: false, startDate: '2026-10-01', startTime: '09:45', endDate: '2026-10-01', endTime: '10:45' },
+    })
+  })
+
+  it('moves an event past midnight', () => {
+    const late = { ...clickWhen, startTime: '22:30', endTime: '23:30' }
+    expect(draggedWhen(moved(draft('event', late), wed, 60), TZ)).toEqual({
+      event: { allDay: false, startDate: '2026-09-30', startTime: '23:30', endDate: '2026-10-01', endTime: '00:30' },
+    })
+  })
+
+  it('changes the end of an event', () => {
+    const item = draft('event', clickWhen)
+    if (item.kind !== 'event') throw new Error('not an event')
+    expect(draggedWhen(resized(item, 30), TZ)).toEqual({ event: { ...clickWhen, endTime: '11:45' } })
+  })
+
+  it('moves a task due at a time, which stays due only', () => {
+    expect(draggedWhen(moved(draft('task', due('2026-09-30', '10:15')), thu, 60), TZ)).toEqual({
+      task: due('2026-10-01', '11:15'),
+    })
+  })
+
+  it('moves both dates of a task span', () => {
+    const span = { startDate: '2026-09-30', startTime: '10:00', dueDate: '2026-09-30', dueTime: '12:00' }
+    expect(draggedWhen(moved(draft('task', span), thu, -30), TZ)).toEqual({
+      task: { startDate: '2026-10-01', startTime: '09:30', dueDate: '2026-10-01', dueTime: '11:30' },
+    })
   })
 })

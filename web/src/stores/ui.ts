@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
 import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
-import { type CreateOrigin, type CreatePreview, type Draft } from '@/lib/quickCreate'
+import { browserTimeZone } from '@/lib/locale'
+import { draftOf, type CreateOrigin, type CreateWhen, type Draft } from '@/lib/quickCreate'
 import { useSettings } from './settings'
 
 /** A new event or task in its editor (FR-09, FR-16). */
@@ -42,11 +43,13 @@ interface UiState {
   editor: EditorState
   detail: DetailState | null
   create: CreateState | null
+  /** When the create popover's entry happens: its fields and a drag of its draft in the calendar set it. */
+  createWhen: CreateWhen | null
   /**
    * The create popover's entry as the views draw it; written by the popover.
    * Kept beside `create`, so writing it does not render the popover again.
    */
-  createPreview: CreatePreview | null
+  createPreview: CalItem | null
   taskEditor: TaskEditorState
   settingsOpen: boolean
   shortcutsOpen: boolean
@@ -59,12 +62,16 @@ interface UiState {
   openEditor: (editor: EditorState) => void
   openDetail: (detail: DetailState | null) => void
   openCreate: (state: CreateState | null) => void
-  setCreatePreview: (preview: CreatePreview | null) => void
+  /** `at`: the column and slot the popover points at since its draft was dragged there. */
+  setCreateWhen: (when: Partial<CreateWhen>, at?: Pick<CreateState, 'anchor' | 'span'>) => void
+  setCreatePreview: (preview: CalItem | null) => void
   openTaskEditor: (state: TaskEditorState) => void
   setSettingsOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
   setBackendReachable: (reachable: boolean) => void
 }
+
+const noCreate = { create: null, createWhen: null, createPreview: null }
 
 const wide = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
 
@@ -75,6 +82,7 @@ export const useUi = create<UiState>()((set) => ({
   editor: null,
   detail: null,
   create: null,
+  createWhen: null,
   createPreview: null,
   taskEditor: null,
   settingsOpen: false,
@@ -82,29 +90,37 @@ export const useUi = create<UiState>()((set) => ({
   backendReachable: true,
 
   setView: (view) => {
-    set({ view, detail: null, create: null, createPreview: null })
+    set({ view, detail: null, ...noCreate })
   },
   setDate: (date) => {
-    set({ date, detail: null, create: null, createPreview: null })
+    set({ date, detail: null, ...noCreate })
   },
   setSidebarOpen: (sidebarOpen) => {
     set({ sidebarOpen })
   },
   // One editor at a time: they share a dialog, and a new entry switches between them.
   openEditor: (editor) => {
-    set({ editor, taskEditor: null, detail: null, create: null, createPreview: null })
+    set({ editor, taskEditor: null, detail: null, ...noCreate })
   },
   openDetail: (detail) => {
     set({ detail })
   },
   openCreate: (state) => {
-    set({ create: state, createPreview: null, detail: null })
+    // The entry the click begins; the popover starts from the same.
+    const when = state && draftOf(state.origin, browserTimeZone())
+    set({ create: state, createWhen: when && { event: when.event, task: when.task }, createPreview: null, detail: null })
+  },
+  setCreateWhen: (when, at) => {
+    set((s) => {
+      if (!s.create || !s.createWhen) return {}
+      return { createWhen: { ...s.createWhen, ...when }, create: at ? { ...s.create, ...at } : s.create }
+    })
   },
   setCreatePreview: (preview) => {
     set((s) => (s.create ? { createPreview: preview } : {}))
   },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor, editor: null, detail: null, create: null, createPreview: null })
+    set({ taskEditor, editor: null, detail: null, ...noCreate })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

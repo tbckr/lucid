@@ -1,5 +1,5 @@
 import { PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -17,7 +17,8 @@ const viewport = () => ({ width: window.innerWidth, height: window.innerHeight }
 /**
  * Popover content at the item's block; focus goes to `initialFocus` and back
  * to the block (or `returnFocus`) on close. `measure` points it at a part of
- * `anchor`, such as the slot of a new event in a day column.
+ * `anchor`, such as the slot of a new event in a day column. A press or focus
+ * beside it closes it unless `onInteractOutside` prevents that.
  */
 export function DetailContent({
   anchor,
@@ -25,6 +26,7 @@ export function DetailContent({
   returnFocus,
   label,
   initialFocus,
+  onInteractOutside,
   children,
 }: {
   anchor: HTMLElement
@@ -32,6 +34,7 @@ export function DetailContent({
   returnFocus?: HTMLElement | undefined
   label: string
   initialFocus: () => HTMLElement | null
+  onInteractOutside?: ComponentProps<typeof PopoverContent>['onInteractOutside']
   children: ReactNode
 }) {
   // Radix measures the anchor again on scroll and resize; the side stays the one it opened on.
@@ -52,6 +55,7 @@ export function DetailContent({
         side={side}
         align="start"
         aria-label={label}
+        onInteractOutside={onInteractOutside}
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           initialFocus()?.focus()

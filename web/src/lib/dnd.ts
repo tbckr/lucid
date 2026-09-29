@@ -1,4 +1,5 @@
 import { differenceInCalendarDays } from 'date-fns'
+import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
 import { movedTodo, toCalTask, type CalTask } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
@@ -10,11 +11,15 @@ export const PX_PER_MINUTE = HOUR_HEIGHT / 60
 export const SNAP_MINUTES = 15
 export const SNAP_PX = SNAP_MINUTES * PX_PER_MINUTE
 
-/** Data attached to draggables. Events and tasks move alike (FR-16); only events resize. */
+/**
+ * Data attached to draggables. Events and tasks move alike (FR-16); only events
+ * resize. `draft`: the create popover's entry, which a drop gives the new times
+ * instead of saving them (FR-09).
+ */
 export type DragData =
   | { type: 'event'; event: CalItem; originDay: Date }
-  | { type: 'timed'; event: CalItem; originDay: Date }
-  | { type: 'resize'; event: CalEvent }
+  | { type: 'timed'; event: CalItem; originDay: Date; draft?: true }
+  | { type: 'resize'; event: CalEvent; draft?: true }
 
 /** How a view makes one of its items draggable. */
 export interface DragBinding {
@@ -28,8 +33,8 @@ export type DropResult =
   | { kind: 'event'; event: CalEvent; times: { start: string; end: string } }
   | { kind: 'task'; task: CalTask; input: TodoInput }
 
-/** Data attached to droppables. */
-export type DropData = { type: 'day'; day: Date } | { type: 'column'; day: Date }
+/** Data attached to droppables; a time-grid column also refers to its element, for the create popover to point at. */
+export type DropData = { type: 'day'; day: Date } | { type: 'column'; day: Date; ref?: RefObject<HTMLElement | null> }
 
 const SLOTS_PER_DAY = (24 * 60) / SNAP_MINUTES
 

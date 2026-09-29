@@ -37,7 +37,7 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
   // The day, not the preview: typing its title must not re-render the month.
-  const draftDay = useUi((s) => (s.createPreview ? dayKey(s.createPreview.start) : null))
+  const draftDay = useUi((s) => (s.createPreview ? dayKey(s.createPreview.startsAt) : null))
   const weeks = useMemo(() => monthGrid(date, prefs.weekStartsOn), [date, prefs.weekStartsOn])
   const names = weekdayNames(prefs)
 

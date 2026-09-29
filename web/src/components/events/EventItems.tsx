@@ -209,12 +209,12 @@ export function TimedBlock({
   )
 }
 
-/** Handle at the bottom of a timed block to change its end (15-min steps). */
-export function ResizeHandle({ event, disabled }: { event: CalEvent; disabled: boolean }) {
+/** Handle at the bottom of a timed block to change its end (15-min steps); `draft`: of the create popover's entry. */
+export function ResizeHandle({ event, disabled, draft }: { event: CalEvent; disabled: boolean; draft?: true }) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef } = useDraggable({
     id: `resize:${event.key}`,
-    data: { type: 'resize', event } satisfies DragData,
+    data: { type: 'resize', event, ...(draft && { draft }) } satisfies DragData,
     disabled,
   })
   if (disabled) return null

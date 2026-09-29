@@ -9,6 +9,7 @@ import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
+import { previewOf } from '@/lib/quickCreate'
 import { useUi } from '@/stores/ui'
 import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -101,15 +102,8 @@ describe('MonthView', () => {
     const thu = screen.getByRole('gridcell', { name: /September 24th/ })
     act(() => {
       fireEvent.click(thu)
-      useUi.getState().setCreatePreview({
-        kind: 'task',
-        calendarId: 'c1',
-        title: '',
-        start: new Date(2026, 8, 24),
-        end: new Date(2026, 8, 25),
-        allDay: true,
-        point: false,
-      })
+      const due = { startDate: '', startTime: '', dueDate: '2026-09-24', dueTime: '' }
+      useUi.getState().setCreatePreview(previewOf('task', due, 'c1', '', 'Europe/Berlin'))
     })
     expect(thu).toHaveAttribute('data-draft')
     expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveAttribute('data-draft')
@@ -117,7 +111,7 @@ describe('MonthView', () => {
     const before = chipRenders.count
     act(() => {
       const p = useUi.getState().createPreview!
-      useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Rent' })
+      useUi.getState().setCreatePreview({ ...p, startsAt: new Date(p.startsAt), endsAt: new Date(p.endsAt), title: 'Rent' })
     })
     expect(chipRenders.count).toBe(before)
     act(() => {

@@ -23,6 +23,10 @@ import { MOVE_EVENT_KEY, useMoveEvent, useUpdateTodo, type MoveVars } from '@/ho
 import { usePrefs } from '@/hooks/usePrefs'
 import { acceptsDrop, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
 import { formatEventSpan } from '@/lib/format'
+import { timedSegments } from '@/lib/layout'
+import { browserTimeZone } from '@/lib/locale'
+import { draggedWhen } from '@/lib/quickCreate'
+import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
 
 function dragData(data: unknown): DragData | null {
@@ -127,7 +131,9 @@ export function CalendarDnd({
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
+  const tz = useMemo(() => browserTimeZone(), [])
   const move = useMoveEvent()
+  const setCreateWhen = useUi((s) => s.setCreateWhen)
   const [active, setActive] = useState<{ id: string; data: DragData } | null>(null)
   // In line with the other updates of the dragged task, so none conflicts with another
   // (FR-16). The scope is the one of the last render, which the pick-up has caused.
@@ -201,12 +207,30 @@ export function CalendarDnd({
     setTarget((prev) => (sameDrop(prev, next) ? prev : next))
   }
 
+  // The create popover's entry takes the times instead of saving them, and a move takes the
+  // popover along to the entry's slot in the column it lands in (FR-09).
+  const dropDraft = (d: DragData, result: DropResult, drop: DropData | null) => {
+    const moved = withDrop(d, result).event
+    const column = d.type === 'timed' && drop?.type === 'column' ? drop : null
+    const anchor = column?.ref?.current
+    const segment = column && timedSegments([moved], column.day)[0]
+    setCreateWhen(
+      draggedWhen(moved, tz),
+      anchor && segment ? { anchor, span: { startMin: segment.startMin, endMin: segment.endMin } } : undefined,
+    )
+  }
+
   const onDragEnd = (e: DragEndEvent) => {
     setActive(null)
     setTarget(null)
     const d = dragData(e.active.data.current)
     if (!d) return
-    const result = dropResult(d, dropData(e.over?.data.current), e.delta.y)
+    const drop = dropData(e.over?.data.current)
+    const result = dropResult(d, drop, e.delta.y)
+    if (d.type !== 'event' && d.draft) {
+      if (result) dropDraft(d, result, drop)
+      return
+    }
     if (result?.kind === 'event') move.mutate({ event: result.event, ...result.times })
     if (result?.kind === 'task') {
       updateTodo.mutate({ todo: result.task.todo, input: result.input })

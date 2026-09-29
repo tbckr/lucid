@@ -1,7 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addDays, format, isSameDay } from 'date-fns'
 import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DraftBlock } from '@/components/create/DraftBlock'
 import { useDndState } from '@/components/dnd/dndState'
@@ -45,8 +45,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
   // Times, not the preview: typing its title must not re-render the grid, only the draft (ColumnDraft).
-  const allDayStart = useUi((s) => (s.createPreview?.allDay ? s.createPreview.start.getTime() : null))
-  const allDayEnd = useUi((s) => (s.createPreview?.allDay ? s.createPreview.end.getTime() : null))
+  const allDayStart = useUi((s) => (s.createPreview?.allDay ? s.createPreview.startsAt.getTime() : null))
+  const allDayEnd = useUi((s) => (s.createPreview?.allDay ? s.createPreview.endsAt.getTime() : null))
   const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -290,24 +290,32 @@ function DayColumn({
 }) {
   const { t } = useTranslation()
   const { resize } = useDndState()
-  const { setNodeRef, node, isOver } = useDroppable({
+  const column = useRef<HTMLDivElement>(null)
+  const { setNodeRef, isOver } = useDroppable({
     id: `col:${dayKey(day)}`,
-    data: { type: 'column', day } satisfies DropData,
+    data: { type: 'column', day, ref: column } satisfies DropData,
   })
+  const ref = useCallback(
+    (el: HTMLDivElement | null) => {
+      column.current = el
+      setNodeRef(el)
+    },
+    [setNodeRef],
+  )
   const positioned = useMemo(() => layoutDay(timedSegments(events, day)), [events, day])
   const today = isSameDay(day, now)
   const { draft, slotProps } = useDragCreate((startMin, endMin, { target, ranged }) => {
     // The popover points at the new entry's slots in this column (FR-09, FR-16).
     onCreate({
       origin: { start: atMinutes(day, startMin), end: atMinutes(day, endMin), allDay: false, granularity: 'time', ranged },
-      anchor: node.current ?? target,
+      anchor: column.current ?? target,
       span: { startMin, endMin },
       returnFocus: target,
     })
   })
 
   return (
-    <div ref={setNodeRef} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
+    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
       {HOURS.map((h) => (
         <button
           key={h}
@@ -405,5 +413,5 @@ function DayColumn({
 function ColumnDraft({ day, colorsOf, prefs }: { day: Date; colorsOf: (id: string) => EventColors; prefs: FormatPrefs }) {
   const preview = useUi((s) => s.createPreview)
   if (!preview) return null
-  return <DraftBlock preview={preview} day={day} colors={colorsOf(preview.calendarId)} prefs={prefs} />
+  return <DraftBlock item={preview} day={day} colors={colorsOf(preview.calendarId)} prefs={prefs} />
 }

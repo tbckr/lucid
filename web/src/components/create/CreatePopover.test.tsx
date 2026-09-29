@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -266,13 +266,54 @@ describe('CreatePopover', () => {
       kind: 'event',
       calendarId: 'c1',
       title: 'Rev',
-      start: click.start,
-      end: click.end,
+      startsAt: click.start,
+      endsAt: click.end,
       allDay: false,
-      point: false,
     })
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
-    expect(useUi.getState().createPreview).toMatchObject({ kind: 'task', calendarId: 'c3', start: click.start, point: true })
+    expect(useUi.getState().createPreview).toMatchObject({ kind: 'task', calendarId: 'c3', startsAt: click.start, point: true })
+  })
+
+  it('creates the event where a drag of its draft put it, and points at it there', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openPopover()
+    const thursday = document.createElement('div')
+    document.body.append(thursday)
+    const measured = vi.spyOn(thursday, 'getBoundingClientRect')
+    // What CalendarDnd sets on a drop of the draft in Thursday's column at 2 PM.
+    act(() => {
+      useUi.getState().setCreateWhen(
+        { event: { allDay: false, startDate: '2026-10-01', startTime: '14:00', endDate: '2026-10-01', endTime: '15:30' } },
+        { anchor: thursday, span: { startMin: 840, endMin: 930 } },
+      )
+    })
+    expect(within(dialog).getByRole('button', { name: /^Start Thu, Oct 1/ })).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('2:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveTextContent('3:30 PM')
+    await waitFor(() => {
+      expect(measured).toHaveBeenCalled()
+    })
+
+    await user.keyboard('Review{Enter}')
+    const { body } = await posted(fetch)
+    expect(body).toMatchObject({ start: '2026-10-01T12:00:00.000Z', end: '2026-10-01T13:30:00.000Z' })
+  })
+
+  it('stays open on a click on its draft, and closes on one beside it', async () => {
+    await openPopover()
+    const draft = document.createElement('div')
+    draft.dataset.draft = ''
+    document.body.append(draft)
+    // Radix listens for presses beside it only from a timer queued at the opening, and closes on their click.
+    await act(() => new Promise((resolve) => setTimeout(resolve)))
+    const press = (target: Element) => {
+      fireEvent.pointerDown(target)
+      fireEvent.click(target)
+    }
+    press(draft)
+    expect(useUi.getState().create).not.toBeNull()
+    press(document.body)
+    expect(useUi.getState().create).toBeNull()
   })
 
   it('has no switch when only events can be created', async () => {

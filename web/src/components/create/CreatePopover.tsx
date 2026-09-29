@@ -14,7 +14,17 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { eventFormSchema, formToInput } from '@/lib/eventForm'
 import { browserTimeZone } from '@/lib/locale'
 import { lastKnownBox, spanBox } from '@/lib/placement'
-import { chooseCalendar, draftOf, eventForm, previewOf, switchDraft, taskForm, writableFor, type CreateKind } from '@/lib/quickCreate'
+import {
+  chooseCalendar,
+  draftOf,
+  eventForm,
+  previewOf,
+  switchDraft,
+  taskForm,
+  writableFor,
+  type CreateKind,
+  type CreateWhen,
+} from '@/lib/quickCreate'
 import { formToTodoInput, taskFormSchema } from '@/lib/taskForm'
 import { useSettings } from '@/stores/settings'
 import { useUi, type CreateState } from '@/stores/ui'
@@ -24,10 +34,12 @@ import { QuickWhen } from './QuickWhen'
 /** Popover at a click in the calendar that creates an event or a task (FR-09, FR-16). */
 export function CreatePopover() {
   const create = useUi((s) => s.create)
+  const when = useUi((s) => s.createWhen)
   const openCreate = useUi((s) => s.openCreate)
-  if (!create) return null
+  if (!create || !when) return null
   return (
-    // Modal: a click beside it only closes it, and never reaches the grid underneath.
+    // Modal: a click beside it only closes it, and never reaches the grid underneath. Only the
+    // entry's draft there takes the pointer (DraftBlock).
     <Popover
       open
       modal
@@ -35,12 +47,17 @@ export function CreatePopover() {
         if (!open) openCreate(null)
       }}
     >
-      <CreateForm create={create} />
+      <CreateForm create={create} when={when} />
     </Popover>
   )
 }
 
-function CreateForm({ create }: { create: CreateState }) {
+/** Its draft in the calendar: a press there moves the entry (FR-10) and keeps the popover open. */
+function onDraft(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-draft]') !== null
+}
+
+function CreateForm({ create, when: { event, task } }: { create: CreateState; when: CreateWhen }) {
   const { t } = useTranslation()
   const id = useId()
   const prefs = usePrefs()
@@ -53,6 +70,7 @@ function CreateForm({ create }: { create: CreateState }) {
   const openCreate = useUi((s) => s.openCreate)
   const openEditor = useUi((s) => s.openEditor)
   const openTaskEditor = useUi((s) => s.openTaskEditor)
+  const setCreateWhen = useUi((s) => s.setCreateWhen)
   const setCreatePreview = useUi((s) => s.setCreatePreview)
   const createEvent = useCreateEvent()
   const createTodo = useCreateTodo()
@@ -64,8 +82,6 @@ function CreateForm({ create }: { create: CreateState }) {
   const [title, setTitle] = useState('')
   // The entry the click began: a switch of the kind follows its rules, and the editor takes it over.
   const [begun] = useState(() => draftOf(origin, tz))
-  const [event, setEvent] = useState(begun.event)
-  const [task, setTask] = useState(begun.task)
   const [calendarId, setCalendarId] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
@@ -104,8 +120,7 @@ function CreateForm({ create }: { create: CreateState }) {
 
   const switchTo = (next: CreateKind) => {
     const switched = switchDraft({ ...begun, event, task }, next)
-    setEvent(switched.event)
-    setTask(switched.task)
+    setCreateWhen({ event: switched.event, task: switched.task })
     setKind(next)
   }
 
@@ -154,6 +169,9 @@ function CreateForm({ create }: { create: CreateState }) {
       returnFocus={returnFocus}
       label={kind === 'event' ? t('event.new') : t('tasks.new')}
       initialFocus={() => titleRef.current ?? closeRef.current}
+      onInteractOutside={(e) => {
+        if (onDraft(e.target)) e.preventDefault()
+      }}
     >
       {none ? (
         <div className="grid gap-3 p-4">
@@ -206,8 +224,12 @@ function CreateForm({ create }: { create: CreateState }) {
                 kind={kind}
                 event={event}
                 task={task}
-                onEvent={setEvent}
-                onTask={setTask}
+                onEvent={(next) => {
+                  setCreateWhen({ event: next })
+                }}
+                onTask={(next) => {
+                  setCreateWhen({ task: next })
+                }}
                 prefs={prefs}
                 now={now}
                 invalid={!!whenError}
