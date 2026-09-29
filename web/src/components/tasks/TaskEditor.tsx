@@ -77,7 +77,7 @@ export function TaskEditor({
   const lists = useMemo(() => writableFor('task', all), [all])
   const list = byId.get(calendarId)
   const readOnly = todo ? (list?.readOnly ?? false) : false
-  const update = useUpdateTodo()
+  const update = useUpdateTodo(todo?.id)
   const create = useCreateTodo()
   const del = useDeleteTodo()
   const [newItem, setNewItem] = useState('')

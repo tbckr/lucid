@@ -63,7 +63,7 @@ test('tasks in the calendar', async ({ page }) => {
 
 test('tasks with a checklist', async ({ page }) => {
   await login(page)
-  await page.getByTestId('task-row').filter({ hasText: 'Buy milk' }).getByRole('button', { name: /Buy milk/ }).click()
+  await page.getByRole('button', { name: 'Edit task: Buy milk' }).click()
   await expect(page.getByRole('dialog', { name: 'Edit task' })).toBeVisible()
   await shoot(page, 'tasks')
 })

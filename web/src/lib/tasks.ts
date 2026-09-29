@@ -1,4 +1,4 @@
-import { differenceInCalendarDays, format } from 'date-fns'
+import { addDays, differenceInCalendarDays, format, nextMonday, startOfDay } from 'date-fns'
 import { type Calendar, type ChecklistItem, type Todo, type TodoInput, type TodoStatus } from './api/schemas'
 import { utcDateToLocal } from './dates'
 import { formatTime, type FormatPrefs } from './format'
@@ -99,6 +99,12 @@ export function todoToInput(todo: Todo, patch: Partial<TodoInput> = {}): TodoInp
     status: todo.status,
     ...patch,
   }
+}
+
+/** The days the task list offers for a due date: today, tomorrow and the next Monday (FR-14). */
+export function dueShortcuts(now: Date): { today: Date; tomorrow: Date; nextWeek: Date } {
+  const today = startOfDay(now)
+  return { today, tomorrow: addDays(today, 1), nextWeek: nextMonday(today) }
 }
 
 export function toggledStatus(todo: Pick<Todo, 'status'>): TodoStatus {

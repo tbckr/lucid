@@ -6,6 +6,7 @@ import {
   addChecklistItem,
   checklistProgress,
   compareTodos,
+  dueShortcuts,
   formatDue,
   groupTodos,
   isOverdue,
@@ -210,5 +211,23 @@ describe('selectTaskList', () => {
 
   it('returns nothing without lists', () => {
     expect(selectTaskList<(typeof groups)[number]>([], 'a')).toBeUndefined()
+  })
+})
+
+describe('dueShortcuts', () => {
+  const keys = (now: Date) => {
+    const s = dueShortcuts(now)
+    return [s.today, s.tomorrow, s.nextWeek].map((d) => d.toDateString())
+  }
+
+  it('offers today, tomorrow and the next Monday', () => {
+    expect(keys(new Date(2026, 8, 29, 14, 0))).toEqual(
+      [new Date(2026, 8, 29), new Date(2026, 8, 30), new Date(2026, 9, 5)].map((d) => d.toDateString()),
+    )
+  })
+
+  it('offers the Monday after this one on a Monday, and tomorrow on a Sunday', () => {
+    expect(keys(new Date(2026, 9, 5))[2]).toBe(new Date(2026, 9, 12).toDateString())
+    expect(keys(new Date(2026, 9, 4))[2]).toBe(new Date(2026, 9, 5).toDateString())
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { todo } from '@/test/fixtures'
-import { formToTodoInput, taskFormSchema, taskToForm } from './taskForm'
+import { formToTodoInput, taskFormSchema, taskToForm, withDue } from './taskForm'
 
 const TZ = 'Europe/Berlin'
 
@@ -80,6 +80,80 @@ describe('taskForm', () => {
         startAllDay: true,
       })
       expect(formToTodoInput(v, TZ)).toMatchObject({ start: null, startAllDay: false })
+    })
+  })
+
+  describe('withDue', () => {
+    it('moves an all-day due date and its start by the same days, keeping the rest', () => {
+      const t = todo({ title: ' as is ', start: '2026-09-20T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true })
+      expect(withDue(t, { date: '2026-09-30', time: '' }, TZ)).toMatchObject({
+        title: ' as is ',
+        start: '2026-09-25T00:00:00.000Z',
+        startAllDay: true,
+        due: '2026-09-30T00:00:00.000Z',
+        dueAllDay: true,
+      })
+    })
+
+    it('keeps the local time of a timed due date across a DST change', () => {
+      const t = todo({ due: '2026-10-24T07:00:00Z' })
+      expect(withDue(t, { date: '2026-10-26', time: '09:00' }, TZ)).toMatchObject({
+        start: null,
+        due: '2026-10-26T08:00:00.000Z',
+        dueAllDay: false,
+      })
+    })
+
+    it('shifts a timed start by as much as the due time, past midnight', () => {
+      const t = todo({ start: '2026-09-25T21:00:00Z', due: '2026-09-26T08:00:00Z' })
+      expect(withDue(t, { date: '2026-09-26', time: '12:00' }, TZ)).toMatchObject({
+        start: '2026-09-25T23:00:00.000Z',
+        startAllDay: false,
+        due: '2026-09-26T10:00:00.000Z',
+      })
+    })
+
+    it('gives the start the time the due date gets', () => {
+      const t = todo({ start: '2026-09-24T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true })
+      expect(withDue(t, { date: '2026-09-26', time: '14:00' }, TZ)).toMatchObject({
+        start: '2026-09-25T12:00:00.000Z',
+        startAllDay: false,
+        due: '2026-09-26T12:00:00.000Z',
+        dueAllDay: false,
+      })
+    })
+
+    it('drops the time of the start with the time of the due date', () => {
+      const t = todo({ start: '2026-09-24T08:00:00Z', due: '2026-09-25T15:30:00Z' })
+      expect(withDue(t, { date: '2026-09-25', time: '' }, TZ)).toMatchObject({
+        start: '2026-09-24T00:00:00.000Z',
+        startAllDay: true,
+        due: '2026-09-25T00:00:00.000Z',
+        dueAllDay: true,
+      })
+    })
+
+    it('removes the due date and keeps the start', () => {
+      const t = todo({ start: '2026-09-24T08:00:00Z', due: '2026-09-25T15:30:00Z' })
+      expect(withDue(t, { date: '', time: '' }, TZ)).toMatchObject({
+        start: '2026-09-24T08:00:00Z',
+        startAllDay: false,
+        due: null,
+        dueAllDay: false,
+      })
+    })
+
+    it('moves a start after the new due date back to it', () => {
+      const t = todo({ start: '2026-10-01T00:00:00Z', startAllDay: true })
+      expect(withDue(t, { date: '2026-09-28', time: '' }, TZ)).toMatchObject({
+        start: '2026-09-28T00:00:00.000Z',
+        startAllDay: true,
+      })
+      expect(withDue(t, { date: '2026-09-28', time: '09:00' }, TZ)).toMatchObject({
+        start: '2026-09-28T07:00:00.000Z',
+        startAllDay: false,
+        due: '2026-09-28T07:00:00.000Z',
+      })
     })
   })
 })

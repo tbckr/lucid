@@ -5,7 +5,7 @@ import { useUpdateTodo } from './queries'
 
 /** Completion state of a task and a toggle that shows the new state at once (FR-15). */
 export function useToggleTodo(todo: Todo): { done: boolean; toggle: () => void } {
-  const update = useUpdateTodo()
+  const update = useUpdateTodo(todo.id)
   // React 19: show the new state instantly while the request is in flight.
   const [done, setOptimisticDone] = useOptimistic(isDone(todo))
 

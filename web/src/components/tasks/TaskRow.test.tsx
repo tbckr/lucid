@@ -1,15 +1,162 @@
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { queryKeys, useCachedTodo } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
+import { type Todo } from '@/lib/api/schemas'
 import { defaultSettings, useSettings } from '@/stores/settings'
+import { useUi } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { PriorityChip, TaskRow } from './TaskRow'
 
+/** Answers each PUT with the task as sent and the next ETag; returns the fetch spy. */
+function serve(t: Todo) {
+  api.setCsrfToken('tok')
+  let etag = Number(JSON.parse(t.etag))
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    etag += 1
+    return Promise.resolve(jsonResponse(200, { ...t, ...bodyOf(init), etag: `"${etag}"` }))
+  })
+}
+
+/** The row as the task list shows it: the task as the cache holds it. */
+function Cached({ todo: t }: { todo: Todo }) {
+  return <TaskRow todo={useCachedTodo(t)} calendar={calendar()} />
+}
+
 describe('TaskRow', () => {
   afterEach(() => {
     useSettings.setState(defaultSettings)
+    useUi.getState().openTaskEditor(null)
+  })
+
+  describe('title', () => {
+    const t = todo({ id: 'x', title: 'Oat milk', etag: '"5"' })
+
+    it('saves a new title on Enter and keeps the focus', async () => {
+      const fetch = serve(t)
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      const field = screen.getByRole('textbox', { name: 'Title' })
+      expect(field).toHaveValue('Oat milk')
+      await user.click(field)
+      await user.type(field, ', 2 l{Enter}')
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe('/api/v1/todos/x')
+      expect((init?.headers as Record<string, string>)['If-Match']).toBe('"5"')
+      expect(bodyOf(init)).toMatchObject({ title: 'Oat milk, 2 l' })
+      expect(field).toHaveValue('Oat milk, 2 l')
+      expect(field).toHaveFocus()
+    })
+
+    it('saves a new title when the field is left', async () => {
+      const fetch = serve(t)
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      await user.type(screen.getByRole('textbox', { name: 'Title' }), '!')
+      await user.tab()
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      expect(bodyOf(fetch.mock.calls[0]![1])).toMatchObject({ title: 'Oat milk!' })
+    })
+
+    it('restores the title on Escape without saving', async () => {
+      const fetch = serve(t)
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      const field = screen.getByRole('textbox', { name: 'Title' })
+      await user.type(field, '!{Escape}')
+      expect(field).toHaveValue('Oat milk')
+      await user.tab()
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('restores the title when it is left empty', async () => {
+      const fetch = serve(t)
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      const field = screen.getByRole('textbox', { name: 'Title' })
+      await user.clear(field)
+      await user.tab()
+      expect(field).toHaveValue('Oat milk')
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('turns pasted line breaks into spaces', async () => {
+      serve(t)
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      const field = screen.getByRole('textbox', { name: 'Title' })
+      await user.clear(field)
+      await user.paste('Oat milk\n2 l')
+      expect(field).toHaveValue('Oat milk 2 l')
+    })
+
+    it('is text in a read-only list, and opens the editor', async () => {
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={t} calendar={calendar({ readOnly: true })} />)
+      expect(screen.queryByRole('textbox')).toBeNull()
+      await user.click(screen.getByRole('button', { name: /Oat milk/ }))
+      expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: t })
+    })
+  })
+
+  it('opens the editor from its button', async () => {
+    const t = todo({ title: 'Oat milk' })
+    const user = userEvent.setup()
+    renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+    await user.click(screen.getByRole('button', { name: 'Edit task: Oat milk' }))
+    expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: t })
+  })
+
+  it('moves the due date from its picker', async () => {
+    const t = todo({ title: 'Oat milk', due: '2020-01-10T00:00:00Z', dueAllDay: true })
+    const fetch = serve(t)
+    const user = userEvent.setup()
+    renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+    await user.click(screen.getByRole('button', { name: 'Change due date: Oat milk' }))
+    await user.click(screen.getByRole('button', { name: /^Tomorrow / }))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+    expect(bodyOf(fetch.mock.calls[0]![1])).toMatchObject({ title: 'Oat milk', dueAllDay: true })
+  })
+
+  it('completes a task right after renaming it, with the ETag the rename got', async () => {
+    api.setCsrfToken('tok')
+    const answers: ((r: Response) => void)[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const t = todo({ id: 'x', calendarId: 'c1', title: 'Oat milk', etag: '"5"' })
+    const user = userEvent.setup()
+    const { queryClient } = renderWithProviders(<Cached todo={t} />)
+    act(() => {
+      queryClient.setQueryData(queryKeys.todos('c1'), { todos: [t], corrupted: [] })
+    })
+
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), ', 2 l')
+    await user.tab()
+    // Checked while the rename is still on its way.
+    await user.click(await screen.findByRole('checkbox', { name: 'Completed: Oat milk, 2 l' }))
+    expect(answers).toHaveLength(1)
+    answers[0]?.(jsonResponse(200, { ...t, title: 'Oat milk, 2 l', etag: '"6"' }))
+
+    await waitFor(() => {
+      expect(answers).toHaveLength(2)
+    })
+    const [, init] = fetch.mock.calls[1]!
+    expect((init?.headers as Record<string, string>)['If-Match']).toBe('"6"')
+    expect(bodyOf(init)).toMatchObject({ title: 'Oat milk, 2 l', status: 'COMPLETED' })
+    answers[1]?.(jsonResponse(200, { ...t, title: 'Oat milk, 2 l', status: 'COMPLETED', etag: '"7"' }))
   })
 
   it('toggles completion optimistically and sends If-Match', async () => {

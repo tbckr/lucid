@@ -28,11 +28,42 @@ test('complete and reopen a task', async ({ page }) => {
 
 test('checklist items are shown and editable', async ({ page }) => {
   await login(page)
-  await page.getByTestId('task-row').filter({ hasText: 'Buy milk' }).getByRole('button', { name: /Buy milk/ }).click()
+  await page.getByRole('button', { name: 'Edit task: Buy milk' }).click()
   const dialog = page.getByRole('dialog', { name: 'Edit task' })
   await expect(dialog.getByRole('textbox', { name: 'Checklist item 1' })).toHaveValue('2 liters')
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
+})
+
+test('rename a task and move its due date in the list', async ({ page }) => {
+  await login(page)
+  const title = `E2E inline ${Date.now()}`
+  const renamed = `${title} renamed`
+  const row = (name: string) =>
+    taskList(page).getByTestId('task-row').filter({ has: page.getByRole('checkbox', { name: `Completed: ${name}` }) })
+  await page.getByRole('textbox', { name: 'Add task' }).fill(title)
+  await page.keyboard.press('Enter')
+
+  const field = row(title).getByRole('textbox', { name: 'Title' })
+  await field.click()
+  await field.press('End')
+  await field.pressSequentially(' renamed')
+  await field.press('Enter')
+  await expect(field).toBeFocused()
+  await expect(row(renamed)).toBeVisible()
+
+  await row(renamed).getByRole('button', { name: `Change due date: ${renamed}` }).click()
+  const picker = page.getByRole('dialog', { name: 'Due date' })
+  await picker.getByRole('button', { name: /^Tomorrow / }).click()
+  await expect(picker).toBeHidden()
+  // Dated now, so the task also shows in the calendar.
+  const inGrid = monthGrid(page).locator('[data-task-key]', { hasText: renamed })
+  await expect(inGrid).toBeVisible()
+
+  // Persisted on the server.
+  await page.reload()
+  await expect(row(renamed)).toBeVisible()
+  await expect(inGrid).toBeVisible()
 })
 
 test('complete a task in the month view', async ({ page }) => {

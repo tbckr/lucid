@@ -335,17 +335,65 @@ export function useCreateTodo() {
   })
 }
 
-export function useUpdateTodo() {
+/**
+ * ETags a client's own updates replaced, per task: an update computed while an
+ * earlier one of the same task was in flight still carries the old ETag, and
+ * must not conflict with its own predecessor. Servers may derive ETags from the
+ * content, so an ETag can come back; the current one never maps anywhere.
+ */
+const ownEtags = new WeakMap<QueryClient, Map<string, string>>()
+
+function ownEtagsOf(qc: QueryClient): Map<string, string> {
+  let map = ownEtags.get(qc)
+  if (!map) {
+    map = new Map()
+    ownEtags.set(qc, map)
+  }
+  return map
+}
+
+/** The ETag `todo` has now, after the client's own updates since it was read. */
+function currentEtag(qc: QueryClient, todo: Todo): string {
+  const map = ownEtagsOf(qc)
+  let etag = todo.etag
+  for (let next = map.get(`${todo.id} ${etag}`); next !== undefined; next = map.get(`${todo.id} ${etag}`)) etag = next
+  return etag
+}
+
+/**
+ * Updates a task and shows the change at once (NFR-26). With the task's `id`,
+ * its updates run one after another, so the title field, the check and the
+ * due date of one row never conflict with each other.
+ */
+export function useUpdateTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
-    mutationFn: ({ todo, input }: { todo: Todo; input: TodoInput }) => endpoints.updateTodo(todo.id, todo.etag, input),
+    ...(id ? { scope: { id: `todo:${id}` } } : {}),
+    mutationFn: async ({ todo, input }: { todo: Todo; input: TodoInput }) => {
+      const etag = currentEtag(qc, todo)
+      const updated = await endpoints.updateTodo(todo.id, etag, input)
+      const map = ownEtagsOf(qc)
+      map.set(`${todo.id} ${etag}`, updated.etag)
+      map.delete(`${todo.id} ${updated.etag}`)
+      return updated
+    },
+    onMutate: async ({ todo, input }) => {
+      const key = queryKeys.todos(todo.calendarId)
+      await qc.cancelQueries({ queryKey: key })
+      const snapshot = qc.getQueryData<TodoList>(key)
+      qc.setQueryData<TodoList>(key, (old) =>
+        old ? { ...old, todos: old.todos.map((x) => (x.id === todo.id ? { ...x, ...input } : x)) } : old,
+      )
+      return { snapshot }
+    },
     onSuccess: (updated, { todo }) => {
       qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
         old ? { ...old, todos: old.todos.map((x) => (x.id === todo.id ? updated : x)) } : old,
       )
     },
-    onError: (err, { todo }) => {
+    onError: (err, { todo }, ctx) => {
+      if (ctx?.snapshot) qc.setQueryData(queryKeys.todos(todo.calendarId), ctx.snapshot)
       reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
     },
     onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),

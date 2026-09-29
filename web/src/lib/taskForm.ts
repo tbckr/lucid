@@ -1,6 +1,8 @@
+import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
-import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { todoToInput } from './tasks'
 
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
 const optionalTime = z.union([z.literal(''), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'validation.time')])
@@ -83,4 +85,53 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
     priority: v.priority,
     status: v.completed ? 'COMPLETED' : keepStatus,
   }
+}
+
+interface Fields {
+  date: string
+  time: string
+}
+
+function minutesOf(time: string): number {
+  const [h = 0, m = 0] = time.split(':').map(Number)
+  return h * 60 + m
+}
+
+/** Date and time fields moved by `days` and `minutes`, carrying past midnight; wall-clock arithmetic, so DST cannot skew it. */
+function shiftFields(f: Fields, days: number, minutes: number): Fields {
+  if (!f.time) return { date: dayKey(addDays(parseDayKey(f.date), days)), time: '' }
+  const total = minutesOf(f.time) + minutes
+  const carry = Math.floor(total / 1440)
+  const m = total - carry * 1440
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: dayKey(addDays(parseDayKey(f.date), days + carry)),
+    time: `${pad(Math.floor(m / 60))}:${pad(m % 60)}`,
+  }
+}
+
+/**
+ * `todo` with its due date set to `due`, in fields of `timeZone`: without a
+ * date it is removed, without a time it is all-day (FR-14). The start moves by
+ * as much as the due date and takes its kind, so the two stay a valid pair
+ * (FR-16); a start that would still come after the due date ends at it.
+ */
+export function withDue(todo: Todo, due: Fields, timeZone: string): TodoInput {
+  const next = fromFields(due.date, due.time, timeZone)
+  const patch = { due: next.value, dueAllDay: next.allDay }
+  if (!due.date || !todo.start) return todoToInput(todo, patch)
+
+  const before = toFields(todo.due, todo.dueAllDay, timeZone)
+  let start = toFields(todo.start, todo.startAllDay, timeZone)
+  if (before.date) {
+    const days = differenceInCalendarDays(parseDayKey(due.date), parseDayKey(before.date))
+    const minutes = start.time && before.time && due.time ? minutesOf(due.time) - minutesOf(before.time) : 0
+    start = shiftFields(start, days, minutes)
+  }
+  if (!due.time) start = { date: start.date, time: '' }
+  else if (!start.time || !before.time) start = { date: start.date, time: due.time }
+  if (`${start.date}T${start.time}` > `${due.date}T${due.time}`) start = due
+
+  const s = fromFields(start.date, start.time, timeZone)
+  return todoToInput(todo, { ...patch, start: s.value, startAllDay: s.allDay })
 }
