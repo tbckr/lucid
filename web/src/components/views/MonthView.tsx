@@ -334,6 +334,11 @@ function DayCell({
                 colors={colorsOf(e.calendarId)}
                 prefs={prefs}
                 readOnly={readOnly(e.calendarId)}
+                drag={{
+                  id: `bar:${e.key}:${key}`,
+                  data: { type: 'event', event: e, originDay: day },
+                  disabled: readOnly(e.calendarId),
+                }}
                 continuesBefore={b.continuesBefore}
                 continuesAfter={b.continuesAfter}
                 className="absolute z-10"
@@ -363,7 +368,17 @@ function DayCell({
         {cell.singles.map((e) => (
           <EventBoundary key={e.key}>
             {e.kind === 'task' ? (
-              <TaskChip task={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} />
+              <TaskChip
+                task={e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                readOnly={readOnly(e.calendarId)}
+                drag={{
+                  id: `chip:${e.key}:${key}`,
+                  data: { type: 'event', event: e, originDay: day },
+                  disabled: readOnly(e.calendarId),
+                }}
+              />
             ) : (
               <EventChip
                 event={e}

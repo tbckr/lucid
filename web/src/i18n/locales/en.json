@@ -176,12 +176,13 @@
     "customRule": "Custom rule: {{rule}}"
   },
   "dnd": {
-    "instructions": "Press space to pick up the event. Use the arrow keys to move it, space or enter to drop it, escape to cancel.",
+    "instructions": "Press space to pick it up. Use the arrow keys to move it, space or enter to drop it, escape to cancel.",
     "picked": "Picked up {{title}}.",
     "over": "New time: {{time}}.",
     "unchanged": "Time unchanged.",
     "notOver": "Not over a drop target.",
     "dropped": "Event moved.",
+    "taskDropped": "Task moved.",
     "cancelled": "Move cancelled."
   },
   "tasks": {

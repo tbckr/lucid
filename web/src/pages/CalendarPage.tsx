@@ -12,6 +12,7 @@ import { TopBar } from '@/components/layout/TopBar'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/settings/ShortcutsDialog'
 import { TaskDetailsPopover } from '@/components/tasks/TaskDetailsPopover'
+import { TaskBar, TaskBlock, TaskChip } from '@/components/tasks/TaskItems'
 import { TasksPanel } from '@/components/tasks/TasksPanel'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { AgendaView } from '@/components/views/AgendaView'
@@ -230,21 +231,31 @@ export function CalendarPage() {
         >
           <CalendarDnd
             renderOverlay={(d) => {
-              const colors = colorsOf(d.event.calendarId)
+              const e = d.event
+              const colors = colorsOf(e.calendarId)
+              const bar = e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= 86_400_000
+              if (e.kind === 'task') {
+                const item = { task: e, colors, prefs, readOnly: false }
+                if (d.type === 'timed') {
+                  return (
+                    <div className="relative size-full shadow-float">
+                      <TaskBlock {...item} size="md" style={{ inset: 0 }} />
+                    </div>
+                  )
+                }
+                if (bar) return <TaskBar {...item} className="w-full shadow-float" />
+                return <TaskChip {...item} className="bg-surface shadow-float" />
+              }
               const drag = { id: 'overlay', data: d, disabled: true }
               if (d.type === 'timed') {
                 return (
                   <div className="relative size-full shadow-float">
-                    <TimedBlock event={d.event} colors={colors} prefs={prefs} drag={drag} size="md" style={{ inset: 0 }} />
+                    <TimedBlock event={e} colors={colors} prefs={prefs} drag={drag} size="md" style={{ inset: 0 }} />
                   </div>
                 )
               }
-              if (d.event.allDay || d.event.endsAt.getTime() - d.event.startsAt.getTime() >= 86_400_000) {
-                return <EventBar event={d.event} colors={colors} prefs={prefs} drag={drag} className="w-full shadow-float" />
-              }
-              return (
-                <EventChip event={d.event} colors={colors} prefs={prefs} drag={drag} className="bg-surface shadow-float" />
-              )
+              if (bar) return <EventBar event={e} colors={colors} prefs={prefs} drag={drag} className="w-full shadow-float" />
+              return <EventChip event={e} colors={colors} prefs={prefs} drag={drag} className="bg-surface shadow-float" />
             }}
           >
             {renderView()}

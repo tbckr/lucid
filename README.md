@@ -37,8 +37,8 @@ of your server.
 
 - **Calendar views:** month, week, day and agenda, with a color and a
   show/hide toggle for every calendar.
-- **Drag & drop:** move and resize events right in the calendar; changes show
-  up instantly.
+- **Drag & drop:** move events and tasks and resize events right in the
+  calendar; changes show up instantly.
 - **Tasks:** a task sidebar that groups each list by when its tasks are due,
   with checklists, start and due dates, priorities and completion. Rename a
   task or move it to another day right in the list, and delete done tasks one

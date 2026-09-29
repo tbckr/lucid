@@ -5,17 +5,11 @@ import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
 import { useDndState } from '@/components/dnd/dndState'
 import { type EventColors } from '@/hooks/useCalendarColors'
-import { type DragData } from '@/lib/dnd'
+import { type DragBinding, type DragData } from '@/lib/dnd'
 import { eventTitle, type CalEvent } from '@/lib/events'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
-
-interface DragBinding {
-  id: string
-  data: DragData
-  disabled: boolean
-}
 
 /**
  * Draggable + clickable wrapper shared by all event renderings. Enter opens

@@ -19,10 +19,9 @@ import {
 import { useMutationState } from '@tanstack/react-query'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MOVE_EVENT_KEY, useMoveEvent, type MoveVars } from '@/hooks/queries'
+import { MOVE_EVENT_KEY, useMoveEvent, useUpdateTodo, type MoveVars } from '@/hooks/queries'
 import { usePrefs } from '@/hooks/usePrefs'
-import { acceptsDrop, dropResult, SNAP_PX, type DragData, type DropData } from '@/lib/dnd'
-import { withTimes } from '@/lib/events'
+import { acceptsDrop, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
 import { formatEventSpan } from '@/lib/format'
 import { DndStateContext } from './dndState'
 
@@ -31,6 +30,13 @@ function dragData(data: unknown): DragData | null {
 }
 function dropData(data: unknown): DropData | null {
   return data && typeof data === 'object' && 'type' in data ? (data as DropData) : null
+}
+
+/** Whether two drops would save the same; a move gives both dates of a task one offset. */
+function sameDrop(a: DropResult | null, b: DropResult | null): boolean {
+  if (a?.kind === 'event' && b?.kind === 'event') return a.times.start === b.times.start && a.times.end === b.times.end
+  if (a?.kind === 'task' && b?.kind === 'task') return a.input.start === b.input.start && a.input.due === b.input.due
+  return a === b
 }
 
 /** Snap vertical movement of time-grid items to 15 minutes. */
@@ -123,11 +129,15 @@ export function CalendarDnd({
   const prefs = usePrefs()
   const move = useMoveEvent()
   const [active, setActive] = useState<{ id: string; data: DragData } | null>(null)
+  // In line with the other updates of the dragged task, so none conflicts with another
+  // (FR-16). The scope is the one of the last render, which the pick-up has caused.
+  const draggedTask = active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined
+  const updateTodo = useUpdateTodo(draggedTask)
   /** What a drop right now would save; null while it would change nothing. */
-  const [target, setTarget] = useState<{ start: string; end: string } | null>(null)
+  const [target, setTarget] = useState<DropResult | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
   // `target` re-renders. `moved`: the drag has had a target since the pick-up.
-  const latest = useRef<{ target: { start: string; end: string } | null; moved: boolean }>({ target: null, moved: false })
+  const latest = useRef<{ target: DropResult | null; moved: boolean }>({ target: null, moved: false })
 
   const pending = useMutationState({
     filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
@@ -155,7 +165,7 @@ export function CalendarDnd({
       const d = dragData(a.data.current)
       if (!d) return undefined
       const { target: next, moved } = latest.current
-      if (next) return t('dnd.over', { time: formatEventSpan(withTimes(d.event, next), prefs, t('event.allDay')) })
+      if (next) return t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
       if (!over && d.type !== 'resize') return t('dnd.notOver')
       // Right after the pick-up nothing has changed yet: keep "Picked up …" audible.
       return moved ? t('dnd.unchanged') : undefined
@@ -167,7 +177,10 @@ export function CalendarDnd({
       },
       onDragMove: announceTarget,
       onDragOver: announceTarget,
-      onDragEnd: ({ over }) => (over ? t('dnd.dropped') : t('dnd.cancelled')),
+      onDragEnd: ({ active: a, over }) => {
+        if (!over) return t('dnd.cancelled')
+        return dragData(a.data.current)?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
+      },
       onDragCancel: () => t('dnd.cancelled'),
     }
   }, [t, prefs])
@@ -185,7 +198,7 @@ export function CalendarDnd({
     if (!d) return
     const next = dropResult(d, dropData(e.over?.data.current), e.delta.y)
     latest.current = { target: next, moved: latest.current.moved || next !== null }
-    setTarget((prev) => (prev?.start === next?.start && prev?.end === next?.end ? prev : next))
+    setTarget((prev) => (sameDrop(prev, next) ? prev : next))
   }
 
   const onDragEnd = (e: DragEndEvent) => {
@@ -194,11 +207,17 @@ export function CalendarDnd({
     const d = dragData(e.active.data.current)
     if (!d) return
     const result = dropResult(d, dropData(e.over?.data.current), e.delta.y)
-    if (result) move.mutate({ event: d.event, ...result })
+    if (result?.kind === 'event') move.mutate({ event: result.event, ...result.times })
+    if (result?.kind === 'task') {
+      updateTodo.mutate({ todo: result.task.todo, input: result.input })
+      // A pending mutation takes over its hook's next options, which lose the scope once
+      // `active` is cleared; detached, it stays in line. Errors still reach the hook's handler.
+      updateTodo.reset()
+    }
   }
 
   const preview = useMemo(
-    () => (active && target ? { ...active.data, event: withTimes(active.data.event, target) } : (active?.data ?? null)),
+    () => (active && target ? withDrop(active.data, target) : (active?.data ?? null)),
     [active, target],
   )
   // Stays null while moving, so the context (read by every event) only changes on resize.

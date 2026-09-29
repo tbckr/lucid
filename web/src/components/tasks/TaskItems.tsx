@@ -1,9 +1,11 @@
+import { useDraggable } from '@dnd-kit/core'
 import { CheckIcon } from 'lucide-react'
 import { type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { type CalTask } from '@/lib/calendarTasks'
+import { type DragBinding } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -11,9 +13,9 @@ import { useUi } from '@/stores/ui'
 
 /*
  * Tasks in the calendar views (FR-16): a round checkbox to complete them
- * (FR-15) and a title that opens their details. Unlike events they are not
- * draggable. Both buttons stop the click and together fill chips and bars, so
- * the cell underneath never creates an event from a click on a task.
+ * (FR-15) and a title that opens their details and, like an event, moves them
+ * by drag & drop (FR-10). Both buttons stop the click and together fill chips
+ * and bars, so the cell underneath never creates an event from a click on a task.
  */
 
 interface TaskItemProps {
@@ -34,6 +36,22 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
     else openDetail({ item: task, anchor: e.currentTarget })
   }
   return { t, title, done, toggle, open }
+}
+
+/**
+ * Drags the task item by its title: Space starts a keyboard drag, Enter still
+ * opens the details. Without `drag`, or disabled, the item stays in place.
+ */
+function useTaskDrag(task: CalTask, drag: DragBinding | undefined) {
+  const draggable = drag !== undefined && !drag.disabled
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
+    id: drag?.id ?? task.key,
+    data: drag?.data,
+    disabled: !draggable,
+  })
+  // dnd-kit sets role="button"; the title is a real one.
+  const handle = { ref: setActivatorNodeRef, ...(draggable ? { ...attributes, ...listeners, role: undefined } : {}) }
+  return { ref: setNodeRef, handle, isDragging }
 }
 
 /** A point shows its time; a span shows start – end unless `compact`. */
@@ -100,21 +118,26 @@ export function TaskChip({
   colors,
   prefs,
   readOnly,
+  drag,
   className,
   onOpen,
 }: TaskItemProps & {
+  drag?: DragBinding
   className?: string
   /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
   onOpen?: (task: CalTask) => void
 }) {
   const { t, title, done, toggle, open } = useTaskItem(task, onOpen)
+  const { ref, handle, isDragging } = useTaskDrag(task, drag)
   return (
     <div
+      ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
       className={cn(
         'flex h-5 w-full min-w-0 items-stretch rounded-sm text-xs leading-none hover:bg-muted',
         done && 'opacity-60',
+        isDragging && 'opacity-40',
         className,
       )}
     >
@@ -129,6 +152,7 @@ export function TaskChip({
       />
       <button
         type="button"
+        {...handle}
         onClick={open}
         aria-label={titleLabel(t, task, title, prefs)}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -148,14 +172,23 @@ export function TaskBar({
   colors,
   prefs,
   readOnly,
+  drag,
   continuesBefore = false,
   continuesAfter = false,
   className,
   style,
-}: TaskItemProps & { continuesBefore?: boolean; continuesAfter?: boolean; className?: string; style?: CSSProperties }) {
+}: TaskItemProps & {
+  drag?: DragBinding
+  continuesBefore?: boolean
+  continuesAfter?: boolean
+  className?: string
+  style?: CSSProperties
+}) {
   const { t, title, done, toggle, open } = useTaskItem(task)
+  const { ref, handle, isDragging } = useTaskDrag(task, drag)
   return (
     <div
+      ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
       className={cn(
@@ -163,6 +196,7 @@ export function TaskBar({
         continuesBefore ? 'rounded-l-none' : 'rounded-l-sm',
         continuesAfter ? 'rounded-r-none' : 'rounded-r-sm',
         done && 'opacity-60',
+        isDragging && 'opacity-40',
         className,
       )}
       style={{ backgroundColor: colors.solid, color: colors.onSolid, ...style }}
@@ -178,6 +212,7 @@ export function TaskBar({
       />
       <button
         type="button"
+        {...handle}
         onClick={open}
         aria-label={titleLabel(t, task, title, prefs)}
         className="flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
@@ -197,20 +232,24 @@ export function TaskBlock({
   colors,
   prefs,
   readOnly,
+  drag,
   size,
   style,
 }: TaskItemProps & {
+  drag?: DragBinding
   /** Available height decides how much text fits. */
   size: 'xs' | 'sm' | 'md'
   style?: CSSProperties
 }) {
   const compact = size === 'xs'
   const { t, title, done, toggle, open } = useTaskItem(task)
+  const { ref, handle, isDragging } = useTaskDrag(task, drag)
   return (
     <div
+      ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
-      className={cn('absolute px-px', done && 'opacity-60')}
+      className={cn('absolute px-px', done && 'opacity-60', isDragging && 'opacity-40')}
       style={{ ...style, color: colors.onTint }}
     >
       {/* The whole block opens the task; the checkbox sits on top of it, left of the text. */}
@@ -225,6 +264,7 @@ export function TaskBlock({
       />
       <button
         type="button"
+        {...handle}
         onClick={open}
         aria-label={titleLabel(t, task, title, prefs)}
         className={cn(

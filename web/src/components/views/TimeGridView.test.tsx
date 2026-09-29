@@ -1,4 +1,4 @@
-import { DndContext } from '@dnd-kit/core'
+import { DndContext, type DragStartEvent } from '@dnd-kit/core'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -30,9 +30,9 @@ const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekS
 const colors = eventColors('#3b82f6', false)
 const cal = calendar()
 
-function renderDay(events: CalItem[] = []) {
+function renderDay(events: CalItem[] = [], onDragStart?: (e: DragStartEvent) => void) {
   return renderWithProviders(
-    <DndContext>
+    <DndContext onDragStart={onDragStart}>
       <TimeGridView
         days={[new Date(2026, 8, 25)]}
         now={new Date(2026, 8, 25, 12)}
@@ -140,6 +140,30 @@ describe('TimeGridView', () => {
     const cell = screen.getByRole('button', { name: /New all-day event/ }).parentElement!
     expect(within(cell).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeInTheDocument()
   })
+  it('picks up a timed task to move it in the grid (FR-10)', () => {
+    const call = toCalTask(todo({ id: 't1', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    renderDay([call], onDragStart)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Call, 10 AM' }), { code: 'Space', key: ' ' })
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: 'timed',
+      event: call,
+      originDay: new Date(2026, 8, 25),
+    })
+  })
+
+  it('picks up an all-day task to move it by days', () => {
+    const rent = toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    renderDay([rent], onDragStart)
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Pay rent, all day' }), { code: 'Space', key: ' ' })
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: 'event',
+      event: rent,
+      originDay: new Date(2026, 8, 25),
+    })
+  })
+
   it('opens the popover for an all-day event from the all-day row', () => {
     renderDay()
     const cell = screen.getByRole('button', { name: /New all-day event/ })

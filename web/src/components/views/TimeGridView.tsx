@@ -150,6 +150,11 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
                         colors={colorsOf(e.calendarId)}
                         prefs={prefs}
                         readOnly={readOnly(e.calendarId)}
+                        drag={{
+                          id: `allday:${e.key}:${dayKey(d)}`,
+                          data: { type: 'event', event: e, originDay: d },
+                          disabled: readOnly(e.calendarId),
+                        }}
                         continuesBefore={b.continuesBefore}
                         continuesAfter={b.continuesAfter}
                         className="absolute z-10"
@@ -330,7 +335,15 @@ function DayColumn({
         return (
           <EventBoundary key={e.key} className="absolute inset-x-1">
             {e.kind === 'task' ? (
-              <TaskBlock task={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={ro} size={size} style={style} />
+              <TaskBlock
+                task={e}
+                colors={colorsOf(e.calendarId)}
+                prefs={prefs}
+                readOnly={ro}
+                drag={{ id: `timed:${e.key}:${dayKey(day)}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
+                size={size}
+                style={style}
+              />
             ) : (
               <TimedBlock
                 event={resized ?? e}

@@ -1,4 +1,4 @@
-import { DndContext } from '@dnd-kit/core'
+import { DndContext, type DragStartEvent } from '@dnd-kit/core'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
@@ -31,9 +31,12 @@ const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekS
 const colors = eventColors('#3b82f6', false)
 const cal = calendar()
 
-function renderMonth(events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup' }))]) {
+function renderMonth(
+  events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup' }))],
+  { onDragStart, readOnly = false }: { onDragStart?: (e: DragStartEvent) => void; readOnly?: boolean } = {},
+) {
   return renderWithProviders(
-    <DndContext>
+    <DndContext onDragStart={onDragStart}>
       <MonthView
         date={new Date(2026, 8, 25)}
         now={new Date(2026, 8, 25, 12)}
@@ -43,7 +46,7 @@ function renderMonth(events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup'
         ]}
         prefs={prefs}
         colorsOf={() => colors}
-        calendarOf={() => cal}
+        calendarOf={() => ({ ...cal, readOnly })}
       />
     </DndContext>,
   )
@@ -139,10 +142,36 @@ describe('MonthView', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Completed: Pay rent' }))
     await user.click(screen.getByRole('checkbox', { name: 'Completed: Call' }))
     expect(useUi.getState().create).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Call, 10 AM' }))
+    // A plain click, as dnd-kit's default pointer sensor here would start a drag on press.
+    fireEvent.click(screen.getByRole('button', { name: 'Call, 10 AM' }))
     expect(useUi.getState().create).toBeNull()
     expect(useUi.getState().detail?.item).toBe(call)
     useUi.getState().openDetail(null)
+  })
+
+  it('picks up a task by its title to move it to another day (FR-10)', () => {
+    const call = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    renderMonth([call], { onDragStart })
+    const title = screen.getByRole('button', { name: 'Call, 10 AM' })
+    expect(title).toHaveAttribute('aria-roledescription', 'draggable')
+    fireEvent.keyDown(title, { code: 'Space', key: ' ' })
+    expect(onDragStart).toHaveBeenCalledTimes(1)
+    expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+      type: 'event',
+      event: call,
+      originDay: new Date(2026, 8, 25),
+    })
+  })
+
+  it('keeps a task of a read-only calendar in place', () => {
+    const call = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+    const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+    renderMonth([call], { onDragStart, readOnly: true })
+    const title = screen.getByRole('button', { name: 'Call, 10 AM' })
+    expect(title).not.toHaveAttribute('aria-roledescription')
+    fireEvent.keyDown(title, { code: 'Space', key: ' ' })
+    expect(onDragStart).not.toHaveBeenCalled()
   })
 
   it('opens the details of an event from "+N more" and creates nothing in the cell', async () => {

@@ -1,6 +1,7 @@
 import { de } from 'date-fns/locale/de'
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
+import { toCalTask } from './calendarTasks'
 import { visibleRange } from './dates'
 import { toCalEvent } from './events'
 import {
@@ -19,7 +20,7 @@ import {
   weekdayNames,
   type FormatPrefs,
 } from './format'
-import { apiEvent } from '@/test/fixtures'
+import { apiEvent, todo } from '@/test/fixtures'
 
 const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const deDE: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
@@ -112,6 +113,13 @@ describe('event spans', () => {
     expect(formatEventSpan(timed, deDE, 'Ganztägig')).toBe('25. September 2026, 10:00 – 11:00')
     const overnight = toCalEvent(apiEvent({ start: '2026-09-25T20:00:00Z', end: '2026-09-26T06:00:00Z' }))
     expect(formatEventSpan(overnight, us, 'All day')).toBe('Sep 25, 2026, 10:00 PM – Sep 26, 2026, 8:00 AM')
+  })
+
+  it('formats a task at one point in time as that time alone', () => {
+    const point = toCalTask(todo({ due: '2026-09-25T08:00:00Z' }))!
+    expect(formatEventSpan(point, deDE, 'Ganztägig')).toBe('25. September 2026, 10:00')
+    const span = toCalTask(todo({ start: '2026-09-25T08:00:00Z', due: '2026-09-25T09:00:00Z' }))!
+    expect(formatEventSpan(span, deDE, 'Ganztägig')).toBe('25. September 2026, 10:00 – 11:00')
   })
 })
 

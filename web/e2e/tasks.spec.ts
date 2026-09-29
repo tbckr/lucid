@@ -187,6 +187,66 @@ test('create a task from a click in the day view', async ({ page }) => {
   await expect(taskList(page)).toContainText(title)
 })
 
+test('dragging a task in the day view moves its due time', async ({ page }) => {
+  const title = `E2E drag task ${Date.now()}`
+  // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls.
+  const popover = await newTaskAt(page, '1:00 PM')
+  await popover.getByPlaceholder('Add a title').fill(title)
+  await popover.getByRole('button', { name: 'Create task' }).click()
+  await expect(popover).toBeHidden()
+  const block = page.getByRole('main').locator('[data-task-key]', { hasText: title })
+  await expect(block).toContainText('1 PM')
+
+  // Down one hour (48 px) by the title, clear of the checkbox: the dragged copy shows the
+  // new time, and so does the saved task.
+  const box = (await block.getByRole('button', { name: new RegExp(title) }).boundingBox())!
+  const x = box.x + box.width * 0.75
+  await page.mouse.move(x, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(x, box.y + box.height / 2 + 10, { steps: 4 })
+  await page.mouse.move(x, box.y + box.height / 2 + 48, { steps: 4 })
+  await expect(block.filter({ hasText: '2 PM' })).toHaveCount(1)
+  await page.mouse.up()
+  await expect(block).toHaveCount(1)
+  await expect(block).toContainText('2 PM')
+
+  // Persisted on the server.
+  await page.reload()
+  await expect(block).toContainText('2 PM')
+})
+
+test('dragging a task in the month view moves its due date', async ({ page }) => {
+  await login(page)
+  const title = `E2E drag day ${Date.now()}`
+  await page.getByRole('textbox', { name: 'Add task' }).fill(title)
+  await page.keyboard.press('Enter')
+  const row = taskList(page).getByTestId('task-row').filter({ has: page.getByRole('checkbox', { name: `Completed: ${title}` }) })
+  await row.getByRole('button', { name: `Change due date: ${title}` }).click()
+  const picker = page.getByRole('dialog', { name: 'Due date' })
+  await picker.getByRole('button', { name: /^Today / }).click()
+  await expect(picker).toBeHidden()
+
+  // To the next day, or the one before when today ends the grid.
+  const cells = monthGrid(page).getByRole('gridcell')
+  const today = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
+  const target = cells.nth(today + 1 < (await cells.count()) ? today + 1 : today - 1)
+  const inTarget = target.locator('[data-task-key]', { hasText: title })
+  const handle = cells.nth(today).locator('[data-task-key]', { hasText: title }).getByRole('button', { name: new RegExp(title) })
+  const from = (await handle.boundingBox())!
+  const to = (await target.boundingBox())!
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + from.width / 2 + 10, from.y + from.height / 2, { steps: 4 })
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 })
+  await page.mouse.up()
+  await expect(inTarget).toBeVisible()
+  await expect(cells.nth(today).locator('[data-task-key]', { hasText: title })).toHaveCount(0)
+
+  // Persisted on the server.
+  await page.reload()
+  await expect(inTarget).toBeVisible()
+})
+
 test("more options opens the task editor with the popover's values", async ({ page }) => {
   const title = `E2E more ${Date.now()}`
   const popover = await newTaskAt(page, '4:00 PM')

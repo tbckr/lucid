@@ -1,7 +1,7 @@
 import { format, isSameDay, type Locale } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
 import { type DateRange, type ViewKind } from './dates'
-import { type CalEvent } from './events'
+import { type CalEvent, type CalItem } from './events'
 import { type HourCycle, type WeekStart } from './locale'
 
 /** Everything formatting needs; derived from settings + browser locale. */
@@ -120,14 +120,16 @@ export function formatPeriodTitle(view: ViewKind, date: Date, range: DateRange, 
   }
 }
 
-/** Human readable time span of an event, e.g. "09:00 – 10:30". */
-export function formatEventSpan(e: CalEvent, p: FormatPrefs, allDayLabel: string): string {
+/** Human readable time span of an event or task, e.g. "09:00 – 10:30". */
+export function formatEventSpan(e: CalItem, p: FormatPrefs, allDayLabel: string): string {
   if (e.allDay) {
     const last = new Date(e.endsAt.getTime() - 1)
     if (isSameDay(e.startsAt, last)) return `${format(e.startsAt, 'PPP', { locale: p.locale })}, ${allDayLabel}`
     return intlRange(e.startsAt, last, p.tag, { day: 'numeric', month: 'short', year: 'numeric' })
   }
   const t = timePattern(p.hourCycle)
+  // A task at one point in time has a size in the views, not an end (FR-16).
+  if (e.kind === 'task' && e.point) return format(e.startsAt, `PPP, ${t}`, { locale: p.locale })
   if (isSameDay(e.startsAt, e.endsAt)) {
     return `${format(e.startsAt, 'PPP', { locale: p.locale })}, ${format(e.startsAt, t, { locale: p.locale })} – ${format(e.endsAt, t, { locale: p.locale })}`
   }

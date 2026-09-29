@@ -176,12 +176,13 @@
     "customRule": "Eigene Regel: {{rule}}"
   },
   "dnd": {
-    "instructions": "Drücke die Leertaste, um den Termin aufzunehmen. Verschiebe ihn mit den Pfeiltasten, lege ihn mit Leertaste oder Eingabe ab, Escape bricht ab.",
+    "instructions": "Drücke die Leertaste zum Aufnehmen. Verschiebe mit den Pfeiltasten, lege mit Leertaste oder Eingabe ab, Escape bricht ab.",
     "picked": "{{title}} aufgenommen.",
     "over": "Neue Zeit: {{time}}.",
     "unchanged": "Zeit unverändert.",
     "notOver": "Über keinem Ablageziel.",
     "dropped": "Termin verschoben.",
+    "taskDropped": "Aufgabe verschoben.",
     "cancelled": "Verschieben abgebrochen."
   },
   "tasks": {

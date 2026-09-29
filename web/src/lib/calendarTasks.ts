@@ -1,6 +1,7 @@
 import { addDays, addMinutes, startOfDay } from 'date-fns'
-import { type Todo } from './api/schemas'
-import { utcDateToLocal } from './dates'
+import { type Todo, type TodoInput } from './api/schemas'
+import { localDateToUtc, utcDateToLocal } from './dates'
+import { todoToInput } from './tasks'
 
 /** Height of a task that has a single point in time (FR-16). */
 export const TASK_POINT_MINUTES = 30
@@ -61,4 +62,22 @@ export function toCalTask(todo: Todo): CalTask | null {
   const end = addMinutes(single.at, TASK_POINT_MINUTES)
   const midnight = addDays(startOfDay(single.at), 1)
   return { ...base, allDay: false, point: true, dates, startsAt: single.at, endsAt: end < midnight ? end : midnight }
+}
+
+/** A wire date moved like an event (`movedTimes`): all-day by whole dates, timed by local days, then minutes. */
+function movedDate(iso: string | null | undefined, allDay: boolean, days: number, minutes: number): string | null {
+  if (!iso) return null
+  if (allDay) return localDateToUtc(addDays(utcDateToLocal(iso), days)).toISOString()
+  return addMinutes(addDays(new Date(iso), days), minutes).toISOString()
+}
+
+/**
+ * `todo` moved by a drag in the calendar views (FR-10, FR-16): start and due
+ * move alike, so a span keeps its length, and each keeps its kind.
+ */
+export function movedTodo(todo: Todo, days: number, minutes: number): TodoInput {
+  return todoToInput(todo, {
+    start: movedDate(todo.start, todo.startAllDay, days, minutes),
+    due: movedDate(todo.due, todo.dueAllDay, days, minutes),
+  })
 }
