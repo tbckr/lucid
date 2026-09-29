@@ -22,6 +22,9 @@ const propKDEPending = "X-KDE-LIBKCAL-DTRECURRENCE"
 var (
 	errNoAnchor = errors.New("recurring todo without DTSTART or DUE")
 	errRRuleCap = fmt.Errorf("RRULE exceeds %d iterations", maxRRuleIterations)
+	// errRuleUnsupported rejects completing or moving an occurrence of a
+	// series whose rule Lucid cannot evaluate (FR-17).
+	errRuleUnsupported error = &domain.ValidationError{Msg: "the repeat rule cannot be evaluated"}
 )
 
 // todoSeries is a recurring VTODO and what other clients recorded in it (FR-17).
@@ -121,14 +124,19 @@ func ruleHasFixedDays(rrule string, hasRDate bool) bool {
 		return true
 	}
 	for part := range strings.SplitSeq(rrule, ";") {
-		key, _, _ := strings.Cut(part, "=")
-		switch strings.ToUpper(strings.TrimSpace(key)) {
+		switch rulePartKey(part) {
 		case "", "FREQ", "INTERVAL", "COUNT", "UNTIL", "WKST":
 		default:
 			return true
 		}
 	}
 	return false
+}
+
+// rulePartKey returns the upper-case name of an RRULE part such as "COUNT=3".
+func rulePartKey(part string) string {
+	key, _, _ := strings.Cut(part, "=")
+	return strings.ToUpper(strings.TrimSpace(key))
 }
 
 // walk calls fn for the occurrences with rid >= from, in order, until fn
@@ -295,4 +303,129 @@ func utcPtr(t *time.Time) *time.Time {
 	}
 	u := t.UTC()
 	return &u
+}
+
+// roll moves the master of s from its completed current occurrence cur to
+// next, in the series' own form (FR-15, FR-17): DTSTART and DUE (DTSTART =
+// DUE for a series anchored on DUE, as RFC 5545 wants DTSTART with RRULE)
+// move to next's place in the rule, a COUNT becomes the UNTIL of the last
+// occurrence, and the override of cur and KDE's pending occurrence go. It
+// fails, without changing anything, when the rule cannot be evaluated to
+// its end.
+//
+// Next's override, if any, stays and keeps moving that occurrence: the
+// master takes the rule's dates (next.rid), not the override's, or the whole
+// series would shift with it.
+func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
+	c := s.master
+	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(p.Value, "COUNT") {
+		last, err := s.ruleEnd()
+		if err != nil {
+			return err
+		}
+		p.Value = countToUntil(strings.TrimSpace(p.Value), last, s.anchor.allDay)
+	}
+
+	tzid := s.anchor.tzid
+	if s.onDue {
+		setSeriesDate(cal, c, ical.PropDateTimeStart, &next.rid, s.dueAllDay, tzid)
+		setSeriesDate(cal, c, ical.PropDue, &next.rid, s.dueAllDay, tzid)
+		c.Props.Del(ical.PropDuration) // invalid without DTSTART; DUE stands
+	} else {
+		setSeriesDate(cal, c, ical.PropDateTimeStart, &next.rid, s.startAllDay, tzid)
+		// A DURATION stays: it is relative to DTSTART.
+		if c.Props.Get(ical.PropDue) != nil && s.dueOffset != nil {
+			due := next.rid.Add(*s.dueOffset)
+			setSeriesDate(cal, c, ical.PropDue, &due, s.dueAllDay, tzid)
+		}
+	}
+
+	cal.Children = slices.DeleteFunc(cal.Children, func(o *ical.Component) bool {
+		if o == c || o.Name != c.Name {
+			return false
+		}
+		rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
+		return err == nil && rid.t.Equal(cur.rid)
+	})
+	c.Props.Del(propKDEPending)
+	return nil
+}
+
+// ruleEnd returns the last instance of the RRULE of s, iterated from the
+// anchor as walk does (so an anchor off the rule still counts extra for
+// COUNT), or the anchor when the rule yields none. RDATEs are left out: they
+// do not extend the rule. It fails for a rule that does not end within
+// maxRRuleIterations (FR-17).
+func (s *todoSeries) ruleEnd() (time.Time, error) {
+	if s.err != nil {
+		return time.Time{}, s.err
+	}
+	r, err := newRRule(rruleString(s.master), s.anchor.t)
+	if err != nil {
+		return time.Time{}, err
+	}
+	last, next := s.anchor.t, r.Iterator()
+	for range maxRRuleIterations {
+		t, ok := next()
+		if !ok {
+			return last, nil
+		}
+		last = t
+	}
+	return time.Time{}, errRRuleCap
+}
+
+// hasRulePart reports whether rrule has a part named key (upper case).
+func hasRulePart(rrule, key string) bool {
+	for part := range strings.SplitSeq(rrule, ";") {
+		if rulePartKey(part) == key {
+			return true
+		}
+	}
+	return false
+}
+
+// countToUntil replaces the COUNT of rrule by an UNTIL at last, the final
+// occurrence, so that the rule keeps its end when DTSTART rolls forward
+// (FR-17). UNTIL is a DATE for an all-day series and UTC otherwise (RFC
+// 5545); an UNTIL next to the COUNT (not allowed by RFC 5545) is replaced
+// too. A rule without COUNT is returned unchanged.
+func countToUntil(rrule string, last time.Time, allDay bool) string {
+	if !hasRulePart(rrule, "COUNT") {
+		return rrule
+	}
+	until := "UNTIL=" + last.UTC().Format(icalDateTimeUTC)
+	if allDay {
+		until = "UNTIL=" + last.UTC().Format(icalDate)
+	}
+	var out []string
+	for part := range strings.SplitSeq(rrule, ";") {
+		switch rulePartKey(part) {
+		case "COUNT":
+			out = append(out, until)
+		case "UNTIL":
+		default:
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, ";")
+}
+
+// setSeriesDate writes the date property name of c in the form of its
+// series (FR-17): a DATE when allDay, local time with TZID when tzid names a
+// zone (adding its VTIMEZONE to cal if missing), else UTC. A nil t removes
+// the property.
+func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.Time, allDay bool, tzid string) {
+	if t == nil {
+		c.Props.Del(name)
+		return
+	}
+	var loc *time.Location
+	if !allDay && tzid != "" {
+		loc = loadLocation(tzid)
+	}
+	c.Props.Set(newDateProp(name, *t, allDay, loc))
+	if loc != nil && loc != time.UTC {
+		ensureVTimezone(cal, loc, t.In(loc).Year())
+	}
 }

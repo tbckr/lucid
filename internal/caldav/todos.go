@@ -353,6 +353,18 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 			return domain.Todo{}, err
 		}
 	}
+	// Completing an open series completes its current occurrence: a copy
+	// keeps it, and the series rolls on. Its last occurrence completes the
+	// series itself, below (FR-15, FR-17).
+	if cur.Recurring && in.Status == domain.TodoCompleted &&
+		cur.Status != domain.TodoCompleted && cur.Status != domain.TodoCancelled {
+		if cur.RuleUnsupported {
+			return domain.Todo{}, errRuleUnsupported
+		}
+		if cur.Next != nil {
+			return s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, newTodoSeries(cal, c), in)
+		}
+	}
 	// A series reports its current occurrence, not its stored dates. Sent
 	// back unchanged, they must not overwrite DTSTART/DUE: the rule would
 	// restart there, in UTC, and lose its overrides (FR-17).
@@ -370,6 +382,81 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, err
 	}
 	return todoFromObject(o, encodeID(calPath), c), nil
+}
+
+// completeOccurrence completes the current occurrence of the open series c
+// (FR-15, FR-17), as Apple Reminders, Tasks.org and OpenTasks do:
+//
+//  1. a completed copy of the occurrence becomes a todo of its own, with the
+//     fields of in, the occurrence's dates in the series' form (or in's, if
+//     the client changed them) and no rule or alarms;
+//  2. the master rolls to the next occurrence with in's other fields, an
+//     open checklist and STATUS:NEEDS-ACTION;
+//  3. if the master cannot be written, the copy is removed again.
+//
+// It returns the rolled series with the copy as CompletedCopy.
+func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput) (domain.Todo, error) {
+	occ, next, err := series.current()
+	if err != nil {
+		return domain.Todo{}, errRuleUnsupported
+	}
+	if next == nil {
+		// UpdateTodo completes the master itself for the last occurrence.
+		return domain.Todo{}, fmt.Errorf("%w: the series has no next occurrence", domain.ErrInvalidInput)
+	}
+	now := s.p.now().UTC()
+	calendarID := encodeID(calPath)
+
+	// The copy is the occurrence as the client describes it: the stored
+	// occurrence unless the client sent other dates than it was given.
+	start, startAllDay, due, dueAllDay := occ.start, occ.startAllDay, occ.due, occ.dueAllDay
+	if !sameDates(todoFromObject(calObject{path: objPath, cal: cal}, "", c), in) {
+		start, startAllDay, due, dueAllDay = in.Start, in.StartAllDay, in.Due, in.DueAllDay
+	}
+	if start == nil && series.onDue {
+		start, startAllDay = due, dueAllDay
+	}
+	uid := newUID()
+	copyCal := newCalendar()
+	cc := newComponent(ical.CompToDo, uid, now)
+	copyCal.Children = append(copyCal.Children, cc)
+	setSeriesDate(copyCal, cc, ical.PropDateTimeStart, start, startAllDay, series.anchor.tzid)
+	setSeriesDate(copyCal, cc, ical.PropDue, due, dueAllDay, series.anchor.tzid)
+	applyTodoFields(cc, in, now)
+
+	// Roll the master in memory first: a rule that cannot be evaluated to its
+	// end fails before anything is written.
+	if err := series.roll(cal, occ, *next); err != nil {
+		return domain.Todo{}, errRuleUnsupported
+	}
+	rolled := in
+	rolled.Status = domain.TodoNeedsAction
+	rolled.Checklist = make([]domain.ChecklistItem, len(in.Checklist))
+	for i, it := range in.Checklist {
+		it.Done = false
+		rolled.Checklist[i] = it
+	}
+	applyTodoFields(c, rolled, now)
+	c.Props.Del(ical.PropPercentComplete)
+	bumpChangeProps(c, now)
+
+	defer s.invalidate(calPath)
+	copyObj := calObject{path: objectPath(calPath, uid+".ics"), cal: copyCal}
+	if copyObj.etag, err = s.putObject(ctx, copyObj.path, copyCal, "", true); err != nil {
+		return domain.Todo{}, err
+	}
+	o := calObject{path: objPath, cal: cal}
+	if o.etag, err = s.putObject(ctx, objPath, cal, etag, false); err != nil {
+		// Paths and errors only, never task content.
+		if derr := s.deleteObject(ctx, copyObj.path, cmp.Or(copyObj.etag, "*")); derr != nil {
+			s.p.log.WarnContext(ctx, "could not remove the copy of a completed occurrence", "path", copyObj.path, "error", derr)
+		}
+		return domain.Todo{}, err
+	}
+	copyTodo := todoFromObject(copyObj, calendarID, cc)
+	t := todoFromObject(o, calendarID, c)
+	t.CompletedCopy = &copyTodo
+	return t, nil
 }
 
 // DeleteTodo implements domain.CalendarService.

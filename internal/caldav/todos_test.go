@@ -1,6 +1,10 @@
 package caldav
 
 import (
+	"bytes"
+	"fmt"
+	"log/slog"
+	"net/http"
 	"reflect"
 	"slices"
 	"strings"
@@ -282,13 +286,14 @@ func TestListTodosReadsStart(t *testing.T) {
 }
 
 // Completing a todo from another client must not rewrite its dates: a
-// DTSTART with TZID anchors the recurrence across DST changes.
+// DTSTART with TZID anchors the recurrence across DST changes. The series
+// ends here, so completing it completes the master itself (FR-17).
 func TestUpdateTodoKeepsUnchangedDates(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
 	ctx := t.Context()
 	id := e.put(t, "tasks", "r.ics", "BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Report",
-		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY", "END:VTODO")
+		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY;COUNT=1", "END:VTODO")
 	todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
 	mustNoErr(t, err)
 	r := todos[0]
@@ -858,4 +863,445 @@ func TestListTodoOccurrences(t *testing.T) {
 			t.Errorf("REPORT count = %d; want 1", got)
 		}
 	})
+}
+
+// seedSeries stores a recurring todo "Series" with the given master lines and
+// overrides in the tasks calendar and returns its ID.
+func seedSeries(t *testing.T, e *env, master []string, overrides ...[]string) string {
+	t.Helper()
+	lines := append([]string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Series"}, master...)
+	lines = append(lines, "END:VTODO")
+	for _, o := range overrides {
+		lines = append(lines, "BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z")
+		lines = append(append(lines, o...), "END:VTODO")
+	}
+	return e.put(t, "tasks", "r.ics", lines...)
+}
+
+// listedTodo returns the todo with the given ID as ListTodos reports it.
+func listedTodo(t *testing.T, e *env, id string) domain.Todo {
+	t.Helper()
+	todos, err := e.svc.ListTodos(t.Context(), e.cals["tasks"])
+	mustNoErr(t, err)
+	for i := range todos {
+		if todos[i].ID == id {
+			return todos[i]
+		}
+	}
+	t.Fatalf("todo %s not in %+v", id, todos)
+	return domain.Todo{}
+}
+
+// completeInput is what the frontend sends to complete f: its fields as
+// reported, with status COMPLETED and no rrule.
+func completeInput(f *domain.Todo) domain.TodoInput {
+	return domain.TodoInput{
+		Title: f.Title, Description: f.Description, Checklist: f.Checklist,
+		Start: f.Start, StartAllDay: f.StartAllDay, Due: f.Due, DueAllDay: f.DueAllDay,
+		Priority: f.Priority, Status: domain.TodoCompleted, RRuleOmitted: true,
+	}
+}
+
+// completeListed completes the todo with the given ID as a client would.
+func completeListed(t *testing.T, e *env, id string) domain.Todo {
+	t.Helper()
+	f := listedTodo(t, e, id)
+	got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+	mustNoErr(t, err)
+	return got
+}
+
+// storedObject returns the stored data of the object with the given ID.
+func storedObject(t *testing.T, e *env, id string) string {
+	t.Helper()
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	data, ok := e.mock.Object(objPath)
+	if !ok {
+		t.Fatalf("no object %s", objPath)
+	}
+	return data
+}
+
+// checkStored asserts that data contains every string of has and none of lacks.
+func checkStored(t *testing.T, what, data string, has, lacks []string) {
+	t.Helper()
+	for _, want := range has {
+		if !strings.Contains(data, want) {
+			t.Errorf("%s lacks %q:\n%s", what, want, data)
+		}
+	}
+	for _, bad := range lacks {
+		if strings.Contains(data, bad) {
+			t.Errorf("%s contains %q:\n%s", what, bad, data)
+		}
+	}
+}
+
+// storedCopy returns the stored data of the completed copy in got.
+func storedCopy(t *testing.T, e *env, got *domain.Todo) string {
+	t.Helper()
+	if got.CompletedCopy == nil {
+		t.Fatalf("no completed copy in %+v", got)
+	}
+	return storedObject(t, e, got.CompletedCopy.ID)
+}
+
+// Completing the current occurrence of a recurring todo leaves a completed
+// copy and rolls the series to its next occurrence (FR-15, FR-17).
+func TestCompleteTodoOccurrence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rolls and copies", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY",
+			"PRIORITY:1", "DESCRIPTION:Notes\\n\\n- [x] a", "X-FOO:bar",
+		})
+		got := completeListed(t, e, id)
+
+		if !sameTime(got.Start, ptr(date(2025, 3, 17, 8, 0))) || !sameTime(got.Due, ptr(date(2025, 3, 17, 10, 0))) ||
+			got.Status != domain.TodoNeedsAction || got.Completed != nil || got.Priority != 1 || got.Description != "Notes" ||
+			!reflect.DeepEqual(got.Checklist, []domain.ChecklistItem{{Text: "a"}}) || !got.Recurring ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 24, 8, 0)), Due: ptr(date(2025, 3, 24, 10, 0))}) {
+			t.Errorf("rolled series = %+v", got)
+		}
+		c := got.CompletedCopy
+		if c == nil {
+			t.Fatalf("no completed copy in %+v", got)
+		}
+		if !sameTime(c.Start, ptr(date(2025, 3, 10, 8, 0))) || !sameTime(c.Due, ptr(date(2025, 3, 10, 10, 0))) ||
+			c.Status != domain.TodoCompleted || !sameTime(c.Completed, ptr(e.clock.Now())) || c.Recurring ||
+			c.Title != "Series" || c.Priority != 1 || c.Description != "Notes" || c.ID == id || c.ETag == "" ||
+			c.CalendarID != e.cals["tasks"] || !reflect.DeepEqual(c.Checklist, []domain.ChecklistItem{{Text: "a", Done: true}}) {
+			t.Errorf("completed copy = %+v", c)
+		}
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 2 {
+			t.Errorf("%d objects; want the series and its copy", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART;TZID=Europe/Berlin:20250317T090000", "DUE;TZID=Europe/Berlin:20250317T110000", "RRULE:FREQ=WEEKLY\r\n",
+			"X-FOO:bar", "STATUS:NEEDS-ACTION", `DESCRIPTION:Notes\n\n- [ ] a`, "PRIORITY:1",
+		}, []string{"COMPLETED", "PERCENT-COMPLETE"})
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "BEGIN:VTIMEZONE",
+			"STATUS:COMPLETED", "COMPLETED:20250301T120000Z", "PERCENT-COMPLETE:100", `DESCRIPTION:Notes\n\n- [x] a`, "PRIORITY:1",
+		}, []string{"RRULE:FREQ=WEEKLY", "\r\nUID:r\r\n"}) // the VTIMEZONE has RRULEs of its own
+	})
+
+	t.Run("rolls one step when overdue", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250220T090000Z", "RRULE:FREQ=DAILY"})
+		got := completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2025, 2, 21, 9, 0))) {
+			t.Errorf("start = %v; want 2025-02-21T09:00Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250221T090000Z"}, nil)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250220T090000Z"}, nil)
+	})
+
+	t.Run("dst", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20261019T090000", "RRULE:FREQ=WEEKLY"})
+		got := completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2026, 10, 26, 8, 0))) {
+			t.Errorf("start = %v; want 2026-10-26T08:00Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20261026T090000"}, nil)
+	})
+
+	t.Run("due only", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"})
+		got := completeListed(t, e, id)
+		if !sameTime(got.Due, ptr(date(2025, 3, 11, 0, 0))) || !got.DueAllDay ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 12, 0, 0)), Due: ptr(date(2025, 3, 12, 0, 0))}) {
+			t.Errorf("rolled series = %+v", got)
+		}
+		if c := got.CompletedCopy; c == nil || !sameTime(c.Due, ptr(date(2025, 3, 10, 0, 0))) || !c.DueAllDay {
+			t.Errorf("completed copy = %+v", c)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;VALUE=DATE:20250311", "DUE;VALUE=DATE:20250311"}, nil)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310"}, nil)
+	})
+
+	t.Run("count to until and end", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=3"})
+
+		first := completeListed(t, e, id)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"RRULE:FREQ=DAILY;UNTIL=20250312T090000Z\r\n", "DTSTART:20250311T090000Z"}, []string{"COUNT"})
+		if first.CompletedCopy == nil || first.Next == nil {
+			t.Fatalf("after the 1st completion: %+v", first)
+		}
+
+		second, err := e.svc.UpdateTodo(ctx, id, first.ETag, completeInput(&first))
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250312T090000Z"}, nil)
+		if second.CompletedCopy == nil || second.Next != nil {
+			t.Fatalf("after the 2nd completion: %+v", second)
+		}
+
+		third, err := e.svc.UpdateTodo(ctx, id, second.ETag, completeInput(&second))
+		mustNoErr(t, err)
+		if third.CompletedCopy != nil || third.Status != domain.TodoCompleted {
+			t.Errorf("after the last completion: %+v", third)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"STATUS:COMPLETED", "DTSTART:20250312T090000Z"}, nil)
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 3 {
+			t.Errorf("%d objects; want the series and 2 copies", n)
+		}
+	})
+
+	t.Run("count to until all-day", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=DAILY;COUNT=3"})
+		completeListed(t, e, id)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"RRULE:FREQ=DAILY;UNTIL=20250312\r\n", "DTSTART;VALUE=DATE:20250311"}, []string{"COUNT"})
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID:20250309T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"},
+		)
+		got := completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) {
+			t.Errorf("start = %v; want 2025-03-11T09:00Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T090000Z", "RECURRENCE-ID:20250309T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"})
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T150000Z"}, []string{"RECURRENCE-ID"})
+	})
+
+	// The master takes the rule's date for the next occurrence; its override
+	// keeps moving it, instead of shifting the whole series (FR-17).
+	t.Run("next override stays", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z"},
+		)
+		got := completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2025, 3, 11, 15, 0))) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 12, 9, 0))}) {
+			t.Errorf("rolled series = %+v; want the moved 2025-03-11T15:00Z, then 2025-03-12T09:00Z", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T090000Z", "RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z"}, nil)
+	})
+
+	t.Run("duration stays", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "DURATION:PT2H", "RRULE:FREQ=DAILY"})
+		got := completeListed(t, e, id)
+		if !sameTime(got.Due, ptr(date(2025, 3, 11, 11, 0))) {
+			t.Errorf("due = %v; want 2025-03-11T11:00Z", got.Due)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250311T090000Z", "DURATION:PT2H"}, []string{"DUE"})
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000Z", "DUE:20250310T110000Z"}, nil)
+	})
+
+	t.Run("kde", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "X-KDE-LIBKCAL-DTRECURRENCE:20250314T090000Z"})
+		got := completeListed(t, e, id)
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250315T090000Z"}, []string{"X-KDE-LIBKCAL-DTRECURRENCE"})
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250314T090000Z"}, nil)
+	})
+
+	// The copy is the occurrence as the client describes it; the series
+	// rolls on from what is stored (FR-17).
+	t.Run("changed dates go to the copy", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY"})
+		f := listedTodo(t, e, id)
+		in := completeInput(&f)
+		in.Start, in.Due = ptr(date(2025, 3, 11, 9, 0)), ptr(date(2025, 3, 11, 10, 0))
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250317T090000Z", "DUE:20250317T100000Z"}, nil)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250311T090000Z", "DUE:20250311T100000Z"}, nil)
+	})
+
+	t.Run("conflict deletes the copy", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut && r.URL.Path == objPath {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return true
+			}
+			return false
+		})
+		e.mock.ResetCounts()
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrConflict)
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 {
+			t.Errorf("%d objects; want only the series", n)
+		}
+		if n := e.mock.Count(http.MethodDelete); n != 1 {
+			t.Errorf("DELETE count = %d; want 1", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z"}, []string{"COMPLETED"})
+	})
+
+	t.Run("failed delete keeps the copy and logs", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		var logs bytes.Buffer
+		e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			switch {
+			case r.Method == http.MethodPut && r.URL.Path == objPath:
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return true
+			case r.Method == http.MethodDelete:
+				w.WriteHeader(http.StatusInternalServerError)
+				return true
+			}
+			return false
+		})
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrConflict)
+		paths := e.mock.ObjectPaths(e.paths["tasks"])
+		if len(paths) != 2 {
+			t.Fatalf("objects = %v; want the series and the stray copy", paths)
+		}
+		copyPath := paths[0]
+		if copyPath == objPath {
+			copyPath = paths[1]
+		}
+		checkStored(t, "log", logs.String(),
+			[]string{"could not remove the copy of a completed occurrence", "path=" + copyPath, "error="}, []string{"Series"})
+	})
+
+	t.Run("failed copy changes nothing", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut && r.Header.Get("If-None-Match") == "*" {
+				w.WriteHeader(http.StatusForbidden)
+				return true
+			}
+			return false
+		})
+		e.mock.ResetCounts()
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrReadOnly)
+		if n := e.mock.Count(http.MethodPut); n != 1 {
+			t.Errorf("PUT count = %d; want only the copy's", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z"}, []string{"STATUS", "SEQUENCE"})
+	})
+
+	// COUNT becomes UNTIL only if the rule can be walked to its end; else
+	// nothing is written (FR-17).
+	t.Run("count beyond the cap rejected", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", fmt.Sprintf("RRULE:FREQ=DAILY;COUNT=%d", maxRRuleIterations+1)})
+		f := listedTodo(t, e, id)
+		e.mock.ResetCounts()
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrInvalidInput)
+		if n := e.mock.Count(http.MethodPut); n != 0 {
+			t.Errorf("PUT count = %d; want 0", n)
+		}
+	})
+
+	t.Run("stale etag", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		e.mock.ResetCounts()
+		_, err := e.svc.UpdateTodo(t.Context(), id, "bogus", completeInput(&f))
+		mustErr(t, err, domain.ErrConflict)
+		if n := e.mock.Count(http.MethodPut); n != 0 {
+			t.Errorf("PUT count = %d; want 0", n)
+		}
+	})
+
+	t.Run("unsupported rejected", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX"})
+		f := listedTodo(t, e, id)
+		e.mock.ResetCounts()
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrInvalidInput)
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 || e.mock.Count(http.MethodPut) != 0 {
+			t.Errorf("%d objects, %d PUTs; want 1 and none", n, e.mock.Count(http.MethodPut))
+		}
+	})
+
+	t.Run("reopen completed series", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"STATUS:COMPLETED", "COMPLETED:20250305T100000Z", "PERCENT-COMPLETE:100", "DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY",
+		})
+		f := listedTodo(t, e, id)
+		in := completeInput(&f)
+		in.Status = domain.TodoNeedsAction
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if got.Status != domain.TodoNeedsAction || got.CompletedCopy != nil {
+			t.Errorf("reopened series = %+v", got)
+		}
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 {
+			t.Errorf("%d objects; want only the series", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z", "STATUS:NEEDS-ACTION"}, []string{"COMPLETED"})
+	})
+}
+
+func TestCountToUntil(t *testing.T) {
+	t.Parallel()
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	mustNoErr(t, err)
+	last := time.Date(2025, 3, 12, 10, 0, 0, 0, berlin)
+	for _, tc := range []struct {
+		rrule  string
+		allDay bool
+		want   string
+	}{
+		{"FREQ=DAILY;COUNT=3", false, "FREQ=DAILY;UNTIL=20250312T090000Z"},
+		{"FREQ=WEEKLY;count=2;BYDAY=MO", false, "FREQ=WEEKLY;UNTIL=20250312T090000Z;BYDAY=MO"},
+		{"FREQ=DAILY;UNTIL=20250401T000000Z;COUNT=3", false, "FREQ=DAILY;UNTIL=20250312T090000Z"},
+		{"FREQ=DAILY;COUNT=3", true, "FREQ=DAILY;UNTIL=20250312"},
+		{"FREQ=DAILY;UNTIL=20250401T000000Z", false, "FREQ=DAILY;UNTIL=20250401T000000Z"},
+		{"FREQ=DAILY", false, "FREQ=DAILY"},
+	} {
+		t.Run(tc.rrule, func(t *testing.T) {
+			t.Parallel()
+			if got := countToUntil(tc.rrule, last, tc.allDay); got != tc.want {
+				t.Errorf("countToUntil(%q, %v) = %q; want %q", tc.rrule, tc.allDay, got, tc.want)
+			}
+		})
+	}
 }
