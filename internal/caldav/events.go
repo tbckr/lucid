@@ -307,17 +307,29 @@ func normalizeEventInput(in domain.EventInput) (string, error) {
 	if err := in.Validate(); err != nil {
 		return "", err
 	}
-	rr := strings.TrimSpace(in.RRule)
+	return normalizeRRule(in.RRule, in.Start.UTC())
+}
+
+// trimRRule strips surrounding space and an "RRULE:" prefix from raw.
+func trimRRule(raw string) string {
+	rr := strings.TrimSpace(raw)
 	if len(rr) >= 6 && strings.EqualFold(rr[:6], "RRULE:") {
 		rr = strings.TrimSpace(rr[6:])
 	}
+	return rr
+}
+
+// normalizeRRule strips "RRULE:", rejects line breaks and validates the rule
+// against dtstart; "" stays "" (FR-17).
+func normalizeRRule(raw string, dtstart time.Time) (string, error) {
+	rr := trimRRule(raw)
 	if rr == "" {
 		return "", nil
 	}
 	if strings.ContainsAny(rr, "\r\n") {
 		return "", &domain.ValidationError{Msg: "invalid rrule"}
 	}
-	if _, err := newRRule(rr, in.Start.UTC()); err != nil {
+	if _, err := newRRule(rr, dtstart); err != nil {
 		return "", &domain.ValidationError{Msg: "invalid rrule"}
 	}
 	return rr, nil

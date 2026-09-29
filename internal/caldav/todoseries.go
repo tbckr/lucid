@@ -30,6 +30,8 @@ var (
 	// errRuleUnsupported rejects completing or moving an occurrence of a
 	// series whose rule Lucid cannot evaluate (FR-17).
 	errRuleUnsupported error = &domain.ValidationError{Msg: "the repeat rule cannot be evaluated"}
+	// errRuleNeedsDate rejects a series without a date to recur from (FR-17).
+	errRuleNeedsDate error = &domain.ValidationError{Msg: "a repeating task needs a start or due date"}
 )
 
 // todoSeries is a recurring VTODO and what other clients recorded in it (FR-17).
@@ -73,12 +75,12 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	}
 	start, startErr := parseDateProp(master.Props.Get(ical.PropDateTimeStart))
 	due, dueErr := parseDateProp(master.Props.Get(ical.PropDue))
+	s.startForm, s.dueForm, _ = storedForms(master)
 	switch {
 	case startErr == nil:
 		s.anchor, s.startAllDay = start, start.allDay
-		s.startForm, s.dueForm = start.form(), start.form()
 		if dueErr == nil {
-			s.dueAllDay, s.dueForm = due.allDay, due.form()
+			s.dueAllDay = due.allDay
 			off := due.t.Sub(start.t)
 			s.dueOffset = &off
 		} else if p := master.Props.Get(ical.PropDuration); p != nil {
@@ -92,7 +94,6 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	case dueErr == nil:
 		// Tasks.org writes series without DTSTART; they recur on DUE.
 		s.anchor, s.onDue, s.dueAllDay = due, true, due.allDay
-		s.startForm, s.dueForm = due.form(), due.form()
 	default:
 		s.err = errNoAnchor
 	}
@@ -252,6 +253,18 @@ func (s *todoSeries) current() (cur todoOcc, next *todoOcc, err error) {
 	return cur, next, nil
 }
 
+// reportedRid returns the RECURRENCE-ID of the occurrence whose dates a todo
+// read from s with the given status reports (see setSeries): the current
+// occurrence of an open series, else the anchor (FR-17).
+func (s *todoSeries) reportedRid(status string) time.Time {
+	if status != domain.TodoCompleted && status != domain.TodoCancelled {
+		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() {
+			return cur.rid
+		}
+	}
+	return s.anchor.t
+}
+
 // setSeries fills the series fields of t, a todo read from s.master, and
 // moves an open series to its current occurrence (FR-16, FR-17). A completed
 // or cancelled master, a rule Lucid cannot evaluate and a series without any
@@ -314,15 +327,21 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 		setSeriesDate(cal, c, ical.PropDue, &due, s.dueForm)
 	}
 
+	dropOverrides(cal, c, cur.rid.Equal)
+	c.Props.Del(propKDEPending)
+	return nil
+}
+
+// dropOverrides removes the overrides of master from cal whose
+// RECURRENCE-ID instant drop reports (FR-17).
+func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid time.Time) bool) {
 	cal.Children = slices.DeleteFunc(cal.Children, func(o *ical.Component) bool {
-		if o == c || o.Name != c.Name {
+		if o == master || o.Name != master.Name {
 			return false
 		}
 		rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
-		return err == nil && rid.t.Equal(cur.rid)
+		return err == nil && drop(rid.t)
 	})
-	c.Props.Del(propKDEPending)
-	return nil
 }
 
 // ruleEnd returns the last instance of the RRULE of s, iterated from the
@@ -433,4 +452,53 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 	default:
 		c.Props.Set(newDateProp(name, *t, false, nil))
 	}
+}
+
+// storedForms returns the forms DTSTART and DUE of c are written in, each
+// standing in for the other when missing; ok is false when c has neither
+// (FR-17).
+func storedForms(c *ical.Component) (start, due dateForm, ok bool) {
+	s, startErr := parseDateProp(c.Props.Get(ical.PropDateTimeStart))
+	d, dueErr := parseDateProp(c.Props.Get(ical.PropDue))
+	switch {
+	case startErr == nil && dueErr == nil:
+		return s.form(), d.form(), true
+	case startErr == nil:
+		return s.form(), s.form(), true
+	case dueErr == nil:
+		return d.form(), d.form(), true
+	}
+	return dateForm{}, dateForm{}, false
+}
+
+// seriesForm returns the form a series date of the given value type is
+// written in (FR-17): a DATE when all-day; else the stored DATE-TIME form f
+// when keep is set or f has a TZID another client chose; else the zone tz,
+// UTC without one.
+func seriesForm(f dateForm, allDay, keep bool, tz string) dateForm {
+	switch {
+	case allDay:
+		return dateForm{allDay: true}
+	case !f.allDay && (keep || f.param != ""):
+		return f
+	default:
+		return dateForm{tzid: tz}
+	}
+}
+
+// writeSeriesDates writes the start and due of in as DTSTART and DUE of the
+// recurring todo c (FR-10, FR-17). Without a start, DTSTART = DUE, as RFC
+// 5545 wants DTSTART with RRULE; DUE replaces a DURATION. keep keeps the
+// form of the dates c has, else only a TZID stays and timed dates take the
+// zone of in (see seriesForm).
+func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool) {
+	startForm, dueForm, ok := storedForms(c)
+	keep = keep && ok
+	start, startAllDay := in.Start, in.StartAllDay
+	if start == nil {
+		start, startAllDay = in.Due, in.DueAllDay
+	}
+	setSeriesDate(cal, c, ical.PropDateTimeStart, start, seriesForm(startForm, startAllDay, keep, in.Timezone))
+	setSeriesDate(cal, c, ical.PropDue, in.Due, seriesForm(dueForm, in.DueAllDay, keep, in.Timezone))
+	c.Props.Del(ical.PropDuration)
 }

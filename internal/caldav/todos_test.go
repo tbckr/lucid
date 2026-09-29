@@ -301,12 +301,14 @@ func TestUpdateTodoKeepsUnchangedDates(t *testing.T) {
 	r := todos[0]
 	_, err = e.svc.UpdateTodo(ctx, id, r.ETag, domain.TodoInput{
 		Title: r.Title, Checklist: r.Checklist, Start: r.Start, StartAllDay: r.StartAllDay,
-		Due: r.Due, DueAllDay: r.DueAllDay, Status: domain.TodoCompleted,
+		Due: r.Due, DueAllDay: r.DueAllDay, Status: domain.TodoCompleted, RRuleOmitted: true,
 	})
 	mustNoErr(t, err)
 	objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
 	data, _ := e.mock.Object(objPath)
-	for _, want := range []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "STATUS:COMPLETED"} {
+	for _, want := range []string{
+		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "STATUS:COMPLETED", "RRULE:FREQ=WEEKLY;COUNT=1",
+	} {
 		if !strings.Contains(data, want) {
 			t.Errorf("stored todo lacks %q:\n%s", want, data)
 		}
@@ -428,7 +430,7 @@ func TestUpdateTodoKeepsStart(t *testing.T) {
 			name:  "recurring",
 			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
 			in: func(f domain.Todo) domain.TodoInput {
-				return domain.TodoInput{Title: f.Title}
+				return domain.TodoInput{Title: f.Title, RRuleOmitted: true}
 			},
 			keeps: "DTSTART:20250310T090000Z",
 		},
@@ -686,7 +688,7 @@ func TestUpdateTodoKeepsSeriesDates(t *testing.T) {
 			f := todos[0]
 			got, err := e.svc.UpdateTodo(ctx, id, f.ETag, domain.TodoInput{
 				Title: "Renamed", Checklist: f.Checklist, Start: f.Start, StartAllDay: f.StartAllDay,
-				Due: f.Due, DueAllDay: f.DueAllDay,
+				Due: f.Due, DueAllDay: f.DueAllDay, RRuleOmitted: true,
 			})
 			mustNoErr(t, err)
 			if got.Title != "Renamed" || !sameTime(got.Start, tc.start) || !sameTime(got.Due, f.Due) || !sameNext(got.Next, f.Next) {
@@ -1347,6 +1349,406 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		}
 		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z", "STATUS:NEEDS-ACTION"}, []string{"COMPLETED"})
 	})
+}
+
+// editInput is what the frontend sends to save f: its fields as reported,
+// without rrule.
+func editInput(f *domain.Todo) domain.TodoInput {
+	in := completeInput(f)
+	in.Status = f.Status
+	return in
+}
+
+// withRule returns in with its rrule set to rr ("" removes the rule).
+func withRule(in domain.TodoInput, rr string) domain.TodoInput {
+	in.RRule, in.RRuleOmitted = rr, false
+	return in
+}
+
+// Moving a series moves its current occurrence, and the rule with it; the
+// rule itself can be set, changed and removed like an event's (FR-10, FR-17).
+func TestUpdateTodoSeries(t *testing.T) {
+	t.Parallel()
+	berlinWeekly := []string{
+		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "RRULE:FREQ=WEEKLY",
+	}
+
+	t.Run("move interval series", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, berlinWeekly)
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Start, in.Due = ptr(f.Start.AddDate(0, 0, 2)), ptr(f.Due.AddDate(0, 0, 2))
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if !sameTime(got.Start, ptr(date(2025, 3, 12, 8, 0))) || !sameTime(got.Due, ptr(date(2025, 3, 12, 10, 0))) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 19, 8, 0)), Due: ptr(date(2025, 3, 19, 10, 0))}) {
+			t.Errorf("moved series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART;TZID=Europe/Berlin:20250312T090000", "DUE;TZID=Europe/Berlin:20250312T110000", "RRULE:FREQ=WEEKLY\r\n",
+		}, nil)
+	})
+
+	// The stored form stays, whatever the browser's zone; COUNT stays too,
+	// only completing converts it (FR-17).
+	t.Run("move drops the current override and kde", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=DAILY;COUNT=5", "X-KDE-LIBKCAL-DTRECURRENCE:20250311T090000Z",
+		}, []string{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z", "DUE:20250311T160000Z"})
+		f := listedTodo(t, e, id)
+		if !sameTime(f.Start, ptr(date(2025, 3, 11, 15, 0))) {
+			t.Fatalf("current occurrence = %+v; want the moved 2025-03-11T15:00Z", f)
+		}
+		in := editInput(&f)
+		in.Start, in.Due, in.Timezone = ptr(date(2025, 3, 11, 16, 0)), ptr(date(2025, 3, 11, 17, 0)), "Europe/Berlin"
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if !sameTime(got.Start, in.Start) || !sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 12, 16, 0)), Due: ptr(date(2025, 3, 12, 17, 0))}) {
+			t.Errorf("moved series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T160000Z", "DUE:20250311T170000Z", "RRULE:FREQ=DAILY;COUNT=5\r\n"},
+			[]string{"RECURRENCE-ID", "X-KDE-LIBKCAL-DTRECURRENCE", "TZID"})
+	})
+
+	t.Run("undo after completion", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, berlinWeekly)
+		f := listedTodo(t, e, id)
+		done := completeListed(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, editInput(&f))
+		mustNoErr(t, err)
+		if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || got.Status != domain.TodoNeedsAction {
+			t.Errorf("undone series = %+v; want it back at %v", got, f.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "STATUS:NEEDS-ACTION",
+		}, nil)
+	})
+
+	// A completed series reports its stored dates; moving it moves them.
+	t.Run("reopen and move a completed series", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"STATUS:COMPLETED", "COMPLETED:20250305T100000Z", "DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY",
+		}, []string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Status, in.Start = domain.TodoNeedsAction, ptr(date(2025, 3, 12, 9, 0))
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if !sameTime(got.Start, in.Start) || !sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))}) {
+			t.Errorf("reopened series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250312T090000Z", "STATUS:NEEDS-ACTION"},
+			[]string{"RECURRENCE-ID", "COMPLETED:"})
+	})
+
+	t.Run("start null writes DTSTART = DUE", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Start, in.Due, in.DueAllDay = nil, ptr(date(2025, 3, 11, 0, 0)), true
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if !sameTime(got.Due, in.Due) || got.Next == nil || !sameTime(got.Next.Due, ptr(date(2025, 3, 12, 0, 0))) {
+			t.Errorf("moved series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;VALUE=DATE:20250311", "DUE;VALUE=DATE:20250311"}, nil)
+	})
+
+	// Fixed days limit a move in the UI only: other clients write any date,
+	// and undo must be able to go back (FR-17).
+	t.Run("move window is not checked", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Start, in.Due = ptr(date(2025, 3, 20, 0, 0)), ptr(date(2025, 3, 20, 0, 0))
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;VALUE=DATE:20250320", "DUE;VALUE=DATE:20250320"}, nil)
+	})
+
+	t.Run("move to all-day and back", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Start, in.StartAllDay, in.Due, in.DueAllDay = ptr(date(2025, 3, 12, 0, 0)), true, ptr(date(2025, 3, 12, 0, 0)), true
+		allDay, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;VALUE=DATE:20250312", "DUE;VALUE=DATE:20250312"}, nil)
+
+		in = editInput(&allDay)
+		in.Start, in.StartAllDay, in.Due, in.DueAllDay = ptr(date(2025, 3, 13, 8, 0)), false, ptr(date(2025, 3, 13, 9, 0)), false
+		in.Timezone = "Europe/Berlin"
+		_, err = e.svc.UpdateTodo(t.Context(), id, allDay.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART;TZID=Europe/Berlin:20250313T090000", "DUE;TZID=Europe/Berlin:20250313T100000", "BEGIN:VTIMEZONE"}, nil)
+	})
+
+	t.Run("rrule omitted keeps the rule", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Title = "Renamed"
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if !got.Recurring || got.RRule != "FREQ=WEEKLY" {
+			t.Errorf("updated series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"RRULE:FREQ=WEEKLY", "SUMMARY:Renamed", "DTSTART:20250310T090000Z"}, nil)
+	})
+
+	// The task stays at its current occurrence (FR-17).
+	t.Run("rrule empty removes", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "EXDATE:20250312T090000Z", "X-KDE-LIBKCAL-DTRECURRENCE:20250310T090000Z",
+		},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250313T090000Z", "DTSTART:20250313T150000Z"},
+		)
+		f := listedTodo(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+		mustNoErr(t, err)
+		if got.Recurring || got.RRule != "" || got.Next != nil || !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) {
+			t.Errorf("single task = %+v; want it at 2025-03-11T09:00Z without a rule", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250311T090000Z"},
+			[]string{"RRULE", "RECURRENCE-ID", "EXDATE", "X-KDE-LIBKCAL-DTRECURRENCE"})
+	})
+
+	// A new rule applies from the current occurrence: completed overrides
+	// before it stay as history, later ones go (FR-17).
+	t.Run("rrule changed drops later overrides", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID:20250309T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250312T090000Z", "DTSTART:20250312T150000Z"},
+		)
+		f := listedTodo(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "FREQ=WEEKLY"))
+		mustNoErr(t, err)
+		if got.RRule != "FREQ=WEEKLY" || !sameTime(got.Start, ptr(date(2025, 3, 10, 9, 0))) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 17, 9, 0))}) {
+			t.Errorf("updated series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"RRULE:FREQ=WEEKLY", "DTSTART:20250310T090000Z", "RECURRENCE-ID:20250309T090000Z"},
+			[]string{"FREQ=DAILY", "RECURRENCE-ID:20250312T090000Z", "DTSTART:20250312T150000Z"})
+	})
+
+	t.Run("same rrule keeps overrides", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250312T090000Z", "DTSTART:20250312T150000Z"},
+		)
+		f := listedTodo(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "rrule:freq=daily"))
+		mustNoErr(t, err)
+		if !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) {
+			t.Errorf("start = %v; want 2025-03-11T09:00Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"RRULE:FREQ=DAILY\r\n", "DTSTART:20250310T090000Z", "RECURRENCE-ID:20250310T090000Z",
+			"RECURRENCE-ID:20250312T090000Z", "DTSTART:20250312T150000Z",
+		}, nil)
+	})
+
+	t.Run("rule on a single timed task", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DUE:20250310T080000Z"})
+		f := listedTodo(t, e, id)
+		in := withRule(editInput(&f), "FREQ=WEEKLY")
+		in.Timezone = "Europe/Berlin"
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		at := date(2025, 3, 10, 8, 0)
+		if !got.Recurring || !sameTime(got.Start, &at) || !sameTime(got.Due, &at) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 17, 8, 0)), Due: ptr(date(2025, 3, 17, 8, 0))}) {
+			t.Errorf("new series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T090000",
+			"BEGIN:VTIMEZONE", "RRULE:FREQ=WEEKLY\r\n",
+		}, nil)
+	})
+
+	// The new rule applies from the current occurrence, which is then
+	// completed like any other (FR-15, FR-17).
+	t.Run("rule changed while completing", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+		f := listedTodo(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(completeInput(&f), "FREQ=DAILY"))
+		mustNoErr(t, err)
+		if got.RRule != "FREQ=DAILY" || !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) || got.Status != domain.TodoNeedsAction {
+			t.Errorf("rolled series = %+v", got)
+		}
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000Z", "STATUS:COMPLETED"}, []string{"RRULE"})
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=DAILY"}, nil)
+	})
+
+	t.Run("rule removed while completing", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+		f := listedTodo(t, e, id)
+		got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(completeInput(&f), ""))
+		mustNoErr(t, err)
+		if got.Recurring || got.CompletedCopy != nil || got.Status != domain.TodoCompleted {
+			t.Errorf("completed task = %+v", got)
+		}
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 {
+			t.Errorf("%d objects; want only the task", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z", "STATUS:COMPLETED"}, []string{"RRULE"})
+	})
+
+	// A rule Lucid cannot evaluate can be kept or removed, but not moved or
+	// replaced (FR-17).
+	t.Run("unsupported rule stays editable", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX"})
+		f := listedTodo(t, e, id)
+		in := withRule(editInput(&f), "FREQ=DAILY;BYDAY=XX")
+		in.Title = "Renamed"
+		renamed, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"SUMMARY:Renamed", "RRULE:FREQ=DAILY;BYDAY=XX"}, nil)
+
+		single, err := e.svc.UpdateTodo(t.Context(), id, renamed.ETag, withRule(editInput(&renamed), ""))
+		mustNoErr(t, err)
+		if single.Recurring || single.RuleUnsupported || !sameTime(single.Start, f.Start) {
+			t.Errorf("single task = %+v", single)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z"}, []string{"RRULE"})
+	})
+
+	for _, tc := range []struct {
+		name   string
+		master []string
+		edit   func(in *domain.TodoInput)
+	}{
+		{"rule without a date", nil, func(in *domain.TodoInput) { *in = withRule(*in, "FREQ=DAILY") }},
+		{"invalid rrule", []string{"DUE:20250310T080000Z"}, func(in *domain.TodoInput) { *in = withRule(*in, "FREQ=NOPE") }},
+		{"rrule with a line break", []string{"DUE:20250310T080000Z"}, func(in *domain.TodoInput) {
+			*in = withRule(*in, "FREQ=DAILY\r\nX-EVIL:1")
+		}},
+		{
+			"move unsupported",
+			[]string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=DAILY;BYDAY=XX"},
+			func(in *domain.TodoInput) { in.Due = ptr(date(2025, 3, 10, 11, 0)) },
+		},
+		{
+			"move rdate series",
+			[]string{"DTSTART:20250310T090000Z", "RRULE:FREQ=MONTHLY", "RDATE:20250320T090000Z"},
+			func(in *domain.TodoInput) { in.Start = ptr(date(2025, 3, 11, 9, 0)) },
+		},
+		{
+			"replace unsupported rule",
+			[]string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX"},
+			func(in *domain.TodoInput) { *in = withRule(*in, "FREQ=DAILY") },
+		},
+		{
+			"move without any date",
+			[]string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"},
+			func(in *domain.TodoInput) { in.Due = nil },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master)
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			tc.edit(&in)
+			e.mock.ResetCounts()
+			_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustErr(t, err, domain.ErrInvalidInput)
+			if n := e.mock.Count(http.MethodPut); n != 0 {
+				t.Errorf("PUT count = %d; want 0", n)
+			}
+		})
+	}
+}
+
+// A todo can be created with a rule; its dates are written like a series'
+// (FR-17).
+func TestCreateTodoWithRule(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all-day due", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		due := date(2025, 3, 10, 0, 0)
+		got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{
+			Title: "Water plants", Due: &due, DueAllDay: true, RRule: "FREQ=DAILY",
+		})
+		mustNoErr(t, err)
+		if !got.Recurring || got.RRule != "FREQ=DAILY" || got.Next == nil || !sameTime(got.Next.Due, ptr(date(2025, 3, 11, 0, 0))) {
+			t.Errorf("created series = %+v", got)
+		}
+		checkStored(t, "series", storedObject(t, e, got.ID),
+			[]string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"}, nil)
+	})
+
+	t.Run("timed in the browser's zone", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		start, due := date(2025, 3, 10, 8, 0), date(2025, 3, 10, 9, 0)
+		got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{
+			Title: "Standup", Start: &start, Due: &due, RRule: "RRULE:FREQ=WEEKLY", Timezone: "Europe/Berlin",
+		})
+		mustNoErr(t, err)
+		if !got.Recurring || !sameTime(got.Start, &start) || !sameTime(got.Due, &due) {
+			t.Errorf("created series = %+v", got)
+		}
+		checkStored(t, "series", storedObject(t, e, got.ID), []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T100000",
+			"BEGIN:VTIMEZONE", "RRULE:FREQ=WEEKLY\r\n",
+		}, nil)
+	})
+
+	for _, tc := range []struct {
+		name string
+		in   domain.TodoInput
+	}{
+		{"without a date", domain.TodoInput{Title: "x", RRule: "FREQ=DAILY"}},
+		{"invalid rrule", domain.TodoInput{Title: "x", Due: ptr(date(2025, 3, 10, 0, 0)), DueAllDay: true, RRule: "FREQ=NOPE"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			_, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], tc.in)
+			mustErr(t, err, domain.ErrInvalidInput)
+			if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 0 {
+				t.Errorf("%d objects; want none", n)
+			}
+		})
+	}
 }
 
 func TestCountToUntil(t *testing.T) {

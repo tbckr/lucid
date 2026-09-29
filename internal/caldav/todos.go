@@ -291,6 +291,10 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if err := in.ValidateDates(); err != nil {
 		return domain.Todo{}, err
 	}
+	rr, err := newTodoRule(in)
+	if err != nil {
+		return domain.Todo{}, err
+	}
 	if err := s.checkWritable(ctx, calPath, ical.CompToDo); err != nil {
 		return domain.Todo{}, err
 	}
@@ -299,7 +303,14 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	cal := newCalendar()
 	c := newComponent(ical.CompToDo, uid, now)
 	cal.Children = append(cal.Children, c)
-	applyTodoDates(c.Props, in)
+	if rr == "" {
+		applyTodoDates(c.Props, in)
+	} else {
+		// A series is written like an event's: timed dates in the browser's
+		// zone, so that it recurs at the same wall-clock time (FR-17).
+		c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
+		writeSeriesDates(cal, c, in, false)
+	}
 	applyTodoFields(c, in, now)
 
 	o := calObject{path: objectPath(calPath, uid+".ics"), cal: cal}
@@ -342,9 +353,9 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
-	// Keep DTSTART for clients that predate `start`, and for recurring todos:
-	// RFC 5545 requires DTSTART with RRULE (FR-16).
-	if in.StartOmitted || (in.Start == nil && c.Props.Get(ical.PropRecurrenceRule) != nil) {
+	// Keep DTSTART for clients that predate `start`, and for recurring todos
+	// sent without any date: RFC 5545 requires DTSTART with RRULE (FR-16).
+	if in.StartOmitted || (in.Start == nil && in.Due == nil && cur.Recurring) {
 		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
 	}
 	unchanged := sameDates(cur, in)
@@ -353,23 +364,60 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 			return domain.Todo{}, err
 		}
 	}
+	edit, rr, err := ruleEditOf(c, in)
+	if err != nil {
+		return domain.Todo{}, err
+	}
+	// A rule Lucid cannot evaluate can be kept or removed, but moving its
+	// series or replacing it needs its occurrences (FR-17).
+	if cur.RuleUnsupported && (edit == ruleSet || (edit == ruleKeep && !unchanged)) {
+		return domain.Todo{}, errRuleUnsupported
+	}
+
+	series := newTodoSeries(cal, c)
+	switch edit {
+	case ruleRemove:
+		// The task stays at the current occurrence, whose dates in carries
+		// (FR-17).
+		removeRecurrence(cal, c)
+		c.Props.Del(propKDEPending)
+		series = nil
+	case ruleSet:
+		setTodoRule(cal, c, series, cur.Status, rr, in)
+		series = newTodoSeries(cal, c)
+	case ruleKeep:
+	}
+
 	// Completing an open series completes its current occurrence: a copy
 	// keeps it, and the series rolls on. Its last occurrence completes the
 	// series itself, below (FR-15, FR-17).
-	if cur.Recurring && in.Status == domain.TodoCompleted &&
+	if series != nil && in.Status == domain.TodoCompleted &&
 		cur.Status != domain.TodoCompleted && cur.Status != domain.TodoCancelled {
 		if cur.RuleUnsupported {
 			return domain.Todo{}, errRuleUnsupported
 		}
-		if cur.Next != nil {
-			return s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, newTodoSeries(cal, c), in)
+		_, next, err := series.current()
+		if err != nil {
+			return domain.Todo{}, errRuleUnsupported
+		}
+		if next != nil {
+			return s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, series, in)
 		}
 	}
-	// A series reports its current occurrence, not its stored dates. Sent
-	// back unchanged, they must not overwrite DTSTART/DUE: the rule would
-	// restart there, in UTC, and lose its overrides (FR-17).
-	if !unchanged || !cur.Recurring {
+
+	switch {
+	case series == nil:
 		applyTodoDates(c.Props, in)
+	case edit == ruleKeep && !unchanged:
+		if in.Start == nil && in.Due == nil {
+			return domain.Todo{}, errRuleNeedsDate
+		}
+		moveSeries(cal, c, series.reportedRid(cur.Status), in)
+	default:
+		// A series reports its current occurrence, not its stored dates.
+		// Sent back unchanged, they must not overwrite DTSTART/DUE: the rule
+		// would restart there and lose its overrides. A new rule wrote them
+		// already (FR-17).
 	}
 	now := s.p.now().UTC()
 	applyTodoFields(c, in, now)
@@ -382,6 +430,76 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, err
 	}
 	return todoFromObject(o, encodeID(calPath), c), nil
+}
+
+// ruleEdit is what an update does to the rule of a todo (FR-17).
+type ruleEdit int
+
+const (
+	ruleKeep   ruleEdit = iota // rrule omitted, the stored rule, or nothing to remove
+	ruleRemove                 // rrule "" on a recurring todo
+	ruleSet                    // another rule
+)
+
+// ruleEditOf returns what in does to the rule of c and, for ruleSet, the
+// normalized rule. A rule that differs from the stored one only in case is
+// the stored rule: it stays as it is, with its overrides (FR-17).
+func ruleEditOf(c *ical.Component, in domain.TodoInput) (ruleEdit, string, error) {
+	rr := trimRRule(in.RRule)
+	switch {
+	case in.RRuleOmitted:
+		return ruleKeep, "", nil
+	case rr == "" && isRecurring(c):
+		return ruleRemove, "", nil
+	case rr == "" || strings.EqualFold(rr, rruleString(c)):
+		return ruleKeep, "", nil
+	}
+	rr, err := newTodoRule(in)
+	if err != nil {
+		return ruleKeep, "", err
+	}
+	return ruleSet, rr, nil
+}
+
+// newTodoRule returns the normalized rule of in, "" for none. A rule needs a
+// start or due to recur from (FR-17).
+func newTodoRule(in domain.TodoInput) (string, error) {
+	if trimRRule(in.RRule) == "" {
+		return "", nil
+	}
+	anchor := cmp.Or(in.Start, in.Due)
+	if anchor == nil {
+		return "", errRuleNeedsDate
+	}
+	return normalizeRRule(in.RRule, anchor.UTC())
+}
+
+// setTodoRule gives the todo c, with the series s (nil if it does not recur
+// yet), the rule rr from its current occurrence on (FR-17): the dates of in,
+// which describe that occurrence, become DTSTART and DUE; overrides from it
+// on and KDE's pending occurrence go; completed overrides before it stay as
+// history. A todo that did not recur yet takes the zone of in for timed
+// dates without a TZID.
+func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, rr string, in domain.TodoInput) {
+	if s != nil {
+		from := s.reportedRid(status)
+		dropOverrides(cal, c, func(rid time.Time) bool { return !rid.Before(from) })
+	}
+	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
+	writeSeriesDates(cal, c, in, s != nil)
+	c.Props.Del(propKDEPending)
+}
+
+// moveSeries moves the recurring todo c from its current occurrence, rid, to
+// the dates of in (FR-10, FR-17): they become DTSTART and DUE in the form the
+// series is written in, and the override of rid and KDE's pending occurrence
+// go, so that the moved occurrence is the current one. The rule, COUNT
+// included, stays: interval rules move along, and the UI keeps fixed-day
+// rules within reach of their next occurrence.
+func moveSeries(cal *ical.Calendar, c *ical.Component, rid time.Time, in domain.TodoInput) {
+	writeSeriesDates(cal, c, in, true)
+	dropOverrides(cal, c, rid.Equal)
+	c.Props.Del(propKDEPending)
 }
 
 // completeOccurrence completes the current occurrence of the open series c
