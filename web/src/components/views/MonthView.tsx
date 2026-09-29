@@ -36,7 +36,8 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
   const setDate = useUi((s) => s.setDate)
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
-  const draftDay = useUi((s) => s.create?.preview?.start ?? null)
+  // The day, not the preview: typing its title must not re-render the month.
+  const draftDay = useUi((s) => (s.create?.preview ? dayKey(s.create.preview.start) : null))
   const weeks = useMemo(() => monthGrid(date, prefs.weekStartsOn), [date, prefs.weekStartsOn])
   const names = weekdayNames(prefs)
 
@@ -205,8 +206,8 @@ function WeekRow({
   corruptedByDay: Map<string, CorruptedItem[]>
   onCellKeyDown: (e: KeyboardEvent<HTMLElement>, day: Date) => void
   onCreate: (day: Date, cell: HTMLElement) => void
-  /** Day of the create popover's entry. */
-  draftDay: Date | null
+  /** Day (key) of the create popover's entry. */
+  draftDay: string | null
   onFocusDay: (day: Date) => void
   onOpenDay: (day: Date) => void
   labelFor: (day: Date, items: CalItem[]) => string
@@ -228,7 +229,7 @@ function WeekRow({
           corrupted={corruptedByDay.get(dayKey(cell.day)) ?? []}
           onKeyDown={onCellKeyDown}
           onCreate={onCreate}
-          draft={draftDay !== null && isSameDay(draftDay, cell.day)}
+          draft={draftDay === dayKey(cell.day)}
           onFocusDay={onFocusDay}
           onOpenDay={onOpenDay}
           label={labelFor(cell.day, cell.all)}

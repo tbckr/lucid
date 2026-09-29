@@ -2,7 +2,8 @@ import { DndContext } from '@dnd-kit/core'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type * as EventItems from '@/components/events/EventItems'
 import { api } from '@/lib/api/client'
 import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
@@ -12,6 +13,19 @@ import { useUi } from '@/stores/ui'
 import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { MonthView } from './MonthView'
+
+// Counts renders of the month's event chips; they keep their real behavior.
+const chipRenders = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@/components/events/EventItems', async (importOriginal) => {
+  const mod = await importOriginal<typeof EventItems>()
+  return {
+    ...mod,
+    EventChip: (props: Parameters<typeof mod.EventChip>[0]) => {
+      chipRenders.count++
+      return mod.EventChip(props)
+    },
+  }
+})
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const colors = eventColors('#3b82f6', false)
@@ -36,6 +50,12 @@ function renderMonth(events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup'
 }
 
 describe('MonthView', () => {
+  afterEach(() => {
+    act(() => {
+      useUi.getState().openCreate(null)
+    })
+  })
+
   it('renders an accessible grid with weekday headers and events', () => {
     renderMonth()
     const grid = screen.getByRole('grid', { name: 'September 2026' })
@@ -90,6 +110,13 @@ describe('MonthView', () => {
     })
     expect(thu).toHaveAttribute('data-draft')
     expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveAttribute('data-draft')
+    // Typing the title builds a new preview on the same day: the grid stays as it is.
+    const before = chipRenders.count
+    act(() => {
+      const p = useUi.getState().create!.preview!
+      useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Rent' })
+    })
+    expect(chipRenders.count).toBe(before)
     act(() => {
       useUi.getState().openCreate(null)
     })

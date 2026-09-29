@@ -1,16 +1,30 @@
 import { DndContext } from '@dnd-kit/core'
 import { act, fireEvent, screen, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type * as EventItems from '@/components/events/EventItems'
 import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
-import { type CalItem } from '@/lib/events'
+import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { type CreatePreview } from '@/lib/quickCreate'
 import { useUi } from '@/stores/ui'
-import { calendar, todo } from '@/test/fixtures'
+import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TimeGridView } from './TimeGridView'
+
+// Counts renders of the grid's event blocks; they keep their real behavior.
+const blockRenders = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@/components/events/EventItems', async (importOriginal) => {
+  const mod = await importOriginal<typeof EventItems>()
+  return {
+    ...mod,
+    TimedBlock: (props: Parameters<typeof mod.TimedBlock>[0]) => {
+      blockRenders.count++
+      return mod.TimedBlock(props)
+    },
+  }
+})
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const colors = eventColors('#3b82f6', false)
@@ -183,5 +197,17 @@ describe('TimeGridView', () => {
     renderDay()
     withPreview({ allDay: true, start: new Date(2026, 8, 25), end: new Date(2026, 8, 26) })
     expect(screen.getByRole('button', { name: /New all-day event/ }).parentElement).toHaveAttribute('data-draft')
+  })
+  it('re-draws only the draft while its title is typed', () => {
+    const { container } = renderDay([toCalEvent(apiEvent({ start: '2026-09-25T12:00:00Z', end: '2026-09-25T13:00:00Z' }))])
+    withPreview({ title: 'R' })
+    const before = blockRenders.count
+    act(() => {
+      // The popover builds a new preview, with new dates, on every keystroke.
+      const p = useUi.getState().create!.preview!
+      useUi.getState().setCreatePreview({ ...p, start: new Date(p.start), end: new Date(p.end), title: 'Re' })
+    })
+    expect(container.querySelector('[data-draft]')).toHaveTextContent('Re')
+    expect(blockRenders.count).toBe(before)
   })
 })
