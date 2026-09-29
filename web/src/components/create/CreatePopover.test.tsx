@@ -96,6 +96,14 @@ async function openPopover({
   return { fetch, slot, release, dialog: await screen.findByRole('dialog') }
 }
 
+/**
+ * An option of the open list. Each picker also keeps a hidden native select
+ * with the same options, so a search of the whole page is slow and ambiguous.
+ */
+function option(name: string) {
+  return within(screen.getByRole('listbox')).getByRole('option', { name })
+}
+
 /** The request the popover sent to create the entry. */
 async function posted(fetch: Awaited<ReturnType<typeof openPopover>>['fetch']) {
   await waitFor(() => {
@@ -165,7 +173,7 @@ describe('CreatePopover', () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()
     await user.click(within(dialog).getByRole('combobox', { name: 'Calendar' }))
-    await user.click(screen.getByRole('option', { name: 'Work' }))
+    await user.click(option('Work'))
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     expect(within(dialog).getByRole('combobox', { name: 'Task list' })).toHaveTextContent('Work')
   })
@@ -332,7 +340,7 @@ describe('CreatePopover', () => {
     }
     const { dialog } = await openPopover({ origin: month })
     await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
-    await user.click(screen.getByRole('option', { name: '2:00 PM' }))
+    await user.click(option('2:00 PM'))
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('2:00 PM')
   })
@@ -349,16 +357,13 @@ describe('CreatePopover', () => {
       expect(same).toHaveFocus()
     })
   })
-  it('keeps changed times when switching to a task and back', async () => {
+  // A start time changed before the switch to a task: the month-cell test above.
+  it('keeps a changed due time when switching back to an event', async () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()
-    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
-    await user.click(screen.getByRole('option', { name: '2:00 PM' }))
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
-    const dueTime = within(dialog).getByRole('combobox', { name: 'Due time' })
-    expect(dueTime).toHaveTextContent('2:00 PM')
-    await user.click(dueTime)
-    await user.click(screen.getByRole('option', { name: '4:00 PM' }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.click(option('4:00 PM'))
     // Back as an event: at the task's time, with the event's length.
     await user.click(within(dialog).getByRole('radio', { name: 'Event' }))
     expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('4:00 PM')
