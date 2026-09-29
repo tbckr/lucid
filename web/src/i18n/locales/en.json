@@ -285,7 +285,7 @@
     "week": "Week view",
     "day": "Day view",
     "agenda": "Agenda view",
-    "create": "Create event",
+    "create": "Create event or task",
     "tasks": "Show or hide tasks",
     "help": "Show shortcuts",
     "moveEvent": "Move a focused event"

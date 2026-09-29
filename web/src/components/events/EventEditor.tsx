@@ -1,18 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
-import { useId, useMemo } from 'react'
+import { useEffect, useId, useMemo, useRef } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { KindSwitch } from '@/components/create/KindSwitch'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -25,7 +18,6 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { type Calendar } from '@/lib/api/schemas'
 import { parseDayKey } from '@/lib/dates'
 import {
-  createFormValues,
   editFormValues,
   eventFormSchema,
   formDuration,
@@ -35,6 +27,7 @@ import {
 } from '@/lib/eventForm'
 import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
+import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
@@ -42,35 +35,29 @@ import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
 import { TimeSelect } from './TimeSelect'
 
-/** Create/edit dialog for events (FR-09, FR-11). */
-export function EventEditorDialog() {
-  const editor = useUi((s) => s.editor)
-  const openEditor = useUi((s) => s.openEditor)
+/** Creates and edits events in the editor dialog (FR-09, FR-11). */
+export function EventEditor({
+  editor,
+  canSwitch,
+  onDone,
+}: {
+  editor: NonNullable<EditorState>
+  /** A new entry can be switched to a task. */
+  canSwitch: boolean
+  onDone: () => void
+}) {
   const { all, visible } = useVisibleCalendars()
-  const writable = all.filter((c) => c.supportsEvents && !c.readOnly)
-  const preferred = visible.find((c) => c.supportsEvents && !c.readOnly) ?? writable[0]
-
+  const calendars = useMemo(() => writableFor('event', all), [all])
+  const current = editor.mode === 'create' ? editor.draft.calendarId : ''
+  const preferred = chooseCalendar('event', { all, visible, taskList: '', current })
   return (
-    <Dialog
-      open={editor !== null}
-      onOpenChange={(open) => {
-        if (!open) openEditor(null)
-      }}
-    >
-      {editor && (
-        <DialogContent className="gap-0 p-0" showCloseButton={false}>
-          <EditorForm
-            key={editor.mode === 'edit' ? editor.event.key : 'create'}
-            editor={editor}
-            calendars={writable}
-            defaultCalendarId={preferred?.id ?? ''}
-            onDone={() => {
-              openEditor(null)
-            }}
-          />
-        </DialogContent>
-      )}
-    </Dialog>
+    <EditorForm
+      editor={editor}
+      calendars={calendars}
+      defaultCalendarId={preferred?.id ?? ''}
+      canSwitch={canSwitch}
+      onDone={onDone}
+    />
   )
 }
 
@@ -78,11 +65,13 @@ function EditorForm({
   editor,
   calendars,
   defaultCalendarId,
+  canSwitch,
   onDone,
 }: {
   editor: NonNullable<EditorState>
   calendars: Calendar[]
   defaultCalendarId: string
+  canSwitch: boolean
   onDone: () => void
 }) {
   const { t } = useTranslation()
@@ -93,6 +82,8 @@ function EditorForm({
   const create = useCreateEvent()
   const update = useUpdateEvent()
   const id = useId()
+  const openTaskEditor = useUi((s) => s.openTaskEditor)
+  const kindRef = useRef<HTMLButtonElement>(null)
   const event = editor.mode === 'edit' ? editor.event : undefined
 
   const form = useForm<EventFormValues>({
@@ -100,11 +91,11 @@ function EditorForm({
     defaultValues:
       editor.mode === 'edit'
         ? editFormValues(editor.event, tz)
-        : createFormValues(editor.defaults, editor.defaults.calendarId ?? defaultCalendarId, tz),
+        : { ...eventForm(editor.draft.title, defaultCalendarId, editor.draft.event), description: editor.draft.description },
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   })
-  const { register, control, handleSubmit, setValue, getValues, formState } = form
+  const { register, control, handleSubmit, setValue, getValues, setFocus, formState } = form
   const [allDay, recurrence, calendarId, startDate, startTime, endDate, endTime] = useWatch({
     control,
     name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
@@ -114,6 +105,23 @@ function EditorForm({
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
   const start = parseDayKey(startDate)
+
+  // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
+  useEffect(() => {
+    if (editor.mode !== 'create') return
+    if (editor.switched) kindRef.current?.focus()
+    else setFocus('title')
+  }, [editor, setFocus])
+
+  const toTask = () => {
+    if (editor.mode !== 'create') return
+    const v = getValues()
+    // A calendar the user chose goes along; the editor's own choice follows the kind (`chooseCalendar`).
+    const chosen = v.calendarId === formState.defaultValues?.calendarId ? editor.draft.calendarId : v.calendarId
+    const when = { allDay, startDate, startTime, endDate, endTime }
+    const draft = { ...editor.draft, title: v.title, description: v.description, calendarId: chosen, event: when }
+    openTaskEditor({ mode: 'create', switched: true, draft: switchDraft(draft, 'task') })
+  }
 
   const onStartChange = (date: string, time: string) => {
     const next = shiftEnd(getValues(), date, time)
@@ -169,6 +177,7 @@ function EditorForm({
       >
         <DialogTitle className="sr-only">{event ? t('event.edit') : t('event.new')}</DialogTitle>
         <DialogDescription className="sr-only">{t('event.dialogDescription')}</DialogDescription>
+        {!event && canSwitch && <KindSwitch ref={kindRef} kind="event" onSwitch={toTask} className="mb-0.5" />}
         <Label htmlFor={`${id}-title`} className="sr-only">
           {t('event.title')}
         </Label>

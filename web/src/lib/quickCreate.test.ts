@@ -4,12 +4,13 @@ import { TASK_POINT_MINUTES } from './calendarTasks'
 import { eventFormSchema, formToInput } from './eventForm'
 import {
   chooseCalendar,
-  eventDefaults,
+  draftOf,
   eventForm,
   eventFromTask,
   eventWhen,
   previewOf,
   shiftTask,
+  switchDraft,
   taskForm,
   taskWhen,
   type CreateOrigin,
@@ -131,6 +132,53 @@ describe('eventFromTask', () => {
   })
 })
 
+describe('draftOf', () => {
+  it('starts an event at the clicked hour and a task due then', () => {
+    expect(draftOf(click, TZ)).toEqual({
+      title: '',
+      description: '',
+      calendarId: '',
+      event: clickWhen,
+      task: due('2026-09-30', '10:15'),
+      origin: { granularity: 'time', ranged: false },
+      started: clickWhen,
+    })
+  })
+
+  it('makes a task due on a whole day without a time', () => {
+    // "Create" and `c` start at a default hour on the day, like a month cell.
+    const day: CreateOrigin = { ...click, start: new Date(2026, 8, 30, 9), end: new Date(2026, 8, 30, 10), granularity: 'day' }
+    expect(draftOf(day, TZ)).toMatchObject({ event: { startTime: '09:00' }, task: due('2026-09-30', '') })
+  })
+})
+
+describe('switchDraft', () => {
+  const draft = draftOf({ ...click, granularity: 'day' }, TZ)
+
+  it('makes the event a task with the rules of the popover', () => {
+    expect(switchDraft(draft, 'task').task).toEqual(due('2026-09-30', ''))
+    const moved = { ...draft, event: { ...clickWhen, startTime: '14:00', endTime: '15:00' } }
+    expect(switchDraft(moved, 'task').task).toEqual(due('2026-09-30', '14:00'))
+  })
+
+  it('makes the task an event with the length of the one it was', () => {
+    expect(switchDraft({ ...draft, task: due('2026-10-01', '16:00') }, 'event').event).toEqual({
+      allDay: false,
+      startDate: '2026-10-01',
+      startTime: '16:00',
+      endDate: '2026-10-01',
+      endTime: '17:00',
+    })
+  })
+
+  it('keeps the event to return to, and the title, notes and chosen calendar', () => {
+    const named = { ...draft, title: 'Call', description: 'Agenda', calendarId: 'c2' }
+    const task = switchDraft(named, 'task')
+    expect(task).toMatchObject({ title: 'Call', description: 'Agenda', calendarId: 'c2', event: clickWhen })
+    expect(switchDraft(task, 'event')).toMatchObject({ title: 'Call', description: 'Agenda', calendarId: 'c2', event: clickWhen })
+  })
+})
+
 describe('shiftTask', () => {
   const span = { startDate: '2026-09-30', startTime: '10:00', dueDate: '2026-09-30', dueTime: '12:00' }
 
@@ -219,11 +267,6 @@ describe('payloads', () => {
 
   it('takes only the dates from a larger object', () => {
     expect(taskForm('Call', { ...due('2026-09-30', ''), title: 'x', calendarId: 'c3' } as TaskWhen)).not.toHaveProperty('calendarId')
-  })
-
-  it('turns event values back into editor defaults', () => {
-    expect(eventDefaults(clickWhen, TZ)).toEqual({ start: new Date(2026, 8, 30, 10, 15), end: new Date(2026, 8, 30, 11, 15), allDay: false })
-    expect(eventDefaults({ ...clickWhen, allDay: true }, TZ)).toEqual({ start: new Date(2026, 8, 30), end: new Date(2026, 8, 30), allDay: true })
   })
 })
 

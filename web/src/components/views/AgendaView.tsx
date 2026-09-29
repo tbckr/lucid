@@ -15,7 +15,7 @@ import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { agendaRows } from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
-import { defaultCreateTimes } from './createDefaults'
+import { newDraft } from './createDefaults'
 
 interface Props {
   range: DateRange
@@ -61,7 +61,7 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
         <p className="max-w-sm text-sm text-muted-foreground">{t('agenda.empty', { count: eachDay(range).length })}</p>
         <Button
           onClick={() => {
-            openEditor({ mode: 'create', defaults: defaultCreateTimes(range.start, now) })
+            openEditor({ mode: 'create', draft: newDraft(range.start, now) })
           }}
         >
           <CalendarPlusIcon aria-hidden />

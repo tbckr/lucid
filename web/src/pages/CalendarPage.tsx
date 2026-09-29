@@ -4,21 +4,20 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CalendarDnd } from '@/components/dnd/CalendarDnd'
 import { CreatePopover } from '@/components/create/CreatePopover'
+import { EditorDialog } from '@/components/EditorDialog'
 import { EventDetailsPopover } from '@/components/events/EventDetailsPopover'
-import { EventEditorDialog } from '@/components/events/EventEditorDialog'
 import { EventBar, EventChip, TimedBlock } from '@/components/events/EventItems'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/settings/ShortcutsDialog'
 import { TaskDetailsPopover } from '@/components/tasks/TaskDetailsPopover'
-import { TaskEditorDialog } from '@/components/tasks/TaskEditorDialog'
 import { TasksPanel } from '@/components/tasks/TasksPanel'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { AgendaView } from '@/components/views/AgendaView'
 import { MonthView } from '@/components/views/MonthView'
 import { TimeGridView } from '@/components/views/TimeGridView'
-import { defaultCreateTimes } from '@/components/views/createDefaults'
+import { newDraft } from '@/components/views/createDefaults'
 import { queryKeys, useCalendarTasks, useEvents, useSession, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useMediaQuery, WIDE_QUERY } from '@/hooks/useMediaQuery'
@@ -96,7 +95,7 @@ export function CalendarPage() {
           s.setView(a.view)
           break
         case 'create':
-          s.openEditor({ mode: 'create', defaults: defaultCreateTimes(s.date, new Date()) })
+          s.openEditor({ mode: 'create', draft: newDraft(s.date, new Date()) })
           break
         case 'help':
           s.setShortcutsOpen(true)
@@ -279,8 +278,7 @@ export function CalendarPage() {
       <EventDetailsPopover />
       <TaskDetailsPopover />
       <CreatePopover />
-      <EventEditorDialog />
-      <TaskEditorDialog />
+      <EditorDialog />
       <SettingsDialog />
       <ShortcutsDialog />
     </div>

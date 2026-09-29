@@ -1,6 +1,6 @@
 import { type Calendar } from './api/schemas'
 import { toCalTask } from './calendarTasks'
-import { parseDayKey, utcDateToLocal, zonedToUtc } from './dates'
+import { utcDateToLocal } from './dates'
 import { createFormValues, eventFormSchema, formToInput, shiftEnd, type EventFormValues } from './eventForm'
 import { formToTodoInput, taskFormSchema, type TaskFormValues } from './taskForm'
 
@@ -91,6 +91,43 @@ export function eventFromTask(task: TaskWhen, last: EventWhen): EventWhen {
   return { allDay: false, startDate: date, startTime: time, ...shiftEnd(base, date, time) }
 }
 
+/**
+ * A new entry in the event or task editor (FR-09, FR-16). It keeps the dates
+ * of both kinds, so a switch back returns to the event it was.
+ */
+export interface Draft {
+  title: string
+  description: string
+  /** The calendar the user chose; empty while the editor chooses (`chooseCalendar`). */
+  calendarId: string
+  event: EventWhen
+  task: TaskWhen
+  /** How the entry began, and the event it began with: a switch to a task follows `taskWhen`. */
+  origin: Pick<CreateOrigin, 'granularity' | 'ranged'>
+  started: EventWhen
+}
+
+/** The entry a click starts, or "Create" and `c` on a day at its default hour. */
+export function draftOf(origin: CreateOrigin, timeZone: string): Draft {
+  const event = eventWhen(origin, timeZone)
+  return {
+    title: '',
+    description: '',
+    calendarId: '',
+    event,
+    task: taskWhen(event, origin),
+    origin: { granularity: origin.granularity, ranged: origin.ranged },
+    started: event,
+  }
+}
+
+/** The entry as the other kind, with the dates the popover's switch gives it. */
+export function switchDraft(draft: Draft, to: CreateKind): Draft {
+  return to === 'task'
+    ? { ...draft, task: taskWhen(draft.event, draft.origin, draft.started) }
+    : { ...draft, event: eventFromTask(draft.task, draft.event) }
+}
+
 /** Move a task to `date` and `time`: a single date directly, a span keeping its length. */
 export function shiftTask(task: TaskWhen, date: string, time: string): TaskWhen {
   if (task.startDate && task.dueDate) {
@@ -149,19 +186,6 @@ export function eventForm(title: string, calendarId: string, when: EventWhen): E
 export function taskForm(title: string, when: TaskWhen): TaskFormValues {
   const { startDate, startTime, dueDate, dueTime } = when
   return { title, description: '', startDate, startTime, dueDate, dueTime, priority: 0, completed: false, checklist: [] }
-}
-
-/** Event values as the defaults of the event editor. */
-export function eventDefaults(when: EventWhen, timeZone: string): { start: Date; end: Date; allDay: boolean } {
-  if (when.allDay) {
-    const day = parseDayKey(when.startDate)
-    return { start: day, end: day, allDay: true }
-  }
-  return {
-    start: zonedToUtc(when.startDate, when.startTime, timeZone),
-    end: zonedToUtc(when.endDate, when.endTime, timeZone),
-    allDay: false,
-  }
 }
 
 /** Where the entry will land, or null while the values are invalid. */

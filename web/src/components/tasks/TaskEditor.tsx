@@ -4,12 +4,13 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { KindSwitch } from '@/components/create/KindSwitch'
 import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { TimeSelect } from '@/components/events/TimeSelect'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import { DialogClose, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -22,10 +23,11 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
-import { taskForm, writableFor } from '@/lib/quickCreate'
+import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { formToTodoInput, taskFormSchema, taskToForm, type TaskFormValues } from '@/lib/taskForm'
 import { isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
+import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
 
 const LEVELS: PriorityLevel[] = ['none', 'low', 'medium', 'high']
@@ -46,44 +48,32 @@ const DATES = {
 type Which = keyof typeof DATES
 
 /**
- * Edit a task: title, notes, start and due date, priority, checklist (FR-13,
- * FR-14, FR-15, FR-16). Also creates one handed over from the create popover.
+ * Edits a task in the editor dialog: title, notes, start and due date,
+ * priority, checklist (FR-13, FR-14, FR-15, FR-16). Also creates one, from the
+ * create popover or switched from a new event.
  */
-export function TaskEditorDialog() {
-  const state = useUi((s) => s.taskEditor)
-  const open = useUi((s) => s.openTaskEditor)
-  return (
-    <Dialog
-      open={state !== null}
-      onOpenChange={(o) => {
-        if (!o) open(null)
-      }}
-    >
-      {state && (
-        <DialogContent className="gap-0 p-0" showCloseButton={false}>
-          <TaskForm
-            key={state.mode === 'edit' ? state.todo.id : 'create'}
-            state={state}
-            onDone={() => {
-              open(null)
-            }}
-          />
-        </DialogContent>
-      )}
-    </Dialog>
-  )
-}
-
-function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDone: () => void }) {
+export function TaskEditor({
+  state,
+  canSwitch,
+  onDone,
+}: {
+  state: NonNullable<TaskEditorState>
+  /** A new entry can be switched to an event. */
+  canSwitch: boolean
+  onDone: () => void
+}) {
   const { t } = useTranslation()
   const id = useId()
   const prefs = usePrefs()
   const now = useNow()
   const todo = state.mode === 'edit' ? state.todo : undefined
-  const [calendarId, setCalendarId] = useState(state.mode === 'edit' ? state.todo.calendarId : state.defaults.calendarId)
+  const { all, visible, byId } = useVisibleCalendars()
+  const taskList = useSettings((s) => s.taskList)
+  // The list the user chose for a new task; while there is none, the editor chooses (`chooseCalendar`).
+  const [chosen, setChosen] = useState(state.mode === 'create' ? state.draft.calendarId : '')
+  const calendarId = todo ? todo.calendarId : (chooseCalendar('task', { all, visible, taskList, current: chosen })?.id ?? '')
   const colors = useCalendarColors()(calendarId)
   const tz = useMemo(() => browserTimeZone(), [])
-  const { all, byId } = useVisibleCalendars()
   const lists = useMemo(() => writableFor('task', all), [all])
   const list = byId.get(calendarId)
   const readOnly = todo ? (list?.readOnly ?? false) : false
@@ -95,12 +85,17 @@ function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDo
   const deleteRef = useRef<HTMLButtonElement>(null)
   const keepRef = useRef<HTMLButtonElement>(null)
   const asked = useRef(false)
+  const openEditor = useUi((s) => s.openEditor)
+  const kindRef = useRef<HTMLButtonElement>(null)
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
-    defaultValues: state.mode === 'edit' ? taskToForm(state.todo, tz) : taskForm(state.defaults.title, state.defaults),
+    defaultValues:
+      state.mode === 'edit'
+        ? taskToForm(state.todo, tz)
+        : { ...taskForm(state.draft.title, state.draft.task), description: state.draft.description },
   })
-  const { register, control, handleSubmit, formState, setValue, getValues } = form
+  const { register, control, handleSubmit, formState, setValue, getValues, setFocus } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
   const [completed, startDate, startTime, dueDate, dueTime, items] = useWatch({
     control,
@@ -117,6 +112,21 @@ function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDo
     else if (asked.current) deleteRef.current?.focus()
     asked.current = confirmDelete
   }, [confirmDelete])
+
+  // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
+  useEffect(() => {
+    if (state.mode !== 'create') return
+    if (state.switched) kindRef.current?.focus()
+    else setFocus('title')
+  }, [state, setFocus])
+
+  const toEvent = () => {
+    if (state.mode !== 'create') return
+    const v = getValues()
+    const when = { startDate, startTime, dueDate, dueTime }
+    const draft = { ...state.draft, title: v.title, description: v.description, calendarId: chosen, task: when }
+    openEditor({ mode: 'create', switched: true, draft: switchDraft(draft, 'event') })
+  }
 
   const addItem = () => {
     const text = newItem.trim()
@@ -231,6 +241,7 @@ function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDo
       >
         <DialogTitle className="sr-only">{todo ? t('tasks.edit') : t('tasks.new')}</DialogTitle>
         <DialogDescription className="sr-only">{todo ? t('tasks.editDescription') : t('tasks.newDescription')}</DialogDescription>
+        {!todo && canSwitch && <KindSwitch ref={kindRef} kind="task" onSwitch={toEvent} className="col-start-2 mb-2.5" />}
         {/* A new task shows the check as its shape only: there is nothing to complete yet. */}
         {todo ? (
           <Controller
@@ -293,7 +304,7 @@ function TaskForm({ state, onDone }: { state: NonNullable<TaskEditorState>; onDo
               <Label htmlFor={`${id}-list`} className="sr-only">
                 {t('tasks.list')}
               </Label>
-              <Select value={calendarId} onValueChange={setCalendarId}>
+              <Select value={calendarId} onValueChange={setChosen}>
                 <SelectTrigger
                   id={`${id}-list`}
                   className="-ml-2 h-8 w-auto border-transparent bg-transparent px-2 font-medium text-current hover:border-current/25 data-[placeholder]:text-current"

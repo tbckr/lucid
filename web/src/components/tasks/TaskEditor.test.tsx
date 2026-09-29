@@ -3,11 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
+import { EditorDialog } from '@/components/EditorDialog'
 import { type Calendar, type Todo } from '@/lib/api/schemas'
-import { useUi, type TaskCreateDefaults } from '@/stores/ui'
+import { draftOf, type Draft } from '@/lib/quickCreate'
+import { useUi } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
-import { TaskEditorDialog } from './TaskEditorDialog'
 
 /** Open the editor for `t` and wait until its list is loaded. */
 async function openTask(t: Todo, list: Calendar = calendar()) {
@@ -20,7 +21,7 @@ async function openTask(t: Todo, list: Calendar = calendar()) {
   act(() => {
     useUi.getState().openTaskEditor({ mode: 'edit', todo: t })
   })
-  const { queryClient } = renderWithProviders(<TaskEditorDialog />)
+  const { queryClient } = renderWithProviders(<EditorDialog />)
   await waitFor(() => {
     expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
   })
@@ -28,32 +29,33 @@ async function openTask(t: Todo, list: Calendar = calendar()) {
 }
 
 /** Open the editor for a new task and wait until the lists are loaded. */
-async function openNew(defaults: TaskCreateDefaults, lists: Calendar[] = [calendar()]) {
+async function openNew(draft: Draft, lists: Calendar[] = [calendar()]) {
   api.setCsrfToken('tok')
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) =>
     Promise.resolve(
       urlOf(input).endsWith('/calendars')
         ? jsonResponse(200, { calendars: lists })
-        : jsonResponse(201, todo({ title: defaults.title, calendarId: defaults.calendarId })),
+        : jsonResponse(201, todo({ title: draft.title, calendarId: draft.calendarId })),
     ),
   )
   act(() => {
-    useUi.getState().openTaskEditor({ mode: 'create', defaults })
+    useUi.getState().openTaskEditor({ mode: 'create', draft })
   })
-  const { queryClient } = renderWithProviders(<TaskEditorDialog />)
+  const { queryClient } = renderWithProviders(<EditorDialog />)
   await waitFor(() => {
     expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
   })
   return { fetch, dialog: await screen.findByRole('dialog', { name: 'New task' }) }
 }
 
-const slides: TaskCreateDefaults = {
+// From a click at 10:15 on Wednesday, 30 September 2026: due then.
+const slides: Draft = {
+  ...draftOf(
+    { start: new Date(2026, 8, 30, 10, 15), end: new Date(2026, 8, 30, 11, 15), allDay: false, granularity: 'time', ranged: false },
+    'Europe/Berlin',
+  ),
   title: 'Slides',
   calendarId: 'c1',
-  startDate: '',
-  startTime: '',
-  dueDate: '2026-09-30',
-  dueTime: '10:15',
 }
 
 /** Body of the PUT the editor sent. */
@@ -65,7 +67,7 @@ async function saved(fetch: Awaited<ReturnType<typeof openTask>>['fetch']) {
   return bodyOf(init)
 }
 
-describe('TaskEditorDialog', () => {
+describe('TaskEditor', () => {
   afterEach(() => {
     useUi.getState().openTaskEditor(null)
     vi.restoreAllMocks()

@@ -1,7 +1,7 @@
 import { PlusIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { defaultCreateTimes } from '@/components/views/createDefaults'
+import { newDraft } from '@/components/views/createDefaults'
 import { type DateRange } from '@/lib/dates'
 import { type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
@@ -31,7 +31,7 @@ export function Sidebar({
           size="lg"
           className="h-11 rounded-xl px-5 shadow-sm"
           onClick={() => {
-            openEditor({ mode: 'create', defaults: defaultCreateTimes(date, now) })
+            openEditor({ mode: 'create', draft: newDraft(date, now) })
           }}
         >
           <PlusIcon className="size-5" aria-hidden />

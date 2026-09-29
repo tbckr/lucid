@@ -222,29 +222,27 @@ describe('CreatePopover', () => {
     const { dialog } = await openPopover()
     await user.keyboard('Review')
     await user.click(within(dialog).getByRole('button', { name: 'More options' }))
-    expect(useUi.getState().editor).toEqual({
+    // No calendar was chosen: the editor chooses by the same rules.
+    expect(useUi.getState().editor).toMatchObject({
       mode: 'create',
-      defaults: {
-        start: new Date(2026, 8, 30, 10, 15),
-        end: new Date(2026, 8, 30, 11, 15),
-        allDay: false,
+      draft: {
         title: 'Review',
-        calendarId: 'c1',
+        calendarId: '',
+        event: { allDay: false, startDate: '2026-09-30', startTime: '10:15', endDate: '2026-09-30', endTime: '11:15' },
       },
     })
     expect(useUi.getState().create).toBeNull()
   })
 
   it('hands the values to the task editor', async () => {
-    useSettings.setState({ taskList: 'c3' })
     const user = userEvent.setup()
     const { dialog } = await openPopover()
     await user.keyboard('Call')
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     await user.click(within(dialog).getByRole('button', { name: 'More options' }))
-    expect(useUi.getState().taskEditor).toEqual({
+    expect(useUi.getState().taskEditor).toMatchObject({
       mode: 'create',
-      defaults: { title: 'Call', calendarId: 'c3', startDate: '', startTime: '', dueDate: '2026-09-30', dueTime: '10:15' },
+      draft: { title: 'Call', calendarId: '', task: { startDate: '', startTime: '', dueDate: '2026-09-30', dueTime: '10:15' } },
     })
     expect(useUi.getState().create).toBeNull()
   })

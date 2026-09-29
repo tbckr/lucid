@@ -148,3 +148,26 @@ test("more options opens the task editor with the popover's values", async ({ pa
   await expect(editor).toBeHidden()
   await expect(page.getByRole('main').locator('[data-task-key]', { hasText: title })).toBeVisible()
 })
+
+test('"c" creates a task through the switch in the editor', async ({ page }) => {
+  const title = `E2E from c ${Date.now()}`
+  await login(page)
+  await page.keyboard.press('c')
+  const editor = page.getByRole('dialog', { name: 'New event' })
+  await expect(editor.getByPlaceholder('Add a title')).toBeFocused()
+  await editor.getByPlaceholder('Add a title').fill(title)
+  // Measure once the dialog has finished zooming in.
+  await editor.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  const before = await editor.getByRole('radio', { name: 'Task' }).boundingBox()
+
+  await editor.getByRole('radio', { name: 'Task' }).click()
+  const task = page.getByRole('dialog', { name: 'New task' })
+  await expect(task.getByPlaceholder('Add a title')).toHaveValue(title)
+  await expect(task.getByRole('radio', { name: 'Task' })).toBeFocused()
+  // The dialog keeps its top: the switch stays under the pointer.
+  expect(await task.getByRole('radio', { name: 'Task' }).boundingBox()).toEqual(before)
+
+  await task.getByRole('button', { name: 'Create task' }).click()
+  await expect(task).toBeHidden()
+  await expect(taskList(page)).toContainText(title)
+})

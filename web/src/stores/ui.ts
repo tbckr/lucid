@@ -2,30 +2,20 @@ import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
 import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
-import { type CreateOrigin, type CreatePreview, type TaskWhen } from '@/lib/quickCreate'
+import { type CreateOrigin, type CreatePreview, type Draft } from '@/lib/quickCreate'
 import { useSettings } from './settings'
 
-export interface CreateDefaults {
-  start: Date
-  end: Date
-  allDay: boolean
-  /** Carried over from the create popover. */
-  title?: string
-  calendarId?: string
+/** A new event or task in its editor (FR-09, FR-16). */
+export interface CreateEditorState {
+  mode: 'create'
+  draft: Draft
+  /** Opened by a switch of the kind: the focus stays on the switch (NFR-27). */
+  switched?: boolean
 }
 
-/** A new task handed over from the create popover (FR-16). */
-export interface TaskCreateDefaults extends TaskWhen {
-  title: string
-  calendarId: string
-}
+export type EditorState = CreateEditorState | { mode: 'edit'; event: CalEvent } | null
 
-export type TaskEditorState = { mode: 'edit'; todo: Todo } | { mode: 'create'; defaults: TaskCreateDefaults } | null
-
-export type EditorState =
-  | { mode: 'create'; defaults: CreateDefaults }
-  | { mode: 'edit'; event: CalEvent }
-  | null
+export type TaskEditorState = CreateEditorState | { mode: 'edit'; todo: Todo } | null
 
 /** The create popover at a click in the calendar (FR-09, FR-16). */
 export interface CreateState {
@@ -100,8 +90,9 @@ export const useUi = create<UiState>()((set) => ({
   setSidebarOpen: (sidebarOpen) => {
     set({ sidebarOpen })
   },
+  // One editor at a time: they share a dialog, and a new entry switches between them.
   openEditor: (editor) => {
-    set({ editor, detail: null, create: null, createPreview: null })
+    set({ editor, taskEditor: null, detail: null, create: null, createPreview: null })
   },
   openDetail: (detail) => {
     set({ detail })
@@ -113,7 +104,7 @@ export const useUi = create<UiState>()((set) => ({
     set((s) => (s.create ? { createPreview: preview } : {}))
   },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor, detail: null, create: null, createPreview: null })
+    set({ taskEditor, editor: null, detail: null, create: null, createPreview: null })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

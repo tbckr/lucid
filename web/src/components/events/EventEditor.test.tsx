@@ -3,16 +3,20 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
+import { EditorDialog } from '@/components/EditorDialog'
 import { toCalEvent } from '@/lib/events'
-import { useUi, type EditorState } from '@/stores/ui'
+import { draftOf } from '@/lib/quickCreate'
+import { useUi, type CreateEditorState, type EditorState } from '@/stores/ui'
 import { apiEvent, bodyOf, calendar, jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
-import { EventEditorDialog } from './EventEditorDialog'
 
 // 11:00-12:00 in Berlin (CET, the Vitest time zone) on Wednesday, 11 March 2026.
-const create: NonNullable<EditorState> = {
+const create: CreateEditorState = {
   mode: 'create',
-  defaults: { start: new Date('2026-03-11T10:00:00Z'), end: new Date('2026-03-11T11:00:00Z'), allDay: false },
+  draft: draftOf(
+    { start: new Date('2026-03-11T10:00:00Z'), end: new Date('2026-03-11T11:00:00Z'), allDay: false, granularity: 'time', ranged: false },
+    'Europe/Berlin',
+  ),
 }
 
 /** Render the editor once the calendars are loaded, as in the app. */
@@ -25,7 +29,7 @@ async function openEditor(editor: NonNullable<EditorState>) {
         : jsonResponse(200, apiEvent()),
     ),
   )
-  const { queryClient } = renderWithProviders(<EventEditorDialog />)
+  const { queryClient } = renderWithProviders(<EditorDialog />)
   await waitFor(() => {
     expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
   })
@@ -35,7 +39,7 @@ async function openEditor(editor: NonNullable<EditorState>) {
   return { fetch, dialog: await screen.findByRole('dialog') }
 }
 
-describe('EventEditorDialog', () => {
+describe('EventEditor', () => {
   afterEach(() => {
     useUi.getState().openEditor(null)
     vi.restoreAllMocks()
@@ -64,7 +68,7 @@ describe('EventEditorDialog', () => {
   })
 
   it('opens with the title and calendar it was given', async () => {
-    const { dialog } = await openEditor({ mode: 'create', defaults: { ...create.defaults, title: 'Review', calendarId: 'c2' } })
+    const { dialog } = await openEditor({ mode: 'create', draft: { ...create.draft, title: 'Review', calendarId: 'c2' } })
     expect(within(dialog).getByPlaceholderText('Add a title')).toHaveValue('Review')
     expect(within(dialog).getByRole('combobox', { name: 'Calendar' })).toHaveTextContent('Work')
   })

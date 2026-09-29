@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label'
 import { Popover } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useCalendars, useCreateEvent, useCreateTodo, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
@@ -15,25 +14,12 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { eventFormSchema, formToInput } from '@/lib/eventForm'
 import { browserTimeZone } from '@/lib/locale'
 import { lastKnownBox, spanBox } from '@/lib/placement'
-import {
-  chooseCalendar,
-  eventDefaults,
-  eventForm,
-  eventFromTask,
-  eventWhen,
-  previewOf,
-  taskForm,
-  taskWhen,
-  writableFor,
-  type CreateKind,
-} from '@/lib/quickCreate'
+import { chooseCalendar, draftOf, eventForm, previewOf, switchDraft, taskForm, writableFor, type CreateKind } from '@/lib/quickCreate'
 import { formToTodoInput, taskFormSchema } from '@/lib/taskForm'
 import { useSettings } from '@/stores/settings'
 import { useUi, type CreateState } from '@/stores/ui'
+import { KindSwitch } from './KindSwitch'
 import { QuickWhen } from './QuickWhen'
-
-// The kind switch on the tint: the chosen side as a paper pill.
-const onTintItem = 'text-current/75 hover:text-current data-[state=on]:bg-surface data-[state=on]:text-foreground'
 
 /** Popover at a click in the calendar that creates an event or a task (FR-09, FR-16). */
 export function CreatePopover() {
@@ -76,10 +62,10 @@ function CreateForm({ create }: { create: CreateState }) {
 
   const [chosenKind, setKind] = useState<CreateKind>('event')
   const [title, setTitle] = useState('')
-  // The event the click began with: a time changed since carries over to a task.
-  const [started] = useState(() => eventWhen(origin, tz))
-  const [event, setEvent] = useState(started)
-  const [task, setTask] = useState(() => taskWhen(started, origin))
+  // The entry the click began: a switch of the kind follows its rules, and the editor takes it over.
+  const [begun] = useState(() => draftOf(origin, tz))
+  const [event, setEvent] = useState(begun.event)
+  const [task, setTask] = useState(begun.task)
   const [calendarId, setCalendarId] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
@@ -116,11 +102,10 @@ function CreateForm({ create }: { create: CreateState }) {
   const titleError = errorOf('title')
   const whenError = errorOf('endDate', 'startDate', 'dueDate')
 
-  const switchTo = (next: string) => {
-    // Radix reports "" when the chosen item is clicked again.
-    if ((next !== 'event' && next !== 'task') || next === kind) return
-    if (next === 'task') setTask(taskWhen(event, origin, started))
-    else setEvent(eventFromTask(task, event))
+  const switchTo = (next: CreateKind) => {
+    const switched = switchDraft({ ...begun, event, task }, next)
+    setEvent(switched.event)
+    setTask(switched.task)
     setKind(next)
   }
 
@@ -153,11 +138,10 @@ function CreateForm({ create }: { create: CreateState }) {
   }
 
   const more = () => {
-    if (kind === 'event') {
-      openEditor({ mode: 'create', defaults: { ...eventDefaults(event, tz), title, ...(target ? { calendarId: target } : {}) } })
-    } else {
-      openTaskEditor({ mode: 'create', defaults: { ...task, title, calendarId: target } })
-    }
+    // The calendar only if the user chose one: the editor chooses by the same rules otherwise.
+    const draft = { ...begun, title, calendarId, event, task }
+    if (kind === 'event') openEditor({ mode: 'create', draft })
+    else openTaskEditor({ mode: 'create', draft })
   }
 
   // Nothing to create in: say so instead of a form that cannot be sent.
@@ -187,22 +171,7 @@ function CreateForm({ create }: { create: CreateState }) {
             className="relative grid grid-cols-[1.25rem_1fr] items-start gap-x-3 gap-y-1 border-l-4 pt-3 pr-12 pb-3.5 pl-3 transition-colors duration-200"
             style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid }}
           >
-            {both && (
-              <ToggleGroup
-                type="single"
-                aria-label={t('create.kind')}
-                value={kind}
-                onValueChange={switchTo}
-                className="col-start-2 mb-1.5 justify-self-start bg-current/10"
-              >
-                <ToggleGroupItem value="event" className={onTintItem}>
-                  {t('create.event')}
-                </ToggleGroupItem>
-                <ToggleGroupItem value="task" className={onTintItem}>
-                  {t('create.task')}
-                </ToggleGroupItem>
-              </ToggleGroup>
-            )}
+            {both && <KindSwitch kind={kind} onSwitch={switchTo} className="col-start-2 mb-1.5" />}
             {kind === 'task' && (
               <span
                 className="col-start-1 mt-[3px] size-6 justify-self-center rounded-full border-2 animate-in duration-150 fade-in zoom-in-50"
