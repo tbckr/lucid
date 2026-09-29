@@ -150,6 +150,12 @@ func occAnchorTime(o domain.TodoOccurrence) time.Time {
 // ones are upcoming unless a completed override marks them done too.
 // Completed overrides recorded before the anchor are also reported as done:
 // history kept after the series rolled past them (FR-17).
+//
+// The walk itself is bounded by RECURRENCE-ID, not by an occurrence's
+// effective (possibly override-shifted) dates, so it can stop before
+// reaching an override whose moved DTSTART/DUE would still fall inside the
+// window. A second pass over the overrides the walk never reached catches
+// those (FR-17).
 func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, end time.Time) ([]domain.TodoOccurrence, error) {
 	occs := []domain.TodoOccurrence{}
 	add := func(o todoOcc, state string) {
@@ -157,6 +163,25 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 			return
 		}
 		occs = append(occs, todoOccurrenceOf(o, todoID, calendarID, title, state))
+	}
+
+	cur, _, err := s.current()
+	if err != nil {
+		return occs, err
+	}
+	// stateOf classifies any occurrence of the series, whether reached by the
+	// bounded walk below or picked up separately: done occurrences (by
+	// construction, everything before cur) stay done, cur is current,
+	// everything else is upcoming (FR-17).
+	stateOf := func(o todoOcc) string {
+		switch {
+		case o.done:
+			return domain.OccurrenceDone
+		case !cur.rid.IsZero() && o.rid.Equal(cur.rid):
+			return domain.OccurrenceCurrent
+		default:
+			return domain.OccurrenceUpcoming
+		}
 	}
 
 	for ridUnix, c := range s.overrides {
@@ -172,23 +197,33 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 	if s.pending.After(from) {
 		from = s.pending
 	}
-	found := false
-	err := s.walk(from, func(o todoOcc) bool {
+	var stopRid time.Time
+	walkErr := s.walk(from, func(o todoOcc) bool {
 		if len(occs) >= maxInstancesPerSeries {
 			return false
 		}
-		switch {
-		case o.done:
-			add(o, domain.OccurrenceDone)
-		case !found:
-			found = true
-			add(o, domain.OccurrenceCurrent)
-		default:
-			add(o, domain.OccurrenceUpcoming)
-		}
+		stopRid = o.rid
+		add(o, stateOf(o))
 		return o.rid.Before(end)
 	})
-	return occs, err
+	if walkErr != nil {
+		return occs, walkErr
+	}
+
+	// Overrides beyond the RECURRENCE-ID the walk stopped at: it never
+	// visited them, so they were not yet checked against the window.
+	for ridUnix := range s.overrides {
+		if len(occs) >= maxInstancesPerSeries {
+			break
+		}
+		if ridUnix < s.anchor.t.Unix() || ridUnix <= stopRid.Unix() {
+			continue
+		}
+		if occ, ok := s.occurrence(time.Unix(ridUnix, 0).UTC()); ok {
+			add(occ, stateOf(occ))
+		}
+	}
+	return occs, nil
 }
 
 // occAnchor returns the anchor of an occurrence: its start, else its due

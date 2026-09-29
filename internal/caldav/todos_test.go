@@ -789,6 +789,36 @@ func TestListTodoOccurrences(t *testing.T) {
 		}
 	})
 
+	// An override far beyond the window can still move its occurrence back
+	// into it: the walk that follows RECURRENCE-ID order stops once it is
+	// past the window, but the override's own DTSTART/DUE must still be
+	// checked (FR-17).
+	t.Run("override moved back into the window from beyond it", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "tasks", "b.ics",
+			"BEGIN:VTODO", "UID:b", "DTSTAMP:20240101T000000Z", "SUMMARY:Weekly",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "END:VTODO",
+			"BEGIN:VTODO", "UID:b", "DTSTAMP:20240101T000000Z",
+			"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z", "END:VTODO",
+		)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 3, 15, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 12, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
+		moved := occs[1]
+		if want := id + "@2025-03-24T09:00:00Z"; moved.Key != want {
+			t.Errorf("key = %q; want %q", moved.Key, want)
+		}
+		if !moved.RecurrenceID.Equal(date(2025, 3, 24, 9, 0)) {
+			t.Errorf("recurrenceId = %v; want the original 2025-03-24T09:00Z", moved.RecurrenceID)
+		}
+		if moved.Due == nil || !moved.Due.Equal(date(2025, 3, 12, 10, 0)) {
+			t.Errorf("due = %v; want 2025-03-12T10:00Z", moved.Due)
+		}
+	})
+
 	t.Run("completed master, unsupported rule and single todo", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
