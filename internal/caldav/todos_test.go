@@ -692,3 +692,140 @@ func TestUpdateTodoKeepsSeriesDates(t *testing.T) {
 		})
 	}
 }
+
+// checkTodoOccurrences asserts that got's anchor dates (start, else due) and
+// states match wantDates/wantStates, in order.
+func checkTodoOccurrences(t *testing.T, got []domain.TodoOccurrence, wantDates []time.Time, wantStates []string) {
+	t.Helper()
+	if len(got) != len(wantDates) {
+		t.Fatalf("ListTodoOccurrences = %+v; want %d occurrences at %v", got, len(wantDates), wantDates)
+	}
+	for i := range got {
+		o := &got[i]
+		d := o.RecurrenceID
+		switch {
+		case o.Start != nil:
+			d = *o.Start
+		case o.Due != nil:
+			d = *o.Due
+		}
+		if !d.Equal(wantDates[i]) || o.State != wantStates[i] {
+			t.Errorf("occurrence %d = %v/%s; want %v/%s", i, d, o.State, wantDates[i], wantStates[i])
+		}
+	}
+}
+
+// A recurring todo reports the occurrences overlapping a window, in state
+// relative to its current occurrence, however other clients recorded their
+// progress in it (FR-16, FR-17).
+func TestListTodoOccurrences(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fixed days with thunderbird done", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		id := e.put(t, "tasks", "r.ics",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Bins",
+			"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH", "END:VTODO",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED", "END:VTODO",
+		)
+		cal := e.cals["tasks"]
+
+		occs, err := e.svc.ListTodoOccurrences(ctx, cal, date(2025, 3, 10, 0, 0), date(2025, 3, 17, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 10, 0, 0), date(2025, 3, 13, 0, 0)},
+			[]string{domain.OccurrenceDone, domain.OccurrenceCurrent})
+		if want := id + "@2025-03-13T00:00:00Z"; occs[1].Key != want {
+			t.Errorf("key = %q; want %q", occs[1].Key, want)
+		}
+
+		occs, err = e.svc.ListTodoOccurrences(ctx, cal, date(2025, 3, 17, 0, 0), date(2025, 3, 24, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 17, 0, 0), date(2025, 3, 20, 0, 0)},
+			[]string{domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+	})
+
+	t.Run("history before the anchor", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		e.put(t, "tasks", "h.ics",
+			"BEGIN:VTODO", "UID:h", "DTSTAMP:20240101T000000Z", "SUMMARY:Recycling",
+			"DTSTART;VALUE=DATE:20250313", "RRULE:FREQ=WEEKLY", "END:VTODO",
+			"BEGIN:VTODO", "UID:h", "DTSTAMP:20240101T000000Z", "RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED", "END:VTODO",
+		)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 3, 14, 0, 0))
+		mustNoErr(t, err)
+		found := false
+		for _, o := range occs {
+			if o.Start != nil && o.Start.Equal(date(2025, 3, 10, 0, 0)) && o.State == domain.OccurrenceDone {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ListTodoOccurrences = %+v; want a done occurrence on 2025-03-10 (history before the anchor)", occs)
+		}
+	})
+
+	t.Run("moved override", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		e.put(t, "tasks", "m.ics",
+			"BEGIN:VTODO", "UID:m", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "END:VTODO",
+			"BEGIN:VTODO", "UID:m", "DTSTAMP:20240101T000000Z",
+			"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z", "SUMMARY:Later", "END:VTODO",
+		)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 11, 0, 0), date(2025, 3, 12, 0, 0))
+		mustNoErr(t, err)
+		if len(occs) != 1 {
+			t.Fatalf("ListTodoOccurrences = %+v; want one occurrence", occs)
+		}
+		got := occs[0]
+		if got.Start == nil || !got.Start.Equal(date(2025, 3, 11, 15, 0)) || got.Title != "Later" {
+			t.Errorf("moved occurrence = %+v; want start 2025-03-11T15:00Z, title %q", got, "Later")
+		}
+	})
+
+	t.Run("completed master, unsupported rule and single todo", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		e.put(t, "tasks", "c.ics", "BEGIN:VTODO", "UID:c", "DTSTAMP:20240101T000000Z", "SUMMARY:Done series",
+			"STATUS:COMPLETED", "DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "END:VTODO")
+		e.put(t, "tasks", "u.ics", "BEGIN:VTODO", "UID:u", "DTSTAMP:20240101T000000Z", "SUMMARY:Bad rule",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX", "END:VTODO")
+		e.put(t, "tasks", "s.ics", "BEGIN:VTODO", "UID:s", "DTSTAMP:20240101T000000Z", "SUMMARY:Single",
+			"DTSTART:20250310T090000Z", "END:VTODO")
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		if len(occs) != 0 {
+			t.Fatalf("ListTodoOccurrences = %+v; want none", occs)
+		}
+	})
+
+	t.Run("invalid window", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		same := date(2025, 3, 10, 0, 0)
+		_, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], same, same)
+		mustErr(t, err, domain.ErrInvalidInput)
+	})
+
+	t.Run("cache", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		e.put(t, "tasks", "r.ics", "BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Bins",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "END:VTODO")
+		e.mock.ResetCounts()
+		_, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+		mustNoErr(t, err)
+		_, err = e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 3, 20, 0, 0))
+		mustNoErr(t, err)
+		if got := e.mock.Count("REPORT"); got != 1 {
+			t.Errorf("REPORT count = %d; want 1", got)
+		}
+	})
+}

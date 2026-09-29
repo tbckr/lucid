@@ -85,6 +85,162 @@ func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.To
 	return t
 }
 
+// ListTodoOccurrences implements domain.CalendarService. It returns the
+// occurrences of open, readable recurring todos overlapping [start, end)
+// (FR-16, FR-17).
+func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, start, end time.Time) ([]domain.TodoOccurrence, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	if err != nil {
+		return nil, err
+	}
+	if !end.After(start) {
+		return nil, &domain.ValidationError{Msg: "end must be after start"}
+	}
+	objs, err := s.objects(ctx, calPath, ical.CompToDo)
+	if err != nil {
+		return nil, err
+	}
+	occs := []domain.TodoOccurrence{}
+	for _, o := range objs {
+		c := mainComponent(o.cal, ical.CompToDo)
+		if c == nil {
+			continue
+		}
+		// Only open, readable recurring series with a rule Lucid can
+		// evaluate: todoFromObject already resolves that via setSeries (FR-17).
+		t := todoFromObject(o, calendarID, c)
+		if !t.Recurring || t.RuleUnsupported || t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
+			continue
+		}
+		series := newTodoSeries(o.cal, c)
+		if series == nil {
+			continue
+		}
+		got, err := seriesOccurrences(series, encodeID(o.path), calendarID, t.Title, start, end)
+		if err != nil {
+			s.p.log.WarnContext(ctx, "skipping unevaluable recurring todo", "path", o.path, "error", err)
+		}
+		occs = append(occs, got...)
+	}
+	slices.SortFunc(occs, func(a, b domain.TodoOccurrence) int {
+		return cmp.Or(occAnchorTime(a).Compare(occAnchorTime(b)), cmp.Compare(a.Key, b.Key))
+	})
+	return occs, nil
+}
+
+// occAnchorTime returns the anchor of a reported occurrence: its start, else
+// its due (FR-17).
+func occAnchorTime(o domain.TodoOccurrence) time.Time {
+	if o.Start != nil {
+		return *o.Start
+	}
+	if o.Due != nil {
+		return *o.Due
+	}
+	return o.RecurrenceID
+}
+
+// seriesOccurrences returns the occurrences of the open recurring series s
+// overlapping [start, end), up to maxInstancesPerSeries, walking from its
+// anchor (and KDE's pending occurrence): occurrences before the current one
+// are done by construction, the current one is reported as such, and later
+// ones are upcoming unless a completed override marks them done too.
+// Completed overrides recorded before the anchor are also reported as done:
+// history kept after the series rolled past them (FR-17).
+func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, end time.Time) ([]domain.TodoOccurrence, error) {
+	occs := []domain.TodoOccurrence{}
+	add := func(o todoOcc, state string) {
+		if len(occs) >= maxInstancesPerSeries || !occOverlaps(o, start, end) {
+			return
+		}
+		occs = append(occs, todoOccurrenceOf(o, todoID, calendarID, title, state))
+	}
+
+	for ridUnix, c := range s.overrides {
+		if ridUnix >= s.anchor.t.Unix() || !strings.EqualFold(text(c.Props, ical.PropStatus), domain.TodoCompleted) {
+			continue
+		}
+		if occ, ok := s.occurrence(time.Unix(ridUnix, 0).UTC()); ok {
+			add(occ, domain.OccurrenceDone)
+		}
+	}
+
+	from := s.anchor.t
+	if s.pending.After(from) {
+		from = s.pending
+	}
+	found := false
+	err := s.walk(from, func(o todoOcc) bool {
+		if len(occs) >= maxInstancesPerSeries {
+			return false
+		}
+		switch {
+		case o.done:
+			add(o, domain.OccurrenceDone)
+		case !found:
+			found = true
+			add(o, domain.OccurrenceCurrent)
+		default:
+			add(o, domain.OccurrenceUpcoming)
+		}
+		return o.rid.Before(end)
+	})
+	return occs, err
+}
+
+// occAnchor returns the anchor of an occurrence: its start, else its due
+// (FR-17).
+func occAnchor(o todoOcc) time.Time {
+	if o.start != nil {
+		return *o.start
+	}
+	return *o.due
+}
+
+// occOverlaps reports whether the occurrence's span overlaps [from, to): the
+// span runs from its anchor to its due, with a day added to the end when the
+// due is all-day; an occurrence with no due, or whose due equals its anchor
+// and is not all-day, is a single point in time (FR-16, FR-17).
+func occOverlaps(o todoOcc, from, to time.Time) bool {
+	anchor := occAnchor(o)
+	if o.due == nil || (o.due.Equal(anchor) && !o.dueAllDay) {
+		return !anchor.Before(from) && anchor.Before(to)
+	}
+	end := *o.due
+	if o.dueAllDay {
+		end = end.AddDate(0, 0, 1)
+	}
+	return anchor.Before(to) && end.After(from)
+}
+
+// todoOccurrenceOf converts one occurrence of the series identified by
+// todoID into a TodoOccurrence. Title is the override's SUMMARY, else the
+// master's (FR-16, FR-17).
+func todoOccurrenceOf(o todoOcc, todoID, calendarID, masterTitle, state string) domain.TodoOccurrence {
+	rid := o.rid.UTC()
+	title := masterTitle
+	if o.override != nil {
+		if t := text(o.override.Props, ical.PropSummary); t != "" {
+			title = t
+		}
+	}
+	return domain.TodoOccurrence{
+		Key:          todoID + "@" + rid.Format(time.RFC3339),
+		TodoID:       todoID,
+		CalendarID:   calendarID,
+		RecurrenceID: rid,
+		Title:        title,
+		Start:        utcPtr(o.start),
+		StartAllDay:  o.startAllDay,
+		Due:          utcPtr(o.due),
+		DueAllDay:    o.dueAllDay,
+		State:        state,
+	}
+}
+
 // CreateTodo implements domain.CalendarService.
 func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.TodoInput) (domain.Todo, error) {
 	if s.err != nil {

@@ -50,12 +50,13 @@ func (p *fakeProvider) Service(acct domain.Account) domain.CalendarService {
 // fakeService implements domain.CalendarService. If err is set, every
 // method returns it.
 type fakeService struct {
-	mu        sync.Mutex
-	err       error
-	panicMsg  string
-	calendars []domain.Calendar
-	events    []domain.Event
-	todos     []domain.Todo
+	mu          sync.Mutex
+	err         error
+	panicMsg    string
+	calendars   []domain.Calendar
+	events      []domain.Event
+	todos       []domain.Todo
+	occurrences []domain.TodoOccurrence
 
 	calls    []string
 	gotCal   string
@@ -129,6 +130,16 @@ func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, e
 		return nil, err
 	}
 	return f.todos, nil
+}
+
+func (f *fakeService) ListTodoOccurrences(_ context.Context, cal string, start, end time.Time) ([]domain.TodoOccurrence, error) {
+	f.mu.Lock()
+	f.gotCal, f.gotStart, f.gotEnd = cal, start, end
+	f.mu.Unlock()
+	if err := f.record("ListTodoOccurrences"); err != nil {
+		return nil, err
+	}
+	return f.occurrences, nil
 }
 
 func (f *fakeService) CreateTodo(_ context.Context, cal string, in domain.TodoInput) (domain.Todo, error) {

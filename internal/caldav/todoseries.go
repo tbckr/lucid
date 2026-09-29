@@ -26,23 +26,27 @@ var (
 
 // todoSeries is a recurring VTODO and what other clients recorded in it (FR-17).
 type todoSeries struct {
-	master    *ical.Component
-	anchor    dateValue                 // DTSTART, or DUE without DTSTART
-	onDue     bool                      // anchored on DUE
-	dueOffset *time.Duration            // DUE (or DURATION) − DTSTART when both exist
-	overrides map[int64]*ical.Component // by RECURRENCE-ID instant (Unix)
-	exdates   map[int64]bool
-	pending   time.Time // X-KDE-LIBKCAL-DTRECURRENCE, zero if absent
-	fixedDays bool
-	err       error // non-nil: the rule cannot be evaluated
+	master      *ical.Component
+	anchor      dateValue                 // DTSTART, or DUE without DTSTART
+	onDue       bool                      // anchored on DUE
+	startAllDay bool                      // master DTSTART value type (only meaningful when set)
+	dueAllDay   bool                      // master DUE (or DURATION-derived) value type
+	dueOffset   *time.Duration            // DUE (or DURATION) − DTSTART when both exist
+	overrides   map[int64]*ical.Component // by RECURRENCE-ID instant (Unix)
+	exdates     map[int64]bool
+	pending     time.Time // X-KDE-LIBKCAL-DTRECURRENCE, zero if absent
+	fixedDays   bool
+	err         error // non-nil: the rule cannot be evaluated
 }
 
-// todoOcc is one occurrence: rid is its original start; start/due its effective dates.
+// todoOcc is one occurrence: rid is its original start; start/due its effective
+// dates, with the value type (date or date-time) they were read with (FR-16, FR-17).
 type todoOcc struct {
-	rid        time.Time
-	start, due *time.Time
-	done       bool            // completed by an override
-	override   *ical.Component // nil for rule-generated occurrences
+	rid                    time.Time
+	start, due             *time.Time
+	startAllDay, dueAllDay bool
+	done                   bool            // completed by an override
+	override               *ical.Component // nil for rule-generated occurrences
 }
 
 // newTodoSeries reads the series of master in cal. It returns nil when master
@@ -61,20 +65,22 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	due, dueErr := parseDateProp(master.Props.Get(ical.PropDue))
 	switch {
 	case startErr == nil:
-		s.anchor = start
+		s.anchor, s.startAllDay = start, start.allDay
 		if dueErr == nil {
+			s.dueAllDay = due.allDay
 			off := due.t.Sub(start.t)
 			s.dueOffset = &off
 		} else if p := master.Props.Get(ical.PropDuration); p != nil {
 			// DURATION stands for DUE, as for single todos (FR-16).
 			if dur, err := parseDuration(p.Value); err == nil {
+				s.dueAllDay = start.allDay
 				off := dur.addTo(start.t).Sub(start.t)
 				s.dueOffset = &off
 			}
 		}
 	case dueErr == nil:
 		// Tasks.org writes series without DTSTART; they recur on DUE.
-		s.anchor, s.onDue = due, true
+		s.anchor, s.onDue, s.dueAllDay = due, true, due.allDay
 	default:
 		s.err = errNoAnchor
 	}
@@ -204,7 +210,7 @@ func (s *todoSeries) occurrence(rid time.Time) (todoOcc, bool) {
 	if s.exdates[rid.Unix()] {
 		return todoOcc{}, false
 	}
-	occ := todoOcc{rid: rid, override: s.overrides[rid.Unix()]}
+	occ := todoOcc{rid: rid, override: s.overrides[rid.Unix()], startAllDay: s.startAllDay, dueAllDay: s.dueAllDay}
 	if s.onDue {
 		occ.due = &rid
 	} else {
@@ -216,11 +222,12 @@ func (s *todoSeries) occurrence(rid time.Time) (todoOcc, bool) {
 			return todoOcc{}, false
 		}
 		occ.done = status == domain.TodoCompleted
+		// An override's own DTSTART/DUE value type wins over the master's (FR-17).
 		if d, err := parseDateProp(ov.Props.Get(ical.PropDateTimeStart)); err == nil {
-			occ.start = &d.t
+			occ.start, occ.startAllDay = &d.t, d.allDay
 		}
 		if d, err := parseDateProp(ov.Props.Get(ical.PropDue)); err == nil {
-			occ.due = &d.t
+			occ.due, occ.dueAllDay = &d.t, d.allDay
 		}
 	}
 	if !s.onDue && occ.due == nil && s.dueOffset != nil {

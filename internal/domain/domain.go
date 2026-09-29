@@ -340,6 +340,9 @@ type CalendarService interface {
 	DeleteEvent(ctx context.Context, eventID, etag string) error
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)
+	// ListTodoOccurrences returns the occurrences of open, readable recurring
+	// todos overlapping [start, end) (FR-16, FR-17).
+	ListTodoOccurrences(ctx context.Context, calendarID string, start, end time.Time) ([]TodoOccurrence, error)
 	CreateTodo(ctx context.Context, calendarID string, in TodoInput) (Todo, error)
 	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, error)
 	DeleteTodo(ctx context.Context, todoID, etag string) error
