@@ -41,10 +41,10 @@ of your server.
   up instantly.
 - **Tasks:** a task sidebar that groups each list by when its tasks are due,
   with checklists, start and due dates, priorities and completion. Rename a
-  task or move it to another day right in the list. Tasks with a date also
-  appear in the calendar views, where you can check them off or hide them
-  once they're done. Checklists are saved as plain Markdown task lines, so
-  your other apps can still read them.
+  task or move it to another day right in the list, and delete done tasks one
+  by one or all at once. Tasks with a date also appear in the calendar views,
+  where you can check them off or hide them once they're done. Checklists are
+  saved as plain Markdown task lines, so your other apps can still read them.
 - **Recurring events and time zones:** recurring series, all-day and timed
   events, always shown in your local time zone.
 - **Easy login:** enter just your domain; Lucid finds the CalDAV endpoint via

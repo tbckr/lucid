@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
@@ -25,18 +25,29 @@ const tasksOf: Record<string, Todo[]> = {
     todo({ id: 'future', calendarId: 'c', title: 'Book flights', due: '2099-01-10T00:00:00Z', dueAllDay: true }),
   ],
   d: [todo({ id: 'plants', calendarId: 'd', title: 'Water plants', status: 'COMPLETED' })],
+  e: [
+    todo({ id: 'rent', calendarId: 'e', title: 'Pay rent', status: 'COMPLETED', etag: '"4"' }),
+    todo({ id: 'keys', calendarId: 'e', title: 'Copy keys' }),
+    todo({ id: 'plumber', calendarId: 'e', title: 'Call the plumber', status: 'CANCELLED', etag: '"9"' }),
+  ],
 }
 
-/** Serves the calendars and their tasks; returns the fetch spy. */
+/** Serves the calendars and their tasks, and deletes them; returns the fetch spy. */
 function serve(calendars: Calendar[]) {
+  const deleted = new Set<string>()
   return vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
     const url = urlOf(input)
     if (url.endsWith('/calendars')) return Promise.resolve(jsonResponse(200, { calendars }))
+    if (init?.method === 'DELETE') {
+      deleted.add(url.split('/').at(-1) ?? '')
+      return Promise.resolve(new Response(null, { status: 204 }))
+    }
     const id = /\/calendars\/(\w+)\/todos$/.exec(url)?.[1] ?? ''
     if (init?.method === 'POST') {
       return Promise.resolve(jsonResponse(201, todo({ id: 'new', calendarId: id, title: 'New' })))
     }
-    return Promise.resolve(jsonResponse(200, { todos: tasksOf[id] ?? [], corrupted: [] }))
+    const todos = (tasksOf[id] ?? []).filter((x) => !deleted.has(x.id))
+    return Promise.resolve(jsonResponse(200, { todos, corrupted: [] }))
   })
 }
 
@@ -179,6 +190,48 @@ describe('TasksPanel', () => {
     await screen.findByRole('checkbox', { name: 'Completed: Buy milk' })
     expect(screen.getByRole('button', { name: /^Completed/ })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('checkbox', { name: 'Completed: Water plants' })).not.toBeInTheDocument()
+  })
+
+  describe('deleting the completed tasks', () => {
+    const home = calendar({ id: 'e', name: 'Home' })
+
+    it('deletes every completed task of the list after asking', async () => {
+      const fetch = serve([home])
+      const user = userEvent.setup()
+      renderWithProviders(<TasksPanel onClose={() => undefined} />)
+      await screen.findByRole('checkbox', { name: 'Completed: Pay rent' })
+      await user.click(screen.getByRole('button', { name: 'Delete all completed tasks' }))
+      const ask = screen.getByRole('alertdialog', { name: 'Delete all 2 completed tasks?' })
+      expect(within(ask).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+      await user.click(within(ask).getByRole('button', { name: 'Delete all' }))
+      await waitFor(() => {
+        expect(screen.queryByRole('checkbox', { name: 'Completed: Pay rent' })).not.toBeInTheDocument()
+      })
+      const deletes = fetch.mock.calls
+        .filter(([, init]) => init?.method === 'DELETE')
+        .map(([url, init]) => [urlOf(url), (init?.headers as Record<string, string>)['If-Match']])
+      expect(deletes).toEqual([
+        ['/api/v1/todos/plumber', '"9"'],
+        ['/api/v1/todos/rent', '"4"'],
+      ])
+      expect(screen.getByRole('checkbox', { name: 'Completed: Copy keys' })).toBeInTheDocument()
+    })
+
+    it('is offered while the completed tasks are folded away', async () => {
+      useSettings.setState({ hideCompletedTasks: true })
+      serve([home])
+      renderWithProviders(<TasksPanel onClose={() => undefined} />)
+      await screen.findByRole('checkbox', { name: 'Completed: Copy keys' })
+      expect(screen.getByRole('button', { name: 'Delete all completed tasks' })).toBeInTheDocument()
+    })
+
+    it('is not offered in a read-only list', async () => {
+      serve([calendar({ id: 'e', name: 'Home', readOnly: true })])
+      renderWithProviders(<TasksPanel onClose={() => undefined} />)
+      await screen.findByRole('checkbox', { name: 'Completed: Pay rent' })
+      expect(screen.queryByRole('button', { name: 'Delete all completed tasks' })).not.toBeInTheDocument()
+    })
   })
 
   it('says when all tasks are done', async () => {

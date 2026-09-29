@@ -400,20 +400,87 @@ export function useUpdateTodo(id?: string) {
   })
 }
 
-export function useDeleteTodo() {
+/** Takes a deleted task out of its list in the cache. */
+function removeTodo(qc: QueryClient, todo: Todo): void {
+  qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
+    old ? { ...old, todos: old.todos.filter((x) => x.id !== todo.id) } : old,
+  )
+}
+
+/**
+ * Deletes a task. With the task's `id`, it waits for the updates of that task
+ * still on their way, so a task checked and deleted at once does not conflict
+ * with its own check.
+ */
+export function useDeleteTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
-    mutationFn: (todo: Todo) => endpoints.deleteTodo(todo.id, todo.etag),
+    ...(id ? { scope: { id: `todo:${id}` } } : {}),
+    mutationFn: (todo: Todo) => endpoints.deleteTodo(todo.id, currentEtag(qc, todo)),
     onSuccess: (_d, todo) => {
       toast.success(t('tasks.deleted'))
-      qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
-        old ? { ...old, todos: old.todos.filter((x) => x.id !== todo.id) } : old,
-      )
+      removeTodo(qc, todo)
     },
     onError: (err, todo) => {
       reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
     },
     onSettled: (_d, _e, todo) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+  })
+}
+
+/** How often a task is tried while the API keeps limiting the rate. */
+const RATE_LIMITED_TRIES = 3
+
+/** Deletes a task, waiting out the API's rate limit as its Retry-After asks. */
+async function deleteWithinRateLimit(todo: Todo, etag: string): Promise<void> {
+  for (let tries = 1; ; tries++) {
+    try {
+      await endpoints.deleteTodo(todo.id, etag)
+      return
+    } catch (err) {
+      if (!isApiError(err, 'rate_limited') || tries === RATE_LIMITED_TRIES) throw err
+      const wait = (err.retryAfter ?? 1) * 1000
+      await new Promise((resolve) => setTimeout(resolve, wait))
+    }
+  }
+}
+
+/**
+ * Deletes tasks one after another, like the completed ones of a list (FR-15):
+ * sent all at once, a long list would run into the API's rate limit. Each task
+ * leaves the list as it goes. A task already gone counts as deleted, one
+ * changed elsewhere stays; any other error stops, as it would fail the rest too.
+ */
+export function useDeleteTodos() {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  return useMutation({
+    mutationFn: async (todos: Todo[]) => {
+      let deleted = 0
+      let failure: unknown = null
+      for (const todo of todos) {
+        try {
+          await deleteWithinRateLimit(todo, currentEtag(qc, todo))
+        } catch (err) {
+          if (!isApiError(err, 'not_found')) {
+            failure ??= err
+            if (isApiError(err, 'conflict')) continue
+            break
+          }
+        }
+        deleted += 1
+        removeTodo(qc, todo)
+      }
+      return { deleted, failure }
+    },
+    onSuccess: ({ deleted, failure }) => {
+      if (deleted > 0) toast.success(t('tasks.deletedCount', { count: deleted }))
+      if (failure !== null) reportMutationError(failure, t, qc, queryKeys.todosAll)
+    },
+    onSettled: (_d, _e, todos) =>
+      Promise.all(
+        [...new Set(todos.map((x) => x.calendarId))].map((id) => qc.invalidateQueries({ queryKey: queryKeys.todos(id) })),
+      ),
   })
 }

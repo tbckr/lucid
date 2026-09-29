@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys, useCachedTodo } from '@/hooks/queries'
@@ -103,6 +103,59 @@ describe('TaskRow', () => {
       expect(screen.queryByRole('textbox')).toBeNull()
       await user.click(screen.getByRole('button', { name: /Oat milk/ }))
       expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: t })
+    })
+  })
+
+  describe('delete', () => {
+    const done = todo({ id: 'x', title: 'Oat milk', etag: '"5"', status: 'COMPLETED' })
+
+    /** Answers each DELETE; returns the fetch spy. */
+    function serveDelete() {
+      api.setCsrfToken('tok')
+      return vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })))
+    }
+
+    it('deletes a completed task after asking', async () => {
+      const fetch = serveDelete()
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={done} calendar={calendar()} />)
+      // In place of the due date, which a done task no longer needs.
+      expect(screen.queryByRole('button', { name: 'Change due date: Oat milk' })).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Delete task: Oat milk' }))
+      const ask = screen.getByRole('alertdialog', { name: 'Delete this task?' })
+      expect(within(ask).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+      expect(fetch).not.toHaveBeenCalled()
+
+      await user.click(within(ask).getByRole('button', { name: 'Delete task' }))
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe('/api/v1/todos/x')
+      expect(init?.method).toBe('DELETE')
+      expect((init?.headers as Record<string, string>)['If-Match']).toBe('"5"')
+    })
+
+    it('keeps the task when the question is cancelled', async () => {
+      const fetch = serveDelete()
+      const user = userEvent.setup()
+      renderWithProviders(<TaskRow todo={done} calendar={calendar()} />)
+      const trash = screen.getByRole('button', { name: 'Delete task: Oat milk' })
+      await user.click(trash)
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(trash).toHaveFocus()
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('is not offered for an open task', () => {
+      renderWithProviders(<TaskRow todo={todo({ title: 'Oat milk' })} calendar={calendar()} />)
+      expect(screen.queryByRole('button', { name: 'Delete task: Oat milk' })).toBeNull()
+    })
+
+    it('is not offered in a read-only list', () => {
+      renderWithProviders(<TaskRow todo={done} calendar={calendar({ readOnly: true })} />)
+      expect(screen.queryByRole('button', { name: 'Delete task: Oat milk' })).toBeNull()
     })
   })
 

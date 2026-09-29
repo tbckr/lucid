@@ -248,6 +248,15 @@
     "delete": "Aufgabe löschen",
     "deleted": "Aufgabe gelöscht",
     "confirmDelete": "Diese Aufgabe löschen?",
+    "deleteNamed": "Aufgabe löschen: {{title}}",
+    "deletedCount_one": "Aufgabe gelöscht",
+    "deletedCount_other": "{{count}} Aufgaben gelöscht",
+    "deleteCompleted": "Alle löschen",
+    "deleteCompletedLabel": "Alle löschen: erledigte Aufgaben",
+    "confirmDeleteCompleted_one": "Die erledigte Aufgabe löschen?",
+    "confirmDeleteCompleted_other": "Alle {{count}} erledigten Aufgaben löschen?",
+    "deleteCompletedNote_one": "Sie wird vom Server gelöscht, auch in anderen Apps.",
+    "deleteCompletedNote_other": "Sie werden vom Server gelöscht, auch in anderen Apps.",
     "readOnlyNotice": "Diese Liste ist schreibgeschützt."
   },
   "priority": {

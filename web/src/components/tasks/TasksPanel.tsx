@@ -7,12 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
-import { useCreateTodo, useTodos, type TodosResult } from '@/hooks/queries'
+import { useCreateTodo, useDeleteTodos, useTodos, type TodosResult } from '@/hooks/queries'
 import { useNow } from '@/hooks/useNow'
 import { type Calendar, type CorruptedItem, type Todo } from '@/lib/api/schemas'
 import { groupTodos, isDone, selectTaskList, type TaskGroupKind } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
+import { ConfirmDelete } from './ConfirmDelete'
 import { TaskRow } from './TaskRow'
 
 type Row =
@@ -23,7 +24,8 @@ type Row =
 /*
  * Right sidebar with the tasks of one todo calendar, chosen from all of them
  * (FR-12..15). The list leads with its color bar and name, and its tasks are
- * grouped by when they are due; the completed ones fold away.
+ * grouped by when they are due; the completed ones fold away, and can be
+ * deleted all at once.
  */
 export function TasksPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
@@ -32,16 +34,20 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
   const collapsed = useSettings((s) => s.hideCompletedTasks)
   const taskList = useSettings((s) => s.taskList)
   const update = useSettings((s) => s.update)
+  const deleteTodos = useDeleteTodos()
   const scrollRef = useRef<HTMLDivElement>(null)
   const list = selectTaskList(lists, taskList)
   const open = list?.todos.filter((x) => !isDone(x)).length ?? 0
   // Counts and empty states wait for the tasks, so they never claim an empty list while it loads.
   const loaded = list && !isLoading ? list : undefined
 
+  const groups = useMemo(() => (list ? groupTodos(list.todos, now) : []), [list, now])
+  const completed = groups.find((g) => g.kind === 'completed')?.todos ?? []
+
   const rows = useMemo(() => {
     if (!list) return []
     const out: Row[] = []
-    for (const g of groupTodos(list.todos, now)) {
+    for (const g of groups) {
       out.push({ type: 'heading', key: `g:${g.kind}`, kind: g.kind, count: g.todos.length })
       if (g.kind === 'completed' && collapsed) continue
       // Today and Tomorrow name the day in their heading, so the rows show only the time.
@@ -50,7 +56,7 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
     }
     for (const c of list.corrupted) out.push({ type: 'corrupted', key: `c:${c.key}`, item: c })
     return out
-  }, [list, now, collapsed])
+  }, [list, groups, collapsed])
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-safe yet
   const virtualizer = useVirtualizer({
@@ -137,6 +143,14 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
                     onToggle={() => {
                       update({ hideCompletedTasks: !collapsed })
                     }}
+                    {...(list && !list.calendar.readOnly
+                      ? {
+                          deleting: deleteTodos.isPending,
+                          onDeleteAll: () => {
+                            deleteTodos.mutate(completed)
+                          },
+                        }
+                      : {})}
                   />
                 )}
                 {row.type === 'todo' && <TaskRow todo={row.todo} calendar={row.calendar} timeOnly={row.timeOnly} />}
@@ -164,35 +178,64 @@ const GROUP_COLOR: Record<TaskGroupKind, string> = {
   completed: 'text-muted-foreground',
 }
 
-/** A group's heading; the completed group folds, and its count says what is folded away. */
+/**
+ * A group's heading; the completed group folds, and its count says what is
+ * folded away. In a writable list it deletes its tasks, quietly until asked.
+ */
 function GroupHeading({
   kind,
   count,
   collapsed,
   onToggle,
+  deleting = false,
+  onDeleteAll,
 }: {
   kind: TaskGroupKind
   count: number
   collapsed: boolean
   onToggle: () => void
+  deleting?: boolean
+  onDeleteAll?: () => void
 }) {
   const { t } = useTranslation()
   const label = t(`tasks.groups.${kind}`)
-  const heading = cn('px-4 pt-5 pb-0.5 font-display text-sm font-semibold', GROUP_COLOR[kind])
-  if (kind !== 'completed') return <h3 className={heading}>{label}</h3>
+  const box = 'px-4 pt-5 pb-0.5'
+  const heading = cn('font-display text-sm font-semibold', GROUP_COLOR[kind])
+  if (kind !== 'completed') return <h3 className={cn(box, heading)}>{label}</h3>
   return (
-    <h3 className={heading}>
-      <button
-        type="button"
-        aria-expanded={!collapsed}
-        onClick={onToggle}
-        className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {label}{' '}
-        <span className="tabular font-sans font-normal">{count}</span>
-        <ChevronDownIcon className={cn('size-4 transition-transform', collapsed && '-rotate-90')} aria-hidden />
-      </button>
-    </h3>
+    <div className={cn(box, 'flex items-baseline justify-between gap-3')}>
+      <h3 className={heading}>
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          onClick={onToggle}
+          className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {label}{' '}
+          <span className="tabular font-sans font-normal">{count}</span>
+          <ChevronDownIcon className={cn('size-4 transition-transform', collapsed && '-rotate-90')} aria-hidden />
+        </button>
+      </h3>
+      {onDeleteAll && (
+        <ConfirmDelete
+          question={t('tasks.confirmDeleteCompleted', { count })}
+          note={t('tasks.deleteCompletedNote', { count })}
+          action={t('tasks.deleteCompleted')}
+          onConfirm={onDeleteAll}
+        >
+          {/* Its text ends where the icons of the rows end. */}
+          <button
+            type="button"
+            aria-label={t('tasks.deleteCompletedLabel')}
+            disabled={deleting}
+            className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[0.8125rem] text-muted-foreground outline-none hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 data-[state=open]:text-destructive"
+          >
+            {deleting && <Spinner />}
+            {t('tasks.deleteCompleted')}
+          </button>
+        </ConfirmDelete>
+      )}
+    </div>
   )
 }
 

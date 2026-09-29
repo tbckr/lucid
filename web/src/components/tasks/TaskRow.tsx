@@ -1,8 +1,8 @@
-import { CheckIcon, FlagIcon, ListChecksIcon, PencilIcon } from 'lucide-react'
+import { CheckIcon, FlagIcon, ListChecksIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { useUpdateTodo } from '@/hooks/queries'
+import { useDeleteTodo, useUpdateTodo } from '@/hooks/queries'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
@@ -11,6 +11,7 @@ import { checklistProgress, formatDue, priorityLevel, todoToInput } from '@/lib/
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
+import { ConfirmDelete } from './ConfirmDelete'
 import { DuePicker } from './DuePicker'
 
 /** The priority level in its color; without `flag` where an icon column already shows one. */
@@ -40,7 +41,8 @@ const ACTION =
 /**
  * A task in the sidebar; `timeOnly` where the group heading already names the
  * day (FR-14). A click on the title edits it in place, the actions beside it
- * change the due date or open the editor; a read-only task opens the editor.
+ * change the due date or open the editor; a done task has a trash in place of
+ * the due date (FR-15). A read-only task opens the editor.
  */
 export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; calendar: Calendar; timeOnly?: boolean }) {
   const { t } = useTranslation()
@@ -49,6 +51,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const { done, toggle } = useToggleTodo(todo)
   const update = useUpdateTodo(todo.id)
+  const del = useDeleteTodo(todo.id)
   const title = todo.title || t('event.untitled')
   const labels = { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') }
   const due = formatDue(todo, now, prefs, labels, { timeOnly })
@@ -110,13 +113,32 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
             }}
           />
           <div className="flex">
-            <DuePicker
-              todo={todo}
-              onChange={(input) => {
-                update.mutate({ todo, input })
-              }}
-              className={ACTION}
-            />
+            {done ? (
+              <ConfirmDelete
+                question={t('tasks.confirmDelete')}
+                action={t('tasks.delete')}
+                onConfirm={() => {
+                  del.mutate(todo)
+                }}
+              >
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('tasks.deleteNamed', { title })}
+                  className={cn(ACTION, 'hover:text-destructive data-[state=open]:text-destructive')}
+                >
+                  <Trash2Icon aria-hidden />
+                </Button>
+              </ConfirmDelete>
+            ) : (
+              <DuePicker
+                todo={todo}
+                onChange={(input) => {
+                  update.mutate({ todo, input })
+                }}
+                className={ACTION}
+              />
+            )}
             <Button
               variant="ghost"
               size="icon-sm"

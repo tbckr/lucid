@@ -66,6 +66,27 @@ test('rename a task and move its due date in the list', async ({ page }) => {
   await expect(inGrid).toBeVisible()
 })
 
+test('delete a completed task from the list', async ({ page }) => {
+  await login(page)
+  const title = `E2E done ${Date.now()}`
+  const box = taskList(page).getByRole('checkbox', { name: `Completed: ${title}` })
+  await page.getByRole('textbox', { name: 'Add task' }).fill(title)
+  await page.keyboard.press('Enter')
+  await box.click()
+  await expect(box).toHaveAttribute('aria-checked', 'true')
+
+  await taskList(page).getByRole('button', { name: `Delete task: ${title}` }).click()
+  const ask = page.getByRole('alertdialog', { name: 'Delete this task?' })
+  await ask.getByRole('button', { name: 'Delete task' }).click()
+  await expect(ask).toBeHidden()
+  await expect(box).toHaveCount(0)
+
+  // Deleted on the server.
+  await page.reload()
+  await expect(taskList(page).getByRole('checkbox', { name: 'Completed: Buy milk' })).toBeVisible()
+  await expect(box).toHaveCount(0)
+})
+
 test('complete a task in the month view', async ({ page }) => {
   await login(page)
   // Whichever seeded task falls into the grid: they are dated relative to today.
