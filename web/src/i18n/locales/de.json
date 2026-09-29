@@ -258,25 +258,37 @@
   },
   "settings": {
     "title": "Einstellungen",
-    "description": "Werden in diesem Browser gespeichert. Automatische Werte folgen Sprache und Region deines Browsers.",
+    "description": "In diesem Browser gespeichert.",
     "language": "Sprache",
     "timeFormat": "Zeitformat",
     "weekStart": "Woche beginnt am",
     "defaultView": "Standardansicht",
-    "theme": "Darstellung",
+    "theme": "Farbschema",
     "auto": "Automatisch ({{value}})",
     "12h": "12 Stunden (1:00 PM)",
     "24h": "24 Stunden (13:00)",
-    "themeSystem": "Wie System",
+    "themeSystem": "System",
     "themeLight": "Hell",
     "themeDark": "Dunkel",
     "completedTasks": "Erledigte Aufgaben",
-    "hideInCalendar": "Im Kalender ausblenden"
+    "hideInCalendar": "Im Kalender ausblenden",
+    "automatic": "Automatisch",
+    "autoHint": "„Automatisch“ folgt deinem Browser.",
+    "preview": "Vorschau",
+    "groups": {
+      "region": "Sprache und Region",
+      "display": "Darstellung"
+    }
   },
   "weekdays": {
     "monday": "Montag",
     "sunday": "Sonntag",
     "saturday": "Samstag"
+  },
+  "weekdaysShort": {
+    "monday": "Mo",
+    "sunday": "So",
+    "saturday": "Sa"
   },
   "shortcuts": {
     "title": "Tastenkürzel",
@@ -291,7 +303,14 @@
     "create": "Termin oder Aufgabe erstellen",
     "tasks": "Aufgaben ein- oder ausblenden",
     "help": "Tastenkürzel anzeigen",
-    "moveEvent": "Fokussierten Termin verschieben"
+    "moveEvent": "Fokussierten Termin verschieben",
+    "or": "oder",
+    "then": "dann",
+    "groups": {
+      "navigate": "Navigation",
+      "views": "Ansichten",
+      "actions": "Aktionen"
+    }
   },
   "offline": {
     "label": "Offline",

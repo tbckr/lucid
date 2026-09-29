@@ -258,25 +258,37 @@
   },
   "settings": {
     "title": "Settings",
-    "description": "Stored in this browser. Automatic values follow your browser's language and region.",
+    "description": "Stored in this browser.",
     "language": "Language",
     "timeFormat": "Time format",
     "weekStart": "Week starts on",
     "defaultView": "Default view",
-    "theme": "Appearance",
+    "theme": "Theme",
     "auto": "Automatic ({{value}})",
     "12h": "12-hour (1:00 PM)",
     "24h": "24-hour (13:00)",
-    "themeSystem": "Match system",
+    "themeSystem": "System",
     "themeLight": "Light",
     "themeDark": "Dark",
     "completedTasks": "Completed tasks",
-    "hideInCalendar": "Hide in calendar"
+    "hideInCalendar": "Hide in calendar",
+    "automatic": "Automatic",
+    "autoHint": "“Automatic” follows your browser.",
+    "preview": "Preview",
+    "groups": {
+      "region": "Language and region",
+      "display": "Display"
+    }
   },
   "weekdays": {
     "monday": "Monday",
     "sunday": "Sunday",
     "saturday": "Saturday"
+  },
+  "weekdaysShort": {
+    "monday": "Mon",
+    "sunday": "Sun",
+    "saturday": "Sat"
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",
@@ -291,7 +303,14 @@
     "create": "Create event or task",
     "tasks": "Show or hide tasks",
     "help": "Show shortcuts",
-    "moveEvent": "Move a focused event"
+    "moveEvent": "Move a focused event",
+    "or": "or",
+    "then": "then",
+    "groups": {
+      "navigate": "Navigate",
+      "views": "Views",
+      "actions": "Actions"
+    }
   },
   "offline": {
     "label": "Offline",

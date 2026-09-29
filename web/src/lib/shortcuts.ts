@@ -17,18 +17,25 @@ export interface KeyLike {
   target: EventTarget | null
 }
 
-/** Documented shortcuts, used by the help dialog. */
-export const SHORTCUTS: { keys: string[]; labelKey: string }[] = [
-  { keys: ['t'], labelKey: 'shortcuts.today' },
-  { keys: ['j', '→'], labelKey: 'shortcuts.next' },
-  { keys: ['k', '←'], labelKey: 'shortcuts.previous' },
-  { keys: ['m'], labelKey: 'shortcuts.month' },
-  { keys: ['w'], labelKey: 'shortcuts.week' },
-  { keys: ['d'], labelKey: 'shortcuts.day' },
-  { keys: ['a'], labelKey: 'shortcuts.agenda' },
-  { keys: ['c'], labelKey: 'shortcuts.create' },
-  { keys: ['g'], labelKey: 'shortcuts.tasks' },
-  { keys: ['?'], labelKey: 'shortcuts.help' },
+export type ShortcutGroup = 'navigate' | 'views' | 'actions'
+
+/**
+ * Documented shortcuts, used by the help dialog. Any of `keys` does the same,
+ * unless `sequence` has them pressed one after the other (moving an event is
+ * dnd-kit's keyboard sensor, not an app shortcut).
+ */
+export const SHORTCUTS: { keys: string[]; labelKey: string; group: ShortcutGroup; sequence?: boolean }[] = [
+  { keys: ['t'], labelKey: 'shortcuts.today', group: 'navigate' },
+  { keys: ['j', '→'], labelKey: 'shortcuts.next', group: 'navigate' },
+  { keys: ['k', '←'], labelKey: 'shortcuts.previous', group: 'navigate' },
+  { keys: ['m'], labelKey: 'shortcuts.month', group: 'views' },
+  { keys: ['w'], labelKey: 'shortcuts.week', group: 'views' },
+  { keys: ['d'], labelKey: 'shortcuts.day', group: 'views' },
+  { keys: ['a'], labelKey: 'shortcuts.agenda', group: 'views' },
+  { keys: ['g'], labelKey: 'shortcuts.tasks', group: 'views' },
+  { keys: ['c'], labelKey: 'shortcuts.create', group: 'actions' },
+  { keys: ['Space', '←↑→↓'], labelKey: 'shortcuts.moveEvent', group: 'actions', sequence: true },
+  { keys: ['?'], labelKey: 'shortcuts.help', group: 'actions' },
 ]
 
 function isEditable(target: EventTarget | null): boolean {
