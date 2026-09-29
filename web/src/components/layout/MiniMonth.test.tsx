@@ -45,4 +45,24 @@ describe('MiniMonth', () => {
     expect(chosen.className).toContain('bg-primary')
     expect(today.className).not.toContain('bg-primary')
   })
+
+  // The band's position on a day, read from the element behind its button.
+  const band = (name: string) => screen.getByRole('button', { name }).parentElement?.dataset.range
+
+  it('draws the visible week as one band from its first to its last day', () => {
+    const range = { start: new Date(2026, 2, 8), end: new Date(2026, 2, 15) }
+    render(<MiniMonth date={now} now={now} range={range} prefs={prefs} onSelect={vi.fn()} />)
+    expect(band('Saturday, March 7th, 2026')).toBeUndefined()
+    expect(band('Sunday, March 8th, 2026')).toBe('start')
+    expect(band('Wednesday, March 11th, 2026')).toBe('middle')
+    expect(band('Saturday, March 14th, 2026')).toBe('end')
+    expect(band('Sunday, March 15th, 2026')).toBeUndefined()
+  })
+
+  it('draws a single day as a band of its own', () => {
+    const range = { start: new Date(2026, 2, 20), end: new Date(2026, 2, 21) }
+    render(<MiniMonth date={new Date(2026, 2, 20)} now={now} range={range} prefs={prefs} onSelect={vi.fn()} />)
+    expect(band('Friday, March 20th, 2026')).toBe('single')
+    expect(band('Saturday, March 21st, 2026')).toBeUndefined()
+  })
 })

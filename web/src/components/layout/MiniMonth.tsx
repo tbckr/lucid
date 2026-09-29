@@ -1,4 +1,4 @@
-import { addDays, addMonths, format, isSameDay, isSameMonth, isWithinInterval, startOfMonth } from 'date-fns'
+import { addDays, addMonths, format, isSameDay, isSameMonth, startOfMonth } from 'date-fns'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import { useRef, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
@@ -9,6 +9,21 @@ import { weekdayNames, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 const ARROW_STEPS: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }
+
+type BandPart = 'start' | 'middle' | 'end' | 'single'
+
+/** A day's part of the band that marks the visible range in its week row, or undefined outside it. */
+function bandPart(week: Date[], i: number, range: DateRange | null): BandPart | undefined {
+  const inRange = (d: Date | undefined) => d !== undefined && range !== null && d >= range.start && d < range.end
+  if (!inRange(week[i])) return undefined
+  const first = !inRange(week[i - 1])
+  const last = !inRange(week[i + 1])
+  return first && last ? 'single' : first ? 'start' : last ? 'end' : 'middle'
+}
+
+// The band's caps wrap the circle of its first and last day (size-7, centered in the cell), so it starts and ends there.
+const BAND =
+  'flex justify-center data-[range]:bg-primary/12 data-[range=start]:justify-start data-[range=end]:justify-end data-[range=start]:ml-[calc(50%-0.875rem)] data-[range=start]:rounded-l-full data-[range=end]:mr-[calc(50%-0.875rem)] data-[range=end]:rounded-r-full data-[range=single]:mx-auto data-[range=single]:w-7 data-[range=single]:rounded-full'
 
 /**
  * Small month calendar: navigation in the sidebar, date picker in the event
@@ -25,7 +40,7 @@ export function MiniMonth({
   /** The chosen day (the view's date in the sidebar). */
   date: Date
   now: Date
-  /** Highlighted days (the visible week/day), or null. */
+  /** The visible week or day, drawn as one band like an event across its days; or null. */
   range: DateRange | null
   prefs: FormatPrefs
   /** Which day gets the solid mark: today (navigation) or the chosen day (picker). */
@@ -101,35 +116,35 @@ export function MiniMonth({
         <tbody>
           {weeks.map((week) => (
             <tr key={week[0] ? dayKey(week[0]) : 'w'}>
-              {week.map((d) => {
+              {week.map((d, i) => {
                 const today = isSameDay(d, now)
                 const chosen = isSameDay(d, date)
                 const solid = emphasis === 'today' ? today : chosen
-                const selected = range !== null && isWithinInterval(d, { start: range.start, end: new Date(range.end.getTime() - 1) })
                 return (
                   <td key={dayKey(d)} className="p-0">
-                    <button
-                      type="button"
-                      data-day={dayKey(d)}
-                      tabIndex={isSameDay(d, tabStop) ? 0 : -1}
-                      onKeyDown={onKeyDown}
-                      onClick={() => {
-                        setActive(d)
-                        onSelect(d)
-                      }}
-                      aria-label={format(d, 'PPPP', { locale: prefs.locale })}
-                      aria-current={today ? 'date' : undefined}
-                      aria-pressed={chosen}
-                      className={cn(
-                        'tabular mx-auto flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
-                        !isSameMonth(d, shown) && 'text-muted-foreground',
-                        selected && !solid && 'bg-primary/10 font-medium text-foreground',
-                        today && !solid && 'font-semibold text-primary',
-                        solid && 'bg-primary font-semibold text-primary-foreground hover:bg-primary/90',
-                      )}
-                    >
-                      {format(d, 'd')}
-                    </button>
+                    <div data-range={bandPart(week, i, range)} className={BAND}>
+                      <button
+                        type="button"
+                        data-day={dayKey(d)}
+                        tabIndex={isSameDay(d, tabStop) ? 0 : -1}
+                        onKeyDown={onKeyDown}
+                        onClick={() => {
+                          setActive(d)
+                          onSelect(d)
+                        }}
+                        aria-label={format(d, 'PPPP', { locale: prefs.locale })}
+                        aria-current={today ? 'date' : undefined}
+                        aria-pressed={chosen}
+                        className={cn(
+                          'tabular flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
+                          !isSameMonth(d, shown) && 'text-muted-foreground',
+                          today && !solid && 'font-semibold text-primary',
+                          solid && 'bg-primary font-semibold text-primary-foreground hover:bg-primary/90',
+                        )}
+                      >
+                        {format(d, 'd')}
+                      </button>
+                    </div>
                   </td>
                 )
               })}

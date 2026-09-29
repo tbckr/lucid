@@ -3,9 +3,26 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { calendar, jsonResponse } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
+import { useSettings } from '@/stores/settings'
 import { CalendarList } from './CalendarList'
 
 describe('CalendarList', () => {
+  it('hides and shows a calendar from a click on its name', async () => {
+    useSettings.setState({ hiddenCalendars: [] })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { calendars: [calendar({ id: 'work', name: 'Work' })] }))
+    const user = userEvent.setup()
+    renderWithProviders(<CalendarList />)
+    const toggle = await screen.findByRole('checkbox', { name: 'Work' })
+    expect(toggle).toBeChecked()
+
+    await user.click(screen.getByText('Work'))
+    expect(toggle).not.toBeChecked()
+    expect(useSettings.getState().hiddenCalendars).toEqual(['work'])
+    await user.click(screen.getByText('Work'))
+    expect(toggle).toBeChecked()
+    expect(useSettings.getState().hiddenCalendars).toEqual([])
+  })
+
   it('marks calendars that only hold tasks', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse(200, {

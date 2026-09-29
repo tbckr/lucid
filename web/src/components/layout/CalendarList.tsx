@@ -1,12 +1,16 @@
-import { CheckIcon, ListTodoIcon, LockIcon, type LucideIcon } from 'lucide-react'
+import { EyeOffIcon, ListTodoIcon, LockIcon, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCalendars } from '@/hooks/queries'
-import { readableTextColor } from '@/lib/color'
+import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 
-/** Calendar list with color swatches and show/hide toggles (FR-04..06). */
+/*
+ * Calendar list with show/hide toggles (FR-04..06). A calendar leads with the
+ * bar its events carry in the grid; a hidden one fades its bar and name and
+ * shows the crossed-out eye, which a visible one previews on hover.
+ */
 export function CalendarList() {
   const { t } = useTranslation()
   const { data: calendars = [], isLoading, isError, refetch } = useCalendars()
@@ -14,7 +18,7 @@ export function CalendarList() {
   const toggle = useSettings((s) => s.toggleCalendar)
 
   return (
-    <section aria-labelledby="calendars-heading" className="px-3">
+    <section aria-labelledby="calendars-heading" className="px-2">
       <h2 id="calendars-heading" className="px-2 pb-1 font-display text-sm font-semibold">
         {t('calendars.title')}
       </h2>
@@ -39,7 +43,7 @@ export function CalendarList() {
           const visible = !hidden.includes(c.id)
           return (
             <li key={c.id}>
-              <label className="group flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-muted has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring">
+              <label className="group grid cursor-pointer grid-cols-[1.125rem_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-sm hover:bg-muted has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring">
                 <input
                   type="checkbox"
                   className="peer sr-only"
@@ -49,16 +53,25 @@ export function CalendarList() {
                   }}
                   data-testid={`calendar-toggle-${c.id}`}
                 />
-                <span
-                  aria-hidden
-                  className="flex size-4 shrink-0 items-center justify-center rounded-[4px] border-2"
-                  style={{ borderColor: c.color, backgroundColor: visible ? c.color : 'transparent' }}
-                >
-                  {visible && <CheckIcon className="size-3" strokeWidth={3.5} style={{ color: readableTextColor(c.color) }} />}
+                {/* In the column of the task checks, like the bar of the list in the task sidebar. */}
+                <span aria-hidden className="flex justify-center">
+                  <span
+                    className={cn('h-4 w-1 rounded-full transition-opacity', !visible && 'opacity-35')}
+                    style={{ backgroundColor: c.color }}
+                  />
                 </span>
-                <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                {!c.supportsEvents && <StatusIcon icon={ListTodoIcon} label={t('calendars.tasksOnly')} />}
-                {c.readOnly && <StatusIcon icon={LockIcon} label={t('calendars.readOnly')} />}
+                <span className={cn('truncate', !visible && 'text-muted-foreground')}>{c.name}</span>
+                <span className="flex items-center gap-1.5">
+                  {!c.supportsEvents && <StatusIcon icon={ListTodoIcon} label={t('calendars.tasksOnly')} />}
+                  {c.readOnly && <StatusIcon icon={LockIcon} label={t('calendars.readOnly')} />}
+                  <EyeOffIcon
+                    aria-hidden
+                    className={cn(
+                      'size-3.5 shrink-0 text-muted-foreground',
+                      visible && 'opacity-0 group-hover:opacity-60 group-has-[:focus-visible]:opacity-60',
+                    )}
+                  />
+                </span>
               </label>
             </li>
           )

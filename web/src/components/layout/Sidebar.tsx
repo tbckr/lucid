@@ -27,18 +27,19 @@ export function Sidebar({
   return (
     <div className="flex h-full flex-col gap-5 overflow-y-auto pt-3 pb-6 scrollbar-thin">
       <div className="px-4">
+        {/* The key is announced, not shown in a tooltip: focus lands here when the drawer opens and when the editor closes. */}
         <Button
-          size="lg"
-          className="h-11 rounded-xl px-5 shadow-sm"
+          className="pr-4"
+          aria-keyshortcuts="c"
           onClick={() => {
             openEditor({ mode: 'create', draft: newDraft(date, now) })
           }}
         >
-          <PlusIcon className="size-5" aria-hidden />
+          <PlusIcon aria-hidden />
           {t('event.create')}
         </Button>
       </div>
-      <nav aria-label={t('sidebar.miniCalendar')} className="px-3">
+      <nav aria-label={t('sidebar.miniCalendar')} className="px-2">
         <MiniMonth
           date={date}
           now={now}
