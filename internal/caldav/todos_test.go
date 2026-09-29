@@ -616,3 +616,79 @@ func TestListTodosRecurring(t *testing.T) {
 		})
 	}
 }
+
+// A recurring todo is reported at its current occurrence; an edit that sends
+// those dates back unchanged must leave the series' stored dates alone, or
+// the rule would restart there in UTC (FR-17).
+func TestUpdateTodoKeepsSeriesDates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		lines     []string
+		overrides [][]string
+		keeps     []string
+		start     *time.Time // current occurrence reported after the edit
+	}{
+		{
+			name: "tzid and count",
+			lines: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000",
+				"RRULE:FREQ=WEEKLY;COUNT=4",
+			},
+			overrides: [][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "STATUS:COMPLETED"}},
+			keeps: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000",
+				"RRULE:FREQ=WEEKLY;COUNT=4", "RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000",
+			},
+			start: ptr(date(2025, 3, 17, 8, 0)),
+		},
+		{
+			name:      "moved override is current",
+			lines:     []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"}},
+			keeps:     []string{"DTSTART:20250310T090000Z", "RECURRENCE-ID:20250310T090000Z"},
+			start:     ptr(date(2025, 3, 10, 15, 0)),
+		},
+		{
+			name:      "duration",
+			lines:     []string{"DTSTART:20250310T090000Z", "DURATION:PT2H", "RRULE:FREQ=DAILY"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"}},
+			keeps:     []string{"DTSTART:20250310T090000Z", "DURATION:PT2H", "RECURRENCE-ID:20250310T090000Z"},
+			start:     ptr(date(2025, 3, 11, 9, 0)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			ctx := t.Context()
+			lines := append([]string{"BEGIN:VTODO", "UID:s", "DTSTAMP:20240101T000000Z", "SUMMARY:Series"}, tc.lines...)
+			lines = append(lines, "END:VTODO")
+			for _, o := range tc.overrides {
+				lines = append(lines, "BEGIN:VTODO", "UID:s", "DTSTAMP:20240101T000000Z")
+				lines = append(append(lines, o...), "END:VTODO")
+			}
+			id := e.put(t, "tasks", "s.ics", lines...)
+			todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+			mustNoErr(t, err)
+			f := todos[0]
+			got, err := e.svc.UpdateTodo(ctx, id, f.ETag, domain.TodoInput{
+				Title: "Renamed", Checklist: f.Checklist, Start: f.Start, StartAllDay: f.StartAllDay,
+				Due: f.Due, DueAllDay: f.DueAllDay,
+			})
+			mustNoErr(t, err)
+			if got.Title != "Renamed" || !sameTime(got.Start, tc.start) || !sameTime(got.Due, f.Due) || !sameNext(got.Next, f.Next) {
+				t.Errorf("updated todo = %+v; want %q at start %v, due %v, next %+v", got, "Renamed", tc.start, f.Due, f.Next)
+			}
+			objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+			data, _ := e.mock.Object(objPath)
+			for _, want := range tc.keeps {
+				if !strings.Contains(data, want) {
+					t.Errorf("stored todo lacks %q:\n%s", want, data)
+				}
+			}
+			if !strings.Contains(data, "SUMMARY:Renamed") {
+				t.Errorf("stored todo lacks the new title:\n%s", data)
+			}
+		})
+	}
+}

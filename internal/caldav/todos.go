@@ -108,6 +108,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	cal := newCalendar()
 	c := newComponent(ical.CompToDo, uid, now)
 	cal.Children = append(cal.Children, c)
+	applyTodoDates(c.Props, in)
 	applyTodoFields(c, in, now)
 
 	o := calObject{path: objectPath(calPath, uid+".ics"), cal: cal}
@@ -155,10 +156,17 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if in.StartOmitted || (in.Start == nil && c.Props.Get(ical.PropRecurrenceRule) != nil) {
 		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
 	}
-	if !sameDates(cur, in) {
+	unchanged := sameDates(cur, in)
+	if !unchanged {
 		if err := in.ValidateDates(); err != nil {
 			return domain.Todo{}, err
 		}
+	}
+	// A series reports its current occurrence, not its stored dates. Sent
+	// back unchanged, they must not overwrite DTSTART/DUE: the rule would
+	// restart there, in UTC, and lose its overrides (FR-17).
+	if !unchanged || !cur.Recurring {
+		applyTodoDates(c.Props, in)
 	}
 	now := s.p.now().UTC()
 	applyTodoFields(c, in, now)
@@ -178,14 +186,10 @@ func (s *service) DeleteTodo(ctx context.Context, todoID, etag string) error {
 	return s.deleteByID(ctx, todoID, etag)
 }
 
+// applyTodoFields writes the TodoInput fields other than the dates into c.
 func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, joinChecklist(in.Description, in.Checklist))
-
-	setTodoDate(c.Props, ical.PropDateTimeStart, in.Start, in.StartAllDay)
-	setTodoDate(c.Props, ical.PropDue, in.Due, in.DueAllDay)
-	// A DURATION read before is written back as DUE.
-	c.Props.Del(ical.PropDuration)
 	if in.Priority == 0 {
 		c.Props.Del(ical.PropPriority)
 	} else {
@@ -206,6 +210,14 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	if p := c.Props.Get(ical.PropPercentComplete); p != nil && strings.TrimSpace(p.Value) == "100" {
 		c.Props.Del(ical.PropPercentComplete)
 	}
+}
+
+// applyTodoDates writes the start and due of in (FR-16).
+func applyTodoDates(props ical.Props, in domain.TodoInput) {
+	setTodoDate(props, ical.PropDateTimeStart, in.Start, in.StartAllDay)
+	setTodoDate(props, ical.PropDue, in.Due, in.DueAllDay)
+	// A DURATION read before is written back as DUE.
+	props.Del(ical.PropDuration)
 }
 
 // sameDates reports whether in carries the start and due cur already has.
