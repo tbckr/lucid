@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
 import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
-import { type TaskWhen } from '@/lib/quickCreate'
+import { type CreateOrigin, type CreatePreview, type TaskWhen } from '@/lib/quickCreate'
 import { useSettings } from './settings'
 
 export interface CreateDefaults {
@@ -27,6 +27,19 @@ export type EditorState =
   | { mode: 'edit'; event: CalEvent }
   | null
 
+/** The create popover at a click in the calendar (FR-09, FR-16). */
+export interface CreateState {
+  origin: CreateOrigin
+  /** Element the popover is measured against: a day column (with `span`) or a cell. */
+  anchor: HTMLElement
+  /** Minutes of the day column the new entry covers. */
+  span?: { startMin: number; endMin: number }
+  /** Element that gets the focus back on close. */
+  returnFocus: HTMLElement
+  /** Written by the popover, drawn by the views. */
+  preview: CreatePreview | null
+}
+
 export interface DetailState {
   /** The event or task whose details are shown (FR-09, FR-16). */
   item: CalItem
@@ -40,6 +53,7 @@ interface UiState {
   sidebarOpen: boolean
   editor: EditorState
   detail: DetailState | null
+  create: CreateState | null
   taskEditor: TaskEditorState
   settingsOpen: boolean
   shortcutsOpen: boolean
@@ -51,6 +65,8 @@ interface UiState {
   setSidebarOpen: (open: boolean) => void
   openEditor: (editor: EditorState) => void
   openDetail: (detail: DetailState | null) => void
+  openCreate: (state: Omit<CreateState, 'preview'> | null) => void
+  setCreatePreview: (preview: CreatePreview | null) => void
   openTaskEditor: (state: TaskEditorState) => void
   setSettingsOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
@@ -65,28 +81,35 @@ export const useUi = create<UiState>()((set) => ({
   sidebarOpen: wide(),
   editor: null,
   detail: null,
+  create: null,
   taskEditor: null,
   settingsOpen: false,
   shortcutsOpen: false,
   backendReachable: true,
 
   setView: (view) => {
-    set({ view, detail: null })
+    set({ view, detail: null, create: null })
   },
   setDate: (date) => {
-    set({ date, detail: null })
+    set({ date, detail: null, create: null })
   },
   setSidebarOpen: (sidebarOpen) => {
     set({ sidebarOpen })
   },
   openEditor: (editor) => {
-    set({ editor, detail: null })
+    set({ editor, detail: null, create: null })
   },
   openDetail: (detail) => {
     set({ detail })
   },
+  openCreate: (state) => {
+    set({ create: state && { ...state, preview: null }, detail: null })
+  },
+  setCreatePreview: (preview) => {
+    set((s) => (s.create ? { create: { ...s.create, preview } } : {}))
+  },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor, detail: null })
+    set({ taskEditor, detail: null, create: null })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

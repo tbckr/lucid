@@ -6,6 +6,13 @@
     "retry": "Try again",
     "save": "Save"
   },
+  "create": {
+    "kind": "Type",
+    "event": "Event",
+    "task": "Task",
+    "more": "More options",
+    "date": "Date"
+  },
   "boot": {
     "unreachableTitle": "Lucid can't be reached",
     "crashTitle": "Something broke",

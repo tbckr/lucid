@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CalendarDnd } from '@/components/dnd/CalendarDnd'
+import { CreatePopover } from '@/components/create/CreatePopover'
 import { EventDetailsPopover } from '@/components/events/EventDetailsPopover'
 import { EventEditorDialog } from '@/components/events/EventEditorDialog'
 import { EventBar, EventChip, TimedBlock } from '@/components/events/EventItems'
@@ -277,6 +278,7 @@ export function CalendarPage() {
 
       <EventDetailsPopover />
       <TaskDetailsPopover />
+      <CreatePopover />
       <EventEditorDialog />
       <TaskEditorDialog />
       <SettingsDialog />

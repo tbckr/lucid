@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { parseDayKey } from '@/lib/dates'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { onTint } from './EditorRow'
 
 const dateRe = /^\d{4}-\d{2}-\d{2}$/
 
@@ -31,6 +32,7 @@ export function DateField({
   placeholder,
   month,
   onClear,
+  tone,
 }: {
   id: string
   /** "yyyy-MM-dd". */
@@ -51,6 +53,8 @@ export function DateField({
   month?: Date | undefined
   /** Removes the date; shown below the month as `onClear.label`. */
   onClear?: { label: string; clear: () => void } | undefined
+  /** On a calendar's tint: reads as text until hovered or focused. */
+  tone?: 'tint'
 }) {
   const [open, setOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -70,10 +74,11 @@ export function DateField({
             !day && 'border-transparent bg-transparent text-muted-foreground hover:border-input hover:bg-transparent',
             // A button cannot be aria-invalid; the message it describes carries the error.
             invalid && 'border-destructive',
+            tone === 'tint' && onTint,
           )}
         >
           {day ? formatPickerDate(day, prefs, now) : (placeholder ?? value)}
-          {day && <ChevronDownIcon className="size-4 opacity-60" aria-hidden />}
+          {day && tone !== 'tint' && <ChevronDownIcon className="size-4 opacity-60" aria-hidden />}
         </button>
       </PopoverTrigger>
       <PopoverContent

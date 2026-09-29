@@ -6,6 +6,13 @@
     "retry": "Erneut versuchen",
     "save": "Speichern"
   },
+  "create": {
+    "kind": "Art",
+    "event": "Termin",
+    "task": "Aufgabe",
+    "more": "Weitere Optionen",
+    "date": "Datum"
+  },
   "boot": {
     "unreachableTitle": "Lucid ist nicht erreichbar",
     "crashTitle": "Etwas ist kaputtgegangen",

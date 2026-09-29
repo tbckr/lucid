@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { atMinutes } from '@/lib/dates'
+import { onTint } from './EditorRow'
 import { timeOptions } from '@/lib/eventForm'
 import { formatTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -28,6 +29,7 @@ export function TimeSelect({
   invalid,
   none,
   placeholder,
+  tone,
   'aria-label': ariaLabel,
 }: {
   id?: string
@@ -40,6 +42,8 @@ export function TimeSelect({
   none?: string
   /** Text while there is no time, e.g. "Add a time"; defaults to `none`. */
   placeholder?: string
+  /** On a calendar's tint, like `DateField`. */
+  tone?: 'tint'
   'aria-label'?: string
 }) {
   const options = useMemo(() => (value === '' || OPTIONS.includes(value) ? OPTIONS : [...OPTIONS, value].sort()), [value])
@@ -63,6 +67,7 @@ export function TimeSelect({
             : prefs.hourCycle === '12h'
               ? 'w-[7rem]'
               : 'w-[5.75rem]',
+          tone === 'tint' && [onTint, 'w-auto [&>svg]:hidden', empty && 'text-current/75'],
         )}
       >
         <SelectValue>{empty ? (placeholder ?? none) : undefined}</SelectValue>
