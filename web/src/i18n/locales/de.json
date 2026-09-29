@@ -185,9 +185,15 @@
     "addPlaceholder": "Aufgabe hinzufügen",
     "list": "Aufgabenliste",
     "openCount": "{{count}} offen",
-    "hideCompleted": "Erledigte Aufgaben ausblenden",
-    "showCompleted": "Erledigte Aufgaben zeigen",
-    "empty": "Noch keine Aufgaben. Füge oben eine hinzu.",
+    "groups": {
+      "overdue": "Überfällig",
+      "today": "Heute",
+      "tomorrow": "Morgen",
+      "later": "Später",
+      "noDue": "Ohne Fälligkeit",
+      "completed": "Erledigt"
+    },
+    "empty": "In dieser Liste gibt es noch keine Aufgaben.",
     "allDone": "Alle Aufgaben sind erledigt.",
     "noCalendars": "Keiner der sichtbaren Kalender enthält Aufgaben.",
     "complete": "Erledigt: {{title}}",

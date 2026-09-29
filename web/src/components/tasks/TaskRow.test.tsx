@@ -1,12 +1,17 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
+import { defaultSettings, useSettings } from '@/stores/settings'
 import { bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { PriorityChip, TaskRow } from './TaskRow'
 
 describe('TaskRow', () => {
+  afterEach(() => {
+    useSettings.setState(defaultSettings)
+  })
+
   it('toggles completion optimistically and sends If-Match', async () => {
     api.setCsrfToken('tok')
     let resolve: (r: Response) => void = () => undefined
@@ -43,6 +48,12 @@ describe('TaskRow', () => {
     expect(screen.getByText('High')).toBeInTheDocument()
     expect(screen.getByLabelText('1 of 2 checklist items done')).toBeInTheDocument()
     expect(screen.getByRole('checkbox')).toBeDisabled()
+  })
+
+  it('shows only the time when a heading names the day', () => {
+    useSettings.setState({ timeFormat: '24h' })
+    renderWithProviders(<TaskRow todo={todo({ due: '2026-09-25T15:30:00Z' })} calendar={calendar()} timeOnly />)
+    expect(screen.getByText('17:30')).toBeInTheDocument()
   })
 
   it('renders nothing for no priority', () => {

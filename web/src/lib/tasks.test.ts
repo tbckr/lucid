@@ -7,13 +7,12 @@ import {
   checklistProgress,
   compareTodos,
   formatDue,
-  isDone,
+  groupTodos,
   isOverdue,
   priorityLevel,
   priorityValue,
   removeChecklistItem,
   selectTaskList,
-  sortTodos,
   todoToInput,
   toggleChecklistItem,
   toggledStatus,
@@ -51,7 +50,7 @@ describe('sorting', () => {
   ]
 
   it('puts incomplete first, then due date, then priority, then title', () => {
-    expect(sortTodos(list, false).map((t) => t.id)).toEqual([
+    expect([...list].sort(compareTodos).map((t) => t.id)).toEqual([
       'due-soon',
       'due-late',
       'nodue-high',
@@ -60,10 +59,6 @@ describe('sorting', () => {
       'done',
       'cancel',
     ])
-  })
-
-  it('filters completed when requested', () => {
-    expect(sortTodos(list, true).some(isDone)).toBe(false)
   })
 
   it('is a stable comparator for equal items', () => {
@@ -92,6 +87,68 @@ describe('due dates', () => {
     expect(formatDue(todo({ due: '2026-09-25T15:30:00Z' }), now, prefs, labels)).toBe('Today, 17:30')
     expect(formatDue(todo({ due: '2026-10-02T00:00:00Z', dueAllDay: true }), now, prefs, labels)).toBe('Fri, 2 Oct')
     expect(formatDue(todo({ due: '2027-12-02T00:00:00Z', dueAllDay: true }), now, prefs, labels)).toBe('Dec 2, 2027')
+  })
+
+  it('leaves the day to the heading when asked', () => {
+    const labels = { today: 'Today', tomorrow: 'Tomorrow', yesterday: 'Yesterday' }
+    expect(formatDue(todo({ due: '2026-09-25T15:30:00Z' }), now, prefs, labels, { timeOnly: true })).toBe('17:30')
+    expect(formatDue(todo({ due: '2026-09-26T00:00:00Z', dueAllDay: true }), now, prefs, labels, { timeOnly: true })).toBeNull()
+  })
+})
+
+describe('groupTodos', () => {
+  // Noon on Fri, 25 Sep 2026 in Europe/Berlin (CEST, UTC+2).
+  const now = new Date(2026, 8, 25, 12, 0)
+  const kinds = (todos: ReturnType<typeof todo>[]) =>
+    groupTodos(todos, now).map((g) => [g.kind, g.todos.map((t) => t.id)])
+
+  it('groups by when the tasks are due, completed last', () => {
+    expect(
+      kinds([
+        todo({ id: 'done', status: 'COMPLETED', due: '2026-09-20T00:00:00Z', dueAllDay: true }),
+        todo({ id: 'someday' }),
+        todo({ id: 'next-week', due: '2026-10-02T00:00:00Z', dueAllDay: true }),
+        todo({ id: 'tomorrow', due: '2026-09-26T08:00:00Z' }),
+        todo({ id: 'today', due: '2026-09-25T00:00:00Z', dueAllDay: true }),
+        todo({ id: 'yesterday', due: '2026-09-24T00:00:00Z', dueAllDay: true }),
+      ]),
+    ).toEqual([
+      ['overdue', ['yesterday']],
+      ['today', ['today']],
+      ['tomorrow', ['tomorrow']],
+      ['later', ['next-week']],
+      ['noDue', ['someday']],
+      ['completed', ['done']],
+    ])
+  })
+
+  it('moves a task due earlier today to overdue', () => {
+    expect(
+      kinds([todo({ id: 'morning', due: '2026-09-25T07:00:00Z' }), todo({ id: 'evening', due: '2026-09-25T16:00:00Z' })]),
+    ).toEqual([
+      ['overdue', ['morning']],
+      ['today', ['evening']],
+    ])
+  })
+
+  it('counts cancelled tasks as completed', () => {
+    expect(kinds([todo({ id: 'x', status: 'CANCELLED', due: '2026-09-26T00:00:00Z', dueAllDay: true })])).toEqual([
+      ['completed', ['x']],
+    ])
+  })
+
+  it('sorts within a group by due date, priority and title', () => {
+    expect(
+      kinds([
+        todo({ id: 'b', title: 'B' }),
+        todo({ id: 'high', title: 'Z', priority: 1 }),
+        todo({ id: 'a', title: 'A' }),
+      ]),
+    ).toEqual([['noDue', ['high', 'a', 'b']]])
+  })
+
+  it('returns no groups without tasks', () => {
+    expect(groupTodos([], now)).toEqual([])
   })
 })
 

@@ -49,10 +49,6 @@ export function compareTodos(a: Todo, b: Todo): number {
   return a.title.localeCompare(b.title)
 }
 
-export function sortTodos(todos: Todo[], hideCompleted: boolean): Todo[] {
-  return todos.filter((t) => !hideCompleted || !isDone(t)).sort(compareTodos)
-}
-
 /** The task list shown in the sidebar: the saved one, or the first if it is gone (FR-12). */
 export function selectTaskList<T extends { calendar: Pick<Calendar, 'id'> }>(lists: T[], id: string): T | undefined {
   return lists.find((l) => l.calendar.id === id) ?? lists[0]
@@ -109,15 +105,26 @@ export function toggledStatus(todo: Pick<Todo, 'status'>): TodoStatus {
   return todo.status === 'COMPLETED' ? 'NEEDS-ACTION' : 'COMPLETED'
 }
 
-/** Due label: "Today", "Tomorrow", "Yesterday" or a short date, plus time for timed due dates. */
+/** The due date as a local date: all-day due dates are midnight UTC of the date. */
+function localDue(todo: Pick<Todo, 'due' | 'dueAllDay'>): Date | null {
+  if (!todo.due) return null
+  return todo.dueAllDay ? utcDateToLocal(todo.due) : new Date(todo.due)
+}
+
+/**
+ * Due label: "Today", "Tomorrow", "Yesterday" or a short date, plus time for
+ * timed due dates. With `timeOnly` a heading names the day, so only the time is left.
+ */
 export function formatDue(
   todo: Pick<Todo, 'due' | 'dueAllDay'>,
   now: Date,
   prefs: FormatPrefs,
   labels: { today: string; tomorrow: string; yesterday: string },
+  { timeOnly = false }: { timeOnly?: boolean } = {},
 ): string | null {
-  if (!todo.due) return null
-  const due = todo.dueAllDay ? utcDateToLocal(todo.due) : new Date(todo.due)
+  const due = localDue(todo)
+  if (!due) return null
+  if (timeOnly) return todo.dueAllDay ? null : formatTime(due, prefs)
   const diff = differenceInCalendarDays(due, now)
   let day: string
   if (diff === 0) day = labels.today
@@ -125,4 +132,33 @@ export function formatDue(
   else if (diff === -1) day = labels.yesterday
   else day = format(due, Math.abs(diff) < 180 ? 'EEE, d MMM' : 'PP', { locale: prefs.locale })
   return todo.dueAllDay ? day : `${day}, ${formatTime(due, prefs)}`
+}
+
+export type TaskGroupKind = 'overdue' | 'today' | 'tomorrow' | 'later' | 'noDue' | 'completed'
+
+export interface TaskGroup {
+  kind: TaskGroupKind
+  todos: Todo[]
+}
+
+const GROUP_ORDER: TaskGroupKind[] = ['overdue', 'today', 'tomorrow', 'later', 'noDue', 'completed']
+
+function groupOf(todo: Todo, now: Date): TaskGroupKind {
+  if (isDone(todo)) return 'completed'
+  const due = localDue(todo)
+  if (!due) return 'noDue'
+  if (isOverdue(todo, now)) return 'overdue'
+  const diff = differenceInCalendarDays(due, now)
+  if (diff === 0) return 'today'
+  return diff === 1 ? 'tomorrow' : 'later'
+}
+
+/** The task list by when its tasks are due, completed last; empty groups are left out (FR-12, FR-14). */
+export function groupTodos(todos: Todo[], now: Date): TaskGroup[] {
+  const byKind = new Map<TaskGroupKind, Todo[]>(GROUP_ORDER.map((kind) => [kind, []]))
+  for (const todo of [...todos].sort(compareTodos)) byKind.get(groupOf(todo, now))?.push(todo)
+  return GROUP_ORDER.flatMap((kind) => {
+    const list = byKind.get(kind) ?? []
+    return list.length > 0 ? [{ kind, todos: list }] : []
+  })
 }

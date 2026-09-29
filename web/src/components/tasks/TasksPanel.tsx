@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { EyeIcon, EyeOffIcon, PlusIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, LockIcon, PlusIcon, XIcon } from 'lucide-react'
 import { useMemo, useRef, useState, type SyntheticEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -8,78 +8,101 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Spinner } from '@/components/ui/spinner'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { useCreateTodo, useTodos, type TodosResult } from '@/hooks/queries'
+import { useNow } from '@/hooks/useNow'
 import { type Calendar, type CorruptedItem, type Todo } from '@/lib/api/schemas'
-import { isDone, selectTaskList, sortTodos } from '@/lib/tasks'
+import { groupTodos, isDone, selectTaskList, type TaskGroupKind } from '@/lib/tasks'
+import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { TaskRow } from './TaskRow'
 
 type Row =
-  | { type: 'todo'; key: string; todo: Todo; calendar: Calendar }
+  | { type: 'heading'; key: string; kind: TaskGroupKind; count: number }
+  | { type: 'todo'; key: string; todo: Todo; calendar: Calendar; timeOnly: boolean }
   | { type: 'corrupted'; key: string; item: CorruptedItem }
 
-/** Right sidebar with the tasks of one todo calendar, chosen from all of them (FR-12..15). */
+/*
+ * Right sidebar with the tasks of one todo calendar, chosen from all of them
+ * (FR-12..15). The list leads with its color bar and name, and its tasks are
+ * grouped by when they are due; the completed ones fold away.
+ */
 export function TasksPanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation()
-  const { groups, isLoading } = useTodos()
-  const hideCompleted = useSettings((s) => s.hideCompletedTasks)
+  const now = useNow()
+  const { groups: lists, isLoading } = useTodos()
+  const collapsed = useSettings((s) => s.hideCompletedTasks)
   const taskList = useSettings((s) => s.taskList)
   const update = useSettings((s) => s.update)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const list = selectTaskList(groups, taskList)
+  const list = selectTaskList(lists, taskList)
+  const open = list?.todos.filter((x) => !isDone(x)).length ?? 0
+  // Counts and empty states wait for the tasks, so they never claim an empty list while it loads.
+  const loaded = list && !isLoading ? list : undefined
 
   const rows = useMemo(() => {
     if (!list) return []
-    const out: Row[] = sortTodos(list.todos, hideCompleted).map((todo) => ({
-      type: 'todo',
-      key: `t:${todo.id}`,
-      todo,
-      calendar: list.calendar,
-    }))
+    const out: Row[] = []
+    for (const g of groupTodos(list.todos, now)) {
+      out.push({ type: 'heading', key: `g:${g.kind}`, kind: g.kind, count: g.todos.length })
+      if (g.kind === 'completed' && collapsed) continue
+      // Today and Tomorrow name the day in their heading, so the rows show only the time.
+      const timeOnly = g.kind === 'today' || g.kind === 'tomorrow'
+      for (const todo of g.todos) out.push({ type: 'todo', key: `t:${todo.id}`, todo, calendar: list.calendar, timeOnly })
+    }
     for (const c of list.corrupted) out.push({ type: 'corrupted', key: `c:${c.key}`, item: c })
     return out
-  }, [list, hideCompleted])
+  }, [list, now, collapsed])
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-safe yet
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 52,
+    estimateSize: (i) => (rows[i]?.type === 'heading' ? 42 : 48),
     overscan: 8,
     getItemKey: (i) => rows[i]?.key ?? i,
   })
 
   return (
-    <aside aria-labelledby="tasks-heading" className="flex h-full min-h-0 flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-1 pr-2 pl-4">
-        <h2 id="tasks-heading" className="flex-1 font-display text-base font-semibold">
-          {t('tasks.title')}
-        </h2>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-pressed={hideCompleted}
-          aria-label={hideCompleted ? t('tasks.showCompleted') : t('tasks.hideCompleted')}
-          title={hideCompleted ? t('tasks.showCompleted') : t('tasks.hideCompleted')}
-          onClick={() => {
-            update({ hideCompletedTasks: !hideCompleted })
-          }}
-        >
-          {hideCompleted ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
-        </Button>
-        <Button variant="ghost" size="icon-sm" aria-label={t('tasks.close')} onClick={onClose}>
+    <aside aria-label={t('tasks.title')} className="flex h-full min-h-0 flex-col">
+      <header className="flex items-start gap-3 pt-2 pr-2 pb-3 pl-4">
+        {/* The list's color as a bar in the column of the checks, like the bar of its tasks in the calendar. */}
+        <span className="flex w-[1.125rem] shrink-0 justify-center self-stretch py-1" aria-hidden>
+          {list && <span className="w-1 rounded-full" style={{ backgroundColor: list.calendar.color }} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          {list && lists.length > 1 ? (
+            <>
+              <h2 className="sr-only">{list.calendar.name}</h2>
+              <TaskListSelect
+                lists={lists}
+                value={list.calendar.id}
+                name={list.calendar.name}
+                onChange={(id) => {
+                  update({ taskList: id })
+                }}
+              />
+            </>
+          ) : (
+            <h2 className="truncate font-display text-xl leading-8 font-semibold tracking-tight">
+              {list?.calendar.name ?? t('tasks.title')}
+            </h2>
+          )}
+          {list && (
+            <p className="flex h-5 items-center gap-3 text-[0.8125rem] text-muted-foreground">
+              {loaded && <span className="tabular">{t('tasks.openCount', { count: open })}</span>}
+              {list.calendar.readOnly && (
+                <span className="inline-flex items-center gap-1">
+                  <LockIcon className="size-3" aria-hidden />
+                  {t('calendars.readOnly')}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+        <Button variant="ghost" size="icon-sm" className="mt-1" aria-label={t('tasks.close')} onClick={onClose}>
           <XIcon aria-hidden />
         </Button>
-      </div>
+      </header>
 
-      {groups.length > 1 && list && (
-        <TaskListSelect
-          lists={groups}
-          value={list.calendar.id}
-          onChange={(id) => {
-            update({ taskList: id })
-          }}
-        />
-      )}
       {list && !list.calendar.readOnly && <AddTask calendar={list.calendar} />}
 
       {isLoading && (
@@ -87,16 +110,13 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
           <Spinner /> {t('common.loading')}
         </p>
       )}
-      {!isLoading && !list && (
-        <p className="px-4 py-6 text-sm text-muted-foreground">{t('tasks.noCalendars')}</p>
-      )}
-      {!isLoading && list && rows.every((r) => r.type !== 'todo') && (
-        <p className="px-4 py-6 text-sm text-muted-foreground">
-          {hideCompleted ? t('tasks.allDone') : t('tasks.empty')}
-        </p>
+      {!isLoading && !list && <p className="px-4 py-3 text-sm text-muted-foreground">{t('tasks.noCalendars')}</p>}
+      {loaded?.todos.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground">{t('tasks.empty')}</p>}
+      {loaded && loaded.todos.length > 0 && open === 0 && (
+        <p className="px-4 pt-3 text-sm text-muted-foreground">{t('tasks.allDone')}</p>
       )}
 
-      <div ref={scrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="tasks-list">
+      <div ref={scrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto pb-4" data-testid="tasks-list">
         <ul className="relative" style={{ height: virtualizer.getTotalSize() }} aria-label={t('tasks.title')}>
           {virtualizer.getVirtualItems().map((item) => {
             const row = rows[item.index]
@@ -109,7 +129,17 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
                 className="absolute inset-x-0 top-0"
                 style={{ transform: `translateY(${item.start}px)` }}
               >
-                {row.type === 'todo' && <TaskRow todo={row.todo} calendar={row.calendar} />}
+                {row.type === 'heading' && (
+                  <GroupHeading
+                    kind={row.kind}
+                    count={row.count}
+                    collapsed={collapsed}
+                    onToggle={() => {
+                      update({ hideCompletedTasks: !collapsed })
+                    }}
+                  />
+                )}
+                {row.type === 'todo' && <TaskRow todo={row.todo} calendar={row.calendar} timeOnly={row.timeOnly} />}
                 {row.type === 'corrupted' && (
                   <div className="px-4 py-1">
                     <CorruptedEvent reason={row.item.reason} />
@@ -124,43 +154,89 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
   )
 }
 
-/** Picks the task list shown in the panel; each entry counts its open tasks. */
+/** Overdue in red and Today in iris, like the current day in the calendar; the rest stays quiet. */
+const GROUP_COLOR: Record<TaskGroupKind, string> = {
+  overdue: 'text-destructive',
+  today: 'text-primary',
+  tomorrow: 'text-muted-foreground',
+  later: 'text-muted-foreground',
+  noDue: 'text-muted-foreground',
+  completed: 'text-muted-foreground',
+}
+
+/** A group's heading; the completed group folds, and its count says what is folded away. */
+function GroupHeading({
+  kind,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  kind: TaskGroupKind
+  count: number
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const { t } = useTranslation()
+  const label = t(`tasks.groups.${kind}`)
+  const heading = cn('px-4 pt-5 pb-0.5 font-display text-sm font-semibold', GROUP_COLOR[kind])
+  if (kind !== 'completed') return <h3 className={heading}>{label}</h3>
+  return (
+    <h3 className={heading}>
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+        className="-mx-1.5 flex items-center gap-1.5 rounded-md px-1.5 py-0.5 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {label}{' '}
+        <span className="tabular font-sans font-normal">{count}</span>
+        <ChevronDownIcon className={cn('size-4 transition-transform', collapsed && '-rotate-90')} aria-hidden />
+      </button>
+    </h3>
+  )
+}
+
+/** The list's name, which picks the list shown in the panel; each entry counts its open tasks. */
 function TaskListSelect({
   lists,
   value,
+  name,
   onChange,
 }: {
   lists: TodosResult['groups']
   value: string
+  name: string
   onChange: (id: string) => void
 }) {
   const { t } = useTranslation()
   return (
-    <div className="px-3 pb-2">
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="*:data-[slot=select-value]:flex-1" aria-label={t('tasks.list')}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {lists.map(({ calendar, todos }) => {
-            const open = todos.filter((x) => !isDone(x)).length
-            return (
-              <SelectItem key={calendar.id} value={calendar.id} className="*:[span]:last:flex-1">
-                <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: calendar.color }} aria-hidden />
-                <span className="truncate">{calendar.name}</span>
-                <span className="tabular ml-auto text-muted-foreground" aria-hidden>
-                  {open}
-                </span>
-                <span className="sr-only">{t('tasks.openCount', { count: open })}</span>
-              </SelectItem>
-            )
-          })}
-        </SelectContent>
-      </Select>
-    </div>
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger
+        className="-ml-1.5 h-8 w-auto max-w-full justify-start gap-1 border-0 bg-transparent px-1.5 py-0 font-display text-xl font-semibold tracking-tight hover:bg-muted"
+        aria-label={t('tasks.list')}
+      >
+        <SelectValue>{name}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+        {lists.map(({ calendar, todos }) => {
+          const open = todos.filter((x) => !isDone(x)).length
+          return (
+            <SelectItem key={calendar.id} value={calendar.id} className="*:[span]:last:flex-1">
+              <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: calendar.color }} aria-hidden />
+              <span className="truncate">{calendar.name}</span>
+              <span className="tabular ml-auto text-muted-foreground" aria-hidden>
+                {open}
+              </span>
+              <span className="sr-only">{t('tasks.openCount', { count: open })}</span>
+            </SelectItem>
+          )
+        })}
+      </SelectContent>
+    </Select>
   )
 }
 
+/** A new task as the list's next row: the plus in the column of the checks adds it. */
 function AddTask({ calendar }: { calendar: Calendar }) {
   const { t } = useTranslation()
   const create = useCreateTodo()
@@ -194,8 +270,17 @@ function AddTask({ calendar }: { calendar: Calendar }) {
   }
 
   return (
-    <form onSubmit={submit} className="px-3 pb-2">
-      <div className="flex items-center gap-1 rounded-lg border border-input bg-surface pr-1 focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/40">
+    <form onSubmit={submit} className="px-2">
+      {/* Reads as a row of the list until hovered or focused, like the quiet fields of the editors. */}
+      <div className="flex items-center gap-3 rounded-md border border-transparent px-2 hover:border-input focus-within:border-ring focus-within:bg-surface focus-within:ring-[3px] focus-within:ring-ring/40">
+        <button
+          type="submit"
+          aria-label={t('tasks.add')}
+          disabled={!title.trim() || create.isPending}
+          className="flex size-[1.125rem] shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none enabled:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {create.isPending ? <Spinner /> : <PlusIcon className="size-4" aria-hidden />}
+        </button>
         <label htmlFor="new-task" className="sr-only">
           {t('tasks.add')}
         </label>
@@ -208,11 +293,8 @@ function AddTask({ calendar }: { calendar: Calendar }) {
           placeholder={t('tasks.addPlaceholder')}
           maxLength={1024}
           autoComplete="off"
-          className="border-0 bg-transparent shadow-none focus-visible:ring-0"
+          className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
-        <Button type="submit" size="icon-sm" variant="ghost" aria-label={t('tasks.add')} disabled={!title.trim() || create.isPending}>
-          {create.isPending ? <Spinner /> : <PlusIcon aria-hidden />}
-        </Button>
       </div>
     </form>
   )

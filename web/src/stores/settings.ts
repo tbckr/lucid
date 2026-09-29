@@ -16,6 +16,7 @@ export interface SettingsState {
   theme: ThemeSetting
   /** Calendar IDs hidden in the sidebar (FR-05). */
   hiddenCalendars: string[]
+  /** Fold the completed group of the task panel away (FR-12). */
   hideCompletedTasks: boolean
   /** Hide completed and cancelled tasks in the calendar views, independent of the task panel (FR-16). */
   hideCompletedInCalendar: boolean

@@ -10,6 +10,7 @@ import { TasksPanel } from './TasksPanel'
 
 const personal = calendar({ id: 'a', name: 'Personal' })
 const work = calendar({ id: 'b', name: 'Work' })
+const errands = calendar({ id: 'c', name: 'Errands' })
 const tasksOf: Record<string, Todo[]> = {
   a: [
     todo({ id: 'milk', calendarId: 'a', title: 'Buy milk' }),
@@ -17,6 +18,13 @@ const tasksOf: Record<string, Todo[]> = {
     todo({ id: 'plants', calendarId: 'a', title: 'Water plants', status: 'COMPLETED' }),
   ],
   b: [todo({ id: 'taxes', calendarId: 'b', title: 'File taxes' })],
+  c: [
+    todo({ id: 'someday', calendarId: 'c', title: 'Fix the bike' }),
+    todo({ id: 'done', calendarId: 'c', title: 'Return books', status: 'COMPLETED' }),
+    todo({ id: 'late', calendarId: 'c', title: 'Renew passport', due: '2020-01-10T00:00:00Z', dueAllDay: true }),
+    todo({ id: 'future', calendarId: 'c', title: 'Book flights', due: '2099-01-10T00:00:00Z', dueAllDay: true }),
+  ],
+  d: [todo({ id: 'plants', calendarId: 'd', title: 'Water plants', status: 'COMPLETED' })],
 }
 
 /** Serves the calendars and their tasks; returns the fetch spy. */
@@ -116,6 +124,75 @@ describe('TasksPanel', () => {
     renderWithProviders(<TasksPanel onClose={() => undefined} />)
     await screen.findByRole('checkbox', { name: 'Completed: File taxes' })
     expect(screen.queryByRole('textbox', { name: 'Add task' })).not.toBeInTheDocument()
+  })
+
+  it('names the list and counts its open tasks', async () => {
+    serve([personal])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    expect(await screen.findByRole('heading', { level: 2, name: 'Personal' })).toBeInTheDocument()
+    expect(await screen.findByText('2 open')).toBeInTheDocument()
+  })
+
+  it('names the chosen list when there are several', async () => {
+    useSettings.setState({ taskList: 'b' })
+    serve([personal, work])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    expect(await screen.findByRole('heading', { level: 2, name: 'Work' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Tasks' })).toBeInTheDocument()
+  })
+
+  it('groups the tasks by when they are due', async () => {
+    serve([errands])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    await screen.findByRole('checkbox', { name: 'Completed: Fix the bike' })
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Overdue',
+      'Later',
+      'No due date',
+      'Completed 1',
+    ])
+    expect(taskTitles()).toEqual([
+      'Completed: Renew passport',
+      'Completed: Book flights',
+      'Completed: Fix the bike',
+      'Completed: Return books',
+    ])
+  })
+
+  it('collapses the completed tasks and remembers it', async () => {
+    serve([personal])
+    const user = userEvent.setup()
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    await screen.findByRole('checkbox', { name: 'Completed: Water plants' })
+    const completed = screen.getByRole('button', { name: /^Completed/ })
+    expect(completed).toHaveAttribute('aria-expanded', 'true')
+    await user.click(completed)
+    expect(completed).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('checkbox', { name: 'Completed: Water plants' })).not.toBeInTheDocument()
+    expect(useSettings.getState().hideCompletedTasks).toBe(true)
+  })
+
+  it('restores collapsed completed tasks', async () => {
+    useSettings.setState({ hideCompletedTasks: true })
+    serve([personal])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    await screen.findByRole('checkbox', { name: 'Completed: Buy milk' })
+    expect(screen.getByRole('button', { name: /^Completed/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('checkbox', { name: 'Completed: Water plants' })).not.toBeInTheDocument()
+  })
+
+  it('says when all tasks are done', async () => {
+    serve([calendar({ id: 'd', name: 'Home' })])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    expect(await screen.findByText('All tasks are done.')).toBeInTheDocument()
+    expect(screen.getByText('0 open')).toBeInTheDocument()
+  })
+
+  it('says when a list is read-only', async () => {
+    serve([calendar({ id: 'a', name: 'Personal', readOnly: true })])
+    renderWithProviders(<TasksPanel onClose={() => undefined} />)
+    await screen.findByRole('checkbox', { name: 'Completed: Buy milk' })
+    expect(screen.getByText('Read-only')).toBeInTheDocument()
   })
 
   it('shows no dropdown for a single list', async () => {

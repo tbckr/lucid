@@ -4,7 +4,7 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { type Calendar, type Todo } from '@/lib/api/schemas'
-import { checklistProgress, formatDue, isOverdue, priorityLevel } from '@/lib/tasks'
+import { checklistProgress, formatDue, priorityLevel } from '@/lib/tasks'
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -16,31 +16,32 @@ export function PriorityChip({ priority }: { priority: number }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-1.5 py-px text-[0.6875rem] font-semibold',
-        level === 'high' && 'bg-destructive/12 text-destructive',
-        level === 'medium' && 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
-        level === 'low' && 'bg-sky-500/12 text-sky-800 dark:text-sky-300',
+        'inline-flex items-center gap-1 font-medium',
+        level === 'high' && 'text-destructive',
+        level === 'medium' && 'text-amber-800 dark:text-amber-300',
+        level === 'low' && 'text-sky-800 dark:text-sky-300',
       )}
     >
-      <FlagIcon className="size-2.5" aria-hidden />
+      <FlagIcon className="size-3" aria-hidden />
       {t(`priority.${level}`)}
     </span>
   )
 }
 
-export function TaskRow({ todo, calendar }: { todo: Todo; calendar: Calendar }) {
+/** A task in the sidebar; `timeOnly` where the group heading already names the day (FR-14). */
+export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; calendar: Calendar; timeOnly?: boolean }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
   const now = useNow()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const { done, toggle } = useToggleTodo(todo)
-  const due = formatDue(todo, now, prefs, { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') })
-  const overdue = isOverdue(todo, now)
+  const labels = { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') }
+  const due = formatDue(todo, now, prefs, labels, { timeOnly })
   const progress = checklistProgress(todo.checklist)
   const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0)
 
   return (
-    <div className="group flex items-start gap-3 px-3 py-1.5" data-testid="task-row" data-task-id={todo.id}>
+    <div className="group flex items-start gap-3 px-4 py-1" data-testid="task-row" data-task-id={todo.id}>
       <button
         type="button"
         role="checkbox"
@@ -65,7 +66,7 @@ export function TaskRow({ todo, calendar }: { todo: Todo; calendar: Calendar }) 
         </span>
         {hasMeta && (
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            {due && <span className={cn('tabular', overdue && 'font-semibold text-destructive')}>{due}</span>}
+            {due && <span className="tabular">{due}</span>}
             {!done && <PriorityChip priority={todo.priority} />}
             {progress.total > 0 && (
               <span className="tabular inline-flex items-center gap-1" aria-label={t('tasks.progress', progress)}>

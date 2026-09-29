@@ -185,9 +185,15 @@
     "addPlaceholder": "Add a task",
     "list": "Task list",
     "openCount": "{{count}} open",
-    "hideCompleted": "Hide completed tasks",
-    "showCompleted": "Show completed tasks",
-    "empty": "No tasks yet. Add one above.",
+    "groups": {
+      "overdue": "Overdue",
+      "today": "Today",
+      "tomorrow": "Tomorrow",
+      "later": "Later",
+      "noDue": "No due date",
+      "completed": "Completed"
+    },
+    "empty": "No tasks in this list yet.",
     "allDone": "All tasks are done.",
     "noCalendars": "None of the visible calendars hold tasks.",
     "complete": "Completed: {{title}}",
