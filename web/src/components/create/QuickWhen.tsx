@@ -5,6 +5,7 @@ import { TimeSelect } from '@/components/events/TimeSelect'
 import { shiftEnd } from '@/lib/eventForm'
 import { type FormatPrefs } from '@/lib/format'
 import { shiftTask, type CreateKind, type EventWhen, type TaskWhen } from '@/lib/quickCreate'
+import { cn } from '@/lib/utils'
 
 /**
  * When the new entry happens, as the sentence the details popover shows
@@ -35,8 +36,10 @@ export function QuickWhen({
   const { t } = useTranslation()
   const id = useId()
   const tint = 'tint' as const
-  // The first field's text lines up with the title above.
-  const line = 'tabular flex flex-wrap items-center text-base font-medium [&>button:first-child]:-ml-1.5'
+  // Every part has the fields' padding, so the text of each line starts under the title's.
+  const line = 'tabular -ml-1.5 flex flex-wrap items-center text-base font-medium'
+  // A time range wraps after the date as a whole.
+  const range = 'flex items-center whitespace-nowrap'
 
   if (kind === 'event') {
     const moveStart = (date: string, time: string) => {
@@ -59,7 +62,8 @@ export function QuickWhen({
         {event.allDay ? (
           <span className="px-1.5">{t('event.allDay')}</span>
         ) : (
-          <>
+          // A range ending on another day may break at its dash; others wrap as a whole.
+          <span className={cn(range, event.endDate !== event.startDate && 'flex-wrap')}>
             <TimeSelect
               value={event.startTime}
               onChange={(v) => {
@@ -96,7 +100,7 @@ export function QuickWhen({
               aria-label={t('event.endTime')}
               tone={tint}
             />
-          </>
+          </span>
         )}
         <span id={`${id}-starts`} className="sr-only">
           {t('event.starts')}
@@ -124,46 +128,48 @@ export function QuickWhen({
           now={now}
           tone={tint}
         />
-        {task.startTime && (
-          <TimeSelect
-            value={task.startTime}
-            onChange={(v) => {
-              onTask(shiftTask(task, task.startDate, v))
-            }}
-            prefs={prefs}
-            aria-label={t('tasks.startTime')}
-            tone={tint}
-          />
-        )}
-        <span aria-hidden>–</span>
-        {task.dueDate !== task.startDate && (
-          <DateField
-            id={`${id}-due`}
-            labelledBy={`${id}-due-label`}
-            label={t('tasks.due')}
-            value={task.dueDate}
-            onChange={(d) => {
-              onTask({ ...task, dueDate: d })
-            }}
-            prefs={prefs}
-            now={now}
-            invalid={invalid}
-            describedBy={describedBy}
-            tone={tint}
-          />
-        )}
-        {task.dueTime && (
-          <TimeSelect
-            value={task.dueTime}
-            onChange={(v) => {
-              onTask({ ...task, dueTime: v })
-            }}
-            prefs={prefs}
-            invalid={invalid}
-            aria-label={t('tasks.dueTime')}
-            tone={tint}
-          />
-        )}
+        <span className={cn(range, task.dueDate !== task.startDate && 'flex-wrap')}>
+          {task.startTime && (
+            <TimeSelect
+              value={task.startTime}
+              onChange={(v) => {
+                onTask(shiftTask(task, task.startDate, v))
+              }}
+              prefs={prefs}
+              aria-label={t('tasks.startTime')}
+              tone={tint}
+            />
+          )}
+          <span aria-hidden>–</span>
+          {task.dueDate !== task.startDate && (
+            <DateField
+              id={`${id}-due`}
+              labelledBy={`${id}-due-label`}
+              label={t('tasks.due')}
+              value={task.dueDate}
+              onChange={(d) => {
+                onTask({ ...task, dueDate: d })
+              }}
+              prefs={prefs}
+              now={now}
+              invalid={invalid}
+              describedBy={describedBy}
+              tone={tint}
+            />
+          )}
+          {task.dueTime && (
+            <TimeSelect
+              value={task.dueTime}
+              onChange={(v) => {
+                onTask({ ...task, dueTime: v })
+              }}
+              prefs={prefs}
+              invalid={invalid}
+              aria-label={t('tasks.dueTime')}
+              tone={tint}
+            />
+          )}
+        </span>
         <span id={`${id}-date-label`} className="sr-only">
           {t('create.date')}
         </span>
@@ -180,7 +186,9 @@ export function QuickWhen({
   const time = which === 'due' ? task.dueTime : task.startTime
   return (
     <div className={line}>
-      <span id={`${id}-label`}>{which === 'due' ? t('tasks.dueLabel') : t('tasks.startLabel')}</span>
+      <span id={`${id}-label`} className="px-1.5">
+        {which === 'due' ? t('tasks.dueLabel') : t('tasks.startLabel')}
+      </span>
       <DateField
         id={`${id}-date`}
         labelledBy={`${id}-label`}
