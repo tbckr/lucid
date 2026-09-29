@@ -74,3 +74,15 @@ test('event dialog', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Quarterly review' })).toBeVisible()
   await shoot(page, 'event-dialog')
 })
+
+test('create popover', async ({ page }) => {
+  await login(page)
+  await page.keyboard.press('w')
+  // A click in the grid, switched to a task: due at the clicked time, with its draft beside the popover.
+  await page.getByRole('button', { name: /Monday, March 9th, 2026 1:00 PM$/ }).click({ position: { x: 20, y: 4 } })
+  await page.getByRole('dialog', { name: 'New event' }).getByRole('radio', { name: 'Task' }).click()
+  const popover = page.getByRole('dialog', { name: 'New task' })
+  await popover.getByPlaceholder('Add a title').fill('Renew passport')
+  await expect(page.getByRole('main').locator('[data-draft]')).toContainText('Renew passport')
+  await shoot(page, 'create')
+})

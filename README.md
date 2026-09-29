@@ -77,10 +77,12 @@ of your server.
     <td align="center">Event details</td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="docs/screenshots/login.png" alt="Sign-in page" width="50%"></td>
+    <td><img src="docs/screenshots/create.png" alt="Creating a task from a click in the week view"></td>
+    <td><img src="docs/screenshots/login.png" alt="Sign-in page"></td>
   </tr>
   <tr>
-    <td colspan="2" align="center">Sign in with just your domain</td>
+    <td align="center">Create an event or a task with a click</td>
+    <td align="center">Sign in with just your domain</td>
   </tr>
 </table>
 
