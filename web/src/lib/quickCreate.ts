@@ -50,14 +50,20 @@ export function eventWhen(origin: CreateOrigin, timeZone: string): EventWhen {
 }
 
 /**
- * The event as a task: due when it begins, without a time for a whole day.
- * A dragged span becomes start to due.
+ * The event as a task: due when it begins, without a time for a whole day or
+ * a day clicked as a whole, unless the user set its time since (`started`:
+ * the event the click began with). A dragged span becomes start to due.
  */
-export function taskWhen(event: EventWhen, origin: Pick<CreateOrigin, 'granularity' | 'ranged'>): TaskWhen {
+export function taskWhen(
+  event: EventWhen,
+  origin: Pick<CreateOrigin, 'granularity' | 'ranged'>,
+  started?: EventWhen,
+): TaskWhen {
   if (origin.ranged && !event.allDay) {
     return { startDate: event.startDate, startTime: event.startTime, dueDate: event.endDate, dueTime: event.endTime }
   }
-  const dateOnly = origin.granularity === 'day' || event.allDay
+  const timeSet = started !== undefined && event.startTime !== started.startTime
+  const dateOnly = event.allDay || (origin.granularity === 'day' && !timeSet)
   return { startDate: '', startTime: '', dueDate: event.startDate, dueTime: dateOnly ? '' : event.startTime }
 }
 

@@ -76,8 +76,10 @@ function CreateForm({ create }: { create: CreateState }) {
 
   const [chosenKind, setKind] = useState<CreateKind>('event')
   const [title, setTitle] = useState('')
-  const [event, setEvent] = useState(() => eventWhen(origin, tz))
-  const [task, setTask] = useState(() => taskWhen(eventWhen(origin, tz), origin))
+  // The event the click began with: a time changed since carries over to a task.
+  const [started] = useState(() => eventWhen(origin, tz))
+  const [event, setEvent] = useState(started)
+  const [task, setTask] = useState(() => taskWhen(started, origin))
   const [calendarId, setCalendarId] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
@@ -117,7 +119,7 @@ function CreateForm({ create }: { create: CreateState }) {
   const switchTo = (next: string) => {
     // Radix reports "" when the chosen item is clicked again.
     if ((next !== 'event' && next !== 'task') || next === kind) return
-    if (next === 'task') setTask(taskWhen(event, origin))
+    if (next === 'task') setTask(taskWhen(event, origin, started))
     else setEvent(eventFromTask(task, event))
     setKind(next)
   }

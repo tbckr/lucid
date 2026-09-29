@@ -72,6 +72,14 @@ describe('taskWhen', () => {
   ] as const)('is due on the day, without a time, from %s', (_, when, origin) => {
     expect(taskWhen(when, origin)).toEqual(due('2026-09-30', ''))
   })
+
+  it('keeps a time set in the popover after a click in a month cell', () => {
+    // The cell started the event at 09:00; the user moved it to 14:00.
+    const started = { ...clickWhen, startTime: '09:00', endTime: '10:00' }
+    const month = { granularity: 'day', ranged: false } as const
+    expect(taskWhen({ ...clickWhen, startTime: '14:00', endTime: '15:00' }, month, started)).toEqual(due('2026-09-30', '14:00'))
+    expect(taskWhen({ ...started, startDate: '2026-10-01', endDate: '2026-10-01' }, month, started)).toEqual(due('2026-10-01', ''))
+  })
 })
 
 describe('eventFromTask', () => {

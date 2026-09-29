@@ -38,10 +38,11 @@ interface Options {
   post?: () => Promise<Response>
   /** Hold the calendar list back until `release` is called. */
   later?: boolean
+  origin?: CreateOrigin
 }
 
-/** Open the popover as a click in a day column would, and render it. */
-async function openPopover({ calendars = [personal, work, tasks], post, later = false }: Options = {}) {
+/** Open the popover as a click in a day column (or `origin`) would, and render it. */
+async function openPopover({ calendars = [personal, work, tasks], post, later = false, origin = click }: Options = {}) {
   api.setCsrfToken('tok')
   let release: () => void = () => undefined
   const listed = new Promise<void>((resolve) => {
@@ -64,7 +65,7 @@ async function openPopover({ calendars = [personal, work, tasks], post, later = 
   column.append(slot)
   document.body.append(column)
   act(() => {
-    useUi.getState().openCreate({ origin: click, anchor: column, span: { startMin: 615, endMin: 675 }, returnFocus: slot })
+    useUi.getState().openCreate({ origin, anchor: column, span: { startMin: 615, endMin: 675 }, returnFocus: slot })
   })
   const { queryClient } = renderWithProviders(
     <>
@@ -289,5 +290,21 @@ describe('CreatePopover', () => {
       useUi.getState().setView('week')
     })
     expect(useUi.getState().create).toBeNull()
+  })
+  it('keeps a time set after a click in a month cell when switching to a task', async () => {
+    useSettings.setState({ taskList: 'c3' })
+    const user = userEvent.setup()
+    const month: CreateOrigin = {
+      start: new Date(2026, 8, 30, 9),
+      end: new Date(2026, 8, 30, 10),
+      allDay: false,
+      granularity: 'day',
+      ranged: false,
+    }
+    const { dialog } = await openPopover({ origin: month })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.click(screen.getByRole('option', { name: '2:00 PM' }))
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('2:00 PM')
   })
 })
