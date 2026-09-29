@@ -150,7 +150,15 @@ export function MoreEventsPopover({
           {t('month.more', { count: hidden })}
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-2" align="start" aria-label={format(day, 'PPPP', { locale: prefs.locale })}>
+      {/* Portaled out of the cell, but React bubbles its clicks into the cell, which would create an event. */}
+      <PopoverContent
+        className="w-64 p-2"
+        align="start"
+        aria-label={format(day, 'PPPP', { locale: prefs.locale })}
+        onClick={(e) => {
+          e.stopPropagation()
+        }}
+      >
         <p className="px-1.5 pb-2 font-display text-sm font-semibold">{format(day, 'EEEE, PPP', { locale: prefs.locale })}</p>
         {virtual ? (
           <VirtualList events={events} prefs={prefs} colorsOf={colorsOf} readOnly={readOnly} onOpen={onOpen} />

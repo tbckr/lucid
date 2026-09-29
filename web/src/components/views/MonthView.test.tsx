@@ -145,6 +145,23 @@ describe('MonthView', () => {
     useUi.getState().openDetail(null)
   })
 
+  it('opens the details of an event from "+N more" and creates nothing in the cell', async () => {
+    const events = ['Standup', 'Review', 'Lunch', 'Gym', 'Call'].map((title, i) =>
+      toCalEvent(apiEvent({ id: `e${i}`, key: `e${i}`, title })),
+    )
+    const user = userEvent.setup()
+    renderMonth(events)
+    await user.click(screen.getByRole('button', { name: /^\d+ more$/ }))
+    // The list is portaled out of the cell, but React bubbles its clicks into the cell.
+    const list = await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
+    await user.click(within(list).getByText('Friday, September 25th, 2026'))
+    expect(useUi.getState().create).toBeNull()
+    await user.click(within(list).getByRole('button', { name: /Call/ }))
+    expect(useUi.getState().create).toBeNull()
+    expect(useUi.getState().detail?.item).toBe(events[4])
+    useUi.getState().openDetail(null)
+  })
+
   it('counts tasks apart from events in the cell label', () => {
     const rent = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
     renderMonth([toCalEvent(apiEvent()), rent])
