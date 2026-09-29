@@ -160,13 +160,54 @@ type Todo struct {
 	Title       string          `json:"title"`
 	Description string          `json:"description,omitempty"` // without checklist lines
 	Checklist   []ChecklistItem `json:"checklist"`
-	Start       *time.Time      `json:"start,omitempty"` // DTSTART; with Due it spans the calendar views (FR-16)
-	StartAllDay bool            `json:"startAllDay"`
-	Due         *time.Time      `json:"due,omitempty"`
-	DueAllDay   bool            `json:"dueAllDay"`
-	Priority    int             `json:"priority"` // 0 = undefined, 1 = highest ... 9 = lowest
-	Status      string          `json:"status"`
-	Completed   *time.Time      `json:"completed,omitempty"`
+	// Start and Due span the calendar views (FR-16); for an open recurring
+	// todo: those of its current occurrence (FR-17).
+	Start       *time.Time `json:"start,omitempty"` // DTSTART
+	StartAllDay bool       `json:"startAllDay"`
+	Due         *time.Time `json:"due,omitempty"`
+	DueAllDay   bool       `json:"dueAllDay"`
+	Priority    int        `json:"priority"` // 0 = undefined, 1 = highest ... 9 = lowest
+	Status      string     `json:"status"`
+	Completed   *time.Time `json:"completed,omitempty"`
+
+	// RRule, Recurring, FixedDays and RuleUnsupported describe a recurring
+	// series (FR-17). Next is the earliest open occurrence after the current
+	// one, or nil if this is the last. CompletedCopy is the just-completed
+	// occurrence, returned only by the PUT that completes it, so the client
+	// can show it alongside the advanced series without a refetch.
+	RRule           string     `json:"rrule"`
+	Recurring       bool       `json:"recurring"`
+	FixedDays       bool       `json:"fixedDays"`
+	RuleUnsupported bool       `json:"ruleUnsupported"`
+	Next            *TodoDates `json:"next"`
+	CompletedCopy   *Todo      `json:"completedCopy,omitempty"`
+}
+
+// TodoDates are the start and due of one occurrence (FR-16).
+type TodoDates struct {
+	Start *time.Time `json:"start"`
+	Due   *time.Time `json:"due"`
+}
+
+// Occurrence states (FR-17).
+const (
+	OccurrenceCurrent  = "current"
+	OccurrenceUpcoming = "upcoming"
+	OccurrenceDone     = "done"
+)
+
+// TodoOccurrence is one occurrence of an open recurring todo (FR-16, FR-17).
+type TodoOccurrence struct {
+	Key          string     `json:"key"` // TodoID + "@" + RecurrenceID in RFC 3339 UTC
+	TodoID       string     `json:"todoId"`
+	CalendarID   string     `json:"calendarId"`
+	RecurrenceID time.Time  `json:"recurrenceId"`
+	Title        string     `json:"title"`
+	Start        *time.Time `json:"start"`
+	StartAllDay  bool       `json:"startAllDay"`
+	Due          *time.Time `json:"due"`
+	DueAllDay    bool       `json:"dueAllDay"`
+	State        string     `json:"state"` // OccurrenceCurrent, OccurrenceUpcoming or OccurrenceDone
 }
 
 // TodoInput is the payload for creating or updating a todo.
@@ -183,10 +224,15 @@ type TodoInput struct {
 	DueAllDay    bool       `json:"dueAllDay"`
 	Priority     int        `json:"priority"`
 	Status       string     `json:"status"` // empty means NEEDS-ACTION
+	// RRule absent means keep the stored rule; "" means remove it (FR-17), see RRuleOmitted.
+	RRule string `json:"rrule"`
+	// RRuleOmitted is set when a JSON body has no "rrule" at all, like StartOmitted.
+	RRuleOmitted bool   `json:"-"`
+	Timezone     string `json:"timezone,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly (unknown fields are errors, as for every
-// request body) and records whether "start" was sent at all.
+// request body) and records whether "start" and "rrule" were sent at all.
 func (in *TodoInput) UnmarshalJSON(b []byte) error {
 	type plain TodoInput // without this method, so decoding does not recurse
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -201,10 +247,14 @@ func (in *TodoInput) UnmarshalJSON(b []byte) error {
 	}
 	*in = TodoInput(p)
 	in.StartOmitted = true
+	in.RRuleOmitted = true
 	for k := range fields {
 		// encoding/json matches field names case-insensitively.
 		if strings.EqualFold(k, "start") {
 			in.StartOmitted = false
+		}
+		if strings.EqualFold(k, "rrule") {
+			in.RRuleOmitted = false
 		}
 	}
 	return nil
@@ -226,11 +276,18 @@ func (in TodoInput) Validate() error {
 		return invalid("priority must be between 0 and 9")
 	case len(in.Checklist) > MaxChecklistItems:
 		return invalid("too many checklist items")
+	case len(in.RRule) > MaxRRuleLen:
+		return invalid("rrule too long")
 	}
 	switch in.Status {
 	case "", TodoNeedsAction, TodoInProcess, TodoCompleted, TodoCancelled:
 	default:
 		return invalid("unknown status")
+	}
+	if in.Timezone != "" {
+		if _, err := time.LoadLocation(in.Timezone); err != nil {
+			return invalid("unknown timezone")
+		}
 	}
 	for _, it := range in.Checklist {
 		if it.Text == "" || len(it.Text) > MaxTitleLen {
