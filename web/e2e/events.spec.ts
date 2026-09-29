@@ -10,6 +10,12 @@ test.afterEach(async ({ page }) => {
 test('create, edit and delete an event', async ({ page }) => {
   const title = `E2E review ${Date.now()}`
   const renamed = `${title} (moved)`
+  // Create picks the next full hour, so the morning it is: later in the day the details open low, under
+  // the toasts, which pause while the pointer is on them, and after 23:00 the event lands tomorrow.
+  // 8:30 UTC is 9:30 or 10:30 in Berlin, the time zone of the config.
+  const morning = new Date()
+  morning.setUTCHours(8, 30, 0, 0)
+  await page.clock.setFixedTime(morning)
   await login(page)
   // Day view: busy month cells may hide new events behind "+N more".
   await page.keyboard.press('d')
