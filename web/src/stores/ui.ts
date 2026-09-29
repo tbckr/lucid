@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
-import { type CalEvent } from '@/lib/events'
+import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
 import { useSettings } from './settings'
 
@@ -16,7 +16,8 @@ export type EditorState =
   | null
 
 export interface DetailState {
-  event: CalEvent
+  /** The event or task whose details are shown (FR-09, FR-16). */
+  item: CalItem
   /** Element the popover is anchored to; focus returns here on close. */
   anchor: HTMLElement
 }
@@ -73,7 +74,7 @@ export const useUi = create<UiState>()((set) => ({
     set({ detail })
   },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor })
+    set({ taskEditor, detail: null })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

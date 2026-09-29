@@ -123,7 +123,7 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
                     data-event-key={event.key}
                     data-calendar-id={event.calendarId}
                     onClick={(e) => {
-                      openDetail({ event, anchor: e.currentTarget })
+                      openDetail({ item: event, anchor: e.currentTarget })
                     }}
                     className="grid w-full grid-cols-[8.5rem_0.75rem_1fr] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-sm:grid-cols-[6rem_0.75rem_1fr]"
                   >

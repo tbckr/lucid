@@ -46,6 +46,25 @@ test('complete a task in the month view', async ({ page }) => {
   await expect(inGrid).toHaveAttribute('aria-checked', 'false')
 })
 
+test('a task in the month view opens its details, and the editor from there', async ({ page }) => {
+  await login(page)
+  const inGrid = monthGrid(page).locator('[data-task-key]').first()
+  await expect(inGrid).toBeVisible()
+  const title = ((await inGrid.getByRole('checkbox').getAttribute('aria-label')) ?? '').replace(/^Completed: /, '')
+  await inGrid.getByRole('button').click()
+
+  const details = page.getByRole('dialog', { name: title })
+  await expect(details.getByRole('heading', { name: title })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Edit task' })).toHaveCount(0)
+
+  await details.getByRole('button', { name: 'Edit task' }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit task' })
+  await expect(editor.getByRole('textbox', { name: 'Title' })).toHaveValue(title)
+  await expect(details).toBeHidden()
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toBeHidden()
+})
+
 test('a completed task leaves the calendar when completed tasks are hidden there', async ({ page }) => {
   await login(page)
   const inGrid = monthGrid(page).locator('[data-task-key]').getByRole('checkbox').first()

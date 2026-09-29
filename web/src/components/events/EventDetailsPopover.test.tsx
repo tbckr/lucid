@@ -26,7 +26,7 @@ async function openDetails(p: Partial<ApiEvent>) {
   const anchor = screen.getByRole('button', { name: 'Block' })
   const event = toCalEvent(apiEvent({ title: 'Quarterly review', ...p }))
   act(() => {
-    useUi.getState().openDetail({ event, anchor })
+    useUi.getState().openDetail({ item: event, anchor })
   })
   return { fetch, anchor, dialog: await screen.findByRole('dialog', { name: 'Quarterly review' }) }
 }

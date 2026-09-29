@@ -18,7 +18,7 @@ const task = (p: Parameters<typeof todo>[0] = {}) =>
 
 describe('task items', () => {
   afterEach(() => {
-    useUi.getState().openTaskEditor(null)
+    useUi.getState().openDetail(null)
   })
 
   it('toggles completion optimistically and keeps the start', async () => {
@@ -44,21 +44,23 @@ describe('task items', () => {
     resolve(jsonResponse(200, { ...t.todo, status: 'COMPLETED', etag: '"2"' }))
   })
 
-  it('opens the task editor from the title', async () => {
+  it('opens the task details at the title, not the editor', async () => {
     const t = task()
     const user = userEvent.setup()
     renderWithProviders(<TaskBar task={t} colors={colors} prefs={prefs} readOnly={false} />)
-    await user.click(screen.getByRole('button', { name: /Pay rent/ }))
-    expect(useUi.getState().taskEditor).toBe(t.todo)
+    const title = screen.getByRole('button', { name: /Pay rent/ })
+    await user.click(title)
+    expect(useUi.getState().detail).toEqual({ item: t, anchor: title })
+    expect(useUi.getState().taskEditor).toBeNull()
   })
 
-  it('read-only calendar disables the checkbox but still opens the editor', async () => {
+  it('read-only calendar disables the checkbox but still opens the details', async () => {
     const t = task()
     const user = userEvent.setup()
     renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} readOnly />)
     expect(screen.getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: /Pay rent/ }))
-    expect(useUi.getState().taskEditor).toBe(t.todo)
+    expect(useUi.getState().detail?.item).toBe(t)
   })
 
   it('labels an untitled task', () => {
@@ -95,7 +97,7 @@ describe('task items', () => {
     expect(container.querySelector('[data-task-key="task:t1"][data-calendar-id="c9"]')).not.toBeNull()
   })
 
-  it('opens the editor from anywhere on a grid block', async () => {
+  it('opens the details from anywhere on a grid block', async () => {
     const t = task({ start: '2026-09-25T07:00:00Z' })
     const user = userEvent.setup()
     renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />)
@@ -103,15 +105,15 @@ describe('task items', () => {
     const surface = screen.getByRole('button', { name: /Pay rent/ })
     expect(surface).toHaveStyle({ backgroundColor: colors.tint })
     await user.click(surface)
-    expect(useUi.getState().taskEditor).toBe(t.todo)
+    expect(useUi.getState().detail?.item).toBe(t)
   })
 
-  it('opens the editor from the agenda time', async () => {
+  it('opens the details from the agenda time', async () => {
     const t = task()
     const user = userEvent.setup()
     renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} readOnly={false} />)
     await user.click(screen.getByText('10 AM'))
-    expect(useUi.getState().taskEditor).toBe(t.todo)
+    expect(useUi.getState().detail?.item).toBe(t)
   })
 })
 

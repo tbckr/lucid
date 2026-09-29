@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detailPlacement } from './placement'
+import { detailPlacement, lastKnownBox } from './placement'
 
 const desktop = { width: 1280, height: 800 }
 const phone = { width: 390, height: 800 }
@@ -27,5 +27,19 @@ describe('detailPlacement', () => {
   it('points at the visible part of a block that sticks out of the view', () => {
     const allDay = { x: 390, y: -200, width: 1000, height: 900 }
     expect(detailPlacement(allDay, desktop)).toEqual({ side: 'bottom', rect: { x: 390, y: 0, width: 890, height: 40 } })
+  })
+})
+
+describe('lastKnownBox', () => {
+  it('follows the anchor and keeps its last box once it has left the page', () => {
+    const anchor = { isConnected: true, getBoundingClientRect: () => ({ x: 10, y: 20, width: 30, height: 40 }) }
+    const box = lastKnownBox(anchor)
+    expect(box()).toEqual({ x: 10, y: 20, width: 30, height: 40 })
+    anchor.getBoundingClientRect = () => ({ x: 10, y: 120, width: 30, height: 40 })
+    expect(box()).toEqual({ x: 10, y: 120, width: 30, height: 40 })
+    // Removed from the page: the browser reports an empty box at the corner.
+    anchor.isConnected = false
+    anchor.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0 })
+    expect(box()).toEqual({ x: 10, y: 120, width: 30, height: 40 })
   })
 })

@@ -11,7 +11,7 @@ import { useUi } from '@/stores/ui'
 
 /*
  * Tasks in the calendar views (FR-16): a round checkbox to complete them
- * (FR-15) and a title that opens the task editor. Unlike events they are not
+ * (FR-15) and a title that opens their details. Unlike events they are not
  * draggable. Both buttons stop the click and together fill chips and bars, so
  * the cell underneath never creates an event from a click on a task.
  */
@@ -23,15 +23,15 @@ interface TaskItemProps {
   readOnly: boolean
 }
 
-function useTaskItem(task: CalTask, onOpen?: () => void) {
+function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
   const { t } = useTranslation()
-  const openTaskEditor = useUi((s) => s.openTaskEditor)
+  const openDetail = useUi((s) => s.openDetail)
   const { done, toggle } = useToggleTodo(task.todo)
   const title = eventTitle(task, t('event.untitled'))
-  const open = (e: MouseEvent) => {
+  const open = (e: MouseEvent<HTMLElement>) => {
     e.stopPropagation()
-    openTaskEditor(task.todo)
-    onOpen?.()
+    if (onOpen) onOpen(task)
+    else openDetail({ item: task, anchor: e.currentTarget })
   }
   return { t, title, done, toggle, open }
 }
@@ -104,8 +104,8 @@ export function TaskChip({
   onOpen,
 }: TaskItemProps & {
   className?: string
-  /** Called after the title opened the task editor, e.g. to close a popover. */
-  onOpen?: () => void
+  /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
+  onOpen?: (task: CalTask) => void
 }) {
   const { t, title, done, toggle, open } = useTaskItem(task, onOpen)
   return (

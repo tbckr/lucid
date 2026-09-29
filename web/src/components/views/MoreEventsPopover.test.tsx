@@ -16,10 +16,10 @@ const colors = eventColors('#3b82f6', false)
 
 describe('MoreEventsPopover', () => {
   afterEach(() => {
-    useUi.getState().openTaskEditor(null)
+    useUi.getState().openDetail(null)
   })
 
-  it('closes when a task is opened from it', async () => {
+  it('closes and opens the details of a task at its button', async () => {
     const rent = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T08:00:00Z' }))!
     const user = userEvent.setup()
     renderWithProviders(
@@ -32,9 +32,11 @@ describe('MoreEventsPopover', () => {
         readOnly={() => false}
       />,
     )
-    await user.click(screen.getByRole('button', { name: '2 more' }))
+    const more = screen.getByRole('button', { name: '2 more' })
+    await user.click(more)
     await user.click(await screen.findByRole('button', { name: /Pay rent/ }))
-    expect(useUi.getState().taskEditor).toBe(rent.todo)
+    // The task's chip leaves with the list; the details stay at the button.
+    expect(useUi.getState().detail).toEqual({ item: rent, anchor: more })
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /Pay rent/ })).not.toBeInTheDocument()
     })

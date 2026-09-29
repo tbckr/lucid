@@ -34,3 +34,16 @@ export function detailPlacement(
   const right = clamp(anchor.x + anchor.width, left, view.width)
   return { side: 'bottom', rect: { x: left, y: top, width: right - left, height: bottom - top } }
 }
+
+/**
+ * The anchor's box, or the last one it had once it has left the page: a task
+ * completed while completed tasks are hidden in the calendar, or an event gone
+ * after a reload. The popover stays where it was instead of jumping to the corner.
+ */
+export function lastKnownBox(anchor: { isConnected: boolean; getBoundingClientRect: () => Box }): () => Box {
+  let last: Box | null = null
+  return () => {
+    if (anchor.isConnected || !last) last = anchor.getBoundingClientRect()
+    return last
+  }
+}

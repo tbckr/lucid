@@ -32,14 +32,14 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   })
   const onClick = (e: MouseEvent<HTMLElement>) => {
     e.stopPropagation()
-    openDetail({ event, anchor: e.currentTarget })
+    openDetail({ item: event, anchor: e.currentTarget })
   }
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     // While a keyboard drag is active, Enter drops (handled by dnd-kit).
     if (e.key === 'Enter' && !isDragging) {
       e.preventDefault()
       e.stopPropagation()
-      openDetail({ event, anchor: e.currentTarget })
+      openDetail({ item: event, anchor: e.currentTarget })
       return
     }
     listeners?.onKeyDown?.(e)

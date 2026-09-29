@@ -218,6 +218,8 @@
     "removeStart": "Beginn entfernen",
     "removeDue": "Fälligkeit entfernen",
     "overdue": "Überfällig",
+    "dueWhen": "Fällig {{when}}",
+    "startsWhen": "Beginnt {{when}}",
     "priority": "Priorität",
     "markCompleted": "Erledigt",
     "notes": "Notizen",

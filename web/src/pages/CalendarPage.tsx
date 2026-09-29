@@ -10,6 +10,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/settings/ShortcutsDialog'
+import { TaskDetailsPopover } from '@/components/tasks/TaskDetailsPopover'
 import { TaskEditorDialog } from '@/components/tasks/TaskEditorDialog'
 import { TasksPanel } from '@/components/tasks/TasksPanel'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
@@ -275,6 +276,7 @@ export function CalendarPage() {
       </div>
 
       <EventDetailsPopover />
+      <TaskDetailsPopover />
       <EventEditorDialog />
       <TaskEditorDialog />
       <SettingsDialog />

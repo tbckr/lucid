@@ -50,17 +50,15 @@ function Entry({
   prefs,
   readOnly,
   onOpen,
-  onClose,
 }: {
   item: CalItem
   colors: EventColors
   prefs: FormatPrefs
   readOnly: boolean
-  onOpen: (e: CalEvent) => void
-  onClose: () => void
+  onOpen: (e: CalItem) => void
 }) {
   if (item.kind === 'task') {
-    return <TaskChip task={item} colors={colors} prefs={prefs} readOnly={readOnly} className="h-6" onOpen={onClose} />
+    return <TaskChip task={item} colors={colors} prefs={prefs} readOnly={readOnly} className="h-6" onOpen={onOpen} />
   }
   return <Row event={item} colors={colors} prefs={prefs} onOpen={onOpen} />
 }
@@ -72,14 +70,12 @@ function VirtualList({
   colorsOf,
   readOnly,
   onOpen,
-  onClose,
 }: {
   events: CalItem[]
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
   readOnly: (calendarId: string) => boolean
-  onOpen: (e: CalEvent) => void
-  onClose: () => void
+  onOpen: (e: CalItem) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-safe yet
@@ -103,7 +99,7 @@ function VirtualList({
               style={{ height: item.size, transform: `translateY(${item.start}px)` }}
             >
               <EventBoundary>
-                <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} onClose={onClose} />
+                <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
               </EventBoundary>
             </li>
           )
@@ -135,12 +131,9 @@ export function MoreEventsPopover({
   const openDetail = useUi((s) => s.openDetail)
   const virtual = events.length > VIRTUALIZE_THRESHOLD
 
-  const close = () => {
+  const onOpen = (e: CalItem) => {
     setOpen(false)
-  }
-  const onOpen = (e: CalEvent) => {
-    setOpen(false)
-    if (triggerRef.current) openDetail({ event: e, anchor: triggerRef.current })
+    if (triggerRef.current) openDetail({ item: e, anchor: triggerRef.current })
   }
 
   return (
@@ -160,13 +153,13 @@ export function MoreEventsPopover({
       <PopoverContent className="w-64 p-2" align="start" aria-label={format(day, 'PPPP', { locale: prefs.locale })}>
         <p className="px-1.5 pb-2 font-display text-sm font-semibold">{format(day, 'EEEE, PPP', { locale: prefs.locale })}</p>
         {virtual ? (
-          <VirtualList events={events} prefs={prefs} colorsOf={colorsOf} readOnly={readOnly} onOpen={onOpen} onClose={close} />
+          <VirtualList events={events} prefs={prefs} colorsOf={colorsOf} readOnly={readOnly} onOpen={onOpen} />
         ) : (
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
               <li key={e.key}>
                 <EventBoundary>
-                  <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} onClose={close} />
+                  <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
                 </EventBoundary>
               </li>
             ))}

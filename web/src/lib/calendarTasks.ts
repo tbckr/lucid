@@ -14,6 +14,8 @@ export interface CalTask {
   allDay: boolean
   /** A single point in time shown with a fixed size; labels show only `startsAt`. */
   point: boolean
+  /** The dates that place it: start through due, or only one of them. */
+  dates: 'span' | 'due' | 'start'
   startsAt: Date
   /** Exclusive end (all-day: local midnight after the last day). */
   endsAt: Date
@@ -43,19 +45,20 @@ export function toCalTask(todo: Todo): CalTask | null {
 
   if (start && due?.allDay === start.allDay) {
     if (start.allDay && start.at <= due.at) {
-      return { ...base, allDay: true, point: false, startsAt: start.at, endsAt: addDays(due.at, 1) }
+      return { ...base, allDay: true, point: false, dates: 'span', startsAt: start.at, endsAt: addDays(due.at, 1) }
     }
     if (!start.allDay && start.at < due.at) {
-      return { ...base, allDay: false, point: false, startsAt: start.at, endsAt: due.at }
+      return { ...base, allDay: false, point: false, dates: 'span', startsAt: start.at, endsAt: due.at }
     }
   }
   const single = due ?? start
   if (!single) return null
+  const dates = due ? 'due' : 'start'
   if (single.allDay) {
-    return { ...base, allDay: true, point: false, startsAt: single.at, endsAt: addDays(single.at, 1) }
+    return { ...base, allDay: true, point: false, dates, startsAt: single.at, endsAt: addDays(single.at, 1) }
   }
   // Clamp to midnight so a late point stays on its day instead of becoming a bar.
   const end = addMinutes(single.at, TASK_POINT_MINUTES)
   const midnight = addDays(startOfDay(single.at), 1)
-  return { ...base, allDay: false, point: true, startsAt: single.at, endsAt: end < midnight ? end : midnight }
+  return { ...base, allDay: false, point: true, dates, startsAt: single.at, endsAt: end < midnight ? end : midnight }
 }

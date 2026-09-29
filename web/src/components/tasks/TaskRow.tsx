@@ -9,7 +9,8 @@ import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
-export function PriorityChip({ priority }: { priority: number }) {
+/** The priority level in its color; without `flag` where an icon column already shows one. */
+export function PriorityChip({ priority, flag = true }: { priority: number; flag?: boolean }) {
   const { t } = useTranslation()
   const level = priorityLevel(priority)
   if (level === 'none') return null
@@ -22,7 +23,7 @@ export function PriorityChip({ priority }: { priority: number }) {
         level === 'low' && 'text-sky-800 dark:text-sky-300',
       )}
     >
-      <FlagIcon className="size-3" aria-hidden />
+      {flag && <FlagIcon className="size-3" aria-hidden />}
       {t(`priority.${level}`)}
     </span>
   )

@@ -130,6 +130,20 @@ export function useTodos(): TodosResult {
   })
 }
 
+/**
+ * `todo` as the cache holds it now: a reload or an update may have replaced it
+ * since it was picked, with a new ETag. Reads the cache only and never fetches.
+ */
+export function useCachedTodo(todo: Todo): Todo {
+  const { data } = useQuery({
+    queryKey: queryKeys.todos(todo.calendarId),
+    queryFn: ({ signal }) => endpoints.listTodos(todo.calendarId, signal),
+    enabled: false,
+    select: (list) => list.todos.find((x) => x.id === todo.id),
+  })
+  return data ?? todo
+}
+
 /** Calendar entries of the loaded todos; module-level so `useQueries` reruns it only on new data. */
 function combineCalendarTasks(results: { data?: TodoList | undefined }[]): CalTask[] {
   return results.flatMap((r) => (r.data?.todos ?? []).map(toCalTask).filter((t) => t !== null))

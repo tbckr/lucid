@@ -14,6 +14,7 @@ describe('toCalTask', () => {
       endsAt: new Date(2026, 8, 25, 11),
       allDay: false,
       point: false,
+      dates: 'span',
     })
   })
 
@@ -21,7 +22,13 @@ describe('toCalTask', () => {
     const task = toCalTask(
       todo({ start: allDay('2026-09-25'), startAllDay: true, due: allDay('2026-09-27'), dueAllDay: true }),
     )
-    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 28), allDay: true, point: false })
+    expect(task).toMatchObject({
+      startsAt: new Date(2026, 8, 25),
+      endsAt: new Date(2026, 8, 28),
+      allDay: true,
+      point: false,
+      dates: 'span',
+    })
   })
 
   it('keeps an all-day span on local midnights across the DST change', () => {
@@ -38,12 +45,18 @@ describe('toCalTask', () => {
       endsAt: new Date(2026, 8, 25, 10, 30),
       allDay: false,
       point: true,
+      dates: 'due',
     })
   })
 
   it('shows a start time alone as a point', () => {
     const task = toCalTask(todo({ start: '2026-09-25T08:00:00Z' }))
-    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25, 10), endsAt: new Date(2026, 8, 25, 10, 30), point: true })
+    expect(task).toMatchObject({
+      startsAt: new Date(2026, 8, 25, 10),
+      endsAt: new Date(2026, 8, 25, 10, 30),
+      point: true,
+      dates: 'start',
+    })
   })
 
   it('ends a point late in the day at midnight', () => {
@@ -54,12 +67,18 @@ describe('toCalTask', () => {
 
   it('shows a due date alone on that day', () => {
     const task = toCalTask(todo({ due: allDay('2026-09-25'), dueAllDay: true }))
-    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 26), allDay: true, point: false })
+    expect(task).toMatchObject({
+      startsAt: new Date(2026, 8, 25),
+      endsAt: new Date(2026, 8, 26),
+      allDay: true,
+      point: false,
+      dates: 'due',
+    })
   })
 
   it('shows a start date alone on that day', () => {
     const task = toCalTask(todo({ start: allDay('2026-09-25'), startAllDay: true }))
-    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 26), allDay: true })
+    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 26), allDay: true, dates: 'start' })
   })
 
   it.each([
@@ -67,12 +86,12 @@ describe('toCalTask', () => {
     ['equal timed start and due', { start: '2026-09-25T08:00:00Z', due: '2026-09-25T08:00:00Z' }],
     ['start date with timed due', { start: allDay('2026-09-24'), startAllDay: true, due: '2026-09-25T08:00:00Z' }],
   ])('falls back to the due time for %s', (_name, dates) => {
-    expect(toCalTask(todo(dates))).toMatchObject({ startsAt: new Date(2026, 8, 25, 10), point: true })
+    expect(toCalTask(todo(dates))).toMatchObject({ startsAt: new Date(2026, 8, 25, 10), point: true, dates: 'due' })
   })
 
   it('falls back to the due day for a timed start with an all-day due', () => {
     const task = toCalTask(todo({ start: '2026-09-24T08:00:00Z', due: allDay('2026-09-25'), dueAllDay: true }))
-    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 26), allDay: true })
+    expect(task).toMatchObject({ startsAt: new Date(2026, 8, 25), endsAt: new Date(2026, 8, 26), allDay: true, dates: 'due' })
   })
 
   it('has no calendar entry without dates', () => {

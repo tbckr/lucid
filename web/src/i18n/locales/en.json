@@ -218,6 +218,8 @@
     "removeStart": "Remove start date",
     "removeDue": "Remove due date",
     "overdue": "Overdue",
+    "dueWhen": "Due {{when}}",
+    "startsWhen": "Starts {{when}}",
     "priority": "Priority",
     "markCompleted": "Completed",
     "notes": "Notes",

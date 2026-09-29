@@ -74,7 +74,7 @@ describe('MonthView', () => {
   it('opens event details on click', () => {
     renderMonth()
     fireEvent.click(screen.getByRole('button', { name: 'Standup, 10 AM' }))
-    expect(useUi.getState().detail?.event.title).toBe('Standup')
+    expect(useUi.getState().detail?.item.title).toBe('Standup')
     useUi.getState().openDetail(null)
   })
 
@@ -90,8 +90,8 @@ describe('MonthView', () => {
     expect(useUi.getState().editor).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Call, 10 AM' }))
     expect(useUi.getState().editor).toBeNull()
-    expect(useUi.getState().taskEditor).toBe(call.todo)
-    useUi.getState().openTaskEditor(null)
+    expect(useUi.getState().detail?.item).toBe(call)
+    useUi.getState().openDetail(null)
   })
 
   it('counts tasks apart from events in the cell label', () => {
