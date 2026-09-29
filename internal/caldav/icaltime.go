@@ -19,9 +19,25 @@ const (
 
 // dateValue is a parsed DATE or DATE-TIME property value.
 type dateValue struct {
-	t      time.Time // in loc for TZID values, UTC otherwise
-	allDay bool
-	tzid   string // IANA name if the value had a resolvable TZID
+	t        time.Time // in loc for TZID values, UTC otherwise
+	allDay   bool
+	tzid     string // IANA name if the value had a resolvable TZID
+	param    string // the TZID parameter as written, "" if none
+	floating bool   // a DATE-TIME without TZID or "Z", read as UTC
+}
+
+// dateForm is how a date property is written, so that a rewritten value can
+// keep the form another client chose (FR-17).
+type dateForm struct {
+	allDay   bool   // a DATE
+	floating bool   // a local DATE-TIME without TZID or "Z"
+	tzid     string // IANA zone to write in when param is empty
+	param    string // TZID parameter to write verbatim
+}
+
+// form returns the form d was written in.
+func (d dateValue) form() dateForm {
+	return dateForm{allDay: d.allDay, floating: d.floating, tzid: d.tzid, param: d.param}
 }
 
 // loc returns the location recurrences of this value are computed in.
@@ -78,7 +94,8 @@ func parseDateValue(v string, params ical.Params) (dateValue, error) {
 		return dateValue{t: t}, nil
 	}
 	loc, tzid := time.UTC, ""
-	if raw := params.Get(ical.ParamTimezoneID); raw != "" {
+	raw := params.Get(ical.ParamTimezoneID)
+	if raw != "" {
 		if l := loadLocation(raw); l != nil {
 			loc, tzid = l, l.String()
 		}
@@ -87,7 +104,7 @@ func parseDateValue(v string, params ical.Params) (dateValue, error) {
 	if err != nil {
 		return dateValue{}, fmt.Errorf("invalid date-time %q: %w", v, err)
 	}
-	return dateValue{t: t, tzid: tzid}, nil
+	return dateValue{t: t, tzid: tzid, param: raw, floating: raw == ""}, nil
 }
 
 var locCache sync.Map // TZID -> *time.Location (nil if unknown)

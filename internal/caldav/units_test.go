@@ -160,17 +160,18 @@ func TestParseDateValue(t *testing.T) {
 	t.Parallel()
 	berlin, _ := time.LoadLocation("Europe/Berlin")
 	tests := []struct {
-		name    string
-		value   string
-		tzid    string
-		want    time.Time
-		allDay  bool
-		wantTZ  string
-		wantErr bool
+		name     string
+		value    string
+		tzid     string
+		want     time.Time
+		allDay   bool
+		wantTZ   string
+		floating bool
+		wantErr  bool
 	}{
 		{name: "date", value: "20250305", want: date(2025, 3, 5, 0, 0), allDay: true},
 		{name: "utc", value: "20250305T101500Z", want: date(2025, 3, 5, 10, 15)},
-		{name: "floating", value: "20250305T101500", want: date(2025, 3, 5, 10, 15)},
+		{name: "floating", value: "20250305T101500", want: date(2025, 3, 5, 10, 15), floating: true},
 		{name: "tzid", value: "20250305T101500", tzid: "Europe/Berlin", want: time.Date(2025, 3, 5, 10, 15, 0, 0, berlin), wantTZ: "Europe/Berlin"},
 		{name: "prefixed tzid", value: "20250305T101500", tzid: "/mozilla.org/20050126_1/Europe/Berlin", want: time.Date(2025, 3, 5, 10, 15, 0, 0, berlin), wantTZ: "Europe/Berlin"},
 		{name: "unknown tzid is UTC", value: "20250305T101500", tzid: "W. Europe Standard Time", want: date(2025, 3, 5, 10, 15)},
@@ -196,6 +197,10 @@ func TestParseDateValue(t *testing.T) {
 			mustNoErr(t, err)
 			if !got.t.Equal(tt.want) || got.allDay != tt.allDay || got.tzid != tt.wantTZ {
 				t.Fatalf("got %+v; want %s allDay=%v tz=%q", got, tt.want, tt.allDay, tt.wantTZ)
+			}
+			// The form keeps the TZID parameter verbatim, resolvable or not (FR-17).
+			if got.param != tt.tzid || got.floating != tt.floating {
+				t.Fatalf("got param %q, floating %v; want %q, %v", got.param, got.floating, tt.tzid, tt.floating)
 			}
 		})
 	}

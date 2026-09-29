@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emersion/go-ical"
+
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
 	"github.com/tbckr/lucid/internal/domain"
 )
@@ -559,11 +561,17 @@ func TestListTodosRecurring(t *testing.T) {
 			rrule: "FREQ=DAILY;COUNT=1",
 		},
 		{
+			// Rolling cannot keep an RDATE off the rule (FR-17).
 			name:      "rdate only",
 			lines:     []string{"DTSTART:20250310T090000Z", "RDATE:20250315T090000Z"},
 			start:     ptr(date(2025, 3, 10, 9, 0)),
-			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 15, 9, 0))},
-			fixedDays: true,
+			fixedDays: true, ruleUnsupported: true,
+		},
+		{
+			// As for events: an empty rule adds no occurrence to the anchor.
+			name:  "empty rule",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
 		},
 		{
 			name:  "no occurrence left",
@@ -1115,6 +1123,67 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000Z", "DUE:20250310T110000Z"}, nil)
 	})
 
+	// A rolled series keeps the date form other clients wrote (FR-17).
+	t.Run("floating", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000", "RRULE:FREQ=DAILY;COUNT=3"})
+		got := completeListed(t, e, id)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T090000\r\n", "RRULE:FREQ=DAILY;UNTIL=20250312T090000\r\n"}, nil)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000\r\n"}, nil)
+	})
+
+	for _, tc := range []struct{ name, tzid string }{
+		{"unknown tzid", "W. Europe Standard Time"},
+		{"prefixed tzid", "/mozilla.org/20050126_1/Europe/Berlin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "tasks", "r.ics",
+				"BEGIN:VTIMEZONE", "TZID:"+tc.tzid,
+				"BEGIN:STANDARD", "DTSTART:19701025T030000", "TZOFFSETFROM:+0200", "TZOFFSETTO:+0100",
+				"RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", "END:STANDARD",
+				"BEGIN:DAYLIGHT", "DTSTART:19700329T020000", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0200",
+				"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU", "END:DAYLIGHT",
+				"END:VTIMEZONE",
+				"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Series",
+				"DTSTART;TZID="+tc.tzid+":20250310T090000", "DUE;TZID="+tc.tzid+":20250310T110000", "RRULE:FREQ=WEEKLY",
+				"END:VTODO",
+			)
+			got := completeListed(t, e, id)
+			master, cp := storedObject(t, e, id), storedCopy(t, e, &got)
+			checkStored(t, "master", master,
+				[]string{"DTSTART;TZID=" + tc.tzid + ":20250317T090000", "DUE;TZID=" + tc.tzid + ":20250317T110000"}, nil)
+			checkStored(t, "copy", cp,
+				[]string{"DTSTART;TZID=" + tc.tzid + ":20250310T090000", "DUE;TZID=" + tc.tzid + ":20250310T110000", "TZID:" + tc.tzid}, nil)
+			for what, data := range map[string]string{"master": master, "copy": cp} {
+				if n := strings.Count(data, "BEGIN:VTIMEZONE"); n != 1 {
+					t.Errorf("%s has %d VTIMEZONEs; want the original only:\n%s", what, n, data)
+				}
+			}
+		})
+	}
+
+	// The rolling model cannot keep an RDATE off the rule without shifting
+	// the rule, so such a series is not completed in Lucid (FR-17).
+	t.Run("rdate rejected", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250110T090000Z", "RRULE:FREQ=MONTHLY", "RDATE:20250120T090000Z"})
+		f := listedTodo(t, e, id)
+		before := storedObject(t, e, id)
+		_, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustErr(t, err, domain.ErrInvalidInput)
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 {
+			t.Errorf("%d objects; want only the series", n)
+		}
+		if after := storedObject(t, e, id); after != before {
+			t.Errorf("series changed:\n%s\nwant:\n%s", after, before)
+		}
+	})
+
 	t.Run("kde", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -1286,21 +1355,83 @@ func TestCountToUntil(t *testing.T) {
 	mustNoErr(t, err)
 	last := time.Date(2025, 3, 12, 10, 0, 0, 0, berlin)
 	for _, tc := range []struct {
-		rrule  string
-		allDay bool
-		want   string
+		rrule string
+		form  dateForm
+		want  string
 	}{
-		{"FREQ=DAILY;COUNT=3", false, "FREQ=DAILY;UNTIL=20250312T090000Z"},
-		{"FREQ=WEEKLY;count=2;BYDAY=MO", false, "FREQ=WEEKLY;UNTIL=20250312T090000Z;BYDAY=MO"},
-		{"FREQ=DAILY;UNTIL=20250401T000000Z;COUNT=3", false, "FREQ=DAILY;UNTIL=20250312T090000Z"},
-		{"FREQ=DAILY;COUNT=3", true, "FREQ=DAILY;UNTIL=20250312"},
-		{"FREQ=DAILY;UNTIL=20250401T000000Z", false, "FREQ=DAILY;UNTIL=20250401T000000Z"},
-		{"FREQ=DAILY", false, "FREQ=DAILY"},
+		{"FREQ=DAILY;COUNT=3", dateForm{tzid: "Europe/Berlin", param: "Europe/Berlin"}, "FREQ=DAILY;UNTIL=20250312T090000Z"},
+		{"FREQ=WEEKLY;count=2;BYDAY=MO", dateForm{}, "FREQ=WEEKLY;UNTIL=20250312T090000Z;BYDAY=MO"},
+		{"FREQ=DAILY;UNTIL=20250401T000000Z;COUNT=3", dateForm{}, "FREQ=DAILY;UNTIL=20250312T090000Z"},
+		{"FREQ=DAILY;COUNT=3", dateForm{allDay: true}, "FREQ=DAILY;UNTIL=20250312"},
+		// RFC 5545 3.3.10: UNTIL of a floating DTSTART is floating too.
+		{"FREQ=DAILY;COUNT=3", dateForm{floating: true}, "FREQ=DAILY;UNTIL=20250312T090000"},
+		{"FREQ=DAILY;UNTIL=20250401T000000Z", dateForm{}, "FREQ=DAILY;UNTIL=20250401T000000Z"},
+		{"FREQ=DAILY", dateForm{}, "FREQ=DAILY"},
 	} {
 		t.Run(tc.rrule, func(t *testing.T) {
 			t.Parallel()
-			if got := countToUntil(tc.rrule, last, tc.allDay); got != tc.want {
-				t.Errorf("countToUntil(%q, %v) = %q; want %q", tc.rrule, tc.allDay, got, tc.want)
+			if got := countToUntil(tc.rrule, last, tc.form); got != tc.want {
+				t.Errorf("countToUntil(%q, %+v) = %q; want %q", tc.rrule, tc.form, got, tc.want)
+			}
+		})
+	}
+}
+
+// setSeriesDate writes a date in the form given: as read from the series, or
+// a zone for a newly set rule (FR-17).
+func TestSetSeriesDate(t *testing.T) {
+	t.Parallel()
+	at := date(2025, 3, 10, 8, 0)
+	for _, tc := range []struct {
+		name      string
+		t         *time.Time
+		form      dateForm
+		want      string // the property line, "" when removed
+		vtimezone string // TZID of the VTIMEZONE added, "" for none
+	}{
+		{name: "nil removes", form: dateForm{}},
+		{name: "date", t: &at, form: dateForm{allDay: true}, want: "DTSTART;VALUE=DATE:20250310"},
+		{name: "utc", t: &at, form: dateForm{}, want: "DTSTART:20250310T080000Z"},
+		{name: "floating", t: &at, form: dateForm{floating: true}, want: "DTSTART:20250310T080000"},
+		{
+			name: "zone of a new rule", t: &at, form: dateForm{tzid: "Europe/Berlin"},
+			want: "DTSTART;TZID=Europe/Berlin:20250310T090000", vtimezone: "Europe/Berlin",
+		},
+		{
+			name: "prefixed parameter", t: &at, form: dateForm{tzid: "Europe/Berlin", param: "/mozilla.org/20050126_1/Europe/Berlin"},
+			want:      "DTSTART;TZID=/mozilla.org/20050126_1/Europe/Berlin:20250310T090000",
+			vtimezone: "/mozilla.org/20050126_1/Europe/Berlin",
+		},
+		{
+			// Read as UTC, so its wall clock is the UTC time.
+			name: "unknown parameter", t: &at, form: dateForm{param: "W. Europe Standard Time"},
+			want: "DTSTART;TZID=W. Europe Standard Time:20250310T080000",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cal := newCalendar()
+			c := newComponent(ical.CompToDo, "x", at)
+			c.Props.Set(newDateProp(ical.PropDateTimeStart, at, false, nil))
+			cal.Children = append(cal.Children, c)
+			setSeriesDate(cal, c, ical.PropDateTimeStart, tc.t, tc.form)
+
+			var buf bytes.Buffer
+			mustNoErr(t, ical.NewEncoder(&buf).Encode(cal))
+			data := buf.String()
+			if tc.want == "" {
+				checkStored(t, "calendar", data, nil, []string{"DTSTART"})
+			} else {
+				checkStored(t, "calendar", data, []string{tc.want + "\r\n"}, nil)
+			}
+			var zones []string
+			for _, x := range cal.Children {
+				if x.Name == ical.CompTimezone {
+					zones = append(zones, text(x.Props, ical.PropTimezoneID))
+				}
+			}
+			if want := []string{tc.vtimezone}; (tc.vtimezone == "" && len(zones) != 0) || (tc.vtimezone != "" && !slices.Equal(zones, want)) {
+				t.Errorf("VTIMEZONEs = %q; want %q", zones, tc.vtimezone)
 			}
 		})
 	}

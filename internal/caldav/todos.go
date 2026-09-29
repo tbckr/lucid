@@ -416,12 +416,27 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	if start == nil && series.onDue {
 		start, startAllDay = due, dueAllDay
 	}
+	// Written like the series' own dates, with the VTIMEZONE a TZID refers
+	// to, which Lucid may not be able to generate.
+	startForm, dueForm := series.startForm, series.dueForm
+	if startForm.allDay != startAllDay {
+		startForm = dateForm{allDay: startAllDay}
+	}
+	if dueForm.allDay != dueAllDay {
+		dueForm = dateForm{allDay: dueAllDay}
+	}
 	uid := newUID()
 	copyCal := newCalendar()
+	for _, tz := range cal.Children {
+		if id := text(tz.Props, ical.PropTimezoneID); tz.Name == ical.CompTimezone && id != "" &&
+			(id == startForm.param || id == dueForm.param) {
+			copyCal.Children = append(copyCal.Children, tz)
+		}
+	}
 	cc := newComponent(ical.CompToDo, uid, now)
 	copyCal.Children = append(copyCal.Children, cc)
-	setSeriesDate(copyCal, cc, ical.PropDateTimeStart, start, startAllDay, series.anchor.tzid)
-	setSeriesDate(copyCal, cc, ical.PropDue, due, dueAllDay, series.anchor.tzid)
+	setSeriesDate(copyCal, cc, ical.PropDateTimeStart, start, startForm)
+	setSeriesDate(copyCal, cc, ical.PropDue, due, dueForm)
 	applyTodoFields(cc, in, now)
 
 	// Roll the master in memory first: a rule that cannot be evaluated to its

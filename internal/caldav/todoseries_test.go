@@ -76,14 +76,6 @@ func TestTodoSeriesWalk(t *testing.T) {
 			want:  []time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 11, 9, 0), date(2025, 3, 18, 9, 0)},
 		},
 		{
-			name: "rdates merge in order, once",
-			lines: []string{
-				"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2",
-				"RDATE:20250320T090000Z,20250312T090000Z", "RDATE:20250317T090000Z",
-			},
-			want: []time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 12, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 20, 9, 0)},
-		},
-		{
 			name:  "from skips earlier occurrences",
 			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=5"},
 			from:  date(2025, 3, 12, 9, 0),
@@ -196,6 +188,12 @@ func TestTodoSeriesErrors(t *testing.T) {
 	}{
 		{name: "invalid rule", lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYDAY=XX"}, start: ptr(date(2025, 3, 10, 9, 0))},
 		{name: "no date", lines: []string{"RRULE:FREQ=DAILY"}},
+		{
+			// Rolling cannot keep an RDATE off the rule without shifting it (FR-17).
+			name:  "rdate",
+			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "RDATE:20250312T090000Z"},
+			start: ptr(date(2025, 3, 10, 9, 0)),
+		},
 		{
 			// The pending occurrence lies beyond maxRRuleIterations minutes.
 			name:  "iteration cap",
