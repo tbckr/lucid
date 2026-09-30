@@ -900,10 +900,14 @@ it did. The master goes back onto the rule date of the completed
 occurrence, the latest one before its current occurrence without an
 override or `EXDATE`, since the roll dropped exactly that override. If
 another client had moved the completed occurrence, the undo writes an
-override that moves it there again. The override of the occurrence the
-series had rolled onto stays too, so an occurrence another client had moved
-stays moved. Completing the last repeat left the master's dates alone, so
-its undo only reopens it. Undoing a move is a plain move back by the same
+override that moves it there again. With fixed days, a start that Lucid's
+own move within the window had left off the rule's days, at the rule's
+time of day, becomes `DTSTART` again instead, as clients that read only the
+master show it. The override of the occurrence the series had rolled onto
+stays too, so an occurrence another client had moved stays moved. The undo
+of the last repeat's completion reopens the master where it is, unless the
+same save also moved it; then its previous dates come back, without
+shifting anything else. Undoing a move is a plain move back by the same
 amount, which moves all of them back.
 
 **Setting or changing a rule** applies it from the current occurrence on: its

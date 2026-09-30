@@ -1949,6 +1949,72 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, after, dates, states)
 	})
 
+	// The task editor can complete the last occurrence and move it in one
+	// request, which moves the master before completing it; its undo moves
+	// the series back to the dates it had, without shifting anything
+	// (FR-17).
+	t.Run("undo after completing and moving the last occurrence moves it back", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		f := listedTodo(t, e, id)
+		in := completeInput(&f)
+		in.Start = ptr(date(2025, 3, 19, 9, 0))
+		done, err := e.svc.UpdateTodo(ctx, id, f.ETag, in)
+		mustNoErr(t, err)
+		if done.CompletedCopy != nil || done.Status != domain.TodoCompleted {
+			t.Fatalf("completed series = %+v; want the master completed, without a copy", done)
+		}
+		checkStored(t, "completed master", storedObject(t, e, id), []string{"DTSTART:20250319T090000Z"}, nil)
+		got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+		mustNoErr(t, err)
+		if !sameTime(got.Start, f.Start) || got.Status != domain.TodoNeedsAction {
+			t.Errorf("undone series = %+v; want it open at %v", got, f.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250317T090000Z", "RECURRENCE-ID:20250310T090000Z", "STATUS:NEEDS-ACTION"}, nil)
+		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		dates, states := occurrenceDates(occs)
+		checkTodoOccurrences(t, after, dates, states)
+	})
+
+	// Lucid moves the current occurrence of a fixed-day series within its
+	// window by moving DTSTART off the rule's days; the undo of its
+	// completion puts DTSTART back there, as clients that read only the
+	// master show it (FR-17).
+	t.Run("undo after completion restores a move within the window", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
+		id := seedSeries(t, e, []string{
+			"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z",
+		})
+		moveListed(t, e, id, 24*time.Hour) // Monday to Tuesday
+		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		f := listedTodo(t, e, id)
+		done := completeListed(t, e, id)
+		got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+		mustNoErr(t, err)
+		if !sameTime(got.Start, f.Start) || !sameNext(got.Next, f.Next) {
+			t.Errorf("undone series = %+v; want it back at %v, next %+v", got, f.Start, f.Next)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART;TZID=Europe/Berlin:20250311T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z\r\n",
+		}, []string{"RECURRENCE-ID"})
+		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		dates, states := occurrenceDates(occs)
+		checkTodoOccurrences(t, after, dates, states)
+	})
+
 	// The completed occurrence may be one another client moved: the roll
 	// dropped its override. The undo puts the series back on that
 	// occurrence's rule date and the override back, whatever lies between
@@ -1983,6 +2049,16 @@ func TestUpdateTodoSeries(t *testing.T) {
 			want: []string{
 				"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z\r\n",
 				"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250311T100000",
+			},
+		},
+		{
+			// Another day and another time of day: not a move Lucid makes within the window.
+			name:      "fixed days, moved to another day and time",
+			master:    []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T140000Z"}},
+			want: []string{
+				"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH\r\n",
+				"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T140000Z",
 			},
 		},
 		{

@@ -256,9 +256,14 @@ For a recurring todo, these four edits are handled specially:
   override or `EXDATE`. When the given dates are not that occurrence's own,
   another client had moved it, and an override (`RECURRENCE-ID` of that
   date, the given dates, the master's `SUMMARY`, `NEEDS-ACTION`) moves it
-  there again. Without such an instance the given dates become
-  `DTSTART`/`DUE`. A master completed on its last occurrence keeps its
-  dates: that completion did not move it. KDE's pending occurrence goes,
+  there again. With fixed days, a given start off the rule's days after
+  that date and before the current occurrence, at the rule's time of day
+  and value type, becomes `DTSTART` itself instead: that is where a move
+  within the window leaves a series. Without such an instance the given
+  dates become `DTSTART`/`DUE`. A master completed on its last occurrence
+  is reopened: it keeps its dates when the given ones are those of the
+  occurrence it then reports, else (the completing `PUT` also moved it)
+  the given dates become `DTSTART`/`DUE`. KDE's pending occurrence goes,
   and an `UNTIL` before the new `DTSTART` still moves onto it.
   `undoCompletion` is ignored on a `PUT` that does not move a series or
   that changes its `rrule`.

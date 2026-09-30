@@ -370,17 +370,19 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //
 // The undo of a completion (in.UndoCompletion) takes back a roll, or the
 // completion of the last occurrence, neither of which moved the rule's
-// instances: the UNTIL and the references stay, and so does the override
-// of the moved occurrence, the one the completion rolled to, which another
-// client may have moved.
+// instances: nothing shifts, and the override of the moved occurrence
+// stays, the one the completion rolled to, which another client may have
+// moved.
 //   - An open series goes back onto the rule date of the occurrence it
 //     rolled from (see rolledFrom), and when in has other dates than the
 //     rule gives that occurrence, another client had moved it: an override
-//     moves it there again, since the roll dropped the one it had. Without
-//     such a rule date the dates of in become DTSTART and DUE, as for any
-//     move.
-//   - A completed master, which completing its last occurrence left where
-//     it was, keeps its dates.
+//     moves it there again, since the roll dropped the one it had. On fixed
+//     days, a start Lucid's own move within the window left off the rule
+//     becomes DTSTART again instead (see leftInWindow). Without such a
+//     rule date the dates of in become DTSTART and DUE.
+//   - A completed master, reopened, keeps its dates when in has those of
+//     the occurrence it then reports; else, when the completion moved it
+//     too, the dates of in become DTSTART and DUE.
 //
 // KDE's pending occurrence still goes, a COUNT is counted as for any move
 // (the moved occurrence is the anchor after a roll, so it stays), and an
@@ -402,8 +404,11 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		return errRuleNeedsDate
 	}
 	undo := in.UndoCompletion
-	if undo && status == domain.TodoCompleted {
-		return nil
+	reopen := undo && status == domain.TodoCompleted
+	if reopen {
+		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() && hasDates(cur, in) {
+			return nil
+		}
 	}
 	c := s.master
 	rid := s.reportedRid(status)
@@ -414,11 +419,13 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		if err != nil {
 			return errRuleUnsupported
 		}
-		if undo {
-			if from, ok := s.rolledFrom(rid); ok {
+		switch {
+		case reopen:
+		case undo:
+			if from, ok := s.rolledFrom(rid); ok && !s.leftInWindow(from, rid, *start, allDay) {
 				anchor, unroll = from, true
 			}
-		} else {
+		default:
 			shift = s.refShift(rid, *start, allDay)
 		}
 		rule := movedRule(s.rrule, before, rid, shift)
@@ -489,6 +496,36 @@ func (s *todoSeries) rolledFrom(rid time.Time) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// leftInWindow reports whether start, of the value type allDay, is a
+// DTSTART off a fixed-day rule that Lucid's own move within the window
+// left between the rule date from and the current occurrence rid (FR-17):
+// not an instance of the rule, at the rule's time of day and value type.
+// Another client's move that also changed the time of day is not one.
+func (s *todoSeries) leftInWindow(from, rid, start time.Time, allDay bool) bool {
+	if !s.fixedDays || allDay != s.anchor.allDay || !start.After(from) || !start.Before(rid) {
+		return false
+	}
+	loc := s.anchor.loc()
+	if secondOfDay(start.In(loc)) != secondOfDay(from.In(loc)) {
+		return false
+	}
+	r, err := newRRule(withoutEnd(s.rrule), from.In(loc))
+	if err != nil {
+		return false
+	}
+	next := r.Iterator()
+	for range maxRRuleIterations {
+		t, ok := next()
+		if !ok || t.After(start) {
+			return true
+		}
+		if t.Equal(start) {
+			return false
+		}
+	}
+	return false
 }
 
 // periodsBefore returns t moved back by n periods of freq, an RRULE FREQ,
