@@ -247,14 +247,21 @@ For a recurring todo, these four edits are handled specially:
   does not enforce the move window the UI shows; that is a client-side hint
   only.
 - **Undoing a completion** (a move as above, with `undoCompletion: true`):
-  the completion moved none of the rule's instances, so the series moves
-  back to the given dates and nothing else moves: the overrides and
-  `EXDATE`s of later occurrences and the `UNTIL` stay where they are, and so
-  does the override of the occurrence the completion rolled onto, which
-  another client may have moved. Only KDE's pending occurrence goes, and an
-  `UNTIL` before the new dates still moves onto them. `undoCompletion` is
-  ignored on a `PUT` that does not move a series or that changes its
-  `rrule`.
+  the completion moved none of the rule's instances, so nothing that refers
+  to them moves: the overrides and `EXDATE`s of later occurrences and the
+  `UNTIL` stay where they are, and so does the override of the occurrence
+  the completion rolled onto, which another client may have moved. The
+  master goes back onto the rule date of the occurrence it rolled from: the
+  latest instance of the rule before its current occurrence without an
+  override or `EXDATE`. When the given dates are not that occurrence's own,
+  another client had moved it, and an override (`RECURRENCE-ID` of that
+  date, the given dates, the master's `SUMMARY`, `NEEDS-ACTION`) moves it
+  there again. Without such an instance the given dates become
+  `DTSTART`/`DUE`. A master completed on its last occurrence keeps its
+  dates: that completion did not move it. KDE's pending occurrence goes,
+  and an `UNTIL` before the new `DTSTART` still moves onto it.
+  `undoCompletion` is ignored on a `PUT` that does not move a series or
+  that changes its `rrule`.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched. It needs a `start`
   or `due` to recur from, otherwise `400 invalid_input`, message *"a

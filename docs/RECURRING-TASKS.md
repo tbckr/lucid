@@ -892,14 +892,19 @@ on ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
 `UNTIL`. The backend does not enforce the move window: other clients write
 any date, and undo has to move a series back.
 
-**Undoing a completion** is a move back to the completed occurrence's dates
-that says so (`undoCompletion` in the API). The completion moved none of the
-rule's instances, so nothing that refers to them moves back either: later
-overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where it did
-before the completion. The override of the occurrence the series had rolled
-onto stays too, so an occurrence another client had moved stays moved.
-Undoing a move is a plain move back by the same amount, which moves all of
-them back.
+**Undoing a completion** says so (`undoCompletion` in the API) and puts the
+series back as it was before the completion. The completion moved none of
+the rule's instances, so nothing that refers to them moves back either:
+later overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where
+it did. The master goes back onto the rule date of the completed
+occurrence, the latest one before its current occurrence without an
+override or `EXDATE`, since the roll dropped exactly that override. If
+another client had moved the completed occurrence, the undo writes an
+override that moves it there again. The override of the occurrence the
+series had rolled onto stays too, so an occurrence another client had moved
+stays moved. Completing the last repeat left the master's dates alone, so
+its undo only reopens it. Undoing a move is a plain move back by the same
+amount, which moves all of them back.
 
 **Setting or changing a rule** applies it from the current occurrence on: its
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
@@ -927,6 +932,9 @@ properties and components Lucid does not know.
   later day, but not to an earlier one.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
+- Undoing the completion of an occurrence another client had moved restores
+  its dates, but not the rest of that client's override: the override Lucid
+  writes has the series' summary and is open.
 - A `COUNT` counts from `DTSTART` (RFC 5545), so a series whose `DTSTART`
   another client left off its rule has one occurrence more than its `COUNT`
   says, the anchor itself; the `UNTIL` a completion writes keeps that extra

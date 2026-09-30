@@ -230,10 +230,11 @@ type TodoInput struct {
 	RRuleOmitted bool   `json:"-"`
 	Timezone     string `json:"timezone,omitempty"`
 	// UndoCompletion marks the PUT that takes back the completion of a
-	// series' occurrence by moving the series back (FR-17): the move then
-	// keeps the references to later occurrences, the rule's end and the
-	// override of the occurrence the series had rolled to. It is ignored
-	// unless the PUT moves a series and keeps its rule.
+	// series' occurrence by moving the series back (FR-17): the series goes
+	// back onto that occurrence's rule date, with another client's move of
+	// it restored, and keeps the references to later occurrences, the
+	// rule's end and the override of the occurrence it had rolled to. It is
+	// ignored unless the PUT moves a series and keeps its rule.
 	UndoCompletion bool `json:"undoCompletion,omitempty"`
 }
 

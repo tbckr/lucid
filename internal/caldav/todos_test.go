@@ -1915,17 +1915,18 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, after, dates, states)
 	})
 
-	// Completing the last occurrence completes the master, whose DTSTART
-	// another client's completion left behind; its undo moves the series
-	// onto that occurrence, and keeps the end and the other client's
-	// completion (FR-17).
-	t.Run("undo after completing the last occurrence keeps the end", func(t *testing.T) {
+	// Completing the last occurrence completes the master where it is, whose
+	// DTSTART another client's completion left behind; its undo leaves the
+	// dates alone: the end, the other client's completion and its move of
+	// the last occurrence stay (FR-17).
+	t.Run("undo after completing the last occurrence keeps the series", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		ctx := t.Context()
 		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
-			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z"})
 		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
 		mustNoErr(t, err)
 		f := listedTodo(t, e, id)
@@ -1933,15 +1934,119 @@ func TestUpdateTodoSeries(t *testing.T) {
 		if done.CompletedCopy != nil || done.Status != domain.TodoCompleted {
 			t.Fatalf("completed series = %+v; want the master completed, without a copy", done)
 		}
-		_, err = e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+		got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
 		mustNoErr(t, err)
+		if !sameTime(got.Start, f.Start) || got.Status != domain.TodoNeedsAction {
+			t.Errorf("undone series = %+v; want it open at %v", got, f.Start)
+		}
 		checkStored(t, "master", storedObject(t, e, id), []string{
-			"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n", "RECURRENCE-ID:20250310T090000Z",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n",
+			"RECURRENCE-ID:20250310T090000Z", "RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z",
 		}, nil)
 		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
 		mustNoErr(t, err)
 		dates, states := occurrenceDates(occs)
 		checkTodoOccurrences(t, after, dates, states)
+	})
+
+	// The completed occurrence may be one another client moved: the roll
+	// dropped its override. The undo puts the series back on that
+	// occurrence's rule date and the override back, whatever lies between
+	// it and the occurrence the series rolled to (FR-17).
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		want      []string
+	}{
+		{
+			name:   "weekly",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z", "EXDATE:20250331T090000Z"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z"},
+				{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z"},
+			},
+			want: []string{
+				"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z\r\n", "EXDATE:20250331T090000Z",
+				"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z",
+				"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z",
+			},
+		},
+		{
+			name: "fixed days, moved to another time of day",
+			master: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z",
+			},
+			overrides: [][]string{
+				{"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250311T100000"},
+			},
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z\r\n",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250311T100000",
+			},
+		},
+		{
+			// February has no 31st: the series rolled from 31 January to 31 March.
+			name:      "monthly on the 31st",
+			master:    []string{"DTSTART:20250131T090000Z", "RRULE:FREQ=MONTHLY;UNTIL=20250531T090000Z"},
+			overrides: [][]string{{"RECURRENCE-ID:20250131T090000Z", "DTSTART:20250201T090000Z"}},
+			want: []string{
+				"DTSTART:20250131T090000Z", "RRULE:FREQ=MONTHLY;UNTIL=20250531T090000Z\r\n",
+				"RECURRENCE-ID:20250131T090000Z", "DTSTART:20250201T090000Z",
+			},
+		},
+		{
+			name:   "another client's completion in between",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z"},
+				{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"},
+			},
+			want: []string{
+				"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY\r\n", "RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z",
+				"RECURRENCE-ID:20250317T090000Z",
+			},
+		},
+	} {
+		t.Run("undo after completion restores another client's move, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			ctx := t.Context()
+			from, to := date(2025, 1, 1, 0, 0), date(2025, 4, 10, 0, 0)
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+			mustNoErr(t, err)
+			f := listedTodo(t, e, id)
+			done := completeListed(t, e, id)
+			got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+			mustNoErr(t, err)
+			if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || !sameNext(got.Next, f.Next) {
+				t.Errorf("undone series = %+v; want it back at start %v, due %v, next %+v", got, f.Start, f.Due, f.Next)
+			}
+			data := storedObject(t, e, id)
+			checkStored(t, "master", data, tc.want, nil)
+			if n := strings.Count(data, "RECURRENCE-ID"); n != len(tc.overrides) {
+				t.Errorf("%d overrides; want %d:\n%s", n, len(tc.overrides), data)
+			}
+			after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+			mustNoErr(t, err)
+			dates, states := occurrenceDates(occs)
+			checkTodoOccurrences(t, after, dates, states)
+		})
+	}
+
+	// A series anchored on DUE is reported without a start: its due alone is
+	// the occurrence's own date, which needs no override (FR-17).
+	t.Run("undo after completion of a series on due adds no override", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;COUNT=3"})
+		f := listedTodo(t, e, id)
+		done := completeListed(t, e, id)
+		_, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, undoInput(&f))
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;UNTIL=20250324\r\n"}, []string{"RECURRENCE-ID"})
 	})
 
 	t.Run("undo after completion", func(t *testing.T) {
@@ -2252,6 +2357,7 @@ func TestUndoCompletionRestoresSeries(t *testing.T) {
 		{"infinite", "FREQ=WEEKLY", "FREQ=WEEKLY"},
 		{"count 2", "FREQ=WEEKLY;COUNT=2", "FREQ=WEEKLY;UNTIL=@20250317"},
 		{"count 3", "FREQ=WEEKLY;COUNT=3", "FREQ=WEEKLY;UNTIL=@20250324"},
+		{"every other week", "FREQ=WEEKLY;INTERVAL=2;COUNT=2", "FREQ=WEEKLY;INTERVAL=2;UNTIL=@20250324"},
 		{"until", "FREQ=WEEKLY;UNTIL=@20250317", "FREQ=WEEKLY;UNTIL=@20250317"},
 		{"fixed days until", "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=@20250313", "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=@20250313"},
 	}
@@ -2283,7 +2389,8 @@ func TestUndoCompletionRestoresSeries(t *testing.T) {
 				if !sameTime(got.Start, before.Start) || !sameTime(got.Due, before.Due) || !sameNext(got.Next, before.Next) {
 					t.Errorf("undone series = %+v; want it back at start %v, due %v, next %+v", got, before.Start, before.Due, before.Next)
 				}
-				checkStored(t, "master", storedObject(t, e, id), []string{f.dtstart, "RRULE:" + inForm(r.want, f) + "\r\n"}, nil)
+				checkStored(t, "master", storedObject(t, e, id),
+					[]string{f.dtstart, "RRULE:" + inForm(r.want, f) + "\r\n"}, []string{"RECURRENCE-ID"})
 				after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
 				mustNoErr(t, err)
 				dates, states := occurrenceDates(occs)

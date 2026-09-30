@@ -409,11 +409,12 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		}
 	}
 
+	now := s.p.now().UTC()
 	switch {
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
-		if err := series.move(cal, cur.Status, in); err != nil {
+		if err := series.move(cal, cur.Status, in, now); err != nil {
 			return domain.Todo{}, err
 		}
 	default:
@@ -422,7 +423,6 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		// would restart there and lose its overrides. A new rule wrote them
 		// already (FR-17).
 	}
-	now := s.p.now().UTC()
 	applyTodoFields(c, in, now)
 	bumpChangeProps(c, now)
 
