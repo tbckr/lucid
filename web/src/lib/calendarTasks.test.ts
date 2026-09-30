@@ -10,6 +10,7 @@ import {
   moveWindow,
   movedTodo,
   occurrenceTask,
+  outsideWindow,
   recurringLabel,
   toCalTask,
   withinWindow,
@@ -343,8 +344,13 @@ describe('moveWindow', () => {
     expect(moveWindow(t)).toBeNull()
   })
 
-  it('is null without a next occurrence', () => {
+  it('has a lower bound only for the last repeat of a fixed-day series', () => {
     const t = todo({ recurring: true, fixedDays: true, due: allDay('2026-10-05'), dueAllDay: true, next: null })
+    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: null })
+  })
+
+  it('is null for a non-fixed-day series without a next occurrence', () => {
+    const t = todo({ recurring: true, fixedDays: false, due: allDay('2026-10-05'), dueAllDay: true, next: null })
     expect(moveWindow(t)).toBeNull()
   })
 
@@ -442,6 +448,29 @@ describe('withinWindow', () => {
       expect(withinWindow(dst, dueAt('2026-10-26T23:00:00Z'))).toBe(false) // Tue 00:00 CET
     })
   })
+
+  describe('for the last repeat of a fixed-day series', () => {
+    const last = todo({
+      recurring: true,
+      fixedDays: true,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+      next: null,
+    })
+    const dueOn = (day: string) => ({ start: null, startAllDay: false, due: allDay(day), dueAllDay: true })
+
+    it('accepts a later day', () => {
+      expect(withinWindow(last, dueOn('2026-12-25'))).toBe(true)
+    })
+
+    it('accepts its own day', () => {
+      expect(withinWindow(last, dueOn('2026-10-05'))).toBe(true)
+    })
+
+    it('refuses an earlier day', () => {
+      expect(withinWindow(last, dueOn('2026-10-04'))).toBe(false)
+    })
+  })
 })
 
 describe('lastAllowedDay', () => {
@@ -454,5 +483,27 @@ describe('lastAllowedDay', () => {
       next: { start: null, due: allDay('2026-10-08') },
     })
     expect(lastAllowedDay(moveWindow(t)!)).toEqual(new Date(2026, 9, 7))
+  })
+
+  it('is null without an upper bound', () => {
+    const t = todo({ recurring: true, fixedDays: true, due: allDay('2026-10-05'), dueAllDay: true, next: null })
+    expect(lastAllowedDay(moveWindow(t)!)).toBeNull()
+  })
+})
+
+describe('outsideWindow', () => {
+  it('is true only before from, when the window has no upper bound', () => {
+    const w = { from: new Date(2026, 9, 5), until: null }
+    expect(outsideWindow(w, new Date(2026, 9, 4))).toBe(true)
+    expect(outsideWindow(w, new Date(2026, 9, 5))).toBe(false)
+    expect(outsideWindow(w, new Date(2026, 9, 25))).toBe(false)
+  })
+
+  it('is true before from, or from until on, for a bounded window', () => {
+    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
+    expect(outsideWindow(w, new Date(2026, 9, 4))).toBe(true)
+    expect(outsideWindow(w, new Date(2026, 9, 5))).toBe(false)
+    expect(outsideWindow(w, new Date(2026, 9, 7))).toBe(false)
+    expect(outsideWindow(w, new Date(2026, 9, 8))).toBe(true)
   })
 })

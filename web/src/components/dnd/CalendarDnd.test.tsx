@@ -209,6 +209,7 @@ describe('CalendarDnd', () => {
       )!
       renderWithProviders(
         <CalendarDnd renderOverlay={() => null}>
+          <Day day={new Date(2026, 9, 4)} left={-100} />
           <Day day={new Date(2026, 9, 5)} left={0}>
             <TaskChip
               task={bounded}
@@ -257,6 +258,17 @@ describe('CalendarDnd', () => {
 
       expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('hatches the day before the series and announces the lower limit while over it', async () => {
+      await pickUpBounded()
+
+      expect(screen.getByTestId('day:4').className).toContain('hatched')
+
+      fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
+      expect(screen.getByRole('status')).toHaveTextContent('Only possible from Mon, Oct 5 on.')
+
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })
   })
 })

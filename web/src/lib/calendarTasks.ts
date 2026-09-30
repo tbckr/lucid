@@ -147,8 +147,8 @@ export function canDrag(task: CalTask): boolean {
 export interface MoveWindow {
   /** Local midnight of the series' current occurrence. */
   from: Date
-  /** Exclusive: local midnight of the day of the next occurrence. */
-  until: Date
+  /** Exclusive: local midnight of the day of the next occurrence; null without an upper bound. */
+  until: Date | null
 }
 
 /**
@@ -157,13 +157,18 @@ export interface MoveWindow {
  * FREQ/INTERVAL/COUNT/UNTIL/WKST, or an `RDATE` — keeps its later occurrences
  * on their days, so a move must end on a day before the next one's; the time
  * of day stays free within those days, as the hatch, the pickers and the
- * hints all speak of days. Other series move freely, like `ruleUnsupported`
- * ones can't move at all (`canDrag`).
+ * hints all speak of days. The last repeat has no next occurrence to stay
+ * before, so its window only keeps a move from landing on an earlier day
+ * than its own (`until: null`); moving it later is free, since the original
+ * day would otherwise resurface as a planned repeat once the series' `UNTIL`
+ * moves with it. Other series move freely, like `ruleUnsupported` ones can't
+ * move at all (`canDrag`).
  */
 export function moveWindow(todo: Todo): MoveWindow | null {
-  if (!todo.recurring || !todo.fixedDays || !todo.next) return null
+  if (!todo.recurring || !todo.fixedDays) return null
   const from = anchorOf(todo)
   if (!from) return null
+  if (!todo.next) return { from: startOfDay(from), until: null }
   const until = anchorOf({
     start: todo.next.start,
     startAllDay: todo.startAllDay,
@@ -180,17 +185,22 @@ export function withinWindow(todo: Todo, input: TaskDates): boolean {
   if (!w) return true
   const anchor = anchorOf(input)
   if (!anchor) return false
-  return anchor >= w.from && anchor < w.until
+  return anchor >= w.from && (w.until === null || anchor < w.until)
 }
 
-/** The last day a move within `w` may land on (inclusive). */
-export function lastAllowedDay(w: MoveWindow): Date {
-  return startOfDay(new Date(w.until.getTime() - 1))
+/** The last day a move within `w` may land on (inclusive), or null without an upper bound. */
+export function lastAllowedDay(w: MoveWindow): Date | null {
+  return w.until === null ? null : startOfDay(new Date(w.until.getTime() - 1))
 }
 
-/** Whether `day` falls outside `w`, so the calendar views can hatch it while dragging (FR-17). */
+/**
+ * Whether `day` falls outside `w`, so the calendar views can hatch it while
+ * dragging (FR-17): before `from` always; past the last allowed day only
+ * when `w` has one.
+ */
 export function outsideWindow(w: MoveWindow, day: Date): boolean {
-  return day < startOfDay(w.from) || day > lastAllowedDay(w)
+  const last = lastAllowedDay(w)
+  return day < startOfDay(w.from) || (last !== null && day > last)
 }
 
 /** A wire date moved like an event (`movedTimes`): all-day by whole dates, timed by local days, then minutes. */

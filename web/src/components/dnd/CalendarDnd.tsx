@@ -22,7 +22,17 @@ import { useTranslation } from 'react-i18next'
 import { MOVE_EVENT_KEY, usePendingSeries, useMoveEvent, useUpdateTodo, type MoveVars } from '@/hooks/queries'
 import { usePrefs } from '@/hooks/usePrefs'
 import { moveWindow as windowOfTask } from '@/lib/calendarTasks'
-import { acceptsDrop, dropBlocked, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
+import {
+  acceptsDrop,
+  dropBlocked,
+  dropResult,
+  SNAP_PX,
+  withDrop,
+  type DragData,
+  type DropBlocked,
+  type DropData,
+  type DropResult,
+} from '@/lib/dnd'
 import { formatEventSpan, formatPickerDate } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
@@ -151,9 +161,9 @@ export function CalendarDnd({
   /** What a drop right now would save; null while it would change nothing. */
   const [target, setTarget] = useState<DropResult | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
-  // `target` re-renders. `moved`: the drag has had a target since the pick-up. `blocked`: the
-  // last allowed day when the current drop would move a bounded series past it (FR-17).
-  const latest = useRef<{ target: DropResult | null; moved: boolean; blocked: Date | null }>({
+  // `target` re-renders. `moved`: the drag has had a target since the pick-up. `blocked`: which
+  // edge of a bounded series' window the current drop would cross (FR-17).
+  const latest = useRef<{ target: DropResult | null; moved: boolean; blocked: DropBlocked | null }>({
     target: null,
     moved: false,
     blocked: null,
@@ -182,6 +192,11 @@ export function CalendarDnd({
   )
 
   const announcements: Announcements = useMemo(() => {
+    // Which edge of a bounded series' move window (FR-17) blocked the drop, in words.
+    const limitMessage = (blocked: DropBlocked) =>
+      blocked.edge === 'until'
+        ? t('dnd.limit', { date: formatPickerDate(blocked.date, prefs, now) })
+        : t('dnd.limitFrom', { date: formatPickerDate(blocked.date, prefs, now) })
     // The target time for screen readers (NFR-27), like the preview shows it.
     const announceTarget: Announcements['onDragOver'] = ({ active: a, over }) => {
       const d = dragData(a.data.current)
@@ -189,7 +204,7 @@ export function CalendarDnd({
       const { target: next, moved, blocked } = latest.current
       if (next) return t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
       // A bounded series (FR-17) can't move here: say why instead of "unchanged".
-      if (blocked) return t('dnd.limit', { date: formatPickerDate(blocked, prefs, now) })
+      if (blocked) return limitMessage(blocked)
       if (!over && d.type !== 'resize') return t('dnd.notOver')
       // Right after the pick-up nothing has changed yet: keep "Picked up …" audible.
       return moved ? t('dnd.unchanged') : undefined
@@ -206,7 +221,7 @@ export function CalendarDnd({
         // A bounded series (FR-17) dropped past its next occurrence saves nothing: say why,
         // instead of falsely announcing a move (NFR-27).
         const { blocked } = latest.current
-        if (blocked) return t('dnd.limit', { date: formatPickerDate(blocked, prefs, now) })
+        if (blocked) return limitMessage(blocked)
         return dragData(a.data.current)?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
       },
       onDragCancel: () => t('dnd.cancelled'),

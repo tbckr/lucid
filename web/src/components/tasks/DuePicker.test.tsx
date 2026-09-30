@@ -151,4 +151,32 @@ describe('DuePicker', () => {
       expect(within(dialog).queryByText(/^Until /)).toBeNull()
     })
   })
+
+  describe('the last repeat of a fixed-day series', () => {
+    const lastTodo = todo({
+      due: '2026-10-05T00:00:00.000Z',
+      dueAllDay: true,
+      recurring: true,
+      fixedDays: true,
+      next: null,
+    })
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('disables only earlier days and shows no limit', async () => {
+      const { dialog } = await open(lastTodo)
+
+      expect(within(dialog).getByRole('button', { name: /^Next week / })).not.toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Sunday, October 4th, 2026' })).toHaveAttribute('aria-disabled', 'true')
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(dialog).queryByText(/^Until /)).toBeNull()
+    })
+  })
 })

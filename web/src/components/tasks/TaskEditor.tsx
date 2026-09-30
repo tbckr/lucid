@@ -137,7 +137,9 @@ export function TaskEditor({
   const bounded = w && !repeatChanged({ recurrence, customRule }, todo) ? w : null
   // The window binds the series' anchor, its start or else its due date; the other date moves freely.
   const anchor: Which = startDate ? 'start' : 'due'
-  const limit = w ? t('tasks.moveLimit', { date: formatPickerDate(lastAllowedDay(w), prefs, now) }) : ''
+  // The last repeat's window has no last day to name (FR-17): it only blocks earlier days, silently.
+  const last = w ? lastAllowedDay(w) : null
+  const limit = last ? t('tasks.moveLimit', { date: formatPickerDate(last, prefs, now) }) : ''
   // The presets repeat on the weekday or date of the start, else of the due date; say which.
   const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
   const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
@@ -174,7 +176,7 @@ export function TaskEditor({
   const onSubmit = handleSubmit((v) => {
     if (todo) {
       const input = formToTodoInput(v, tz, todo)
-      // The pickers block the days past the window, but a time can still take the task there (FR-17).
+      // The pickers block the days past the window, but an added start date can still take the task there (FR-17).
       // Only a moved date needs the check: a notes-only save of an occurrence another
       // app already moved past `next` must still go through.
       if (datesChanged(todo, input)) {
@@ -252,7 +254,7 @@ export function TaskEditor({
             invalid={!!error}
             describedBy={error ? `${id}-${which}-error` : undefined}
             isDisabled={bounded && which === anchor ? (d) => !dayAllowed(todo, getValues(), which, dayKey(d), tz) : undefined}
-            footer={bounded && which === anchor && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
+            footer={bounded && which === anchor && last && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
           />
           {date && (
             <TimeSelect
@@ -488,7 +490,7 @@ export function TaskEditor({
               )}
             />
           </EditorRow>
-  
+
           <EditorRow icon={<ListChecksIcon />}>
             <fieldset className="grid">
               <legend className="sr-only">{t('tasks.checklist')}</legend>
@@ -560,7 +562,7 @@ export function TaskEditor({
               {itemError && <p className="pt-1 text-sm text-destructive">{itemError}</p>}
             </fieldset>
           </EditorRow>
-  
+
           <EditorRow icon={<AlignLeftIcon />}>
             <Label htmlFor={`${id}-notes`} className="sr-only">
               {t('tasks.notes')}

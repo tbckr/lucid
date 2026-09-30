@@ -186,7 +186,8 @@
     "dropped": "Termin verschoben.",
     "taskDropped": "Aufgabe verschoben.",
     "cancelled": "Verschieben abgebrochen.",
-    "limit": "Nur bis {{date}} möglich."
+    "limit": "Nur bis {{date}} möglich.",
+    "limitFrom": "Erst ab {{date}} möglich."
   },
   "tasks": {
     "title": "Aufgaben",

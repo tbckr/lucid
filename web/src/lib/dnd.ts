@@ -1,7 +1,7 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import { lastAllowedDay, movedTodo, moveWindow, toCalTask, withinWindow, type CalTask } from './calendarTasks'
+import { anchorOf, lastAllowedDay, movedTodo, moveWindow, toCalTask, withinWindow, type CalTask } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 
@@ -95,19 +95,31 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
   return { kind: 'event', event: e, times: movedTimes(e, delta.days, delta.minutes) }
 }
 
+/** Which edge of a bounded series' move window (FR-17) a blocked drop hit, and the day it names. */
+export interface DropBlocked {
+  edge: 'from' | 'until'
+  date: Date
+}
+
 /**
- * The last allowed day when a drop of a bounded series (FR-17) would move it
- * onto or past its next occurrence, so the UI can explain why nothing was
- * saved. Null when the drag isn't a bounded task, or the drop is within reach.
+ * Which edge of the move window a drop of a bounded series (FR-17) would
+ * cross, so the UI can explain why nothing was saved: `from` when the drop
+ * lands before the series' own day, `until` when it reaches or passes the
+ * next occurrence. Null when the drag isn't a bounded task, or the drop is
+ * within reach.
  */
-export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: number): Date | null {
+export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: number): DropBlocked | null {
   if (drag.type === 'resize' || drag.event.kind !== 'task') return null
   const w = moveWindow(drag.event.todo)
   if (!w) return null
   const delta = movedDelta(drag, drop, deltaY)
   if (!delta) return null
   const input = movedTodo(drag.event.todo, delta.days, delta.minutes)
-  return withinWindow(drag.event.todo, input) ? null : lastAllowedDay(w)
+  if (withinWindow(drag.event.todo, input)) return null
+  const anchor = anchorOf(input)
+  if (anchor && anchor < w.from) return { edge: 'from', date: w.from }
+  const last = lastAllowedDay(w)
+  return last ? { edge: 'until', date: last } : null
 }
 
 /** `drag` with its item where `result` puts it, to preview a drop before it is saved. */

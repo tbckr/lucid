@@ -225,6 +225,29 @@ describe('TimeGridView', () => {
     expect(day).not.toHaveClass(tint)
   })
 
+  it('hatches only the days before the last repeat of a fixed-day series (FR-17)', () => {
+    const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
+    renderWithProviders(
+      <DndContext>
+        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow: w, activeId: null }}>
+          <TimeGridView
+            days={[new Date(2026, 8, 24), new Date(2026, 8, 25), new Date(2026, 8, 26)]}
+            now={new Date(2026, 8, 25, 12)}
+            events={[]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>,
+    )
+    const cellOf = (date: string) => screen.getByRole('button', { name: `New all-day event on ${date}` }).parentElement!
+    expect(cellOf('Thursday, September 24th, 2026')).toHaveClass('hatched')
+    expect(cellOf('Friday, September 25th, 2026')).not.toHaveClass('hatched')
+    expect(cellOf('Saturday, September 26th, 2026')).not.toHaveClass('hatched')
+  })
+
   it('opens the popover for an all-day event from the all-day row', () => {
     renderDay()
     const cell = screen.getByRole('button', { name: /New all-day event/ })

@@ -486,6 +486,18 @@ describe('TaskEditor', () => {
       expect(body).not.toHaveProperty('rrule')
     })
 
+    it('limits only earlier days for the last repeat, and shows no limit text', async () => {
+      const user = userEvent.setup()
+      const last = { ...series, next: null }
+      const { dialog } = await openTask(last)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      expect(within(month).getByRole('button', { name: 'Sunday, October 4th, 2026' })).toHaveAttribute('aria-disabled', 'true')
+      expect(within(month).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(month).queryByText(/^Until /)).toBeNull()
+    })
+
     it('saves a note on an occurrence already moved past the next repeat', async () => {
       const user = userEvent.setup()
       // Due Thu, Oct 9, but the series' own next repeat is already Wed, Oct 8: another

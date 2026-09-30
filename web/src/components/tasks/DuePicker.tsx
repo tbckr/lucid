@@ -50,9 +50,11 @@ export function DuePicker({
   const dayDisabled = (day: Date) => !withinWindow(todo, withDue(todo, { date: dayKey(day), time: dueTime }, tz))
   // The window bounds the anchor: the due date itself, or a start that moves along with it, so the
   // last due day lies as far past the window's last day as the due date lies past the start. A start
-  // that stays put, next to a due date still to be added, leaves every day open.
+  // that stays put, next to a due date still to be added, leaves every day open. The last repeat has
+  // no last day to show (FR-17): its window only blocks earlier days, silently.
+  const last = w ? lastAllowedDay(w) : null
   const shift = !startDate ? 0 : dueDate ? differenceInCalendarDays(parseDayKey(dueDate), parseDayKey(startDate)) : null
-  const lastDue = w && shift !== null ? addDays(lastAllowedDay(w), shift) : null
+  const lastDue = last && shift !== null ? addDays(last, shift) : null
 
   const pickDay = (day: Date) => {
     const input = withDue(todo, { date: dayKey(day), time: dueTime }, tz)

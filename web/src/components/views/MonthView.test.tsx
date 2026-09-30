@@ -231,6 +231,28 @@ describe('MonthView', () => {
     expect(friday).not.toHaveClass('bg-primary/8')
   })
 
+  it('hatches only the days before the last repeat of a fixed-day series (FR-17)', () => {
+    const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
+    renderWithProviders(
+      <DndContext>
+        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow: w, activeId: null }}>
+          <MonthView
+            date={new Date(2026, 8, 25)}
+            now={new Date(2026, 8, 25, 12)}
+            events={[]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>,
+    )
+    expect(screen.getByRole('gridcell', { name: /September 24th/ })).toHaveClass('hatched')
+    expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveClass('hatched')
+    expect(screen.getByRole('gridcell', { name: /September 26th/ })).not.toHaveClass('hatched')
+  })
+
   it('counts tasks apart from events in the cell label', () => {
     const rent = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
     renderMonth([toCalEvent(apiEvent()), rent])

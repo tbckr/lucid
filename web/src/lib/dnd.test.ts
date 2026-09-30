@@ -110,11 +110,12 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
 
   it('blocks a move that reaches the next occurrence, naming the last allowed day', () => {
     expect(dropResult(drag, drop(8), 0)).toBeNull()
-    expect(dropBlocked(drag, drop(8), 0)).toEqual(new Date(2026, 9, 7))
+    expect(dropBlocked(drag, drop(8), 0)).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
   })
 
-  it('blocks a move before the window', () => {
+  it('blocks a move before the window, naming the first allowed day', () => {
     expect(dropResult(drag, drop(4), 0)).toBeNull()
+    expect(dropBlocked(drag, drop(4), 0)).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
   })
 
   // The same shape with a time: Mon 09:00 local, next Thu 09:00 local.
@@ -132,7 +133,7 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
 
   it('blocks a week-view drop at an earlier time on the day the next occurrence is due', () => {
     expect(dropResult(timedDrag, column(8), -60 * PX_PER_MINUTE)).toBeNull()
-    expect(dropBlocked(timedDrag, column(8), -60 * PX_PER_MINUTE)).toEqual(new Date(2026, 9, 7))
+    expect(dropBlocked(timedDrag, column(8), -60 * PX_PER_MINUTE)).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
   })
 
   it('allows a week-view drop at any time on the last allowed day', () => {
@@ -155,6 +156,23 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
     )!
     const free = { type: 'event' as const, event: intervalTask, originDay: new Date(2026, 9, 5) }
     expect(dropResult(free, drop(15), 0)).not.toBeNull()
+  })
+
+  describe('the last repeat of a fixed-day series', () => {
+    const lastTask = toCalTask(
+      todo({ id: 't5', due: '2026-10-05T00:00:00Z', dueAllDay: true, recurring: true, fixedDays: true, next: null }),
+    )!
+    const lastDrag = { type: 'event' as const, event: lastTask, originDay: new Date(2026, 9, 5) }
+
+    it('blocks a move to an earlier day, naming the first allowed day', () => {
+      expect(dropResult(lastDrag, drop(4), 0)).toBeNull()
+      expect(dropBlocked(lastDrag, drop(4), 0)).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
+    })
+
+    it('allows a move to a later day, with nothing blocked', () => {
+      expect(dropResult(lastDrag, drop(25), 0)).not.toBeNull()
+      expect(dropBlocked(lastDrag, drop(25), 0)).toBeNull()
+    })
   })
 })
 
