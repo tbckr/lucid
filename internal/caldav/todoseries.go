@@ -364,6 +364,10 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		}
 		shift = s.refShift(rid, *start, allDay)
 		p.Value = movedRule(strings.TrimSpace(p.Value), before, rid, shift)
+		if hasRulePart(p.Value, "UNTIL") && !s.hasLater(rid) {
+			// The last occurrence keeps being one, wherever it goes.
+			p.Value = untilAt(p.Value, *start, s.anchor.loc())
+		}
 	}
 	writeSeriesDates(cal, c, in, true)
 	dropOverrides(cal, c, rid.Equal)
@@ -488,6 +492,32 @@ func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) ti
 	return mapRulePart(rrule, "UNTIL", func(v string) string {
 		p := ical.Prop{Value: v}
 		shiftDatePropBy(&p, after(rid, shift))
+		return p.Value
+	})
+}
+
+// hasLater reports whether s has an occurrence after rid, done or not; a rule
+// that cannot be walked that far counts as having one (FR-17).
+func (s *todoSeries) hasLater(rid time.Time) bool {
+	later := false
+	err := s.walk(rid, func(o todoOcc) bool {
+		later = o.rid.After(rid)
+		return !later
+	})
+	return later || err != nil
+}
+
+// untilAt returns rrule with its UNTIL at to, written in the UNTIL's own
+// form: a DATE (to's date in loc), floating or UTC (FR-17).
+func untilAt(rrule string, to time.Time, loc *time.Location) string {
+	return mapRulePart(rrule, "UNTIL", func(v string) string {
+		p := ical.Prop{Value: v}
+		shiftDatePropBy(&p, func(d dateValue) time.Time {
+			if d.allDay {
+				return civilDate(to.In(loc))
+			}
+			return to
+		})
 		return p.Value
 	})
 }

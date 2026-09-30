@@ -1470,6 +1470,59 @@ func TestUpdateTodoSeries(t *testing.T) {
 			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
 	})
 
+	// The last occurrence takes UNTIL along wherever it moves, or clients
+	// that end the series at UNTIL would drop it (FR-17).
+	t.Run("move of the last occurrence extends until", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=3"})
+		completeListed(t, e, id)
+		completeListed(t, e, id)
+		got := moveListed(t, e, id, time.Hour)
+		if got.Next != nil {
+			t.Errorf("next = %+v; want none", got.Next)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250312T100000Z", "RRULE:FREQ=DAILY;UNTIL=20250312T100000Z\r\n"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs, []time.Time{date(2025, 3, 12, 10, 0)}, []string{domain.OccurrenceCurrent})
+	})
+
+	for _, tc := range []struct {
+		name     string
+		master   []string
+		override []string
+		want     string
+		anchor   time.Time
+	}{
+		{
+			name:     "utc",
+			master:   []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			override: []string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			want:     "RRULE:FREQ=WEEKLY;UNTIL=20250324T090000Z\r\n",
+			anchor:   date(2025, 3, 24, 9, 0),
+		},
+		{
+			name:     "date",
+			master:   []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;UNTIL=20250317"},
+			override: []string{"RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED"},
+			want:     "RRULE:FREQ=WEEKLY;UNTIL=20250324\r\n",
+			anchor:   date(2025, 3, 24, 0, 0),
+		},
+	} {
+		t.Run("on-grid move of the last occurrence extends until, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.override)
+			moveListed(t, e, id, 7*24*time.Hour)
+			checkStored(t, "master", storedObject(t, e, id), []string{tc.want}, nil)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 20, 0, 0), date(2025, 4, 20, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, []time.Time{tc.anchor}, []string{domain.OccurrenceCurrent})
+		})
+	}
+
 	// Overrides and EXDATEs of later occurrences move with an interval
 	// series, or they would match no occurrence any more (FR-17).
 	t.Run("move shifts later exceptions", func(t *testing.T) {
