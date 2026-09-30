@@ -13,6 +13,7 @@ import {
   outsideWindow,
   recurringLabel,
   toCalTask,
+  windowEdge,
   withinWindow,
 } from './calendarTasks'
 import { isSpanning } from './events'
@@ -505,5 +506,35 @@ describe('outsideWindow', () => {
     expect(outsideWindow(w, new Date(2026, 9, 5))).toBe(false)
     expect(outsideWindow(w, new Date(2026, 9, 7))).toBe(false)
     expect(outsideWindow(w, new Date(2026, 9, 8))).toBe(true)
+  })
+})
+
+describe('windowEdge', () => {
+  it('names from for an anchor before the window, for a bounded window', () => {
+    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
+    expect(windowEdge(w, new Date(2026, 9, 4))).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
+  })
+
+  it('names until for an anchor at or past the end, for a bounded window', () => {
+    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
+    expect(windowEdge(w, new Date(2026, 9, 8))).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
+    expect(windowEdge(w, new Date(2026, 9, 7, 23, 59))).toBeNull()
+  })
+
+  it('is null for an anchor inside a bounded window', () => {
+    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
+    expect(windowEdge(w, new Date(2026, 9, 5))).toBeNull()
+    expect(windowEdge(w, new Date(2026, 9, 6))).toBeNull()
+  })
+
+  it('names from for an anchor before the window, without an upper bound', () => {
+    const w = { from: new Date(2026, 9, 5), until: null }
+    expect(windowEdge(w, new Date(2026, 9, 4))).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
+  })
+
+  it('is null for any anchor on or after from, without an upper bound', () => {
+    const w = { from: new Date(2026, 9, 5), until: null }
+    expect(windowEdge(w, new Date(2026, 9, 5))).toBeNull()
+    expect(windowEdge(w, new Date(2026, 11, 25))).toBeNull()
   })
 })

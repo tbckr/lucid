@@ -188,6 +188,18 @@ export function withinWindow(todo: Todo, input: TaskDates): boolean {
   return anchor >= w.from && (w.until === null || anchor < w.until)
 }
 
+/**
+ * Which edge of `w` an anchor lies outside of, or null when it's within
+ * (FR-17): shared by a blocked drag (`dropBlocked`) and the task editor's
+ * submit guard, so a move and a typed date name the same edge the same way.
+ */
+export function windowEdge(w: MoveWindow, anchor: Date): { edge: 'from' | 'until'; date: Date } | null {
+  if (anchor < w.from) return { edge: 'from', date: w.from }
+  const { until } = w
+  if (until !== null && anchor >= until) return { edge: 'until', date: startOfDay(new Date(until.getTime() - 1)) }
+  return null
+}
+
 /** The last day a move within `w` may land on (inclusive), or null without an upper bound. */
 export function lastAllowedDay(w: MoveWindow): Date | null {
   return w.until === null ? null : startOfDay(new Date(w.until.getTime() - 1))

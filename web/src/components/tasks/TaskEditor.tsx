@@ -33,7 +33,7 @@ import { useCreateTodo, useDeleteTodo, useUpdateTodo, useVisibleCalendars } from
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
-import { lastAllowedDay, moveWindow } from '@/lib/calendarTasks'
+import { anchorOf, lastAllowedDay, moveWindow, windowEdge } from '@/lib/calendarTasks'
 import { dayKey, parseDayKey } from '@/lib/dates'
 import { formatPickerDate } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
@@ -140,6 +140,9 @@ export function TaskEditor({
   // The last repeat's window has no last day to name (FR-17): it only blocks earlier days, silently.
   const last = w ? lastAllowedDay(w) : null
   const limit = last ? t('tasks.moveLimit', { date: formatPickerDate(last, prefs, now) }) : ''
+  // Named for the submit guard below, which can hit either edge (FR-17): an added start date, for
+  // instance, isn't blocked by the picker while the due date is still the window's anchor.
+  const fromLimit = w ? t('tasks.moveFrom', { date: formatPickerDate(w.from, prefs, now) }) : ''
   // The presets repeat on the weekday or date of the start, else of the due date; say which.
   const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
   const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
@@ -183,7 +186,10 @@ export function TaskEditor({
         const which: Which = v.startDate ? 'start' : 'due'
         const field = DATES[which].date
         if (!dayAllowed(todo, v, which, v[field], tz)) {
-          setError(field, { message: 'tasks.moveLimit' })
+          // Names the edge the save would cross (FR-17), the way a blocked drag does.
+          const anchor = anchorOf(input)
+          const edge = w && anchor ? windowEdge(w, anchor) : null
+          setError(field, { message: edge?.edge === 'from' ? 'tasks.moveFrom' : 'tasks.moveLimit' })
           return
         }
       }
@@ -216,6 +222,7 @@ export function TaskEditor({
 
   const msg = (m: string | undefined) => {
     if (m === 'tasks.moveLimit') return limit
+    if (m === 'tasks.moveFrom') return fromLimit
     return m ? t(m as 'validation.date') : undefined
   }
   const titleError = msg(formState.errors.title?.message)

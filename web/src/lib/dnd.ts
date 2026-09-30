@@ -1,7 +1,7 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import { anchorOf, lastAllowedDay, movedTodo, moveWindow, toCalTask, withinWindow, type CalTask } from './calendarTasks'
+import { anchorOf, movedTodo, moveWindow, toCalTask, windowEdge, withinWindow, type CalTask } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 
@@ -115,11 +115,8 @@ export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: numbe
   const delta = movedDelta(drag, drop, deltaY)
   if (!delta) return null
   const input = movedTodo(drag.event.todo, delta.days, delta.minutes)
-  if (withinWindow(drag.event.todo, input)) return null
   const anchor = anchorOf(input)
-  if (anchor && anchor < w.from) return { edge: 'from', date: w.from }
-  const last = lastAllowedDay(w)
-  return last ? { edge: 'until', date: last } : null
+  return anchor ? windowEdge(w, anchor) : null
 }
 
 /** `drag` with its item where `result` puts it, to preview a drop before it is saved. */

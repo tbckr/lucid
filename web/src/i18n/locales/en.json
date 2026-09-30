@@ -274,6 +274,7 @@
     "movedToLast": "Moved to {{date}}.",
     "undone": "Undone.",
     "moveLimit": "Until {{date}}, then the next repeat is due.",
+    "moveFrom": "Only possible from {{date}} on.",
     "plannedRepeat": "{{title}}, planned repeat on {{date}}",
     "repeat": "Repeat",
     "repeatInfo": "How repeating tasks work",

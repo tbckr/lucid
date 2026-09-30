@@ -274,6 +274,7 @@
     "movedToLast": "Auf {{date}} verschoben.",
     "undone": "Rückgängig gemacht.",
     "moveLimit": "Bis {{date}}, danach kommt die nächste Wiederholung.",
+    "moveFrom": "Erst ab {{date}} möglich.",
     "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}",
     "repeat": "Wiederholung",
     "repeatInfo": "So funktionieren wiederkehrende Aufgaben",

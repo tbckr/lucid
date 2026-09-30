@@ -498,6 +498,32 @@ describe('TaskEditor', () => {
       expect(within(month).queryByText(/^Until /)).toBeNull()
     })
 
+    it('does not save a start date before the window of the last repeat, and names from', async () => {
+      const user = userEvent.setup()
+      // Its picker isn't gated while due is still the anchor (FR-17); the submit guard is the backstop.
+      const last = { ...series, next: null }
+      const { fetch, dialog } = await openTask(last)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
+      await user.click(screen.getByRole('button', { name: 'Thursday, October 1st, 2026' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('Only possible from Mon, Oct 5 on.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
+    it('does not save a start date before the window of an ordinary series, and names from', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(series)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
+      await user.click(screen.getByRole('button', { name: 'Thursday, October 1st, 2026' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('Only possible from Mon, Oct 5 on.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
     it('saves a note on an occurrence already moved past the next repeat', async () => {
       const user = userEvent.setup()
       // Due Thu, Oct 9, but the series' own next repeat is already Wed, Oct 8: another
