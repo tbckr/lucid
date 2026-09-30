@@ -315,12 +315,12 @@ func utcPtr(t *time.Time) *time.Time {
 // series would shift with it.
 func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	c := s.master
-	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(p.Value, "COUNT") {
+	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(s.rrule, "COUNT") {
 		last, err := s.ruleEnd()
 		if err != nil {
 			return err
 		}
-		p.Value = countToUntil(strings.TrimSpace(p.Value), last, s.startForm)
+		p.Value = countToUntil(s.rrule, last, s.startForm)
 	}
 
 	setSeriesDate(cal, c, ical.PropDateTimeStart, &next.rid, s.startForm)
