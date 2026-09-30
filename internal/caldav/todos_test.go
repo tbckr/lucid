@@ -1950,39 +1950,83 @@ func TestUpdateTodoSeries(t *testing.T) {
 	})
 
 	// The task editor can complete the last occurrence and move it in one
-	// request, which moves the master before completing it; its undo moves
-	// the series back to the dates it had, without shifting anything
-	// (FR-17).
-	t.Run("undo after completing and moving the last occurrence moves it back", func(t *testing.T) {
-		t.Parallel()
-		e := newEnv(t, caldavtest.Options{})
-		ctx := t.Context()
-		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
-		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
-			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
-		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
-		mustNoErr(t, err)
-		f := listedTodo(t, e, id)
-		in := completeInput(&f)
-		in.Start = ptr(date(2025, 3, 19, 9, 0))
-		done, err := e.svc.UpdateTodo(ctx, id, f.ETag, in)
-		mustNoErr(t, err)
-		if done.CompletedCopy != nil || done.Status != domain.TodoCompleted {
-			t.Fatalf("completed series = %+v; want the master completed, without a copy", done)
-		}
-		checkStored(t, "completed master", storedObject(t, e, id), []string{"DTSTART:20250319T090000Z"}, nil)
-		got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
-		mustNoErr(t, err)
-		if !sameTime(got.Start, f.Start) || got.Status != domain.TodoNeedsAction {
-			t.Errorf("undone series = %+v; want it open at %v", got, f.Start)
-		}
-		checkStored(t, "master", storedObject(t, e, id),
-			[]string{"DTSTART:20250317T090000Z", "RECURRENCE-ID:20250310T090000Z", "STATUS:NEEDS-ACTION"}, nil)
-		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
-		mustNoErr(t, err)
-		dates, states := occurrenceDates(occs)
-		checkTodoOccurrences(t, after, dates, states)
-	})
+	// request, which moves the master, and its UNTIL, before completing it.
+	// Its undo is the inverse move: the series gets back its dates and its
+	// end, with no repeat left over (FR-17).
+	for _, tc := range []struct {
+		name     string
+		master   []string
+		done     string // RECURRENCE-ID of another client's completion
+		moveTo   time.Time
+		want     []string
+		ruleWant string
+	}{
+		{
+			name:     "two days later",
+			master:   []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			done:     "RECURRENCE-ID:20250310T090000Z",
+			moveTo:   date(2025, 3, 19, 9, 0),
+			want:     []string{"DTSTART:20250317T090000Z"},
+			ruleWant: "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n",
+		},
+		{
+			name:     "a week later",
+			master:   []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			done:     "RECURRENCE-ID:20250310T090000Z",
+			moveTo:   date(2025, 3, 24, 9, 0),
+			want:     []string{"DTSTART:20250317T090000Z"},
+			ruleWant: "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n",
+		},
+		{
+			// Thursday to the next Tuesday: the move pulled UNTIL onto Tuesday, past Monday.
+			name:     "fixed days, to another day",
+			master:   []string{"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250320T090000Z"},
+			done:     "RECURRENCE-ID:20250317T090000Z",
+			moveTo:   date(2025, 3, 25, 9, 0),
+			want:     []string{"DTSTART:20250320T090000Z"},
+			ruleWant: "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250320T090000Z\r\n",
+		},
+		{
+			name:     "fixed days, all-day",
+			master:   []string{"DTSTART;VALUE=DATE:20250317", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250320"},
+			done:     "RECURRENCE-ID;VALUE=DATE:20250317",
+			moveTo:   date(2025, 3, 25, 0, 0),
+			want:     []string{"DTSTART;VALUE=DATE:20250320"},
+			ruleWant: "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250320\r\n",
+		},
+	} {
+		t.Run("undo after completing and moving the last occurrence moves it back, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			ctx := t.Context()
+			from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 15, 0, 0)
+			id := seedSeries(t, e, tc.master, []string{tc.done, "STATUS:COMPLETED"})
+			occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+			mustNoErr(t, err)
+			f := listedTodo(t, e, id)
+			if f.Next != nil {
+				t.Fatalf("listed series = %+v; want its last occurrence", f)
+			}
+			in := completeInput(&f)
+			in.Start = ptr(tc.moveTo)
+			done, err := e.svc.UpdateTodo(ctx, id, f.ETag, in)
+			mustNoErr(t, err)
+			if done.CompletedCopy != nil || done.Status != domain.TodoCompleted || !sameTime(done.Start, in.Start) {
+				t.Fatalf("completed series = %+v; want the master moved and completed, without a copy", done)
+			}
+			got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+			mustNoErr(t, err)
+			if !sameTime(got.Start, f.Start) || got.Next != nil || got.Status != domain.TodoNeedsAction {
+				t.Errorf("undone series = %+v; want it open at %v, its last occurrence", got, f.Start)
+			}
+			checkStored(t, "master", storedObject(t, e, id),
+				slices.Concat(tc.want, []string{tc.ruleWant, tc.done, "STATUS:NEEDS-ACTION"}), nil)
+			after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+			mustNoErr(t, err)
+			dates, states := occurrenceDates(occs)
+			checkTodoOccurrences(t, after, dates, states)
+		})
+	}
 
 	// Lucid moves the current occurrence of a fixed-day series within its
 	// window by moving DTSTART off the rule's days; the undo of its

@@ -369,20 +369,22 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //     see refShift and movedRule.
 //
 // The undo of a completion (in.UndoCompletion) takes back a roll, or the
-// completion of the last occurrence, neither of which moved the rule's
-// instances: nothing shifts, and the override of the moved occurrence
-// stays, the one the completion rolled to, which another client may have
-// moved.
-//   - An open series goes back onto the rule date of the occurrence it
-//     rolled from (see rolledFrom), and when in has other dates than the
-//     rule gives that occurrence, another client had moved it: an override
-//     moves it there again, since the roll dropped the one it had. On fixed
-//     days, a start Lucid's own move within the window left off the rule
-//     becomes DTSTART again instead (see leftInWindow). Without such a
-//     rule date the dates of in become DTSTART and DUE.
+// completion of the last occurrence.
+//   - A roll moved none of the rule's instances: nothing shifts, and the
+//     override of the moved occurrence stays, the one the completion
+//     rolled to, which another client may have moved. The series goes back
+//     onto the rule date of the occurrence it rolled from (see rolledFrom),
+//     and when in has other dates than the rule gives that occurrence,
+//     another client had moved it: an override moves it there again, since
+//     the roll dropped the one it had. On fixed days, a start off the rule
+//     that a move within the window left becomes DTSTART again instead (see
+//     leftInWindow). Without such a rule date the dates of in become
+//     DTSTART and DUE.
 //   - A completed master, reopened, keeps its dates when in has those of
-//     the occurrence it then reports; else, when the completion moved it
-//     too, the dates of in become DTSTART and DUE.
+//     the occurrence it then reports. Else the completing request moved it
+//     too, and the undo is the inverse move, a move like any other; moved
+//     back, an UNTIL on the moved occurrence, which fixed days had pulled
+//     onto it, goes back onto the dates of in.
 //
 // KDE's pending occurrence still goes, a COUNT is counted as for any move
 // (the moved occurrence is the anchor after a roll, so it stays), and an
@@ -403,12 +405,12 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	if start == nil {
 		return errRuleNeedsDate
 	}
-	undo := in.UndoCompletion
-	reopen := undo && status == domain.TodoCompleted
-	if reopen {
+	undo, inverse := in.UndoCompletion, false
+	if undo && status == domain.TodoCompleted {
 		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() && hasDates(cur, in) {
 			return nil
 		}
+		undo, inverse = false, true
 	}
 	c := s.master
 	rid := s.reportedRid(status)
@@ -419,18 +421,20 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		if err != nil {
 			return errRuleUnsupported
 		}
-		switch {
-		case reopen:
-		case undo:
+		if undo {
 			if from, ok := s.rolledFrom(rid); ok && !s.leftInWindow(from, rid, *start, allDay) {
 				anchor, unroll = from, true
 			}
-		default:
+		} else {
 			shift = s.refShift(rid, *start, allDay)
 		}
 		rule := movedRule(s.rrule, before, rid, shift)
+		loc := s.anchor.loc()
+		if inverse && start.Before(rid) && untilOn(s.rrule, rid, loc) {
+			rule = untilAt(rule, *start, loc)
+		}
 		// UNTIL never ends before the moved series starts.
-		if loc := s.anchor.loc(); untilBefore(rule, anchor, loc) {
+		if untilBefore(rule, anchor, loc) {
 			rule = untilAt(rule, anchor, loc)
 		}
 		p.Value = rule
@@ -722,6 +726,24 @@ func untilBefore(rrule string, to time.Time, loc *time.Location) bool {
 		}
 	}
 	return false
+}
+
+// untilOn reports whether rrule has an UNTIL on t; a DATE compares with
+// t's date in loc (FR-17).
+func untilOn(rrule string, t time.Time, loc *time.Location) bool {
+	v := rulePart(rrule, "UNTIL")
+	if v == "" {
+		return false
+	}
+	d, err := parseDateValue(v, nil)
+	switch {
+	case err != nil:
+		return false
+	case d.allDay:
+		return d.t.Equal(civilDate(t.In(loc)))
+	default:
+		return d.t.Equal(t)
+	}
 }
 
 // untilAt returns rrule with its UNTIL at to, written in the UNTIL's own

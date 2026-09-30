@@ -893,22 +893,28 @@ on ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
 any date, and undo has to move a series back.
 
 **Undoing a completion** says so (`undoCompletion` in the API) and puts the
-series back as it was before the completion. The completion moved none of
-the rule's instances, so nothing that refers to them moves back either:
-later overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where
-it did. The master goes back onto the rule date of the completed
-occurrence, the latest one before its current occurrence without an
-override or `EXDATE`, since the roll dropped exactly that override. If
-another client had moved the completed occurrence, the undo writes an
-override that moves it there again. With fixed days, a start that Lucid's
-own move within the window had left off the rule's days, at the rule's
-time of day, becomes `DTSTART` again instead, as clients that read only the
-master show it. The override of the occurrence the series had rolled onto
-stays too, so an occurrence another client had moved stays moved. The undo
-of the last repeat's completion reopens the master where it is, unless the
-same save also moved it; then its previous dates come back, without
-shifting anything else. Undoing a move is a plain move back by the same
-amount, which moves all of them back.
+series back as it was before the completion. The roll moved none of the
+rule's instances, so nothing that refers to them moves back either: later
+overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where it
+did. The master goes back onto the rule date of the completed occurrence,
+the latest one before its current occurrence without an override or
+`EXDATE`, since the roll dropped exactly that override. If another client
+had moved the completed occurrence, the undo writes an override that moves
+it there again. With fixed days, a start off the rule's days at the rule's
+time of day, between that rule date and the current occurrence, becomes
+`DTSTART` again instead: that is what Lucid's own move within the window
+leaves, as clients that read only the master show it. Another client's
+move to another day at the same time is written the same way, as
+`DTSTART` rather than an override; the occurrences are the same, only the
+stored form differs. The override of the occurrence the series had rolled
+onto stays too, so an occurrence another client had moved stays moved.
+
+The undo of the last repeat's completion reopens the master where it is,
+unless the same save also moved it. Then the undo is that move's inverse,
+a move like any other: the later references and an interval rule's `UNTIL`
+move back, and an `UNTIL` that a fixed-day move had pulled onto the new
+date goes back with it, so no repeat is left over. Undoing a move is a
+plain move back by the same amount, which moves all of them back.
 
 **Setting or changing a rule** applies it from the current occurrence on: its
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
@@ -938,7 +944,9 @@ properties and components Lucid does not know.
   don't change it, and deleting the series keeps it.
 - Undoing the completion of an occurrence another client had moved restores
   its dates, but not the rest of that client's override: the override Lucid
-  writes has the series' summary and is open.
+  writes has the series' summary and is open. On fixed days, a move to
+  another day at the rule's time of day comes back as `DTSTART` instead of
+  an override, with the same occurrences.
 - A `COUNT` counts from `DTSTART` (RFC 5545), so a series whose `DTSTART`
   another client left off its rule has one occurrence more than its `COUNT`
   says, the anchor itself; the `UNTIL` a completion writes keeps that extra
