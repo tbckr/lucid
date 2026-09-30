@@ -6,11 +6,10 @@ import { useDndState } from '@/components/dnd/dndState'
 import { RecurringMark } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { anchorOf, canComplete, type CalTask } from '@/lib/calendarTasks'
+import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
 import { type DragBinding } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
-import { describeRRule } from '@/lib/rrule'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
@@ -45,12 +44,6 @@ export function PencilMark({ color, className }: { color: string; className?: st
       style={{ borderColor: color }}
     />
   )
-}
-
-/** The rule an occurrence's `RecurringMark` names, in words (FR-17). */
-function recurringLabel(t: ReturnType<typeof useTranslation>['t'], task: CalTask, prefs: FormatPrefs, now: Date): string {
-  const anchor = anchorOf(task.todo) ?? task.startsAt
-  return describeRRule(task.todo.rrule, anchor, prefs, now, t) ?? t('recurrence.customRule', { rule: task.todo.rrule })
 }
 
 function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
@@ -219,7 +212,7 @@ export function TaskChip({
           <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(task.startsAt, prefs)}</span>
         )}
         <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
-        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task, prefs, now)} />
+        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
       </button>
     </div>
   )
@@ -290,7 +283,7 @@ export function TaskBar({
           <span className="tabular shrink-0 opacity-85">{formatShortTime(task.startsAt, prefs)}</span>
         )}
         <span className={cn('truncate', done && 'line-through')}>{title}</span>
-        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task, prefs, now)} />
+        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
       </button>
     </div>
   )
@@ -354,7 +347,7 @@ export function TaskBlock({
       >
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
-          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task, prefs, now)} />
+          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
       </button>
@@ -397,7 +390,7 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
         <span />
         <span className="flex min-w-0 items-center gap-1.5">
           <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
-          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task, prefs, now)} />
+          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
         </span>
       </button>
     </div>

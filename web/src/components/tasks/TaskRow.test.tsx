@@ -260,4 +260,26 @@ describe('TaskRow', () => {
     const { container } = renderWithProviders(<PriorityChip priority={0} />)
     expect(container).toBeEmptyDOMElement()
   })
+
+  describe('recurring series (FR-17)', () => {
+    it('names its rule in the meta line', () => {
+      renderWithProviders(
+        <TaskRow
+          todo={todo({ title: 'Water the flowers', rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })}
+          calendar={calendar()}
+        />,
+      )
+      expect(screen.getByRole('img', { name: 'Every week on Monday and Thursday' })).toBeInTheDocument()
+    })
+
+    it('disables the checkbox for a rule Lucid cannot read', () => {
+      renderWithProviders(
+        <TaskRow
+          todo={todo({ title: 'Water the flowers', rrule: 'FREQ=SOMETIMES', recurring: true, ruleUnsupported: true })}
+          calendar={calendar()}
+        />,
+      )
+      expect(screen.getByRole('checkbox', { name: /Water the flowers/ })).toBeDisabled()
+    })
+  })
 })

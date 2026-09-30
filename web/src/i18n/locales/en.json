@@ -265,6 +265,8 @@
     "readOnlyNotice": "This list is read-only.",
     "seriesNotice": "This task repeats. Changes apply to all upcoming repeats.",
     "ruleUnsupported": "Lucid can't read this repeat. Complete and move it in the app that created it.",
+    "upcomingHint": "Can be completed once {{date}} is done.",
+    "doneElsewhere": "Completed in another app.",
     "nextUp": "Done. Next up: {{date}}",
     "lastRepeat": "Done. That was the last repeat.",
     "movedTo": "Moved to {{date}}. Then: {{next}}",

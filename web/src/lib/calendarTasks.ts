@@ -1,6 +1,9 @@
 import { addDays, addMinutes, startOfDay } from 'date-fns'
+import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
 import { localDateToUtc, utcDateToLocal } from './dates'
+import { type FormatPrefs } from './format'
+import { describeRRule } from './rrule'
 import { todoToInput } from './tasks'
 
 /** Height of a task that has a single point in time (FR-16). */
@@ -46,6 +49,18 @@ function taskDate(iso: string | null | undefined, allDay: boolean): TaskDate | n
 /** The instant that places a task, occurrence, or planned move (FR-16, FR-17): start, else due. */
 export function anchorOf(d: TaskDates): Date | null {
   return taskDate(d.start, d.startAllDay)?.at ?? taskDate(d.due, d.dueAllDay)?.at ?? null
+}
+
+/**
+ * The rule a `RecurringMark` names, in words (FR-17): anchored on the series'
+ * own dates, else `fallback` (a placed occurrence's, when the series itself
+ * has none). A rule `describeRRule` cannot put into words, or no anchor at
+ * all, falls back to naming it verbatim.
+ */
+export function recurringLabel(t: TFunction, todo: Todo, fallback: Date | null, prefs: FormatPrefs, now: Date): string {
+  const anchor = anchorOf(todo) ?? fallback
+  if (!anchor) return t('recurrence.customRule', { rule: todo.rrule })
+  return describeRRule(todo.rrule, anchor, prefs, now, t) ?? t('recurrence.customRule', { rule: todo.rrule })
 }
 
 type Placement = Pick<CalTask, 'allDay' | 'point' | 'dates' | 'startsAt' | 'endsAt'>

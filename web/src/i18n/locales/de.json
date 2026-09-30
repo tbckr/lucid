@@ -265,6 +265,8 @@
     "readOnlyNotice": "Diese Liste ist schreibgeschützt.",
     "seriesNotice": "Diese Aufgabe wiederholt sich. Änderungen gelten für alle kommenden Wiederholungen.",
     "ruleUnsupported": "Lucid kann diese Wiederholung nicht auswerten. Abhaken und Verschieben gehen in der App, in der sie angelegt wurde.",
+    "upcomingHint": "Erst abhakbar, wenn {{date}} erledigt ist.",
+    "doneElsewhere": "In einer anderen App erledigt.",
     "nextUp": "Erledigt. Als Nächstes: {{date}}",
     "lastRepeat": "Erledigt. Das war die letzte Wiederholung.",
     "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",

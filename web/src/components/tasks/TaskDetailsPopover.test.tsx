@@ -3,10 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
-import { type Todo } from '@/lib/api/schemas'
-import { toCalTask } from '@/lib/calendarTasks'
+import { type Todo, type TodoOccurrence } from '@/lib/api/schemas'
+import { occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { useUi } from '@/stores/ui'
-import { bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
+import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TaskDetailsPopover } from './TaskDetailsPopover'
 
@@ -15,8 +15,8 @@ const calendars = [calendar(), calendar({ id: 'c2', name: 'Shared', color: '#22c
 // Vitest runs in Europe/Berlin (CEST until 25 Oct 2026, UTC+2).
 const allDay = (iso: string) => `${iso}T00:00:00Z`
 
-/** Open the details of a task as a click on it in the calendar does: the calendars are loaded by then. */
-async function openDetails(p: Partial<Todo>) {
+/** Open the details of `task` as a click on it in the calendar does: the calendars are loaded by then. */
+async function open(task: CalTask, name: string) {
   api.setCsrfToken('tok')
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(jsonResponse(204)))
   const { queryClient } = renderWithProviders(
@@ -27,11 +27,16 @@ async function openDetails(p: Partial<Todo>) {
   )
   queryClient.setQueryData(queryKeys.calendars, calendars)
   const anchor = screen.getByRole('button', { name: 'Chip' })
-  const task = toCalTask(todo({ title: 'Pay rent', due: '2026-09-25T08:00:00Z', ...p }))!
   act(() => {
     useUi.getState().openDetail({ item: task, anchor })
   })
-  return { fetch, queryClient, task, dialog: await screen.findByRole('dialog', { name: p.title ?? 'Pay rent' }) }
+  return { fetch, queryClient, task, dialog: await screen.findByRole('dialog', { name }) }
+}
+
+/** Open the details of a plain (non-recurring) task, as `open` for a `Todo` built from `p`. */
+async function openDetails(p: Partial<Todo>) {
+  const t = todo({ title: 'Pay rent', due: '2026-09-25T08:00:00Z', ...p })
+  return open(toCalTask(t)!, p.title ?? 'Pay rent')
 }
 
 describe('TaskDetailsPopover', () => {
@@ -151,5 +156,85 @@ describe('TaskDetailsPopover', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Edit task' }))
     expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: now })
     expect(useUi.getState().detail).toBeNull()
+  })
+
+  describe('recurring series (FR-17)', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // A recurring series and one of its occurrences (FR-17), joined as `useCalendarTasks` would.
+    const series = (p: Partial<Todo> = {}) =>
+      todo({
+        id: 't1',
+        calendarId: 'c1',
+        title: 'Water the flowers',
+        rrule: 'FREQ=DAILY',
+        recurring: true,
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        ...p,
+      })
+    const occurrenceOf = (p: Partial<TodoOccurrence>) =>
+      occurrenceTask(occurrence({ todoId: 't1', calendarId: 'c1', title: 'Water the flowers', ...p }), series())!
+
+    it('shows an upcoming occurrence with its own date, no checkbox, and when it can be completed', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+      const t = occurrenceOf({
+        due: '2026-10-08T00:00:00Z',
+        dueAllDay: true,
+        state: 'upcoming',
+        recurrenceId: '2026-10-08T00:00:00Z',
+        key: 't1@2026-10-08T00:00:00Z',
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).queryByRole('checkbox')).toBeNull()
+      expect(within(dialog).getByText('Due Thu, Oct 8')).toBeInTheDocument()
+      expect(within(dialog).getByText('Can be completed once Mon, Oct 5 is done.')).toBeInTheDocument()
+    })
+
+    it('shows a done occurrence as completed elsewhere', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+      const t = occurrenceOf({
+        due: '2026-10-01T00:00:00Z',
+        dueAllDay: true,
+        state: 'done',
+        recurrenceId: '2026-10-01T00:00:00Z',
+        key: 't1@2026-10-01T00:00:00Z',
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).getByText('Completed in another app.')).toBeInTheDocument()
+    })
+
+    it('keeps the current occurrence completable and names the rule', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+      const t = occurrenceOf({
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        state: 'current',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        key: 't1@2026-10-05T00:00:00Z',
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).getByRole('checkbox', { name: 'Completed: Water the flowers' })).toBeEnabled()
+      expect(within(dialog).getByText('Every day')).toBeInTheDocument()
+    })
+
+    it('asks to delete all repeats for a series', async () => {
+      const user = userEvent.setup()
+      const t = occurrenceOf({
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        state: 'current',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        key: 't1@2026-10-05T00:00:00Z',
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('This task repeats. Delete all repeats? Completed ones stay.')
+    })
   })
 })

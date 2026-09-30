@@ -1,12 +1,14 @@
 import { CheckIcon, FlagIcon, ListChecksIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RecurringMark } from '@/components/events/EventItems'
 import { Button } from '@/components/ui/button'
 import { useDeleteTodo, useUpdateTodo } from '@/hooks/queries'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { type Calendar, type Todo } from '@/lib/api/schemas'
+import { recurringLabel } from '@/lib/calendarTasks'
 import { checklistProgress, formatDue, priorityLevel, todoToInput } from '@/lib/tasks'
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
@@ -56,7 +58,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const labels = { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') }
   const due = formatDue(todo, now, prefs, labels, { timeOnly })
   const progress = checklistProgress(todo.checklist)
-  const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0)
+  const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0) || todo.recurring
   const edit = () => {
     openTaskEditor({ mode: 'edit', todo })
   }
@@ -64,6 +66,8 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const meta = hasMeta && (
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
       {due && <span className="tabular">{due}</span>}
+      {/* FR-17: names the series' rule, e.g. "Every week on Monday and Thursday". */}
+      <RecurringMark recurring={todo.recurring} label={recurringLabel(t, todo, null, prefs, now)} />
       {!done && <PriorityChip priority={todo.priority} />}
       {progress.total > 0 && (
         <span className="tabular inline-flex items-center gap-1" aria-label={t('tasks.progress', progress)}>
@@ -85,7 +89,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
         role="checkbox"
         aria-checked={done}
         aria-label={t('tasks.complete', { title: todo.title })}
-        disabled={calendar.readOnly}
+        disabled={calendar.readOnly || todo.ruleUnsupported}
         onClick={toggle}
         className="mt-1.5 flex size-[1.125rem] shrink-0 items-center justify-center rounded-full border-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50"
         style={{ borderColor: calendar.color, backgroundColor: done ? calendar.color : 'transparent' }}

@@ -1,4 +1,4 @@
-import { AlignLeftIcon, CheckIcon, FlagIcon, ListChecksIcon, LockIcon } from 'lucide-react'
+import { AlignLeftIcon, CheckIcon, FlagIcon, ListChecksIcon, LockIcon, RepeatIcon } from 'lucide-react'
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from '@/components/events/DetailParts'
@@ -8,12 +8,13 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { anchorOf, canComplete, recurringLabel, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
-import { formatEventWhen } from '@/lib/format'
+import { formatEventWhen, formatPickerDate } from '@/lib/format'
 import { isOverdue, priorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
+import { PencilMark } from './TaskItems'
 import { PriorityChip } from './TaskRow'
 
 /** Popover with the details of a task selected in the calendar (read, complete, edit, delete; FR-16). */
@@ -46,8 +47,11 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const editRef = useRef<HTMLButtonElement>(null)
   // The task as it is now: the check below or a reload may have replaced the one that was clicked.
   const todo = useCachedTodo(task.todo)
-  const placed = toCalTask(todo) ?? task
-  const { done, toggle } = useToggleTodo(todo)
+  // An occurrence keeps the dates it was clicked at; a plain task picks up the cache's, as before (FR-17).
+  const placed = task.occurrence ? task : (toCalTask(todo) ?? task)
+  const { done: toggledDone, toggle } = useToggleTodo(todo)
+  // An occurrence another app completed (FR-17) shows as done regardless of the series' own status.
+  const done = task.occurrence?.state === 'done' ? true : toggledDone
   const list = byId.get(todo.calendarId)
   const readOnly = list?.readOnly ?? true
   const title = eventTitle(todo, t('event.untitled'))
@@ -56,7 +60,17 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const whenText = placed.dates === 'span' ? when : t(placed.dates === 'due' ? 'tasks.dueWhen' : 'tasks.startsWhen', { when })
   const overdue = !done && isOverdue(todo, now)
   const hasPriority = priorityLevel(todo.priority) !== 'none'
-  const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== ''
+  const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring
+  const upcoming = task.occurrence?.state === 'upcoming'
+  // The rule row's hint (FR-17): which occurrence to complete first, that another app already did, or that
+  // Lucid can't read the rule at all; the current occurrence, or a plain series, needs none of these.
+  const hint = upcoming
+    ? t('tasks.upcomingHint', { date: formatPickerDate(anchorOf(todo) ?? placed.startsAt, prefs, now) })
+    : task.occurrence?.state === 'done'
+      ? t('tasks.doneElsewhere')
+      : !task.occurrence && todo.ruleUnsupported
+        ? t('tasks.ruleUnsupported')
+        : null
 
   return (
     <DetailContent anchor={anchor} label={title} initialFocus={() => editRef.current ?? closeRef.current}>
@@ -65,18 +79,23 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
         className="relative grid grid-cols-[1.25rem_1fr] items-start gap-x-3 border-l-4 pt-4 pr-12 pb-3.5 pl-3"
         style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid }}
       >
-        <button
-          type="button"
-          role="checkbox"
-          aria-checked={done}
-          aria-label={t('tasks.complete', { title })}
-          disabled={readOnly}
-          onClick={toggle}
-          className="mt-[3px] flex size-6 items-center justify-center justify-self-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-current/50 disabled:opacity-50"
-          style={{ borderColor: colors.solid, backgroundColor: done ? colors.solid : 'transparent' }}
-        >
-          {done && <CheckIcon className="size-4" strokeWidth={3.5} style={{ color: colors.onSolid }} aria-hidden />}
-        </button>
+        {/* An upcoming occurrence has nothing to check off yet (FR-17): the same pencilled-in stand-in as its item. */}
+        {upcoming ? (
+          <PencilMark color={colors.solid} className="mt-[3px] size-6 justify-self-center" />
+        ) : (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={done}
+            aria-label={t('tasks.complete', { title })}
+            disabled={readOnly || !canComplete(placed)}
+            onClick={toggle}
+            className="mt-[3px] flex size-6 items-center justify-center justify-self-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-current/50 disabled:opacity-50"
+            style={{ borderColor: colors.solid, backgroundColor: done ? colors.solid : 'transparent' }}
+          >
+            {done && <CheckIcon className="size-4" strokeWidth={3.5} style={{ color: colors.onSolid }} aria-hidden />}
+          </button>
+        )}
         <div className="grid min-w-0 gap-1">
           <h2
             className={cn(
@@ -113,6 +132,12 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
       <div className="grid gap-4 p-4 empty:hidden">
         {hasDetails && (
           <div className="grid gap-3 text-sm">
+            {todo.recurring && (
+              <DetailRow icon={<RepeatIcon />}>
+                <p>{recurringLabel(t, todo, placed.startsAt, prefs, now)}</p>
+                {hint && <p className="mt-1 text-muted-foreground">{hint}</p>}
+              </DetailRow>
+            )}
             {hasPriority && (
               <DetailRow icon={<FlagIcon />}>
                 <PriorityChip priority={todo.priority} flag={false} />
@@ -157,7 +182,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
             editRef={editRef}
             editLabel={t('tasks.edit')}
             deleteLabel={t('tasks.delete')}
-            confirm={t('tasks.confirmDelete')}
+            confirm={todo.recurring ? t('tasks.confirmDeleteSeries') : t('tasks.confirmDelete')}
             onEdit={() => {
               openTaskEditor({ mode: 'edit', todo })
             }}
