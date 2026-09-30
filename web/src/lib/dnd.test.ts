@@ -117,6 +117,31 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
     expect(dropResult(drag, drop(4), 0)).toBeNull()
   })
 
+  // The same shape with a time: Mon 09:00 local, next Thu 09:00 local.
+  const fixedTimed = toCalTask(
+    todo({
+      id: 't4',
+      due: '2026-10-05T07:00:00Z',
+      recurring: true,
+      fixedDays: true,
+      next: { due: '2026-10-08T07:00:00Z' },
+    }),
+  )!
+  const timedDrag = { type: 'timed' as const, event: fixedTimed, originDay: new Date(2026, 9, 5) }
+  const column = (d: number) => ({ type: 'column' as const, day: new Date(2026, 9, d) })
+
+  it('blocks a week-view drop at an earlier time on the day the next occurrence is due', () => {
+    expect(dropResult(timedDrag, column(8), -60 * PX_PER_MINUTE)).toBeNull()
+    expect(dropBlocked(timedDrag, column(8), -60 * PX_PER_MINUTE)).toEqual(new Date(2026, 9, 7))
+  })
+
+  it('allows a week-view drop at any time on the last allowed day', () => {
+    expect(dropResult(timedDrag, column(7), 13 * 60 * PX_PER_MINUTE)).toMatchObject({
+      kind: 'task',
+      input: { due: '2026-10-07T20:00:00.000Z' },
+    })
+  })
+
   it('lets a non-fixed-day series move past where a fixed one would be blocked', () => {
     const intervalTask = toCalTask(
       todo({

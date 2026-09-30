@@ -880,8 +880,8 @@ properties and components Lucid does not know.
 - An occurrence cannot be moved on its own: moving it moves the series from
   the current occurrence on. With an interval rule the later occurrences move
   along. With fixed days the calendar, the editor and the date picker in the
-  task list keep the move between the current occurrence's day and the next
-  occurrence.
+  task list keep the move between the current occurrence's day and the day
+  before the next occurrence; the time of day is free within those days.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
 - Removing a rule also removes other clients' overrides, completed ones

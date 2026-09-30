@@ -143,11 +143,11 @@ export function canDrag(task: CalTask): boolean {
   return canComplete(task)
 }
 
-/** The window a recurring series may move within (FR-17). */
+/** The window a recurring series may move within (FR-17): whole local days. */
 export interface MoveWindow {
   /** Local midnight of the series' current occurrence. */
   from: Date
-  /** Exclusive: the anchor of the next occurrence. */
+  /** Exclusive: local midnight of the day of the next occurrence. */
   until: Date
 }
 
@@ -155,8 +155,10 @@ export interface MoveWindow {
  * The move window of a recurring series, or null when it isn't bounded
  * (FR-17): only a fixed-day series — an `RRULE` with any part other than
  * FREQ/INTERVAL/COUNT/UNTIL/WKST, or an `RDATE` — keeps its later occurrences
- * on their days, so a move must end before the next one. Other series move
- * freely, like `ruleUnsupported` ones can't move at all (`canDrag`).
+ * on their days, so a move must end on a day before the next one's; the time
+ * of day stays free within those days, as the hatch, the pickers and the
+ * hints all speak of days. Other series move freely, like `ruleUnsupported`
+ * ones can't move at all (`canDrag`).
  */
 export function moveWindow(todo: Todo): MoveWindow | null {
   if (!todo.recurring || !todo.fixedDays || !todo.next) return null
@@ -169,7 +171,7 @@ export function moveWindow(todo: Todo): MoveWindow | null {
     dueAllDay: todo.dueAllDay,
   })
   if (!until) return null
-  return { from: startOfDay(from), until }
+  return { from: startOfDay(from), until: startOfDay(until) }
 }
 
 /** Whether `input`'s anchor still falls inside `todo`'s move window; true when it has none (FR-17). */

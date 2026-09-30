@@ -309,6 +309,29 @@ describe('moveWindow', () => {
     expect(moveWindow(t)?.from).toEqual(new Date(2026, 9, 5))
   })
 
+  it('ends a timed series window at local midnight of the day the next occurrence is due', () => {
+    // Mon 09:00 local, next Thu 09:00 local: the window ends where Thursday begins.
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: '2026-10-05T07:00:00Z',
+      next: { start: null, due: '2026-10-08T07:00:00Z' },
+    })
+    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) })
+  })
+
+  it('keeps the window on local midnights across the DST change', () => {
+    // Sat 24 Oct 09:00 CEST, next Tue 27 Oct 09:00 CET; the clocks go back on the 25th.
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: '2026-10-24T07:00:00Z',
+      next: { start: null, due: '2026-10-27T08:00:00Z' },
+    })
+    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 24), until: new Date(2026, 9, 27) })
+    expect(lastAllowedDay(moveWindow(t)!)).toEqual(new Date(2026, 9, 26))
+  })
+
   it('is null for an interval rule (fixedDays false)', () => {
     const t = todo({
       recurring: true,
@@ -383,6 +406,41 @@ describe('withinWindow', () => {
 
   it('rejects an input without dates when a window exists', () => {
     expect(withinWindow(t, { start: null, startAllDay: false, due: null, dueAllDay: false })).toBe(false)
+  })
+
+  describe('for a timed series', () => {
+    // Mon 09:00 local, next Thu 09:00 local.
+    const timed = todo({
+      recurring: true,
+      fixedDays: true,
+      due: '2026-10-05T07:00:00Z',
+      next: { start: null, due: '2026-10-08T07:00:00Z' },
+    })
+    const dueAt = (iso: string) => ({ start: null, startAllDay: false, due: iso, dueAllDay: false })
+
+    it('rejects an earlier time on the day the next occurrence is due', () => {
+      expect(withinWindow(timed, dueAt('2026-10-08T05:00:00Z'))).toBe(false)
+    })
+
+    it('accepts any time on the last allowed day', () => {
+      expect(withinWindow(timed, dueAt('2026-10-07T21:30:00Z'))).toBe(true)
+    })
+
+    it('accepts an earlier time on the day of the current occurrence', () => {
+      expect(withinWindow(timed, dueAt('2026-10-05T04:00:00Z'))).toBe(true)
+    })
+
+    it('ends at local midnight across the DST change', () => {
+      // Sat 24 Oct 09:00 CEST, next Tue 27 Oct 09:00 CET; the clocks go back on the 25th.
+      const dst = todo({
+        recurring: true,
+        fixedDays: true,
+        due: '2026-10-24T07:00:00Z',
+        next: { start: null, due: '2026-10-27T08:00:00Z' },
+      })
+      expect(withinWindow(dst, dueAt('2026-10-26T22:30:00Z'))).toBe(true) // Mon 23:30 CET
+      expect(withinWindow(dst, dueAt('2026-10-26T23:00:00Z'))).toBe(false) // Tue 00:00 CET
+    })
   })
 })
 
