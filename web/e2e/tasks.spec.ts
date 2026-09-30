@@ -4,6 +4,13 @@ import { calendarId, deleteTestTasks, login, monthGrid } from './helpers'
 /** The task sidebar; tasks with a date also appear in the calendar views. */
 const taskList = (page: Page) => page.getByTestId('tasks-list')
 
+/**
+ * The seeded tasks in the month grid that don't repeat, whichever fall into it: they are
+ * dated relative to today. A repeating one, marked by its ⟳ image, moves on to its next
+ * repeat when completed and keeps the completed one as a task of its own (FR-17).
+ */
+const singleTasks = (page: Page) => monthGrid(page).locator('[data-task-key]').filter({ hasNot: page.getByRole('img') })
+
 // A failed test never reaches its own clean-up; remove the tasks the specs created.
 test.afterEach(async ({ page }) => {
   await deleteTestTasks(page)
@@ -89,8 +96,7 @@ test('delete a completed task from the list', async ({ page }) => {
 
 test('complete a task in the month view', async ({ page }) => {
   await login(page)
-  // Whichever seeded task falls into the grid: they are dated relative to today.
-  const inGrid = monthGrid(page).locator('[data-task-key]').getByRole('checkbox').first()
+  const inGrid = singleTasks(page).getByRole('checkbox').first()
   await expect(inGrid).toBeVisible()
   const name = (await inGrid.getAttribute('aria-label')) ?? ''
   const inList = taskList(page).getByRole('checkbox', { name, exact: true })
@@ -124,7 +130,7 @@ test('a task in the month view opens its details, and the editor from there', as
 
 test('a completed task leaves the calendar when completed tasks are hidden there', async ({ page }) => {
   await login(page)
-  const inGrid = monthGrid(page).locator('[data-task-key]').getByRole('checkbox').first()
+  const inGrid = singleTasks(page).getByRole('checkbox').first()
   await expect(inGrid).toBeVisible()
   const name = (await inGrid.getAttribute('aria-label')) ?? ''
   const task = monthGrid(page).getByRole('checkbox', { name, exact: true })

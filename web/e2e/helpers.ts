@@ -73,6 +73,51 @@ export async function deleteTestTasks(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Create a task through the API in the "Tasks" calendar, the way the editor
+ * saves one: `due` (and `start`) are wire dates, UTC midnight for all-day
+ * values, and a timed repeat recurs in the browser's time zone. The title
+ * must start with "E2E ", so that `deleteTestTasks` removes it again.
+ */
+export async function createTestTask(
+  page: Page,
+  body: { title: string; due: string; dueAllDay: boolean; rrule?: string; start?: string | null },
+): Promise<{ id: string; etag: string }> {
+  if (!body.title.startsWith('E2E ')) throw new Error(`test task "${body.title}" must start with "E2E "`)
+  const api = page.request
+  const sessionRes = await api.get('/api/v1/session')
+  await expect(sessionRes).toBeOK()
+  const session = (await sessionRes.json()) as { csrfToken: string }
+
+  const calendarsRes = await api.get('/api/v1/calendars')
+  await expect(calendarsRes).toBeOK()
+  const { calendars } = (await calendarsRes.json()) as { calendars: { id: string; name: string }[] }
+  const tasks = calendars.find((c) => c.name === 'Tasks')
+  if (!tasks) throw new Error('calendar Tasks not found')
+
+  const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const res = await api.post(`/api/v1/calendars/${tasks.id}/todos`, {
+    headers: { 'X-CSRF-Token': session.csrfToken },
+    data: {
+      title: body.title,
+      description: '',
+      checklist: [],
+      start: body.start ?? null,
+      // Start and due are both dates or both times.
+      startAllDay: body.dueAllDay,
+      due: body.due,
+      dueAllDay: body.dueAllDay,
+      priority: 0,
+      status: 'NEEDS-ACTION',
+      ...(body.rrule === undefined ? {} : { rrule: body.rrule }),
+      timezone,
+    },
+  })
+  await expect(res).toBeOK()
+  const { id, etag } = (await res.json()) as { id: string; etag: string }
+  return { id, etag }
+}
+
 /** The month grid of the main view. */
 export function monthGrid(page: Page) {
   return page.getByRole('grid')

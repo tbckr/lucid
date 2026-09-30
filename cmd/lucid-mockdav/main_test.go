@@ -65,6 +65,7 @@ func TestSeed(t *testing.T) {
 		t.Fatalf("ListCalendars = %+v, %v", cals, err)
 	}
 	var events, todos int
+	states := map[string]int{}
 	for _, c := range cals {
 		if c.SupportsEvents {
 			evs, err := svc.ListEvents(ctx, c.ID, now.AddDate(0, 0, -7), now.AddDate(0, 0, 14))
@@ -82,11 +83,27 @@ func TestSeed(t *testing.T) {
 				if td.Title == "Buy milk" && len(td.Checklist) != 2 {
 					t.Errorf("checklist not parsed: %+v", td)
 				}
+				if td.Title == "Water the flowers" && !td.Recurring {
+					t.Errorf("series not recurring: %+v", td)
+				}
 			}
 			todos += len(ts)
+			occs, err := svc.ListTodoOccurrences(ctx, c.ID, now.AddDate(0, 0, -7), now.AddDate(0, 0, 14))
+			if err != nil {
+				t.Fatalf("ListTodoOccurrences(%s): %v", c.Name, err)
+			}
+			for _, o := range occs {
+				if o.Title == "Water the flowers" {
+					states[o.State]++
+				}
+			}
 		}
 	}
-	if events < 10 || todos != 5 {
+	if events < 10 || todos != 7 {
 		t.Fatalf("events=%d todos=%d", events, todos)
+	}
+	// The override completed this Monday's repeat; the series goes on with the next one (FR-17).
+	if states[domain.OccurrenceDone] < 1 || states[domain.OccurrenceCurrent] < 1 {
+		t.Fatalf("occurrences of Water the flowers by state = %v, want a done and a current one", states)
 	}
 }

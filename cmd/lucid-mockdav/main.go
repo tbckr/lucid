@@ -124,6 +124,18 @@ func seed(m *caldavtest.Server, now time.Time) error {
 		// Starts after the standup, so the week view has room for its title.
 		{tasks, "slides.ics", vtodo("demo-slides", "Prepare slides", "DTSTART:"+utc(2, 9, 0), "DUE:"+utc(2, 10, 0))},
 		{tasks, "landlord.ics", vtodo("demo-landlord", "Call the landlord", "DUE:"+utc(0, 15, 0))},
+		// Repeating tasks (FR-17) as other clients write them: on fixed days, with this
+		// Monday's repeat completed by an override (Thunderbird) ...
+		{tasks, "flowers.ics", calendar(
+			component("VTODO", "demo-flowers", "Water the flowers",
+				"DTSTART;VALUE=DATE:"+date(monday), "DUE;VALUE=DATE:"+date(monday), "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"),
+			component("VTODO", "demo-flowers", "Water the flowers",
+				"RECURRENCE-ID;VALUE=DATE:"+date(monday), "DTSTART;VALUE=DATE:"+date(monday), "DUE;VALUE=DATE:"+date(monday),
+				"STATUS:COMPLETED", "COMPLETED:"+utc(monday, 8, 0), "PERCENT-COMPLETE:100"),
+		)},
+		// ... and every other week from a due date alone, without DTSTART (Tasks.org).
+		{tasks, "trash.ics", vtodo("demo-trash", "Take out the trash",
+			"DUE;TZID=Europe/Berlin:"+local(monday+3, 19, 0), "RRULE:FREQ=WEEKLY;INTERVAL=2")},
 	}
 	for _, o := range objects {
 		if _, err := m.PutObject(o.cal, o.name, o.body); err != nil {
@@ -136,18 +148,25 @@ func seed(m *caldavtest.Server, now time.Time) error {
 const dtstamp = "DTSTAMP:20250101T000000Z"
 
 func vevent(uid, summary string, lines ...string) string {
-	return wrap("VEVENT", uid, summary, lines)
+	return calendar(component("VEVENT", uid, summary, lines...))
 }
 
 func vtodo(uid, summary string, lines ...string) string {
-	return wrap("VTODO", uid, summary, lines)
+	return calendar(component("VTODO", uid, summary, lines...))
 }
 
-func wrap(comp, uid, summary string, lines []string) string {
-	all := append([]string{
-		"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lucid//mockdav//EN",
-		"BEGIN:" + comp, "UID:" + uid, dtstamp, "SUMMARY:" + summary,
-	}, lines...)
-	all = append(all, "END:"+comp, "END:VCALENDAR", "")
+// calendar wraps components, such as a master and its overrides, in one VCALENDAR.
+func calendar(components ...[]string) string {
+	all := []string{"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lucid//mockdav//EN"}
+	for _, c := range components {
+		all = append(all, c...)
+	}
+	all = append(all, "END:VCALENDAR", "")
 	return strings.Join(all, "\r\n")
+}
+
+// component returns the lines of one component with UID, DTSTAMP and SUMMARY.
+func component(comp, uid, summary string, lines ...string) []string {
+	all := append([]string{"BEGIN:" + comp, "UID:" + uid, dtstamp, "SUMMARY:" + summary}, lines...)
+	return append(all, "END:"+comp)
 }
