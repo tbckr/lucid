@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -1277,6 +1278,39 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		}
 		checkStored(t, "log", logs.String(),
 			[]string{"could not remove the copy of a completed occurrence", "path=" + copyPath, "error="}, []string{"Series"})
+	})
+
+	// The client may go away between the two PUTs (a closed tab): the copy
+	// still has to go, or it stays next to the open occurrence in every
+	// client (FR-17).
+	t.Run("cancelled request still deletes the copy", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
+		f := listedTodo(t, e, id)
+		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut && r.URL.Path == objPath {
+				// The client disconnects while the master is being written.
+				cancel()
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return true
+			}
+			return false
+		})
+		e.mock.ResetCounts()
+		if _, err := e.svc.UpdateTodo(ctx, id, f.ETag, completeInput(&f)); err == nil {
+			t.Fatal("UpdateTodo succeeded; want an error")
+		}
+		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 1 {
+			t.Errorf("%d objects; want only the series", n)
+		}
+		if n := e.mock.Count(http.MethodDelete); n != 1 {
+			t.Errorf("DELETE count = %d; want 1", n)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250310T090000Z"}, []string{"COMPLETED"})
 	})
 
 	t.Run("failed copy changes nothing", func(t *testing.T) {

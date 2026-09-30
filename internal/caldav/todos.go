@@ -15,6 +15,10 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 )
 
+// copyRemovalTimeout bounds the compensating DELETE of a completed copy,
+// which runs on after the request that started it is cancelled (FR-17).
+const copyRemovalTimeout = 10 * time.Second
+
 // ListTodos implements domain.CalendarService. A recurring todo is listed
 // once, at its current occurrence (FR-17).
 func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.Todo, error) {
@@ -567,8 +571,12 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	}
 	o := calObject{path: objPath, cal: cal}
 	if o.etag, err = s.putObject(ctx, objPath, cal, etag, false); err != nil {
+		// The copy goes even when the client has gone: on the request's
+		// context, a closed tab would leave it next to the open occurrence.
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+		defer cancel()
 		// Paths and errors only, never task content.
-		if derr := s.deleteObject(ctx, copyObj.path, cmp.Or(copyObj.etag, "*")); derr != nil {
+		if derr := s.deleteObject(dctx, copyObj.path, cmp.Or(copyObj.etag, "*")); derr != nil {
 			s.p.log.WarnContext(ctx, "could not remove the copy of a completed occurrence", "path", copyObj.path, "error", derr)
 		}
 		return domain.Todo{}, err
