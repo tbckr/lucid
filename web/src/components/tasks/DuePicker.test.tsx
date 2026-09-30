@@ -119,5 +119,36 @@ describe('DuePicker', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Wednesday, October 7th, 2026' }))
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-07T00:00:00.000Z', dueAllDay: true }))
     })
+
+    it('names the last due day of a series anchored on its start, which moves along', async () => {
+      // Starts Monday, due Wednesday; the next repeat starts Thursday.
+      const { dialog } = await open({
+        ...fixedDayTodo,
+        start: '2026-10-05T00:00:00.000Z',
+        startAllDay: true,
+        due: '2026-10-07T00:00:00.000Z',
+        next: { start: '2026-10-08T00:00:00.000Z', due: '2026-10-10T00:00:00.000Z' },
+      })
+
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(dialog).getByRole('button', { name: 'Saturday, October 10th, 2026' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      )
+      expect(within(dialog).getByText('Until Fri, Oct 9, then the next repeat is due.')).toBeInTheDocument()
+    })
+
+    it('shows no limit for a due date added next to a start that stays put', async () => {
+      const { dialog } = await open({
+        ...fixedDayTodo,
+        start: '2026-10-05T00:00:00.000Z',
+        startAllDay: true,
+        due: null,
+        next: { start: '2026-10-08T00:00:00.000Z', due: null },
+      })
+
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(dialog).queryByText(/^Until /)).toBeNull()
+    })
   })
 })

@@ -1,3 +1,4 @@
+import { addDays, differenceInCalendarDays } from 'date-fns'
 import { CalendarIcon, ClockIcon, XIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,7 +37,7 @@ export function DuePicker({
   const tz = useMemo(() => browserTimeZone(), [])
   const timeId = useId()
   const [open, setOpen] = useState(false)
-  const { dueDate, dueTime } = taskToForm(todo, tz)
+  const { startDate, dueDate, dueTime } = taskToForm(todo, tz)
   const shortcuts = dueShortcuts(now)
   const picks = [
     { label: t('tasks.today'), day: shortcuts.today },
@@ -47,6 +48,11 @@ export function DuePicker({
   // shortcuts past the window, and say so below the month.
   const w = moveWindow(todo)
   const dayDisabled = (day: Date) => !withinWindow(todo, withDue(todo, { date: dayKey(day), time: dueTime }, tz))
+  // The window bounds the anchor: the due date itself, or a start that moves along with it, so the
+  // last due day lies as far past the window's last day as the due date lies past the start. A start
+  // that stays put, next to a due date still to be added, leaves every day open.
+  const shift = !startDate ? 0 : dueDate ? differenceInCalendarDays(parseDayKey(dueDate), parseDayKey(startDate)) : null
+  const lastDue = w && shift !== null ? addDays(lastAllowedDay(w), shift) : null
 
   const pickDay = (day: Date) => {
     const input = withDue(todo, { date: dayKey(day), time: dueTime }, tz)
@@ -97,9 +103,9 @@ export function DuePicker({
             onSelect={pickDay}
             isDisabled={dayDisabled}
             footer={
-              w && (
+              lastDue && (
                 <p className="px-2 pt-2 text-xs text-muted-foreground">
-                  {t('tasks.moveLimit', { date: formatPickerDate(lastAllowedDay(w), prefs, now) })}
+                  {t('tasks.moveLimit', { date: formatPickerDate(lastDue, prefs, now) })}
                 </p>
               )
             }
