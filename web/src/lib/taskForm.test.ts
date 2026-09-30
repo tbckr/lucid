@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { todo } from '@/test/fixtures'
-import { dayAllowed, formToTodoInput, formWithDate, taskFormSchema, taskToForm, withDue } from './taskForm'
+import { buildTaskFormSchema, dayAllowed, formToTodoInput, formWithDate, taskFormSchema, taskToForm, withDue } from './taskForm'
 
 const TZ = 'Europe/Berlin'
 
@@ -230,6 +230,21 @@ describe('taskForm', () => {
     it('limits a custom rule to 1024 characters', () => {
       const v = { ...taskToForm(series, TZ), customRule: `FREQ=WEEKLY;BYDAY=${'MO,'.repeat(400)}TH` }
       expect(taskFormSchema.safeParse(v).error?.issues.map((i) => i.message)).toContain('validation.tooLong')
+    })
+
+    it('needs a date only while the repeat of an existing task changes', () => {
+      // A ruleUnsupported series may have no date at all (RDATE-only, or a rule no
+      // client can read); an edit that leaves its rule alone must still be savable.
+      const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
+      const v = { ...taskToForm(dateless, TZ), title: 'Other' }
+      expect(buildTaskFormSchema(dateless).safeParse(v).success).toBe(true)
+      // Removing the rule needs no date either.
+      expect(buildTaskFormSchema(dateless).safeParse({ ...v, recurrence: 'none' as const }).success).toBe(true)
+      // Giving it a rule the editor actually writes does.
+      const issues = buildTaskFormSchema(dateless)
+        .safeParse({ ...v, recurrence: 'daily' as const })
+        .error?.issues.map((i) => [i.path.join('.'), i.message])
+      expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
     })
   })
 

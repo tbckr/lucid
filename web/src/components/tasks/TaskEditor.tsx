@@ -40,15 +40,15 @@ import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
 import {
+  buildTaskFormSchema,
   dayAllowed,
   formToTodoInput,
   formWithDate,
   repeatChanged,
-  taskFormSchema,
   taskToForm,
   type TaskFormValues,
 } from '@/lib/taskForm'
-import { isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
+import { datesChanged, isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
@@ -112,7 +112,7 @@ export function TaskEditor({
   const kindRef = useRef<HTMLButtonElement>(null)
 
   const form = useForm<TaskFormValues>({
-    resolver: zodResolver(taskFormSchema),
+    resolver: zodResolver(buildTaskFormSchema(todo)),
     defaultValues:
       state.mode === 'edit'
         ? taskToForm(state.todo, tz)
@@ -171,14 +171,19 @@ export function TaskEditor({
 
   const onSubmit = handleSubmit((v) => {
     if (todo) {
+      const input = formToTodoInput(v, tz, todo)
       // The pickers block the days past the window, but a time can still take the task there (FR-17).
-      const which: Which = v.startDate ? 'start' : 'due'
-      const field = DATES[which].date
-      if (!dayAllowed(todo, v, which, v[field], tz)) {
-        setError(field, { message: 'tasks.moveLimit' })
-        return
+      // Only a moved date needs the check: a notes-only save of an occurrence another
+      // app already moved past `next` must still go through.
+      if (datesChanged(todo, input)) {
+        const which: Which = v.startDate ? 'start' : 'due'
+        const field = DATES[which].date
+        if (!dayAllowed(todo, v, which, v[field], tz)) {
+          setError(field, { message: 'tasks.moveLimit' })
+          return
+        }
       }
-      update.mutate({ todo, input: formToTodoInput(v, tz, todo) }, { onSuccess: onDone })
+      update.mutate({ todo, input }, { onSuccess: onDone })
       return
     }
     create.mutate(

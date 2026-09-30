@@ -421,5 +421,33 @@ describe('TaskEditor', () => {
 
       expect(await saved(fetch)).toMatchObject({ rrule: '' })
     })
+
+    it('saves an unrelated edit on a dateless series without touching its rule', async () => {
+      const user = userEvent.setup()
+      // A rule Lucid can't read may leave a series with no date at all; only a repeat
+      // that actually changes needs one, so a title edit that leaves it alone must save.
+      const dateless = { ...series, due: null, dueAllDay: false, rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, next: null }
+      const { fetch, dialog } = await openTask(dateless)
+
+      await user.type(within(dialog).getByPlaceholderText('Add a title'), ' (extra)')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      const body = await saved(fetch)
+      expect(body).toMatchObject({ title: 'Water the flowers (extra)' })
+      expect(body).not.toHaveProperty('rrule')
+    })
+
+    it('saves a note on an occurrence already moved past the next repeat', async () => {
+      const user = userEvent.setup()
+      // Due Thu, Oct 9, but the series' own next repeat is already Wed, Oct 8: another
+      // app moved this occurrence past it. A notes-only save must still go through.
+      const moved = { ...series, due: '2026-10-09T00:00:00Z', next: { start: null, due: '2026-10-08T00:00:00Z' } }
+      const { fetch, dialog } = await openTask(moved)
+
+      await user.type(within(dialog).getByRole('textbox', { name: 'Notes' }), 'watered extra')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await saved(fetch)).toMatchObject({ description: 'watered extra' })
+    })
   })
 })

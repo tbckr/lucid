@@ -9,26 +9,36 @@ import { todoToInput } from './tasks'
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
 const optionalTime = z.union([z.literal(''), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'validation.time')])
 
-/** Task editor form; limits mirror domain.TodoInput.Validate. Messages are i18n keys. */
-export const taskFormSchema = z
-  .object({
-    title: z.string().trim().min(1, 'validation.titleRequired').max(1024, 'validation.tooLong'),
-    description: z.string().max(64 * 1024, 'validation.tooLong'),
-    startDate: optionalDate,
-    startTime: optionalTime,
-    dueDate: optionalDate,
-    dueTime: optionalTime,
-    priority: z.number().int().min(0).max(9),
-    completed: z.boolean(),
-    checklist: z
-      .array(z.object({ text: z.string().trim().min(1, 'validation.itemRequired').max(1024, 'validation.tooLong'), done: z.boolean() }))
-      .max(200, 'validation.tooManyItems'),
-    recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']),
-    customRule: z.string().max(1024, 'validation.tooLong'),
-  })
-  .superRefine((v, ctx) => {
-    // A rule recurs from the start, else the due date (FR-17).
-    if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '') {
+const taskFormShape = {
+  title: z.string().trim().min(1, 'validation.titleRequired').max(1024, 'validation.tooLong'),
+  description: z.string().max(64 * 1024, 'validation.tooLong'),
+  startDate: optionalDate,
+  startTime: optionalTime,
+  dueDate: optionalDate,
+  dueTime: optionalTime,
+  priority: z.number().int().min(0).max(9),
+  completed: z.boolean(),
+  checklist: z
+    .array(z.object({ text: z.string().trim().min(1, 'validation.itemRequired').max(1024, 'validation.tooLong'), done: z.boolean() }))
+    .max(200, 'validation.tooManyItems'),
+  recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']),
+  customRule: z.string().max(1024, 'validation.tooLong'),
+}
+
+/**
+ * Task editor form; limits mirror domain.TodoInput.Validate. Messages are i18n keys.
+ * `original` lets `validation.repeatNeedsDate` (FR-17) see whether the repeat itself
+ * changes: a new task needs a date only if it is given a repeat, and an existing task
+ * needs one only when its repeat changes, not for edits that leave the rule alone (a
+ * `ruleUnsupported` series can be dateless, and its title must still be editable).
+ */
+export function buildTaskFormSchema(original?: Todo) {
+  return z.object(taskFormShape).superRefine((v, ctx) => {
+    // A rule recurs from the start, else the due date (FR-17). Removing a rule needs
+    // no date, so this only fires while a rule stays set, and only when it is the one
+    // being set: an untouched rule, kept on a task whose dates were never there (or
+    // were cleared without touching the rule), does not need one to be saved.
+    if (v.recurrence !== 'none' && repeatChanged(v, original) && v.startDate === '' && v.dueDate === '') {
       ctx.addIssue({ code: 'custom', message: 'validation.repeatNeedsDate', path: ['recurrence'] })
     }
     if (v.dueTime !== '' && v.dueDate === '') {
@@ -45,6 +55,10 @@ export const taskFormSchema = z
       ctx.addIssue({ code: 'custom', message: 'validation.startAfterDue', path: ['startDate'] })
     }
   })
+}
+
+/** The schema for a new task: no original to compare the repeat against. */
+export const taskFormSchema = buildTaskFormSchema()
 
 export type TaskFormValues = z.infer<typeof taskFormSchema>
 
