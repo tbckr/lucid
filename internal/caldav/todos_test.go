@@ -1502,6 +1502,34 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, occs, []time.Time{date(2025, 4, 7, 9, 0)}, []string{domain.OccurrenceCurrent})
 	})
 
+	// Whether the moved occurrence is the last one is decided on the rule as
+	// it was: moved earlier, off the grid, by more than the series has left,
+	// the shifted UNTIL lies before the old occurrence, which is no reason to
+	// end the series at the new anchor (FR-17).
+	t.Run("move earlier than the remaining span keeps later occurrences", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"},
+		)
+		f := listedTodo(t, e, id)
+		if !sameTime(f.Start, ptr(date(2025, 3, 24, 9, 0))) {
+			t.Fatalf("current occurrence = %+v; want 2025-03-24T09:00Z", f)
+		}
+		got := moveListed(t, e, id, -20*24*time.Hour)
+		if !sameTime(got.Start, ptr(date(2025, 3, 4, 9, 0))) || !sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 11, 9, 0))}) {
+			t.Errorf("moved series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250304T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250318T090000Z\r\n"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 4, 9, 0), date(2025, 3, 11, 9, 0), date(2025, 3, 18, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+	})
+
 	for _, tc := range []struct {
 		name     string
 		master   []string

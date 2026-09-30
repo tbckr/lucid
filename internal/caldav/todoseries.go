@@ -35,9 +35,12 @@ var (
 	errRuleNeedsDate error = &domain.ValidationError{Msg: "a repeating task needs a start or due date"}
 )
 
-// todoSeries is a recurring VTODO and what other clients recorded in it (FR-17).
+// todoSeries is a recurring VTODO and what other clients recorded in it, as
+// read (FR-17): roll and move rewrite the master, and decide on the series
+// they were read from, never on a master they have already written.
 type todoSeries struct {
 	master      *ical.Component
+	rrule       string                    // RRULE as read (trimmed), "" if none
 	anchor      dateValue                 // DTSTART, or DUE without DTSTART
 	onDue       bool                      // anchored on DUE
 	startAllDay bool                      // master DTSTART value type (only meaningful when set)
@@ -68,11 +71,13 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	if !isRecurring(master) {
 		return nil
 	}
+	rr := rruleString(master)
 	s := &todoSeries{
 		master:    master,
+		rrule:     rr,
 		overrides: map[int64]*ical.Component{},
 		exdates:   map[int64]bool{},
-		fixedDays: ruleHasFixedDays(rruleString(master), master.Props.Get(ical.PropRecurrenceDates) != nil),
+		fixedDays: ruleHasFixedDays(rr, master.Props.Get(ical.PropRecurrenceDates) != nil),
 	}
 	start, startErr := parseDateProp(master.Props.Get(ical.PropDateTimeStart))
 	due, dueErr := parseDateProp(master.Props.Get(ical.PropDue))
@@ -98,7 +103,7 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	default:
 		s.err = errNoAnchor
 	}
-	switch rr := rruleString(master); {
+	switch {
 	case s.err != nil:
 	case master.Props.Get(ical.PropRecurrenceDates) != nil:
 		s.err = errRDate
@@ -163,8 +168,8 @@ func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
 		return s.err
 	}
 	var ruleNext func() (time.Time, bool)
-	if rr := rruleString(s.master); rr != "" {
-		r, err := newRRule(rr, s.anchor.t)
+	if s.rrule != "" {
+		r, err := newRRule(s.rrule, s.anchor.t)
 		if err != nil {
 			return err
 		}
@@ -271,7 +276,7 @@ func (s *todoSeries) reportedRid(status string) time.Time {
 // or cancelled master, a rule Lucid cannot evaluate and a series without any
 // occurrence left keep the master's dates.
 func (s *todoSeries) setSeries(t *domain.Todo) {
-	t.RRule, t.Recurring, t.FixedDays = rruleString(s.master), true, s.fixedDays
+	t.RRule, t.Recurring, t.FixedDays = s.rrule, true, s.fixedDays
 	if t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
 		return
 	}
@@ -346,6 +351,11 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 // A rule Lucid cannot evaluate (of a completed series) only gets its dates
 // moved. It fails, without changing anything, when in has no date or the
 // rule cannot be walked up to the moved occurrence.
+//
+// Where the moved occurrence lies in the series (the instances before it,
+// whether it is the last, whether the move stays on the grid) is decided on
+// the series as read, s, and the rewritten rule is written last: once
+// shifted, it no longer says where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
 	start, allDay := in.Start, in.StartAllDay
 	if start == nil {
@@ -357,18 +367,20 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	c := s.master
 	rid := s.reportedRid(status)
 	var shift func(dateValue) time.Time
-	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && s.err == nil && rruleString(c) != "" {
+	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && s.err == nil && s.rrule != "" {
 		before, err := s.instancesBefore(rid)
 		if err != nil {
 			return errRuleUnsupported
 		}
 		shift = s.refShift(rid, *start, allDay)
-		p.Value = movedRule(strings.TrimSpace(p.Value), before, rid, shift)
+		last := hasRulePart(s.rrule, "UNTIL") && !s.hasLater(rid)
+		rule := movedRule(s.rrule, before, rid, shift)
 		// UNTIL never ends before the moved series starts, and the last
 		// occurrence stays the last, wherever it goes.
-		if loc := s.anchor.loc(); untilBefore(p.Value, *start, loc) || (hasRulePart(p.Value, "UNTIL") && !s.hasLater(rid)) {
-			p.Value = untilAt(p.Value, *start, loc)
+		if loc := s.anchor.loc(); last || untilBefore(rule, *start, loc) {
+			rule = untilAt(rule, *start, loc)
 		}
+		p.Value = rule
 	}
 	writeSeriesDates(cal, c, in, true)
 	dropOverrides(cal, c, rid.Equal)
@@ -382,7 +394,7 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 // instancesBefore returns the number of instances of the rule of s before
 // t, iterated from the anchor as ruleEnd does (FR-17).
 func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
-	r, err := newRRule(rruleString(s.master), s.anchor.t)
+	r, err := newRRule(s.rrule, s.anchor.t)
 	if err != nil {
 		return 0, err
 	}
@@ -448,7 +460,7 @@ func (s *todoSeries) onGrid(a, b time.Time) bool {
 	if b.Before(a) {
 		a, b = b, a
 	}
-	r, err := newRRule(withoutEnd(rruleString(s.master)), a.In(s.anchor.loc()))
+	r, err := newRRule(withoutEnd(s.rrule), a.In(s.anchor.loc()))
 	if err != nil {
 		return false
 	}
@@ -614,7 +626,7 @@ func (s *todoSeries) ruleEnd() (time.Time, error) {
 	if s.err != nil {
 		return time.Time{}, s.err
 	}
-	r, err := newRRule(rruleString(s.master), s.anchor.t)
+	r, err := newRRule(s.rrule, s.anchor.t)
 	if err != nil {
 		return time.Time{}, err
 	}
