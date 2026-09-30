@@ -285,13 +285,15 @@ describe('taskForm', () => {
       expect(dayAllowed(series, v, 'due', '2026-10-04', TZ)).toBe(false)
     })
 
-    it('judges a start, which places the task, with the time it will get', () => {
+    it('judges a timed series by the day, whatever time the date gets', () => {
       const timed = todo({ ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { due: '2026-10-08T07:00:00Z' } })
       const tv = taskToForm(timed, TZ)
+      // A start takes the due date's time, 09:00, and places the task from then on.
       expect(dayAllowed(timed, tv, 'start', '2026-10-07', TZ)).toBe(true)
-      // 09:00, like the due date: the next repeat's own time.
       expect(dayAllowed(timed, tv, 'start', '2026-10-08', TZ)).toBe(false)
-      expect(dayAllowed(timed, { ...tv, dueTime: '08:00' }, 'due', '2026-10-08', TZ)).toBe(true)
+      // The next repeat's day is out even before its 09:00; the day before is in until midnight.
+      expect(dayAllowed(timed, { ...tv, dueTime: '08:00' }, 'due', '2026-10-08', TZ)).toBe(false)
+      expect(dayAllowed(timed, { ...tv, dueTime: '23:30' }, 'due', '2026-10-07', TZ)).toBe(true)
     })
 
     it('allows any day without a window', () => {

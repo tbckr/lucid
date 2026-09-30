@@ -256,6 +256,8 @@ describe('TaskEditor', () => {
       next: { start: null, due: '2026-10-08T00:00:00Z' },
     })
     const single = todo({ title: 'Slides', due: '2026-10-05T00:00:00Z', dueAllDay: true })
+    // The same series with a time: due at 9:00 on Monday, the next repeat at 9:00 on Thursday.
+    const timed = { ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { start: null, due: '2026-10-08T07:00:00Z' } }
     const puts = (fetch: Awaited<ReturnType<typeof openTask>>['fetch']) =>
       fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
 
@@ -398,21 +400,35 @@ describe('TaskEditor', () => {
       expect(within(due).queryByText(/^Until /)).toBeNull()
     })
 
-    it('does not save a due time past the next repeat', async () => {
+    it('limits a timed series to the days before the next repeat, at any time', async () => {
       const user = userEvent.setup()
-      // Due at 9:00 on Monday; the next repeat is due at 9:00 on Thursday.
-      const timed = { ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { start: null, due: '2026-10-08T07:00:00Z' } }
       const { fetch, dialog } = await openTask(timed)
 
-      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
-      await user.click(screen.getByRole('option', { name: '8:00 AM' }))
+      // Wednesday is the last day, whatever the time; Thursday is out, even before 9:00.
       await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
-      await user.click(screen.getByRole('button', { name: 'Thursday, October 8th, 2026' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      expect(within(month).getByRole('button', { name: 'Thursday, October 8th, 2026' })).toHaveAttribute('aria-disabled', 'true')
+      expect(within(month).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+      await user.click(within(month).getByRole('button', { name: 'Wednesday, October 7th, 2026' }))
       await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
       await user.click(screen.getByRole('option', { name: '10:00 AM' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-      expect(await within(dialog).findByText('Until Thu, Oct 8, then the next repeat is due.')).toBeInTheDocument()
+      expect(await saved(fetch)).toMatchObject({ due: '2026-10-07T08:00:00.000Z', dueAllDay: false })
+    })
+
+    it('does not save a start date past the next repeat', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(timed)
+
+      // A start binds the window instead of the due date, and its picker was free while there was none.
+      await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
+      await user.click(screen.getByRole('button', { name: 'Thursday, October 8th, 2026' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      await user.click(screen.getByRole('button', { name: 'Friday, October 9th, 2026' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
       expect(puts(fetch)).toHaveLength(0)
     })
 
