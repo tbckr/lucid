@@ -26,6 +26,7 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPut, path: "/api/v1/events/e1", body: eventBody, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/events/e1", headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"},
+		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"},
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"x"}`},
 		{method: http.MethodPut, path: "/api/v1/todos/t1", body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: map[string]string{"If-Match": `"1"`}},
@@ -263,6 +264,11 @@ func TestTodos(t *testing.T) {
 		{"list", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"}, nil, http.StatusOK, "", "ListTodos"},
 		{"list error", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"}, domain.ErrUpstream, http.StatusBadGateway, codeUpstreamError, "ListTodos"},
 		{"list long id", req{method: http.MethodGet, path: "/api/v1/calendars/" + strings.Repeat("c", 1100) + "/todos"}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"occurrences", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"}, nil, http.StatusOK, "", "ListTodoOccurrences"},
+		{"occurrences no range", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences"}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"occurrences too long", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2026-01-03T00:00:00Z"}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"occurrences error", req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"}, domain.ErrUpstream, http.StatusBadGateway, codeUpstreamError, "ListTodoOccurrences"},
+		{"occurrences long id", req{method: http.MethodGet, path: "/api/v1/calendars/" + strings.Repeat("c", 1100) + "/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"}, nil, http.StatusBadRequest, codeInvalidInput, ""},
 		{"create", req{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"Buy milk"}`}, nil, http.StatusCreated, "", "CreateTodo"},
 		{"create invalid", req{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"x","priority":10}`}, nil, http.StatusBadRequest, codeInvalidInput, ""},
 		{"create error", req{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: todoBody}, domain.ErrReadOnly, http.StatusForbidden, codeReadOnly, "CreateTodo"},
@@ -293,8 +299,12 @@ func TestTodos(t *testing.T) {
 			if got := strings.Join(h.svc.calls, ","); got != tt.call {
 				t.Fatalf("calls = %q, want %q", got, tt.call)
 			}
-			if tt.status < 300 && tt.status != http.StatusNoContent && !strings.Contains(w.Body.String(), `"checklist":[`) {
+			if tt.status < 300 && tt.status != http.StatusNoContent && tt.call != "ListTodoOccurrences" &&
+				!strings.Contains(w.Body.String(), `"checklist":[`) {
 				t.Errorf("checklist must be an array: %s", w.Body)
+			}
+			if tt.call == "ListTodoOccurrences" && tt.code == "" && !strings.Contains(w.Body.String(), `"occurrences":`) {
+				t.Errorf("response missing occurrences: %s", w.Body)
 			}
 			if tt.call == "UpdateTodo" || tt.call == "DeleteTodo" {
 				if h.svc.gotID != "t1" || h.svc.gotETag != `"t-etag"` {
@@ -311,21 +321,29 @@ func TestTodos(t *testing.T) {
 	if !strings.Contains(w.Body.String(), `"todos":[]`) {
 		t.Errorf("nil list must encode as []: %s", w.Body)
 	}
+
+	w = h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"})
+	decode(t, w, http.StatusOK, nil)
+	if !strings.Contains(w.Body.String(), `"occurrences":[]`) {
+		t.Errorf("nil list must encode as []: %s", w.Body)
+	}
 }
 
 // Clients that predate `start` omit it; only an explicit null removes it (FR-16).
 func TestUpdateTodoStartPresence(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name, body string
-		status     int
-		omitted    bool
-		start      bool
+		name, body   string
+		status       int
+		omitted      bool
+		start        bool
+		rruleOmitted bool
 	}{
-		{"omitted", `{"title":"x"}`, http.StatusOK, true, false},
-		{"null", `{"title":"x","start":null}`, http.StatusOK, false, false},
-		{"value", `{"title":"x","start":"2025-03-10T08:00:00Z"}`, http.StatusOK, false, true},
-		{"unknown field", `{"title":"x","bogus":1}`, http.StatusBadRequest, false, false},
+		{"omitted", `{"title":"x"}`, http.StatusOK, true, false, true},
+		{"null", `{"title":"x","start":null}`, http.StatusOK, false, false, true},
+		{"value", `{"title":"x","start":"2025-03-10T08:00:00Z"}`, http.StatusOK, false, true, true},
+		{"unknown field", `{"title":"x","bogus":1}`, http.StatusBadRequest, false, false, true},
+		{"rrule empty", `{"title":"x","rrule":""}`, http.StatusOK, true, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -338,9 +356,45 @@ func TestUpdateTodoStartPresence(t *testing.T) {
 				return
 			}
 			decode(t, w, http.StatusOK, nil)
-			if got := h.svc.gotTodo; got.StartOmitted != tt.omitted || (got.Start != nil) != tt.start {
-				t.Errorf("StartOmitted = %v, Start = %v; want %v, set %v", got.StartOmitted, got.Start, tt.omitted, tt.start)
+			if got := h.svc.gotTodo; got.StartOmitted != tt.omitted || (got.Start != nil) != tt.start || got.RRuleOmitted != tt.rruleOmitted {
+				t.Errorf("StartOmitted = %v, Start = %v, RRuleOmitted = %v; want %v, set %v, %v",
+					got.StartOmitted, got.Start, got.RRuleOmitted, tt.omitted, tt.start, tt.rruleOmitted)
 			}
 		})
+	}
+}
+
+// Completing an occurrence of a recurring todo returns the rolled master
+// with the completed occurrence attached as CompletedCopy (FR-17), and both
+// checklists (master and copy) must encode as [] rather than null.
+func TestUpdateTodoCompletedCopy(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	c := h.login(t)
+	h.svc.todos = []domain.Todo{{ID: "t1", Title: "Water plants"}}
+	h.svc.updateTodoResult = &domain.Todo{
+		ID:        "t1",
+		Title:     "Water plants",
+		Recurring: true,
+		RRule:     "FREQ=WEEKLY",
+		CompletedCopy: &domain.Todo{
+			ID:     "t1-copy",
+			Title:  "Water plants",
+			Status: domain.TodoCompleted,
+		},
+	}
+	w := h.do(t, c, req{
+		method:  http.MethodPut,
+		path:    "/api/v1/todos/t1",
+		body:    `{"title":"Water plants","status":"COMPLETED"}`,
+		headers: map[string]string{"If-Match": `"t-etag"`},
+	})
+	decode(t, w, http.StatusOK, nil)
+	body := w.Body.String()
+	if !strings.Contains(body, `"completedCopy":{`) {
+		t.Errorf("response missing completedCopy: %s", body)
+	}
+	if strings.Count(body, `"checklist":[]`) != 2 {
+		t.Errorf("master and copy both need an empty checklist array: %s", body)
 	}
 }

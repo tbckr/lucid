@@ -137,10 +137,12 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 
 ```json
 { "todos": [ { "id": "...", "calendarId": "...", "uid": "...", "etag": "...",
-  "title": "Buy milk", "description": "", "checklist": [ { "text": "oat", "done": false } ],
+  "title": "Water plants", "description": "", "checklist": [],
   "start": null, "startAllDay": false,
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
-  "status": "NEEDS-ACTION", "completed": null } ] }
+  "status": "NEEDS-ACTION", "completed": null,
+  "rrule": "FREQ=WEEKLY", "recurring": true, "fixedDays": false, "ruleUnsupported": false,
+  "next": { "start": null, "due": "2025-01-14T00:00:00Z" } } ] }
 ```
 
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
@@ -155,11 +157,53 @@ completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 
+`rrule`, `recurring`, `fixedDays`, `ruleUnsupported` and `next` describe a
+recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
+
+- `rrule` is the stored `RRULE` (RFC 5545), empty for a non-recurring todo.
+- `recurring` is `true` for any such series, evaluable or not.
+- `fixedDays` is `true` when the series recurs on fixed calendar days rather
+  than at a fixed interval from its anchor: an `RRULE` part other than
+  `FREQ`/`INTERVAL`/`COUNT`/`UNTIL`/`WKST`, or any `RDATE`.
+- `ruleUnsupported` is `true` for a series Lucid cannot evaluate: an
+  unparsable `RRULE`, neither `start` nor `due` at all, or any `RDATE`. Such a
+  series is reported once, with its stored dates, and does **not** appear in
+  `GET .../todos/occurrences`.
+- `next` is the earliest open occurrence after the current one (`{ "start",
+  "due" }`), or `null` if this is the last (or the series is not recurring,
+  or `ruleUnsupported`).
+
+For an open recurring todo, `start` and `due` are not the series' stored
+`DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
+that is still open (`NEEDS-ACTION`/`IN-PROCESS`). Completing or moving the
+todo (see `PUT` below) changes which occurrence that is.
+
+### `GET /api/v1/calendars/{calendarId}/todos/occurrences?start=<RFC3339>&end=<RFC3339>`
+
+Returns the occurrences of open, evaluable recurring todos (`recurring: true`,
+`ruleUnsupported: false`, not `COMPLETED`/`CANCELLED`) overlapping `[start,
+end)`. Same range limit as events: at most 366 days.
+
+```json
+{ "occurrences": [ {
+  "key": "...@2025-01-14T00:00:00Z", "todoId": "...", "calendarId": "...",
+  "recurrenceId": "2025-01-14T00:00:00Z", "title": "Water plants",
+  "start": null, "startAllDay": false,
+  "due": "2025-01-14T00:00:00Z", "dueAllDay": true, "state": "upcoming" } ] }
+```
+
+`state` is `current` (the occurrence the todo's own `start`/`due` describe,
+and that `PUT` acts on), `upcoming`, or `done` (completed out of order by
+another CalDAV client, kept in the list as history). Use `key` as the React
+key / occurrence identity; `todoId` identifies the underlying resource, like
+a todo's `id`.
+
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
-Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status" }` → `201` `Todo`.
+Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
-(`supportsTodos: false`).
+(`supportsTodos: false`). `timezone` is the IANA zone timed `start`/`due`
+recur in; without it, a series uses UTC.
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 
@@ -168,7 +212,44 @@ without `start` keeps the stored `DTSTART` (clients that predate the field),
 and `null` removes it unless the todo recurs (`RRULE`), which keeps its
 `DTSTART` as RFC 5545 requires.
 
-Setting `status` to `COMPLETED` sets `completed`; any other status clears it.
+`rrule` follows the same absent/empty/value convention as `TodoInput`:
+absent keeps the stored rule, `""` removes it (the todo becomes a single,
+non-recurring task at the current occurrence's dates), any other value sets
+it. Setting `status` to `COMPLETED` sets `completed`; any other status clears
+it.
+
+For a recurring todo, these three edits are handled specially:
+
+- **Completing the current occurrence** (`status: COMPLETED` on an open
+  series): the backend creates a completed copy of the occurrence — a new
+  todo, its own `id`/`uid`, no rule, the occurrence's dates — and rolls the
+  master to its next open occurrence (`NEEDS-ACTION`, checklist reset, a
+  `COUNT` rule converted to an equivalent `UNTIL` once so the remaining
+  occurrence count survives the rewrite). The response is the **rolled
+  master**, with the copy attached as `completedCopy`. On the series' last
+  occurrence there is no next one: the master itself becomes `COMPLETED` and
+  `completedCopy` is absent. If writing the rolled master fails, the
+  already-written copy is deleted again and the error is returned.
+- **Moving the series** (`start`/`due` different from the stored ones): the
+  master's `DTSTART`/`DUE` become the new dates, keeping their written form
+  (a series without `start` recurs on `due`). Exceptions later than the
+  current occurrence shift by the same offset. The backend does not enforce
+  the move window the UI shows; that is a client-side hint only.
+- **Changing `rrule`**: the new rule applies from the current occurrence on;
+  earlier occurrences and completed copies are untouched. It needs a `start`
+  or `due` to recur from, otherwise `400 invalid_input`, message *"a
+  repeating task needs a start or due date"*.
+
+A series with `ruleUnsupported: true` cannot be completed, moved, or given a
+new `rrule`: any of those is `400 invalid_input`, message *"the repeat rule
+cannot be evaluated"*. Removing its rule (`rrule: ""`) and other field edits
+(title, description, checklist, priority, status other than completing it)
+still work.
+
+There is no dedicated undo endpoint. Undoing a move or a completion replays
+the previous state: `PUT` the master with its previous `start`/`due`/
+`status`/`checklist`, then, for a completion, `DELETE` the `completedCopy`
+it created.
 
 ### `DELETE /api/v1/todos/{todoId}` (header `If-Match`) → `204`
 

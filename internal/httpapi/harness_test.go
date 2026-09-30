@@ -57,6 +57,8 @@ type fakeService struct {
 	events      []domain.Event
 	todos       []domain.Todo
 	occurrences []domain.TodoOccurrence
+	// updateTodoResult overrides UpdateTodo's default response, if set.
+	updateTodoResult *domain.Todo
 
 	calls    []string
 	gotCal   string
@@ -158,6 +160,9 @@ func (f *fakeService) UpdateTodo(_ context.Context, id, etag string, in domain.T
 	f.mu.Unlock()
 	if err := f.record("UpdateTodo"); err != nil {
 		return domain.Todo{}, err
+	}
+	if f.updateTodoResult != nil {
+		return *f.updateTodoResult, nil
 	}
 	return domain.Todo{ID: id, Title: in.Title, Checklist: in.Checklist}, nil
 }

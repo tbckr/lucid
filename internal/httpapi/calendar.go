@@ -231,6 +231,35 @@ func (s *Server) handleListTodos(w http.ResponseWriter, r *http.Request) {
 	middleware.WriteJSON(w, http.StatusOK, todosResponse{Todos: todos})
 }
 
+type occurrencesResponse struct {
+	Occurrences []domain.TodoOccurrence `json:"occurrences"`
+}
+
+// handleListTodoOccurrences serves the occurrences of open recurring todos
+// overlapping the requested range (FR-16, FR-17), the same shape as
+// handleListEvents.
+func (s *Server) handleListTodoOccurrences(w http.ResponseWriter, r *http.Request) {
+	calID, ok := pathID(w, r, "calendarId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	start, end, msg := parseRange(r)
+	if msg != "" {
+		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, msg)
+		return
+	}
+	occurrences, err := svc.ListTodoOccurrences(r.Context(), calID, start, end)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	middleware.WriteJSON(w, http.StatusOK, occurrencesResponse{Occurrences: nonNil(occurrences)})
+}
+
 func (s *Server) handleCreateTodo(w http.ResponseWriter, r *http.Request) {
 	calID, ok := pathID(w, r, "calendarId")
 	if !ok {
@@ -314,10 +343,15 @@ func (s *Server) decodeValid(w http.ResponseWriter, r *http.Request, v validator
 	return true
 }
 
-// normalizeTodo makes sure the checklist is encoded as [] rather than null.
+// normalizeTodo makes sure the checklist is encoded as [] rather than null,
+// for the todo itself and, if present, its CompletedCopy (FR-17).
 func normalizeTodo(t domain.Todo) domain.Todo {
 	if t.Checklist == nil {
 		t.Checklist = []domain.ChecklistItem{}
+	}
+	if t.CompletedCopy != nil {
+		copyTodo := normalizeTodo(*t.CompletedCopy)
+		t.CompletedCopy = &copyTodo
 	}
 	return t
 }
