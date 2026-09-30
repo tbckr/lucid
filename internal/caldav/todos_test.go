@@ -1489,6 +1489,19 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, occs, []time.Time{date(2025, 3, 12, 10, 0)}, []string{domain.OccurrenceCurrent})
 	})
 
+	// Wherever a move lands, UNTIL does not end before it (FR-17).
+	t.Run("move beyond until extends it", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250331T090000Z"})
+		moveListed(t, e, id, 28*24*time.Hour)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250407T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z\r\n"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs, []time.Time{date(2025, 4, 7, 9, 0)}, []string{domain.OccurrenceCurrent})
+	})
+
 	for _, tc := range []struct {
 		name     string
 		master   []string

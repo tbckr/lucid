@@ -364,9 +364,10 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		}
 		shift = s.refShift(rid, *start, allDay)
 		p.Value = movedRule(strings.TrimSpace(p.Value), before, rid, shift)
-		if hasRulePart(p.Value, "UNTIL") && !s.hasLater(rid) {
-			// The last occurrence keeps being one, wherever it goes.
-			p.Value = untilAt(p.Value, *start, s.anchor.loc())
+		// UNTIL never ends before the moved series starts, and the last
+		// occurrence stays the last, wherever it goes.
+		if loc := s.anchor.loc(); untilBefore(p.Value, *start, loc) || (hasRulePart(p.Value, "UNTIL") && !s.hasLater(rid)) {
+			p.Value = untilAt(p.Value, *start, loc)
 		}
 	}
 	writeSeriesDates(cal, c, in, true)
@@ -505,6 +506,27 @@ func (s *todoSeries) hasLater(rid time.Time) bool {
 		return !later
 	})
 	return later || err != nil
+}
+
+// untilBefore reports whether rrule has an UNTIL before to; a DATE compares
+// with to's date in loc (FR-17).
+func untilBefore(rrule string, to time.Time, loc *time.Location) bool {
+	for part := range strings.SplitSeq(rrule, ";") {
+		if rulePartKey(part) != "UNTIL" {
+			continue
+		}
+		_, v, _ := strings.Cut(part, "=")
+		d, err := parseDateValue(v, nil)
+		switch {
+		case err != nil:
+			return false
+		case d.allDay:
+			return d.t.Before(civilDate(to.In(loc)))
+		default:
+			return d.t.Before(to)
+		}
+	}
+	return false
 }
 
 // untilAt returns rrule with its UNTIL at to, written in the UNTIL's own
