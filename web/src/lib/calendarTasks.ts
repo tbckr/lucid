@@ -138,11 +138,10 @@ export interface MoveWindow {
 
 /**
  * The move window of a recurring series, or null when it isn't bounded
- * (FR-17): only a series with fixed days (an `RRULE` of just
- * FREQ/INTERVAL/COUNT/UNTIL/WKST, plus any `RDATE`) keeps its calendar dates
- * meaningful across a move, so it may move up to, but not past, its next
- * occurrence. Other series move freely, like `ruleUnsupported` ones can't
- * move at all (`canDrag`).
+ * (FR-17): only a fixed-day series — an `RRULE` with any part other than
+ * FREQ/INTERVAL/COUNT/UNTIL/WKST, or an `RDATE` — keeps its later occurrences
+ * on their days, so a move must end before the next one. Other series move
+ * freely, like `ruleUnsupported` ones can't move at all (`canDrag`).
  */
 export function moveWindow(todo: Todo): MoveWindow | null {
   if (!todo.recurring || !todo.fixedDays || !todo.next) return null
