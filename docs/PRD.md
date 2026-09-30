@@ -87,12 +87,12 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **FR-13:** Checklist support.
 * **FR-14:** Due Date & Priority.
 * **FR-15:** Status Update (COMPLETED).
-* **FR-16:** Tasks with a date are shown in the calendar views, can be completed there and created from a click in them.
+* **FR-16:** Tasks with a date are shown in the calendar views, can be completed there and created from a click in them. Recurring tasks show every repeat; the current one can be completed and moved.
 
 ### **4.5 Extended iCal Features**
 
 * **FR-17:** Recurring Events (RRULE).
-  * *Implementation:* Backend expands RRULEs for the requested view range.
+  * *Implementation:* Backend expands RRULEs for the requested view range. Recurring tasks (VTODO) are expanded like events; see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md).
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**

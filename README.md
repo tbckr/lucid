@@ -41,11 +41,12 @@ of your server.
   calendar, a new one too while you are still naming it; changes show up
   instantly.
 - **Tasks:** a task sidebar that groups each list by when its tasks are due,
-  with checklists, start and due dates, priorities and completion. Rename a
-  task or move it to another day right in the list, and delete done tasks one
-  by one or all at once. Tasks with a date also appear in the calendar views,
-  where you can check them off or hide them once they're done. Checklists are
-  saved as plain Markdown task lines, so your other apps can still read them.
+  with checklists, start and due dates, priorities, repeats and completion.
+  Rename a task or move it to another day right in the list, and delete done
+  tasks one by one or all at once. Tasks with a date also appear in the
+  calendar views, repeating ones at every repeat, where you can check them off
+  or hide them once they're done. Checklists are saved as plain Markdown task
+  lines, so your other apps can still read them.
 - **Recurring events and time zones:** recurring series, all-day and timed
   events, always shown in your local time zone.
 - **Easy login:** enter just your domain; Lucid finds the CalDAV endpoint via
@@ -101,6 +102,17 @@ talks JSON to your browser and CalDAV to your server. Your CalDAV server stays
 the single source of truth; Lucid only keeps sessions and a short-lived cache
 in memory. After login, your browser holds nothing but a session cookie, never
 your CalDAV credentials.
+
+### Repeating tasks
+
+A repeating task shows up at every repeat in the calendar views. Checking off
+the current repeat moves the task on to its next one and leaves the done one
+behind as a completed entry of its own. Repeats are checked off in order, and
+moving the task moves it from the current repeat on. Apple Reminders and
+Tasks.org handle repeating tasks the same way, so they see what you did in
+Lucid, and Lucid reads what Thunderbird, KDE and others write.
+[docs/RECURRING-TASKS.md](docs/RECURRING-TASKS.md) explains why, with a survey
+of how CalDAV clients handle repeating tasks.
 
 ## Quick start
 
