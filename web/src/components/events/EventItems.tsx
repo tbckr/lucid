@@ -58,9 +58,9 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
 }
 
 /** Marks a recurring event or task (FR-16, FR-17); nothing for a single one. */
-export function RecurringMark({ recurring, label }: { recurring: boolean; label: string }) {
+export function RecurringMark({ recurring, label, className }: { recurring: boolean; label: string; className?: string }) {
   if (!recurring) return null
-  return <RepeatIcon className="size-3 shrink-0 opacity-70" role="img" aria-label={label} />
+  return <RepeatIcon className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label} />
 }
 
 /** Single-day timed event in the month grid: dot, time, title. */

@@ -28,6 +28,15 @@ import { useUi } from '@/stores/ui'
 
 const INK_IN = 'transition-[background-color] duration-200 motion-reduce:transition-none'
 
+/*
+ * A one-line item with checkbox, time and title (FR-17): in a narrow `@container` the repeat mark
+ * goes first, so it never takes the title's last characters; the details and the task list still
+ * show the rule. Either width leaves the title about 3.5rem next to the checkbox, the time and the
+ * mark: the chip's own, the block's content box inside its padding.
+ */
+const CHIP_MARK_IF_ROOM = '@max-[9rem]:hidden'
+const BLOCK_MARK_IF_ROOM = '@max-[7rem]:hidden'
+
 interface TaskItemProps {
   task: CalTask
   colors: EventColors
@@ -178,7 +187,7 @@ export function TaskChip({
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
       className={cn(
-        'flex h-5 w-full min-w-0 items-stretch rounded-sm text-xs leading-none hover:bg-muted',
+        'flex h-5 w-full min-w-0 items-stretch rounded-sm text-xs leading-none @container hover:bg-muted',
         INK_IN,
         done && 'opacity-60',
         isDragging && 'opacity-40',
@@ -212,7 +221,11 @@ export function TaskChip({
           <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(task.startsAt, prefs)}</span>
         )}
         <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
-        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
+        <RecurringMark
+          recurring={task.todo.recurring}
+          label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+          className={CHIP_MARK_IF_ROOM}
+        />
       </button>
     </div>
   )
@@ -341,13 +354,17 @@ export function TaskBlock({
           'flex size-full min-h-0 overflow-hidden rounded-md pr-1.5 pl-[1.625rem] text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
           INK_IN,
           upcoming ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
-          compact ? 'flex-row items-center gap-1 py-0' : 'flex-col py-1',
+          compact ? 'flex-row items-center gap-1 py-0 @container' : 'flex-col py-1',
         )}
         style={upcoming ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
       >
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
-          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
+          <RecurringMark
+            recurring={task.todo.recurring}
+            label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+            className={compact ? BLOCK_MARK_IF_ROOM : undefined}
+          />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
       </button>

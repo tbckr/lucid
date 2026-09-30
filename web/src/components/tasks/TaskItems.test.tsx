@@ -178,6 +178,35 @@ describe('task items', () => {
       expect(screen.getByRole('img', { name: 'Every day' })).toBeInTheDocument()
     })
 
+    it('drops the repeat mark before the title in a narrow chip or one-line block', () => {
+      const t = occurrenceOf({
+        due: '2026-10-05T17:00:00Z',
+        state: 'current',
+        recurrenceId: '2026-10-05T17:00:00Z',
+        key: 't1@2026-10-05T17:00:00Z',
+      })
+      const { unmount } = renderWithProviders(<TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} />)
+      const chip = screen.getByRole('button', { name: /^Water the flowers, / }).closest('[data-task-key]')
+      expect(chip).toHaveClass('@container')
+      expect(screen.getByRole('img', { name: 'Every day' })).toHaveClass('@max-[9rem]:hidden')
+      unmount()
+
+      renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="xs" />)
+      expect(screen.getByRole('button', { name: /^Water the flowers, / })).toHaveClass('@container')
+      expect(screen.getByRole('img', { name: 'Every day' })).toHaveClass('@max-[7rem]:hidden')
+    })
+
+    it('keeps the repeat mark of a two-line block, whose title has its own line', () => {
+      const t = occurrenceOf({
+        due: '2026-10-05T17:00:00Z',
+        state: 'current',
+        recurrenceId: '2026-10-05T17:00:00Z',
+        key: 't1@2026-10-05T17:00:00Z',
+      })
+      renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />)
+      expect(screen.getByRole('img', { name: 'Every day' }).getAttribute('class')).not.toContain('@max-')
+    })
+
     it('previews an upcoming occurrence as dashed, with no background-color style', () => {
       const t = occurrenceOf({
         due: '2026-10-08T00:00:00Z',
