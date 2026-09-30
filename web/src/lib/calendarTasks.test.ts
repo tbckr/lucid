@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { todo } from '@/test/fixtures'
-import { movedTodo, toCalTask } from './calendarTasks'
+import { occurrence, todo } from '@/test/fixtures'
+import {
+  anchorOf,
+  canComplete,
+  canDrag,
+  lastAllowedDay,
+  moveWindow,
+  movedTodo,
+  occurrenceTask,
+  toCalTask,
+  withinWindow,
+} from './calendarTasks'
 import { isSpanning } from './events'
 
 // Vitest runs in Europe/Berlin (CEST until 25 Oct 2026, UTC+2).
@@ -157,5 +167,204 @@ describe('movedTodo', () => {
     // A mix from another client: the all-day start moves by days only.
     const t = todo({ start: allDay('2026-09-24'), startAllDay: true, due: '2026-09-25T08:00:00Z' })
     expect(movedTodo(t, 1, 45)).toMatchObject({ start: '2026-09-25T00:00:00.000Z', due: '2026-09-26T08:45:00.000Z' })
+  })
+})
+
+describe('anchorOf', () => {
+  it('prefers start over due', () => {
+    expect(
+      anchorOf({ start: allDay('2026-09-20'), startAllDay: true, due: allDay('2026-09-25'), dueAllDay: true }),
+    ).toEqual(new Date(2026, 8, 20))
+  })
+
+  it('falls back to due', () => {
+    expect(anchorOf({ start: null, startAllDay: false, due: '2026-09-25T08:00:00Z', dueAllDay: false })).toEqual(
+      new Date(2026, 8, 25, 10),
+    )
+  })
+
+  it('is null without dates', () => {
+    expect(anchorOf({ start: null, startAllDay: false, due: null, dueAllDay: false })).toBeNull()
+  })
+})
+
+describe('occurrenceTask', () => {
+  it('places an all-day occurrence on its day', () => {
+    const t = todo({ id: 't1' })
+    const occ = occurrence({ due: allDay('2026-09-25'), dueAllDay: true, state: 'upcoming' })
+    const task = occurrenceTask(occ, t)
+    expect(task).toMatchObject({
+      startsAt: new Date(2026, 8, 25),
+      allDay: true,
+      key: occ.key,
+      occurrence: { state: 'upcoming', recurrenceId: occ.recurrenceId },
+    })
+    expect(task?.todo.id).toBe('t1')
+  })
+
+  it('places a timed point occurrence as a 30-minute point', () => {
+    const occ = occurrence({ due: '2026-09-25T08:00:00Z', dueAllDay: false })
+    const task = occurrenceTask(occ, todo())
+    expect(task).toMatchObject({
+      point: true,
+      startsAt: new Date(2026, 8, 25, 10),
+      endsAt: new Date(2026, 8, 25, 10, 30),
+    })
+  })
+
+  it('is null without dates', () => {
+    expect(occurrenceTask(occurrence({ start: null, due: null }), todo())).toBeNull()
+  })
+})
+
+describe('canComplete', () => {
+  it.each([
+    ['upcoming', false],
+    ['done', false],
+    ['current', true],
+  ] as const)('an occurrence in state %s -> %s', (state, expected) => {
+    const task = occurrenceTask(occurrence({ state }), todo())!
+    expect(canComplete(task)).toBe(expected)
+  })
+
+  it('is true for a plain todo', () => {
+    const task = toCalTask(todo({ due: allDay('2026-09-25'), dueAllDay: true }))!
+    expect(canComplete(task)).toBe(true)
+  })
+
+  it('is false for a todo whose rule is unsupported', () => {
+    const task = toCalTask(todo({ due: allDay('2026-09-25'), dueAllDay: true, ruleUnsupported: true }))!
+    expect(canComplete(task)).toBe(false)
+  })
+})
+
+describe('canDrag', () => {
+  it('matches canComplete for an occurrence', () => {
+    const current = occurrenceTask(occurrence({ state: 'current' }), todo())!
+    const done = occurrenceTask(occurrence({ state: 'done' }), todo())!
+    expect(canDrag(current)).toBe(true)
+    expect(canDrag(done)).toBe(false)
+  })
+
+  it('stays true for a plain, done task (unlike an occurrence)', () => {
+    const t = todo({ due: allDay('2026-09-25'), dueAllDay: true, status: 'COMPLETED' })
+    expect(canDrag(toCalTask(t)!)).toBe(true)
+  })
+
+  it('is false for a todo whose rule is unsupported', () => {
+    const t = todo({ due: allDay('2026-09-25'), dueAllDay: true, ruleUnsupported: true })
+    expect(canDrag(toCalTask(t)!)).toBe(false)
+  })
+})
+
+describe('moveWindow', () => {
+  it('bounds a fixed-day all-day series to its next occurrence', () => {
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+      next: { start: null, due: allDay('2026-10-08') },
+    })
+    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) })
+  })
+
+  it('starts a timed series window at local midnight of the current occurrence', () => {
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: '2026-10-05T07:00:00Z',
+      next: { start: null, due: '2026-10-08T07:00:00Z' },
+    })
+    expect(moveWindow(t)?.from).toEqual(new Date(2026, 9, 5))
+  })
+
+  it('is null for an interval rule (fixedDays false)', () => {
+    const t = todo({
+      recurring: true,
+      fixedDays: false,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+      next: { start: null, due: allDay('2026-10-08') },
+    })
+    expect(moveWindow(t)).toBeNull()
+  })
+
+  it('is null without a next occurrence', () => {
+    const t = todo({ recurring: true, fixedDays: true, due: allDay('2026-10-05'), dueAllDay: true, next: null })
+    expect(moveWindow(t)).toBeNull()
+  })
+
+  it('is null without dates on the series itself', () => {
+    const t = todo({ recurring: true, fixedDays: true, next: { start: null, due: allDay('2026-10-08') } })
+    expect(moveWindow(t)).toBeNull()
+  })
+
+  it('is null without dates on the next occurrence', () => {
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+      next: { start: null, due: null },
+    })
+    expect(moveWindow(t)).toBeNull()
+  })
+})
+
+describe('withinWindow', () => {
+  const t = todo({
+    recurring: true,
+    fixedDays: true,
+    due: allDay('2026-10-05'),
+    dueAllDay: true,
+    next: { start: null, due: allDay('2026-10-08') },
+  })
+
+  it('accepts a due date inside the window', () => {
+    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-07'), dueAllDay: true })).toBe(
+      true,
+    )
+  })
+
+  it('rejects the day the next occurrence is due', () => {
+    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-08'), dueAllDay: true })).toBe(
+      false,
+    )
+  })
+
+  it('rejects a day before the current occurrence', () => {
+    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-04'), dueAllDay: true })).toBe(
+      false,
+    )
+  })
+
+  it('is judged by its start when both start and due are given', () => {
+    expect(
+      withinWindow(t, { start: allDay('2026-10-04'), startAllDay: true, due: allDay('2026-10-07'), dueAllDay: true }),
+    ).toBe(false)
+  })
+
+  it('is true without a window', () => {
+    expect(
+      withinWindow(todo(), { start: null, startAllDay: false, due: allDay('2026-10-20'), dueAllDay: true }),
+    ).toBe(true)
+  })
+
+  it('rejects an input without dates when a window exists', () => {
+    expect(withinWindow(t, { start: null, startAllDay: false, due: null, dueAllDay: false })).toBe(false)
+  })
+})
+
+describe('lastAllowedDay', () => {
+  it('is the day before the window ends', () => {
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+      next: { start: null, due: allDay('2026-10-08') },
+    })
+    expect(lastAllowedDay(moveWindow(t)!)).toEqual(new Date(2026, 9, 7))
   })
 })
