@@ -912,7 +912,9 @@ properties and components Lucid does not know.
   the current occurrence on. With an interval rule the later occurrences move
   along. With fixed days the calendar, the editor and the date picker in the
   task list keep the move between the current occurrence's day and the day
-  before the next occurrence; the time of day is free within those days.
+  before the next occurrence; the time of day is free within those days. The
+  last repeat has no next occurrence to stay before, so it can move to a
+  later day, but not to an earlier one.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
 - Undoing a completion is a move back onto the completed occurrence, and a
@@ -964,8 +966,12 @@ that repeats are completed in order.
   rule without a date is refused with "A repeating task needs a date."
 - **Date pickers**: days outside the move window are blocked but stay
   reachable by keyboard, with "Until *date*, then the next repeat is due."
+  For the last repeat, only the days before it are blocked, and the picker
+  shows no limit.
 - **Dragging**: days outside the move window are hatched. A drop there
-  changes nothing, and screen readers hear "Only possible until *date*."
+  changes nothing, and screen readers hear "Only possible until *date*." For
+  the last repeat, only the days before it are hatched, and a blocked drop
+  there says "Only possible from *date* on."
 - **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
   *date*.", each with Undo for 8 seconds, then "Undone."
