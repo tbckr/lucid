@@ -268,7 +268,14 @@ describe('TimeGridView', () => {
     const draft = previewOf('event', at('10:00', '11:00'), 'c1', 'Review', 'Europe/Berlin')!
     const { container } = renderWithProviders(
       <DndContext>
-        <DndStateContext value={{ pendingKeys: new Set(), resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent, activeId: null }}>
+        <DndStateContext
+          value={{
+            pendingKeys: new Set(),
+            pendingTodos: new Set(),
+            resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent,
+            activeId: null,
+          }}
+        >
           <TimeGridView
             days={[new Date(2026, 8, 25)]}
             now={new Date(2026, 8, 25, 12)}

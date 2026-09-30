@@ -3,11 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
-import { toCalTask } from '@/lib/calendarTasks'
+import { canDrag, occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
-import { bodyOf, jsonResponse, todo, urlOf } from '@/test/fixtures'
+import { bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TaskAgendaRow, TaskBar, TaskBlock, TaskChip } from './TaskItems'
 
@@ -15,6 +15,12 @@ const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekS
 const colors = eventColors('#3b82f6', false)
 const task = (p: Parameters<typeof todo>[0] = {}) =>
   toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T08:00:00Z', ...p }))!
+
+// A recurring series and one of its occurrences (FR-17), joined as `useCalendarTasks` would.
+const series = (p: Parameters<typeof todo>[0] = {}) =>
+  todo({ id: 't1', title: 'Water the flowers', rrule: 'FREQ=DAILY', recurring: true, ...p })
+const occurrenceOf = (p: Parameters<typeof occurrence>[0]) =>
+  occurrenceTask(occurrence({ todoId: 't1', title: 'Water the flowers', ...p }), series())!
 
 describe('task items', () => {
   afterEach(() => {
@@ -57,7 +63,7 @@ describe('task items', () => {
   it('read-only calendar disables the checkbox but still opens the details', async () => {
     const t = task()
     const user = userEvent.setup()
-    renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} readOnly />)
+    renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} prefs={prefs} readOnly />)
     expect(screen.getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: /Pay rent/ }))
     expect(useUi.getState().detail?.item).toBe(t)
@@ -111,9 +117,80 @@ describe('task items', () => {
   it('opens the details from the agenda time', async () => {
     const t = task()
     const user = userEvent.setup()
-    renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} readOnly={false} />)
+    renderWithProviders(<TaskAgendaRow task={t} time="10 AM" colors={colors} prefs={prefs} readOnly={false} />)
     await user.click(screen.getByText('10 AM'))
     expect(useUi.getState().detail?.item).toBe(t)
+  })
+
+  describe('recurring occurrences (FR-17)', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('pencils in an upcoming occurrence: no checkbox, a planned-repeat name, not draggable', () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 8, 25, 12))
+      const t = occurrenceOf({
+        due: '2026-10-08T00:00:00Z',
+        dueAllDay: true,
+        state: 'upcoming',
+        recurrenceId: '2026-10-08T00:00:00Z',
+        key: 't1@2026-10-08T00:00:00Z',
+      })
+      renderWithProviders(
+        <TaskChip
+          task={t}
+          colors={colors}
+          prefs={prefs}
+          readOnly={false}
+          drag={{ id: 'x', data: { type: 'event', event: t, originDay: t.startsAt }, disabled: !canDrag(t) }}
+        />,
+      )
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      const button = screen.getByRole('button', { name: 'Water the flowers, planned repeat on Thu, Oct 8' })
+      expect(button).not.toHaveAttribute('aria-roledescription')
+    })
+
+    it('shows a done occurrence with a checked, disabled checkbox', () => {
+      const t = occurrenceOf({
+        due: '2026-10-01T00:00:00Z',
+        dueAllDay: true,
+        state: 'done',
+        recurrenceId: '2026-10-01T00:00:00Z',
+        key: 't1@2026-10-01T00:00:00Z',
+      })
+      renderWithProviders(<TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} />)
+      const box = screen.getByRole('checkbox', { name: 'Completed: Water the flowers' })
+      expect(box).toHaveAttribute('aria-checked', 'true')
+      expect(box).toBeDisabled()
+    })
+
+    it('keeps the current occurrence completable and marks it recurring', () => {
+      const t = occurrenceOf({
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        state: 'current',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        key: 't1@2026-10-05T00:00:00Z',
+      })
+      renderWithProviders(<TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} />)
+      expect(screen.getByRole('checkbox', { name: 'Completed: Water the flowers' })).toBeEnabled()
+      expect(screen.getByRole('img', { name: 'Every day' })).toBeInTheDocument()
+    })
+
+    it('previews an upcoming occurrence as dashed, with no background-color style', () => {
+      const t = occurrenceOf({
+        due: '2026-10-08T00:00:00Z',
+        dueAllDay: true,
+        state: 'upcoming',
+        recurrenceId: '2026-10-08T00:00:00Z',
+        key: 't1@2026-10-08T00:00:00Z',
+      })
+      renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />)
+      const block = screen.getByRole('button', { name: /Water the flowers/ })
+      expect(block).toHaveClass('border-dashed')
+      expect(block.style.backgroundColor).toBe('')
+    })
   })
 })
 

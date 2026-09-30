@@ -57,10 +57,10 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   }
 }
 
-function RecurringMark({ event }: { event: CalEvent }) {
-  const { t } = useTranslation()
-  if (!event.recurring) return null
-  return <RepeatIcon className="size-3 shrink-0 opacity-70" aria-label={t('event.recurring')} />
+/** Marks a recurring event or task (FR-16, FR-17); nothing for a single one. */
+export function RecurringMark({ recurring, label }: { recurring: boolean; label: string }) {
+  if (!recurring) return null
+  return <RepeatIcon className="size-3 shrink-0 opacity-70" role="img" aria-label={label} />
 }
 
 /** Single-day timed event in the month grid: dot, time, title. */
@@ -148,7 +148,7 @@ export function EventBar({
         <span className="tabular shrink-0 opacity-85">{formatShortTime(event.startsAt, prefs)}</span>
       )}
       <span className="truncate">{title}</span>
-      <RecurringMark event={event} />
+      <RecurringMark recurring={event.recurring} label={t('event.recurring')} />
     </button>
   )
 }
@@ -197,7 +197,7 @@ export function TimedBlock({
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           {pending && <Spinner className="size-3" />}
           <span className="truncate">{title}</span>
-          <RecurringMark event={event} />
+          <RecurringMark recurring={event.recurring} label={t('event.recurring')} />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>
           {compact ? formatShortTime(event.startsAt, prefs) : time}

@@ -11,6 +11,7 @@ import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventIte
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
+import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -41,6 +42,7 @@ interface Props {
 
 export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, calendarOf }: Props) {
   const { t } = useTranslation()
+  const { pendingTodos } = useDndState()
   const setDate = useUi((s) => s.setDate)
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
@@ -70,6 +72,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
 
   const cols = `3.5rem repeat(${days.length}, minmax(0, 1fr))`
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
+  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
+  const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -153,7 +157,7 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
                         drag={{
                           id: `allday:${e.key}:${dayKey(d)}`,
                           data: { type: 'event', event: e, originDay: d },
-                          disabled: readOnly(e.calendarId),
+                          disabled: taskDisabled(e),
                         }}
                         continuesBefore={b.continuesBefore}
                         continuesAfter={b.continuesAfter}
@@ -289,7 +293,7 @@ function DayColumn({
   onCreate: (state: CreateState) => void
 }) {
   const { t } = useTranslation()
-  const { resize } = useDndState()
+  const { resize, pendingTodos } = useDndState()
   const column = useRef<HTMLDivElement>(null)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${dayKey(day)}`,
@@ -348,7 +352,12 @@ function DayColumn({
                 colors={colorsOf(e.calendarId)}
                 prefs={prefs}
                 readOnly={ro}
-                drag={{ id: `timed:${e.key}:${dayKey(day)}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
+                drag={{
+                  id: `timed:${e.key}:${dayKey(day)}`,
+                  data: { type: 'timed', event: e, originDay: day },
+                  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
+                  disabled: ro || !canDrag(e) || pendingTodos.has(e.todo.id),
+                }}
                 size={size}
                 style={style}
               />

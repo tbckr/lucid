@@ -2,12 +2,14 @@ import { useDroppable } from '@dnd-kit/core'
 import { addDays, addMonths, format, isSameDay, isSameMonth, startOfDay } from 'date-fns'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useDndState } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, EventChip } from '@/components/events/EventItems'
 import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
+import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { dayKey, monthGrid } from '@/lib/dates'
 import { type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -275,10 +277,13 @@ function DayCell({
   label: string
 }) {
   const { t } = useTranslation()
+  const { pendingTodos } = useDndState()
   const key = dayKey(day)
   const { setNodeRef, isOver } = useDroppable({ id: `day:${key}`, data: { type: 'day', day } satisfies DropData })
   const first = day.getDate() === 1
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
+  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
+  const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
 
   return (
     <div
@@ -337,7 +342,7 @@ function DayCell({
                 drag={{
                   id: `bar:${e.key}:${key}`,
                   data: { type: 'event', event: e, originDay: day },
-                  disabled: readOnly(e.calendarId),
+                  disabled: taskDisabled(e),
                 }}
                 continuesBefore={b.continuesBefore}
                 continuesAfter={b.continuesAfter}
@@ -376,7 +381,7 @@ function DayCell({
                 drag={{
                   id: `chip:${e.key}:${key}`,
                   data: { type: 'event', event: e, originDay: day },
-                  disabled: readOnly(e.calendarId),
+                  disabled: taskDisabled(e),
                 }}
               />
             ) : (

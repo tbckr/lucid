@@ -265,7 +265,8 @@
     "lastRepeat": "Erledigt. Das war die letzte Wiederholung.",
     "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",
     "movedToLast": "Auf {{date}} verschoben.",
-    "undone": "Rückgängig gemacht."
+    "undone": "Rückgängig gemacht.",
+    "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}"
   },
   "priority": {
     "none": "Keine",

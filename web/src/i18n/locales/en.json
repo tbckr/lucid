@@ -265,7 +265,8 @@
     "lastRepeat": "Done. That was the last repeat.",
     "movedTo": "Moved to {{date}}. Then: {{next}}",
     "movedToLast": "Moved to {{date}}.",
-    "undone": "Undone."
+    "undone": "Undone.",
+    "plannedRepeat": "{{title}}, planned repeat on {{date}}"
   },
   "priority": {
     "none": "None",

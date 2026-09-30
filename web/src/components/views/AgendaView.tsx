@@ -113,6 +113,7 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
                     task={task}
                     time={timeLabel(task, row.day)}
                     colors={colorsOf(task.calendarId)}
+                    prefs={prefs}
                     readOnly={calendarOf(task.calendarId)?.readOnly ?? true}
                   />
                 </EventBoundary>

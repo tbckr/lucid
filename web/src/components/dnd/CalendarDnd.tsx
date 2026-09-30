@@ -19,7 +19,7 @@ import {
 import { useMutationState } from '@tanstack/react-query'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MOVE_EVENT_KEY, useMoveEvent, useUpdateTodo, type MoveVars } from '@/hooks/queries'
+import { MOVE_EVENT_KEY, usePendingSeries, useMoveEvent, useUpdateTodo, type MoveVars } from '@/hooks/queries'
 import { usePrefs } from '@/hooks/usePrefs'
 import { acceptsDrop, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
 import { formatEventSpan } from '@/lib/format'
@@ -153,6 +153,8 @@ export function CalendarDnd({
     () => new Set(pending.flatMap((e) => (e?.recurring ? [e.key] : []))),
     [pending],
   )
+  // Recurring todos with a task update on the way (FR-17): busy and not draggable until reloaded.
+  const pendingTodos = usePendingSeries()
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -246,7 +248,10 @@ export function CalendarDnd({
   )
   // Stays null while moving, so the context (read by every event) only changes on resize.
   const resize = preview?.type === 'resize' ? preview.event : null
-  const state = useMemo(() => ({ pendingKeys, resize, activeId: active?.id ?? null }), [pendingKeys, resize, active])
+  const state = useMemo(
+    () => ({ pendingKeys, pendingTodos, resize, activeId: active?.id ?? null }),
+    [pendingKeys, pendingTodos, resize, active],
+  )
 
   return (
     <DndStateContext value={state}>
