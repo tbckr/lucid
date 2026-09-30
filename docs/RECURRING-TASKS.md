@@ -858,7 +858,8 @@ If the master cannot be written, for example because another client changed
 it in the meantime, Lucid deletes the copy again and reports the error. The
 last occurrence gets no copy: the master itself becomes `COMPLETED` and keeps
 its `RRULE`, as with Apple, Tasks.org and Evolution. Undo writes the master's
-previous dates, status and checklist back, then deletes the copy.
+previous dates, status and checklist back, marked as the undo of a
+completion (see below), then deletes the copy.
 
 A series anchored on `DUE` gets its `DTSTART` because RFC 5545 requires one
 with `RRULE`, and because the readers above do better with it: Thunderbird
@@ -877,19 +878,25 @@ KDE's pending occurrence. What refers to later occurrences stays with them:
 - With an interval rule, their overrides (`RECURRENCE-ID`, `DTSTART`, `DUE`),
   `EXDATE`s and an `UNTIL` from the moved occurrence on move by the same
   amount, in the wall clock of the series, so across a change of daylight
-  saving time too.
+  saving time too, and by whole periods of the rule as well: a weekly series
+  moved a week earlier also ends a week earlier.
 - With fixed days they move by the change in time of day only, because the
   rule's days stay.
-- A move that keeps the rule's instances where they are, such as undoing a
-  completion, moves none of them; an `UNTIL` on the occurrence the master
-  had rolled to stays too, so the series ends where it did before the
-  completion.
 
 A `COUNT` no longer counts the rule's instances before the moved occurrence.
 An `UNTIL` that would end before the new date moves onto it: clients built
 on ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
 `UNTIL`. The backend does not enforce the move window: other clients write
 any date, and undo has to move a series back.
+
+**Undoing a completion** is a move back to the completed occurrence's dates
+that says so (`undoCompletion` in the API). The completion moved none of the
+rule's instances, so nothing that refers to them moves back either: later
+overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where it did
+before the completion. The override of the occurrence the series had rolled
+onto stays too, so an occurrence another client had moved stays moved.
+Undoing a move is a plain move back by the same amount, which moves all of
+them back.
 
 **Setting or changing a rule** applies it from the current occurrence on: its
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
@@ -917,10 +924,6 @@ properties and components Lucid does not know.
   later day, but not to an earlier one.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
-- Undoing a completion is a move back onto the completed occurrence, and a
-  move drops the override of the occurrence it moves from: an occurrence
-  another client had moved, which the completion rolled onto and kept, loses
-  that override when the completion is undone.
 - A `COUNT` counts from `DTSTART` (RFC 5545), so a series whose `DTSTART`
   another client left off its rule has one occurrence more than its `COUNT`
   says, the anchor itself; the `UNTIL` a completion writes keeps that extra
