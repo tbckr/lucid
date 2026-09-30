@@ -135,6 +135,8 @@ export function TaskEditor({
   // A fixed-day series stays before its next repeat while it keeps its rule; a new one starts over (FR-17).
   const w = todo ? moveWindow(todo) : null
   const bounded = w && !repeatChanged({ recurrence, customRule }, todo) ? w : null
+  // The window binds the series' anchor, its start or else its due date; the other date moves freely.
+  const anchor: Which = startDate ? 'start' : 'due'
   const limit = w ? t('tasks.moveLimit', { date: formatPickerDate(lastAllowedDay(w), prefs, now) }) : ''
   // The presets repeat on the weekday or date of the start, else of the due date; say which.
   const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
@@ -249,8 +251,8 @@ export function TaskEditor({
             now={now}
             invalid={!!error}
             describedBy={error ? `${id}-${which}-error` : undefined}
-            isDisabled={bounded ? (d) => !dayAllowed(todo, getValues(), which, dayKey(d), tz) : undefined}
-            footer={bounded && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
+            isDisabled={bounded && which === anchor ? (d) => !dayAllowed(todo, getValues(), which, dayKey(d), tz) : undefined}
+            footer={bounded && which === anchor && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
           />
           {date && (
             <TimeSelect

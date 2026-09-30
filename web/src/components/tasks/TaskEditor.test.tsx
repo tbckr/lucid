@@ -374,6 +374,30 @@ describe('TaskEditor', () => {
       expect(within(month).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
     })
 
+    it('limits only the start of a series anchored on it, and says until when only there', async () => {
+      const user = userEvent.setup()
+      // Starts Monday, due Wednesday; the next repeat starts Thursday.
+      const started = {
+        ...series,
+        start: '2026-10-05T00:00:00Z',
+        startAllDay: true,
+        due: '2026-10-07T00:00:00Z',
+        next: { start: '2026-10-08T00:00:00Z', due: '2026-10-10T00:00:00Z' },
+      }
+      const { dialog } = await openTask(started)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Start Mon, Oct 5' }))
+      const start = screen.getByRole('dialog', { name: 'Start date' })
+      expect(within(start).getByRole('button', { name: 'Thursday, October 8th, 2026' })).toHaveAttribute('aria-disabled', 'true')
+      expect(within(start).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+
+      await user.click(within(dialog).getByRole('button', { name: 'Due Wed, Oct 7' }))
+      const due = screen.getByRole('dialog', { name: 'Due date' })
+      expect(within(due).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(due).queryByText(/^Until /)).toBeNull()
+    })
+
     it('does not save a due time past the next repeat', async () => {
       const user = userEvent.setup()
       // Due at 9:00 on Monday; the next repeat is due at 9:00 on Thursday.
