@@ -81,12 +81,37 @@ describe('MiniMonth', () => {
       />,
     )
     const disabledDay = screen.getByRole('button', { name: 'Monday, March 9th, 2026' })
-    expect(disabledDay).toBeDisabled()
     expect(disabledDay).toHaveAttribute('aria-disabled', 'true')
 
     await user.click(disabledDay)
     expect(onSelect).not.toHaveBeenCalled()
 
     expect(screen.getByText('Only until the 8th')).toBeInTheDocument()
+  })
+
+  it('keeps a disabled day reachable by the arrow keys, but not selectable', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    render(
+      <MiniMonth
+        date={new Date(2026, 2, 9)}
+        now={now}
+        range={null}
+        prefs={prefs}
+        onSelect={onSelect}
+        isDisabled={(d) => d.getDate() > 9}
+      />,
+    )
+    screen.getByRole('button', { name: 'Monday, March 9th, 2026' }).focus()
+
+    await user.keyboard('{ArrowRight}')
+    const tenth = screen.getByRole('button', { name: 'Tuesday, March 10th, 2026' })
+    expect(document.activeElement).toBe(tenth)
+    expect(tenth).toHaveAttribute('aria-disabled', 'true')
+
+    await user.keyboard('{Enter}')
+    expect(onSelect).not.toHaveBeenCalled()
+
+    expect(dayButtons().filter((b) => b.tabIndex === 0)).toHaveLength(1)
   })
 })

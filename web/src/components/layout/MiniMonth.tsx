@@ -133,22 +133,26 @@ export function MiniMonth({
                       <button
                         type="button"
                         data-day={dayKey(d)}
-                        disabled={blocked}
-                        aria-disabled={blocked}
+                        aria-disabled={blocked || undefined}
                         tabIndex={isSameDay(d, tabStop) ? 0 : -1}
                         onKeyDown={onKeyDown}
                         onClick={() => {
                           setActive(d)
+                          // A day outside a bounded series' window (FR-17) stays focusable and
+                          // reachable by arrow keys (NFR-27) so the roving tab stop is never
+                          // trapped; it just can't be picked (aria-disabled, not `disabled`).
+                          if (blocked) return
                           onSelect(d)
                         }}
                         aria-label={format(d, 'PPPP', { locale: prefs.locale })}
                         aria-current={today ? 'date' : undefined}
                         aria-pressed={chosen}
                         className={cn(
-                          'tabular flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+                          'tabular flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
                           !isSameMonth(d, shown) && 'text-muted-foreground',
                           today && !solid && 'font-semibold text-primary',
                           solid && 'bg-primary font-semibold text-primary-foreground hover:bg-primary/90',
+                          blocked && 'cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent',
                         )}
                       >
                         {format(d, 'd')}

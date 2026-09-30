@@ -107,8 +107,14 @@ describe('DuePicker', () => {
       const { user, onChange, dialog } = await open(fixedDayTodo)
 
       expect(within(dialog).getByRole('button', { name: /^Next week / })).toBeDisabled()
-      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      )
       expect(within(dialog).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' }))
+      expect(onChange).not.toHaveBeenCalled()
 
       await user.click(within(dialog).getByRole('button', { name: 'Wednesday, October 7th, 2026' }))
       expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-07T00:00:00.000Z', dueAllDay: true }))
