@@ -534,16 +534,26 @@ function seriesMessage(
 /**
  * Takes back the completion or move of a series (FR-17). There is no undo
  * endpoint: the series gets its dates, status and checklist from `before`
- * again, without `rrule`, which keeps the rule. Only then the completed copy
- * goes, so a failure never loses the completion; one already gone counts as
- * deleted. `after` is the update's answer, whose ETag the client may have
- * replaced since.
+ * again, without `rrule`, which keeps the rule. The undo of a `completion`
+ * says so, since the completion moved nothing that refers to later repeats
+ * and the series' end, and moving back must not shift them either; a move
+ * is undone by moving back, which shifts them back. Only then the completed
+ * copy goes, so a failure never loses the completion; one already gone
+ * counts as deleted. `after` is the update's answer, whose ETag the client
+ * may have replaced since.
  */
-async function undoSeriesChange(qc: QueryClient, t: TFn, before: Todo, after: UpdatedTodo): Promise<void> {
+async function undoSeriesChange(
+  qc: QueryClient,
+  t: TFn,
+  before: Todo,
+  after: UpdatedTodo,
+  completion: boolean,
+): Promise<void> {
   const key = queryKeys.todos(before.calendarId)
   try {
     const etag = currentEtag(qc, after)
-    const restored = await endpoints.updateTodo(before.id, etag, todoToInput(before))
+    const input = todoToInput(before, completion ? { undoCompletion: true } : {})
+    const restored = await endpoints.updateTodo(before.id, etag, input)
     replaceEtag(qc, before.id, etag, restored.etag)
     putTodo(qc, before.calendarId, restored)
     const copy = after.completedCopy
@@ -597,17 +607,18 @@ export function useUpdateTodo(id?: string) {
       return { snapshot }
     },
     onSuccess: (updated, vars) => {
-      const { todo } = vars
+      const { todo, input } = vars
       putTodo(qc, todo.calendarId, updated)
       // `now` only decides whether the date needs its year.
       const message = seriesMessage(vars, updated, t, prefs, new Date())
       if (!message) return
+      const completion = isSeriesCompletion(todo, input)
       toast.success(message, {
         duration: ACTION_TOAST_MS,
         action: {
           label: t('common.undo'),
           onClick: () => {
-            void undoSeriesChange(qc, t, todo, updated)
+            void undoSeriesChange(qc, t, todo, updated, completion)
           },
         },
       })

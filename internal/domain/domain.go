@@ -229,6 +229,12 @@ type TodoInput struct {
 	// RRuleOmitted is set when a JSON body has no "rrule" at all, like StartOmitted.
 	RRuleOmitted bool   `json:"-"`
 	Timezone     string `json:"timezone,omitempty"`
+	// UndoCompletion marks the PUT that takes back the completion of a
+	// series' occurrence by moving the series back (FR-17): the move then
+	// keeps the references to later occurrences, the rule's end and the
+	// override of the occurrence the series had rolled to. It is ignored
+	// unless the PUT moves a series and keeps its rule.
+	UndoCompletion bool `json:"undoCompletion,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly (unknown fields are errors, as for every

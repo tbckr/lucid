@@ -201,10 +201,11 @@ a todo's `id`.
 
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
-Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone" }` → `201` `Todo`.
+Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone", "undoCompletion" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
 (`supportsTodos: false`). `timezone` is the IANA zone timed `start`/`due`
-recur in; without it, a series uses UTC.
+recur in; without it, a series uses UTC. `undoCompletion` is an optional
+boolean that only a `PUT` uses (see below).
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 
@@ -219,7 +220,7 @@ non-recurring task at the current occurrence's dates), any other value sets
 it. Setting `status` to `COMPLETED` sets `completed`; any other status clears
 it.
 
-For a recurring todo, these three edits are handled specially:
+For a recurring todo, these four edits are handled specially:
 
 - **Completing the current occurrence** (`status: COMPLETED` on an open
   series): the backend creates a completed copy of the occurrence — a new
@@ -236,11 +237,22 @@ For a recurring todo, these three edits are handled specially:
   (a series without `start` recurs on `due`). What refers to later
   occurrences stays with them: with an interval rule, their overrides,
   `EXDATE`s and an `UNTIL` from the current occurrence on move by the same
-  amount, in the wall clock of the series; with fixed days by the change in
-  time of day only, because the rule's days stay. A `COUNT` no longer counts
-  the rule's instances before the moved occurrence, and an `UNTIL` that would
-  end before the new dates moves onto them. The backend does not enforce the
-  move window the UI shows; that is a client-side hint only.
+  amount, whole periods of the rule included, in the wall clock of the
+  series; with fixed days by the change in time of day only, because the
+  rule's days stay; after a change between all-day and timed dates they
+  stay. The override of the current occurrence goes. A `COUNT` no longer
+  counts the rule's instances before the moved occurrence, and an `UNTIL`
+  that would end before the new dates moves onto them. The backend does not
+  enforce the move window the UI shows; that is a client-side hint only.
+- **Undoing a completion** (a move as above, with `undoCompletion: true`):
+  the completion moved none of the rule's instances, so the series moves
+  back to the given dates and nothing else moves: the overrides and
+  `EXDATE`s of later occurrences and the `UNTIL` stay where they are, and so
+  does the override of the occurrence the completion rolled onto, which
+  another client may have moved. Only KDE's pending occurrence goes, and an
+  `UNTIL` before the new dates still moves onto them. `undoCompletion` is
+  ignored on a `PUT` that does not move a series or that changes its
+  `rrule`.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched. It needs a `start`
   or `due` to recur from, otherwise `400 invalid_input`, message *"a
@@ -255,7 +267,10 @@ still work.
 There is no dedicated undo endpoint. Undoing a move or a completion replays
 the previous state: `PUT` the master with its previous `start`/`due`/
 `status`/`checklist`, then, for a completion, `DELETE` the `completedCopy`
-it created.
+it created. The `PUT` that undoes a completion, with or without a copy,
+sends `undoCompletion: true`; the one that undoes a move does not, because
+moving back by the same amount moves the later references and the `UNTIL`
+back as well.
 
 ### `DELETE /api/v1/todos/{todoId}` (header `If-Match`) → `204`
 

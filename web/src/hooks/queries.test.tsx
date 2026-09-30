@@ -492,7 +492,12 @@ describe('useUpdateTodo with a recurring task', () => {
     const undo = writes()[1]
     expect(undo?.request).toBe('PUT /api/v1/todos/t2')
     expect(undo?.etag).toBe('"2"')
-    expect(undo?.body).toMatchObject({ due: '2026-10-05T00:00:00Z', dueAllDay: true, status: 'NEEDS-ACTION' })
+    expect(undo?.body).toMatchObject({
+      due: '2026-10-05T00:00:00Z',
+      dueAllDay: true,
+      status: 'NEEDS-ACTION',
+      undoCompletion: true,
+    })
     expect(undo?.body).not.toHaveProperty('rrule')
     // The completed repeat stays until the series is back.
     await new Promise((r) => setTimeout(r, 20))
@@ -602,6 +607,27 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(cached()?.map((x) => [x.id, x.status])).toEqual([['t2', 'COMPLETED']])
   })
 
+  it('undoes the completion of the last repeat as a completion too', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const last = { ...series, next: null }
+    const done = { ...last, etag: '"2"', status: 'COMPLETED' as const, completed: '2026-10-05T10:00:00Z' }
+    const { result, writes } = setup([done, { ...last, etag: '"3"' }], { from: last })
+
+    act(() => {
+      result.current.mutate({ todo: last, input: todoToInput(last, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(toastOf(success.mock.calls, 'Done. That was the last repeat.').click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    // The series itself was completed: there is no completed repeat to delete.
+    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'PUT /api/v1/todos/t2'])
+    expect(writes()[1]?.body).toMatchObject({ status: 'NEEDS-ACTION', undoCompletion: true })
+  })
+
   it('tells where a moved series is and when it repeats, and moves it back', async () => {
     const success = vi.spyOn(toast, 'success')
     let answerMove: (a: Answer) => void = () => undefined
@@ -635,6 +661,8 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'PUT /api/v1/todos/t2'])
     expect(writes()[1]?.etag).toBe('"2"')
     expect(writes()[1]?.body).toMatchObject({ due: '2026-10-05T00:00:00Z', status: 'NEEDS-ACTION' })
+    // A move is undone by moving back: the server shifts what refers to later repeats back too.
+    expect(writes()[1]?.body).not.toHaveProperty('undoCompletion')
   })
 
   it('tells where a series moved on its last repeat', async () => {

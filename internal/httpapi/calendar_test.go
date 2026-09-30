@@ -364,6 +364,30 @@ func TestUpdateTodoStartPresence(t *testing.T) {
 	}
 }
 
+// The undo of a completion says so, and the service gets to know (FR-17).
+func TestUpdateTodoUndoCompletion(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"sent", `{"title":"x","undoCompletion":true}`, true},
+		{"absent", `{"title":"x"}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.todos = []domain.Todo{{ID: "t1", Title: "x"}}
+			w := h.do(t, c, req{method: http.MethodPut, path: "/api/v1/todos/t1", body: tt.body, headers: map[string]string{"If-Match": `"t-etag"`}})
+			decode(t, w, http.StatusOK, nil)
+			if got := h.svc.gotTodo.UndoCompletion; got != tt.want {
+				t.Errorf("UndoCompletion = %v; want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // Completing an occurrence of a recurring todo returns the rolled master
 // with the completed occurrence attached as CompletedCopy (FR-17), and both
 // checklists (master and copy) must encode as [] rather than null.

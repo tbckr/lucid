@@ -154,6 +154,12 @@ export interface TodoInput {
   rrule?: string
   /** IANA zone timed start/due recur in; without it, a series uses UTC. */
   timezone?: string
+  /**
+   * Marks the PUT that takes back the completion of a series' repeat (FR-17):
+   * the series moves back without shifting what refers to later repeats or
+   * its end. Absent for every other update, the undo of a move included.
+   */
+  undoCompletion?: boolean
 }
 
 /** A list item that failed validation, rendered as "Corrupted" placeholder. */

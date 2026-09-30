@@ -1420,6 +1420,14 @@ func moveListed(t *testing.T, e *env, id string, d time.Duration) domain.Todo {
 	return got
 }
 
+// undoInput is what the frontend sends to take back the completion of f's
+// occurrence: f's fields as reported, marked as that undo.
+func undoInput(f *domain.Todo) domain.TodoInput {
+	in := editInput(f)
+	in.UndoCompletion = true
+	return in
+}
+
 // withRule returns in with its rrule set to rr ("" removes the rule).
 func withRule(in domain.TodoInput, rr string) domain.TodoInput {
 	in.RRule, in.RRuleOmitted = rr, false
@@ -1534,21 +1542,22 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, occs, []time.Time{date(2025, 3, 12, 10, 0)}, []string{domain.OccurrenceCurrent})
 	})
 
-	// Wherever a move lands, UNTIL does not end before it (FR-17).
+	// Wherever a move lands, UNTIL does not end before it, also where it
+	// stays, as on fixed days (FR-17).
 	t.Run("move beyond until extends it", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250331T090000Z"})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250331T090000Z"})
 		moveListed(t, e, id, 28*24*time.Hour)
 		checkStored(t, "master", storedObject(t, e, id),
-			[]string{"DTSTART:20250407T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z\r\n"}, nil)
+			[]string{"DTSTART:20250407T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250407T090000Z\r\n"}, nil)
 		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
 		mustNoErr(t, err)
 		checkTodoOccurrences(t, occs, []time.Time{date(2025, 4, 7, 9, 0)}, []string{domain.OccurrenceCurrent})
 	})
 
-	// The last occurrence takes UNTIL along off the grid in either direction,
-	// so that it stays the only one left (FR-17).
+	// The last occurrence takes UNTIL along in either direction, on the
+	// rule's grid or off it, so that it stays the only one left (FR-17).
 	for _, tc := range []struct {
 		name   string
 		master []string
@@ -1564,6 +1573,13 @@ func TestUpdateTodoSeries(t *testing.T) {
 			at:     date(2025, 3, 16, 9, 0),
 		},
 		{
+			name:   "a week earlier",
+			master: []string{"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			by:     -7 * 24 * time.Hour,
+			want:   []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250310T090000Z\r\n"},
+			at:     date(2025, 3, 10, 9, 0),
+		},
+		{
 			name:   "an hour earlier on fixed days",
 			master: []string{"DTSTART:20250313T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313T090000Z"},
 			by:     -time.Hour,
@@ -1571,7 +1587,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			at:     date(2025, 3, 13, 8, 0),
 		},
 	} {
-		t.Run("off-grid move of the last occurrence "+tc.name+" keeps it the only one", func(t *testing.T) {
+		t.Run("move of the last occurrence "+tc.name+" keeps it the only one", func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			id := seedSeries(t, e, tc.master)
@@ -1611,6 +1627,53 @@ func TestUpdateTodoSeries(t *testing.T) {
 			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
 	})
 
+	// A move by whole periods takes UNTIL along like any other: moved
+	// earlier, a series gains no occurrence at its end, also where UNTIL
+	// comes from a COUNT (FR-17).
+	for _, tc := range []struct {
+		name     string
+		master   []string
+		complete bool
+		by       time.Duration
+		want     []string
+		at       []time.Time
+	}{
+		{
+			name:   "until",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250324T090000Z"},
+			by:     -7 * 24 * time.Hour,
+			want:   []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n"},
+			at:     []time.Time{date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0), date(2025, 3, 17, 9, 0)},
+		},
+		{
+			// The completion rolls the series to 17 March, with its COUNT as the UNTIL of 24 March.
+			name:     "count",
+			master:   []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3"},
+			complete: true,
+			by:       -14 * 24 * time.Hour,
+			want:     []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250310T090000Z\r\n"},
+			at:       []time.Time{date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0)},
+		},
+	} {
+		t.Run("move earlier by whole periods adds no occurrence, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master)
+			if tc.complete {
+				completeListed(t, e, id)
+			}
+			moveListed(t, e, id, tc.by)
+			checkStored(t, "master", storedObject(t, e, id), tc.want, nil)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+			mustNoErr(t, err)
+			states := []string{domain.OccurrenceCurrent}
+			for range tc.at[1:] {
+				states = append(states, domain.OccurrenceUpcoming)
+			}
+			checkTodoOccurrences(t, occs, tc.at, states)
+		})
+	}
+
 	for _, tc := range []struct {
 		name     string
 		master   []string
@@ -1633,7 +1696,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			anchor:   date(2025, 3, 24, 0, 0),
 		},
 	} {
-		t.Run("on-grid move of the last occurrence extends until, "+tc.name, func(t *testing.T) {
+		t.Run("move of the last occurrence by whole periods extends until, "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			id := seedSeries(t, e, tc.master, tc.override)
@@ -1667,6 +1730,30 @@ func TestUpdateTodoSeries(t *testing.T) {
 		if moved := occs[2]; moved.Title != "Moved" || !moved.RecurrenceID.Equal(date(2025, 3, 26, 9, 0)) {
 			t.Errorf("moved occurrence = %+v; want %q with recurrenceId 2025-03-26T09:00Z", moved, "Moved")
 		}
+	})
+
+	// A move by whole periods moves the later exceptions and the end along
+	// like any other, and moving back by as much puts them back: that is
+	// how a move is undone (FR-17).
+	t.Run("move by whole periods shifts later exceptions, and back", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		master := []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z", "EXDATE:20250331T090000Z"}
+		moved := []string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z", "SUMMARY:Moved"}
+		id := seedSeries(t, e, master, moved)
+		moveListed(t, e, id, 7*24*time.Hour)
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250414T090000Z\r\n", "EXDATE:20250407T090000Z",
+			"RECURRENCE-ID:20250331T090000Z", "DTSTART:20250401T090000Z",
+		}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0), date(2025, 4, 1, 9, 0), date(2025, 4, 14, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+
+		moveListed(t, e, id, -7*24*time.Hour)
+		checkStored(t, "master", storedObject(t, e, id), slices.Concat(master, moved, []string{"UNTIL=20250407T090000Z\r\n"}), nil)
 	})
 
 	// References move in the series' wall clock and keep the form they are
@@ -1730,20 +1817,90 @@ func TestUpdateTodoSeries(t *testing.T) {
 			[]string{domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming})
 	})
 
-	// Undoing a completion moves the series back onto its own rule: every
-	// occurrence stays where it is, and so do the exceptions (FR-17).
-	t.Run("undo after completion keeps later exceptions", func(t *testing.T) {
+	// The undo of a completion says so, and moves the series back onto its
+	// own rule: every occurrence stays where it is, and so do the exceptions
+	// and the end. Without the mark, the same request is a move like any
+	// other, and they move back with the series (FR-17).
+	for _, tc := range []struct {
+		name string
+		undo bool
+		want []string
+	}{
+		{"undo after completion keeps later exceptions and the end", true, []string{
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z\r\n", "EXDATE:20250331T090000Z",
+			"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z",
+		}},
+		{"the same move without the undo mark shifts them", false, []string{
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250331T090000Z\r\n", "EXDATE:20250324T090000Z",
+			"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e,
+				[]string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250407T090000Z", "EXDATE:20250331T090000Z"},
+				[]string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z", "SUMMARY:Moved"})
+			f := listedTodo(t, e, id)
+			done := completeListed(t, e, id)
+			in := editInput(&f)
+			in.UndoCompletion = tc.undo
+			_, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "master", storedObject(t, e, id), tc.want, nil)
+		})
+	}
+
+	// The series rolled onto an occurrence another client had moved, and
+	// kept its override; the undo keeps it too (FR-17).
+	t.Run("undo after completion keeps the next occurrence's override", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250331T090000Z"},
-			[]string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z", "SUMMARY:Moved"})
+		ctx := t.Context()
+		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z", "SUMMARY:Moved"})
+		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
 		f := listedTodo(t, e, id)
 		done := completeListed(t, e, id)
-		_, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, editInput(&f))
+		_, err = e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250310T090000Z", "RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z"}, nil)
+		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		dates, states := occurrenceDates(occs)
+		checkTodoOccurrences(t, after, dates, states)
+	})
+
+	// Completing the last occurrence completes the master, whose DTSTART
+	// another client's completion left behind; its undo moves the series
+	// onto that occurrence, and keeps the end and the other client's
+	// completion (FR-17).
+	t.Run("undo after completing the last occurrence keeps the end", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		from, to := date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0)
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+		occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		f := listedTodo(t, e, id)
+		done := completeListed(t, e, id)
+		if done.CompletedCopy != nil || done.Status != domain.TodoCompleted {
+			t.Fatalf("completed series = %+v; want the master completed, without a copy", done)
+		}
+		_, err = e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&f))
 		mustNoErr(t, err)
 		checkStored(t, "master", storedObject(t, e, id), []string{
-			"DTSTART:20250310T090000Z", "EXDATE:20250331T090000Z", "RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z",
+			"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n", "RECURRENCE-ID:20250310T090000Z",
 		}, nil)
+		after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+		mustNoErr(t, err)
+		dates, states := occurrenceDates(occs)
+		checkTodoOccurrences(t, after, dates, states)
 	})
 
 	t.Run("undo after completion", func(t *testing.T) {
@@ -1752,7 +1909,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		id := seedSeries(t, e, berlinWeekly)
 		f := listedTodo(t, e, id)
 		done := completeListed(t, e, id)
-		got, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, editInput(&f))
+		got, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, undoInput(&f))
 		mustNoErr(t, err)
 		if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || got.Status != domain.TodoNeedsAction {
 			t.Errorf("undone series = %+v; want it back at %v", got, f.Start)
@@ -2026,9 +2183,10 @@ func TestUpdateTodoSeries(t *testing.T) {
 	}
 }
 
-// Undoing a completion is a plain move back to the completed occurrence's
-// dates: it gives the series back as it was, whatever ends its rule, with
-// only a COUNT turned into the UNTIL of the same last occurrence (FR-17).
+// Undoing a completion moves the series back to the completed occurrence's
+// dates, marked as that undo: it gives the series back as it was, whatever
+// ends its rule, with only a COUNT turned into the UNTIL of the same last
+// occurrence (FR-17).
 func TestUndoCompletionRestoresSeries(t *testing.T) {
 	t.Parallel()
 	// The series starts on Monday 10 March 2025 at 09:00 (Berlin: 08:00Z), in
@@ -2075,8 +2233,9 @@ func TestUndoCompletionRestoresSeries(t *testing.T) {
 				if done.CompletedCopy == nil {
 					t.Fatalf("completion left no copy: %+v", done)
 				}
-				// Undo as the frontend does: the previous dates back onto the master, then the copy goes.
-				got, err := e.svc.UpdateTodo(ctx, id, done.ETag, editInput(&before))
+				// Undo as the frontend does: the previous dates back onto the master, marked as the
+				// undo of a completion, then the copy goes.
+				got, err := e.svc.UpdateTodo(ctx, id, done.ETag, undoInput(&before))
 				mustNoErr(t, err)
 				mustNoErr(t, e.svc.DeleteTodo(ctx, done.CompletedCopy.ID, done.CompletedCopy.ETag))
 
