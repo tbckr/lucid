@@ -91,7 +91,10 @@ test('completing the current repeat leaves it done and moves on, and undo takes 
   await expect(tomorrowBox).toHaveCount(0)
 
   await todayBox.click()
-  await expect(page.getByText(`Done. Next up: ${short(day(1))}`)).toBeVisible()
+  const toast = page.getByText(`Done. Next up: ${short(day(1))}`)
+  await expect(toast).toBeVisible()
+  // Hovering pauses the toast's 8 s timer, so a slow run keeps its Undo through the checks below.
+  await toast.hover()
   // Tomorrow's repeat is the current one now, and today's stays, done.
   await expect(tomorrowBox).toHaveAttribute('aria-checked', 'false')
   await expect(todayBox).toHaveCount(1)
