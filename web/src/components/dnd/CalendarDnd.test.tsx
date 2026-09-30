@@ -185,13 +185,17 @@ describe('CalendarDnd', () => {
       vi.useRealTimers()
     })
 
-    it('hatches the days past the next occurrence and announces the limit while over one', async () => {
+    /**
+     * Renders a fixed-day series due 10-05 (next occurrence due 10-08, so its window is
+     * [10-05, 10-08)) draggable across day cells 10-05..10-09, and picks it up with the
+     * keyboard. Callers move it and finish the drag themselves.
+     */
+    async function pickUpBounded() {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
         return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(10, 40, 80, 20)
       })
-      // Fixed-day series due 10-05, next occurrence due 10-08: window [10-05, 10-08).
       const bounded = toCalTask(
         todo({
           id: 't2',
@@ -225,6 +229,11 @@ describe('CalendarDnd', () => {
       chip.focus()
       fireEvent.keyDown(chip, { code: 'Space', key: ' ' })
       await act(() => new Promise((resolve) => setTimeout(resolve)))
+      return chip
+    }
+
+    it('hatches the days past the next occurrence and announces the limit while over one', async () => {
+      await pickUpBounded()
 
       expect(screen.getByTestId('day:9').className).toContain('hatched')
       expect(screen.getByTestId('day:6').className).not.toContain('hatched')
@@ -235,6 +244,19 @@ describe('CalendarDnd', () => {
       expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
 
       fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+    })
+
+    it('saves nothing and announces the limit when a keyboard drop completes on a blocked day', async () => {
+      const fetch = vi.spyOn(globalThis, 'fetch')
+      await pickUpBounded()
+      for (let i = 0; i < 4; i++) {
+        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+      }
+      // End, not cancel: completes the drop instead of abandoning it.
+      fireEvent.keyDown(document, { code: 'Space', key: ' ' })
+
+      expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
+      expect(fetch).not.toHaveBeenCalled()
     })
   })
 })

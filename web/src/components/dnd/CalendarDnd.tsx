@@ -142,8 +142,12 @@ export function CalendarDnd({
   const draggedTask = active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined
   const updateTodo = useUpdateTodo(draggedTask)
   // The move window of the dragged task, fixed for the whole drag (FR-17): hatches days
-  // outside it and bounds the drop, regardless of where the pointer currently is.
-  const moveWindow = active?.data.event.kind === 'task' ? windowOfTask(active.data.event.todo) : null
+  // outside it and bounds the drop, regardless of where the pointer currently is. Memoized so
+  // the context below only changes on an actual pick-up/drop, not on every render.
+  const moveWindow = useMemo(
+    () => (active?.data.event.kind === 'task' ? windowOfTask(active.data.event.todo) : null),
+    [active],
+  )
   /** What a drop right now would save; null while it would change nothing. */
   const [target, setTarget] = useState<DropResult | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
@@ -199,6 +203,10 @@ export function CalendarDnd({
       onDragOver: announceTarget,
       onDragEnd: ({ active: a, over }) => {
         if (!over) return t('dnd.cancelled')
+        // A bounded series (FR-17) dropped past its next occurrence saves nothing: say why,
+        // instead of falsely announcing a move (NFR-27).
+        const { blocked } = latest.current
+        if (blocked) return t('dnd.limit', { date: formatPickerDate(blocked, prefs, now) })
         return dragData(a.data.current)?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
       },
       onDragCancel: () => t('dnd.cancelled'),
