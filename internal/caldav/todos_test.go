@@ -1359,6 +1359,22 @@ func editInput(f *domain.Todo) domain.TodoInput {
 	return in
 }
 
+// moveListed moves the todo with the given ID by d as a client would.
+func moveListed(t *testing.T, e *env, id string, d time.Duration) domain.Todo {
+	t.Helper()
+	f := listedTodo(t, e, id)
+	in := editInput(&f)
+	if f.Start != nil {
+		in.Start = ptr(f.Start.Add(d))
+	}
+	if f.Due != nil {
+		in.Due = ptr(f.Due.Add(d))
+	}
+	got, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+	mustNoErr(t, err)
+	return got
+}
+
 // withRule returns in with its rrule set to rr ("" removes the rule).
 func withRule(in domain.TodoInput, rr string) domain.TodoInput {
 	in.RRule, in.RRuleOmitted = rr, false
@@ -1391,8 +1407,8 @@ func TestUpdateTodoSeries(t *testing.T) {
 		}, nil)
 	})
 
-	// The stored form stays, whatever the browser's zone; COUNT stays too,
-	// only completing converts it (FR-17).
+	// The stored form stays, whatever the browser's zone; COUNT loses the
+	// occurrence before the moved one, so that as many remain (FR-17).
 	t.Run("move drops the current override and kde", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -1411,8 +1427,148 @@ func TestUpdateTodoSeries(t *testing.T) {
 			t.Errorf("moved series = %+v", got)
 		}
 		checkStored(t, "master", storedObject(t, e, id),
-			[]string{"DTSTART:20250311T160000Z", "DUE:20250311T170000Z", "RRULE:FREQ=DAILY;COUNT=5\r\n"},
+			[]string{"DTSTART:20250311T160000Z", "DUE:20250311T170000Z", "RRULE:FREQ=DAILY;COUNT=4\r\n"},
 			[]string{"RECURRENCE-ID", "X-KDE-LIBKCAL-DTRECURRENCE", "TZID"})
+	})
+
+	// Re-anchored on its current occurrence, a COUNT would count again from
+	// there; the occurrences before it no longer count (FR-17).
+	t.Run("move keeps the number of occurrences left", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=5"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+		moveListed(t, e, id, time.Hour)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T100000Z", "RRULE:FREQ=DAILY;COUNT=4\r\n", "RECURRENCE-ID:20250310T090000Z"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{
+				date(2025, 3, 10, 9, 0), date(2025, 3, 11, 10, 0), date(2025, 3, 12, 10, 0),
+				date(2025, 3, 13, 10, 0), date(2025, 3, 14, 10, 0),
+			},
+			[]string{
+				domain.OccurrenceDone, domain.OccurrenceCurrent, domain.OccurrenceUpcoming,
+				domain.OccurrenceUpcoming, domain.OccurrenceUpcoming,
+			})
+	})
+
+	// UNTIL moves along too, or a series moved later loses its last
+	// occurrence, such as one whose COUNT a completion converted (FR-17).
+	t.Run("move keeps the end of an until rule", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;UNTIL=20250312T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+		moveListed(t, e, id, time.Hour)
+		checkStored(t, "master", storedObject(t, e, id), []string{"RRULE:FREQ=DAILY;UNTIL=20250312T100000Z\r\n"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 11, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 11, 10, 0), date(2025, 3, 12, 10, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
+	})
+
+	// Overrides and EXDATEs of later occurrences move with an interval
+	// series, or they would match no occurrence any more (FR-17).
+	t.Run("move shifts later exceptions", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250331T090000Z"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z", "SUMMARY:Moved"},
+		)
+		moveListed(t, e, id, 48*time.Hour)
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART:20250312T090000Z", "EXDATE:20250402T090000Z", "RECURRENCE-ID:20250319T090000Z",
+			"RECURRENCE-ID:20250326T090000Z", "DTSTART:20250327T090000Z",
+		}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 4, 10, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 12, 9, 0), date(2025, 3, 19, 9, 0), date(2025, 3, 27, 9, 0), date(2025, 4, 9, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+		if moved := occs[2]; moved.Title != "Moved" || !moved.RecurrenceID.Equal(date(2025, 3, 26, 9, 0)) {
+			t.Errorf("moved occurrence = %+v; want %q with recurrenceId 2025-03-26T09:00Z", moved, "Moved")
+		}
+	})
+
+	// References move in the series' wall clock and keep the form they are
+	// written in; a series anchored on its current occurrence keeps its
+	// COUNT (FR-17).
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		by        time.Duration
+		want      []string
+	}{
+		{
+			// Friday 09:00 CET to Monday 09:00 CEST: 71 hours, 3 days on the clock.
+			name: "across dst",
+			master: []string{
+				"DTSTART;TZID=Europe/Berlin:20250328T090000", "RRULE:FREQ=WEEKLY;COUNT=3", "EXDATE;TZID=Europe/Berlin:20250404T090000",
+			},
+			by: 71 * time.Hour,
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250331T090000", "RRULE:FREQ=WEEKLY;COUNT=3\r\n", "EXDATE;TZID=Europe/Berlin:20250407T090000",
+			},
+		},
+		{
+			name:   "all-day",
+			master: []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY", "EXDATE;VALUE=DATE:20250324"},
+			by:     24 * time.Hour,
+			want:   []string{"DTSTART;VALUE=DATE:20250311", "DUE;VALUE=DATE:20250311", "EXDATE;VALUE=DATE:20250325"},
+		},
+		{
+			name:      "floating",
+			master:    []string{"DTSTART:20250310T090000", "RRULE:FREQ=WEEKLY"},
+			overrides: [][]string{{"RECURRENCE-ID:20250317T090000", "STATUS:COMPLETED"}},
+			by:        time.Hour,
+			want:      []string{"DTSTART:20250310T100000\r\n", "RECURRENCE-ID:20250317T100000\r\n"},
+		},
+	} {
+		t.Run("move shifts later references, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			moveListed(t, e, id, tc.by)
+			checkStored(t, "master", storedObject(t, e, id), tc.want, nil)
+		})
+	}
+
+	// Fixed days keep their dates; only the time of day moves along, in the
+	// series' zone (FR-17).
+	t.Run("fixed days shift later references by the time of day", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			[]string{"RECURRENCE-ID;TZID=Europe/Berlin:20250313T090000", "STATUS:COMPLETED"})
+		moveListed(t, e, id, 26*time.Hour) // Monday 09:00 to Tuesday 11:00
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART;TZID=Europe/Berlin:20250311T110000", "RECURRENCE-ID;TZID=Europe/Berlin:20250313T110000"}, nil)
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 3, 18, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 11, 10, 0), date(2025, 3, 13, 10, 0), date(2025, 3, 17, 10, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming})
+	})
+
+	// Undoing a completion moves the series back onto its own rule: every
+	// occurrence stays where it is, and so do the exceptions (FR-17).
+	t.Run("undo after completion keeps later exceptions", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250331T090000Z"},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z", "SUMMARY:Moved"})
+		f := listedTodo(t, e, id)
+		done := completeListed(t, e, id)
+		_, err := e.svc.UpdateTodo(t.Context(), id, done.ETag, editInput(&f))
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"DTSTART:20250310T090000Z", "EXDATE:20250331T090000Z", "RECURRENCE-ID:20250324T090000Z", "DTSTART:20250325T090000Z",
+		}, nil)
 	})
 
 	t.Run("undo after completion", func(t *testing.T) {

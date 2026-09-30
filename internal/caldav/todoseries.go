@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -330,6 +331,215 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	dropOverrides(cal, c, cur.rid.Equal)
 	c.Props.Del(propKDEPending)
 	return nil
+}
+
+// move moves the series s from the occurrence a todo with the given status
+// reports (see reportedRid) to the dates of in (FR-10, FR-17), so that the
+// moved occurrence is the current one and the others stay as they were:
+//   - the dates become DTSTART and DUE in the form the series is written in;
+//   - the override of the moved occurrence and KDE's pending occurrence go;
+//   - a COUNT no longer counts the rule's instances before the moved
+//     occurrence, which the new DTSTART leaves behind;
+//   - an UNTIL and the references to later occurrences (their overrides with
+//     their dates, EXDATEs) move along, see refShift.
+//
+// A rule Lucid cannot evaluate (of a completed series) only gets its dates
+// moved. It fails, without changing anything, when in has no date or the
+// rule cannot be walked up to the moved occurrence.
+func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
+	start, allDay := in.Start, in.StartAllDay
+	if start == nil {
+		start, allDay = in.Due, in.DueAllDay
+	}
+	if start == nil {
+		return errRuleNeedsDate
+	}
+	c := s.master
+	rid := s.reportedRid(status)
+	var shift func(dateValue) time.Time
+	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && s.err == nil && rruleString(c) != "" {
+		before, err := s.instancesBefore(rid)
+		if err != nil {
+			return errRuleUnsupported
+		}
+		shift = s.refShift(rid, *start, allDay)
+		p.Value = movedRule(strings.TrimSpace(p.Value), before, rid, shift)
+	}
+	writeSeriesDates(cal, c, in, true)
+	dropOverrides(cal, c, rid.Equal)
+	c.Props.Del(propKDEPending)
+	if shift != nil {
+		shiftLaterRefs(cal, c, rid, shift)
+	}
+	return nil
+}
+
+// instancesBefore returns the number of instances of the rule of s before
+// t, iterated from the anchor as ruleEnd does (FR-17).
+func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
+	r, err := newRRule(rruleString(s.master), s.anchor.t)
+	if err != nil {
+		return 0, err
+	}
+	next := r.Iterator()
+	for n := range maxRRuleIterations {
+		i, ok := next()
+		if !ok || !i.Before(t) {
+			return n, nil
+		}
+	}
+	return 0, errRRuleCap
+}
+
+// refShift returns how moving the occurrence rid to the anchor to (of the
+// value type allDay) moves the references to later occurrences, or nil when
+// they stay (FR-17):
+//   - for an interval rule by the move, in the wall clock of the series, as
+//     the rule's instances move;
+//   - for fixed days by its change in time of day only, as the instances
+//     stay on the rule's days.
+//
+// They stay when the move keeps the rule's instances in place (such as
+// undoing a completion, which moves the series back onto its own rule), and
+// when the value type changes, which no reference can follow.
+func (s *todoSeries) refShift(rid, to time.Time, allDay bool) func(dateValue) time.Time {
+	if allDay != s.anchor.allDay || (!s.fixedDays && s.onGrid(rid, to)) {
+		return nil
+	}
+	loc := s.anchor.loc()
+	from, dest := rid.In(loc), to.In(loc)
+	days := 0
+	if !s.fixedDays {
+		days = int(civilDate(dest).Sub(civilDate(from)) / (24 * time.Hour))
+	}
+	secs := secondOfDay(dest) - secondOfDay(from)
+	if days == 0 && secs == 0 {
+		return nil
+	}
+	return func(d dateValue) time.Time {
+		if d.allDay {
+			return d.t.AddDate(0, 0, days)
+		}
+		w := d.t.In(loc)
+		return time.Date(w.Year(), w.Month(), w.Day()+days, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)
+	}
+}
+
+// civilDate returns midnight UTC of t's date in its own location.
+func civilDate(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+// secondOfDay returns the wall-clock time of t in seconds since midnight.
+func secondOfDay(t time.Time) int {
+	return t.Hour()*3600 + t.Minute()*60 + t.Second()
+}
+
+// onGrid reports whether the later of a and b is an instance of the rule of
+// s without its end, anchored at the earlier: moving the anchor between them
+// keeps every instance where it is (FR-17).
+func (s *todoSeries) onGrid(a, b time.Time) bool {
+	if b.Before(a) {
+		a, b = b, a
+	}
+	r, err := newRRule(withoutEnd(rruleString(s.master)), a.In(s.anchor.loc()))
+	if err != nil {
+		return false
+	}
+	next := r.Iterator()
+	for range maxRRuleIterations {
+		t, ok := next()
+		if !ok || t.After(b) {
+			return false
+		}
+		if t.Equal(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutEnd returns rrule without its COUNT and UNTIL.
+func withoutEnd(rrule string) string {
+	var out []string
+	for part := range strings.SplitSeq(rrule, ";") {
+		if k := rulePartKey(part); k != "COUNT" && k != "UNTIL" {
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, ";")
+}
+
+// movedRule returns rrule for a series moved from its occurrence rid
+// (FR-17): its COUNT without the before instances that preceded rid, at
+// least one; its UNTIL, if after rid, moved by shift (nil: kept).
+func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) time.Time) string {
+	rrule = mapRulePart(rrule, "COUNT", func(v string) string {
+		n, err := strconv.Atoi(v)
+		if err != nil || before == 0 {
+			return v
+		}
+		return strconv.Itoa(max(n-before, 1))
+	})
+	if shift == nil {
+		return rrule
+	}
+	return mapRulePart(rrule, "UNTIL", func(v string) string {
+		p := ical.Prop{Value: v}
+		shiftDatePropBy(&p, after(rid, shift))
+		return p.Value
+	})
+}
+
+// mapRulePart replaces the value of the part key (upper case) of rrule by
+// f's result; a part f keeps is left as written.
+func mapRulePart(rrule, key string, f func(string) string) string {
+	parts := strings.Split(rrule, ";")
+	for i, part := range parts {
+		if rulePartKey(part) != key {
+			continue
+		}
+		_, v, _ := strings.Cut(part, "=")
+		if nv := f(strings.TrimSpace(v)); nv != strings.TrimSpace(v) {
+			parts[i] = key + "=" + nv
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+// after returns shift for values after rid; it keeps the others.
+func after(rid time.Time, shift func(dateValue) time.Time) func(dateValue) time.Time {
+	return func(d dateValue) time.Time {
+		if !d.t.After(rid) {
+			return d.t
+		}
+		return shift(d)
+	}
+}
+
+// shiftLaterRefs moves the references of master in cal to occurrences after
+// rid by shift (FR-17): the RECURRENCE-ID, DTSTART and DUE of their
+// overrides, and EXDATE values.
+func shiftLaterRefs(cal *ical.Calendar, master *ical.Component, rid time.Time, shift func(dateValue) time.Time) {
+	for _, o := range cal.Children {
+		if o == master || o.Name != master.Name {
+			continue
+		}
+		if r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err != nil || !r.t.After(rid) {
+			continue
+		}
+		for _, name := range []string{ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDue} {
+			vals := o.Props[name]
+			for i := range vals {
+				shiftDatePropBy(&vals[i], shift)
+			}
+		}
+	}
+	vals := master.Props[ical.PropExceptionDates]
+	for i := range vals {
+		shiftDatePropBy(&vals[i], after(rid, shift))
+	}
 }
 
 // dropOverrides removes the overrides of master from cal whose

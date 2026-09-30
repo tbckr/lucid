@@ -409,10 +409,9 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
-		if in.Start == nil && in.Due == nil {
-			return domain.Todo{}, errRuleNeedsDate
+		if err := series.move(cal, cur.Status, in); err != nil {
+			return domain.Todo{}, err
 		}
-		moveSeries(cal, c, series.reportedRid(cur.Status), in)
 	default:
 		// A series reports its current occurrence, not its stored dates.
 		// Sent back unchanged, they must not overwrite DTSTART/DUE: the rule
@@ -487,18 +486,6 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, r
 	}
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	writeSeriesDates(cal, c, in, s != nil)
-	c.Props.Del(propKDEPending)
-}
-
-// moveSeries moves the recurring todo c from its current occurrence, rid, to
-// the dates of in (FR-10, FR-17): they become DTSTART and DUE in the form the
-// series is written in, and the override of rid and KDE's pending occurrence
-// go, so that the moved occurrence is the current one. The rule, COUNT
-// included, stays: interval rules move along, and the UI keeps fixed-day
-// rules within reach of their next occurrence.
-func moveSeries(cal *ical.Calendar, c *ical.Component, rid time.Time, in domain.TodoInput) {
-	writeSeriesDates(cal, c, in, true)
-	dropOverrides(cal, c, rid.Equal)
 	c.Props.Del(propKDEPending)
 }
 

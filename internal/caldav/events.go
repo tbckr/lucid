@@ -528,6 +528,12 @@ func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, delta time.
 }
 
 func shiftDateProp(p *ical.Prop, delta time.Duration) {
+	shiftDatePropBy(p, func(d dateValue) time.Time { return d.t.Add(delta) })
+}
+
+// shiftDatePropBy replaces each DATE or DATE-TIME value of p by shift's
+// result, written in the value's own form (FR-17).
+func shiftDatePropBy(p *ical.Prop, shift func(dateValue) time.Time) {
 	parts := strings.Split(p.Value, ",")
 	for i, v := range parts {
 		if strings.Contains(v, "/") {
@@ -537,7 +543,10 @@ func shiftDateProp(p *ical.Prop, delta time.Duration) {
 		if err != nil {
 			continue
 		}
-		t := d.t.Add(delta)
+		t := shift(d)
+		if t.Equal(d.t) {
+			continue // kept verbatim
+		}
 		switch {
 		case d.allDay:
 			parts[i] = t.UTC().Format(icalDate)
