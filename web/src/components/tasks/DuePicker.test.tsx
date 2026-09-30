@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, format, nextMonday } from 'date-fns'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type Todo } from '@/lib/api/schemas'
 import { dayKey, zonedToUtc } from '@/lib/dates'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -83,5 +83,35 @@ describe('DuePicker', () => {
     const { dialog } = await open(todo())
     expect(within(dialog).queryByRole('combobox', { name: 'Due time' })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
+  })
+
+  describe('a fixed-day series', () => {
+    const fixedDayTodo = todo({
+      due: '2026-10-05T00:00:00.000Z',
+      dueAllDay: true,
+      recurring: true,
+      fixedDays: true,
+      next: { start: null, due: '2026-10-08T00:00:00.000Z' },
+    })
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('limits the shortcuts and the month to the window, and shows the limit', async () => {
+      const { user, onChange, dialog } = await open(fixedDayTodo)
+
+      expect(within(dialog).getByRole('button', { name: /^Next week / })).toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).toBeDisabled()
+      expect(within(dialog).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Wednesday, October 7th, 2026' }))
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-07T00:00:00.000Z', dueAllDay: true }))
+    })
   })
 })

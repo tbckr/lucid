@@ -267,6 +267,7 @@
     "movedTo": "Moved to {{date}}. Then: {{next}}",
     "movedToLast": "Moved to {{date}}.",
     "undone": "Undone.",
+    "moveLimit": "Until {{date}}, then the next repeat is due.",
     "plannedRepeat": "{{title}}, planned repeat on {{date}}"
   },
   "priority": {

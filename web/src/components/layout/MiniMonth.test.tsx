@@ -65,4 +65,28 @@ describe('MiniMonth', () => {
     expect(band('Friday, March 20th, 2026')).toBe('single')
     expect(band('Saturday, March 21st, 2026')).toBeUndefined()
   })
+
+  it('disables a day via isDisabled, blocks its click, and renders the footer', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    render(
+      <MiniMonth
+        date={new Date(2026, 2, 20)}
+        now={now}
+        range={null}
+        prefs={prefs}
+        onSelect={onSelect}
+        isDisabled={(d) => d.getDate() === 9}
+        footer={<p>Only until the 8th</p>}
+      />,
+    )
+    const disabledDay = screen.getByRole('button', { name: 'Monday, March 9th, 2026' })
+    expect(disabledDay).toBeDisabled()
+    expect(disabledDay).toHaveAttribute('aria-disabled', 'true')
+
+    await user.click(disabledDay)
+    expect(onSelect).not.toHaveBeenCalled()
+
+    expect(screen.getByText('Only until the 8th')).toBeInTheDocument()
+  })
 })

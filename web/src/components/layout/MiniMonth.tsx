@@ -1,6 +1,6 @@
 import { addDays, addMonths, format, isSameDay, isSameMonth, startOfMonth } from 'date-fns'
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,8 @@ export function MiniMonth({
   prefs,
   emphasis = 'today',
   onSelect,
+  isDisabled,
+  footer,
 }: {
   /** The chosen day (the view's date in the sidebar). */
   date: Date
@@ -46,6 +48,10 @@ export function MiniMonth({
   /** Which day gets the solid mark: today (navigation) or the chosen day (picker). */
   emphasis?: 'today' | 'selected'
   onSelect: (day: Date) => void
+  /** A day a bounded series (FR-17) may not move to: a real disabled button, kept in the arrow-key traversal. */
+  isDisabled?: (day: Date) => boolean
+  /** Extra content below the month grid, e.g. the window's last day. */
+  footer?: ReactNode
 }) {
   const { t } = useTranslation()
   const [shown, setShown] = useState(date)
@@ -120,12 +126,15 @@ export function MiniMonth({
                 const today = isSameDay(d, now)
                 const chosen = isSameDay(d, date)
                 const solid = emphasis === 'today' ? today : chosen
+                const blocked = isDisabled?.(d) ?? false
                 return (
                   <td key={dayKey(d)} className="p-0">
                     <div data-range={bandPart(week, i, range)} className={BAND}>
                       <button
                         type="button"
                         data-day={dayKey(d)}
+                        disabled={blocked}
+                        aria-disabled={blocked}
                         tabIndex={isSameDay(d, tabStop) ? 0 : -1}
                         onKeyDown={onKeyDown}
                         onClick={() => {
@@ -136,7 +145,7 @@ export function MiniMonth({
                         aria-current={today ? 'date' : undefined}
                         aria-pressed={chosen}
                         className={cn(
-                          'tabular flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
+                          'tabular flex size-7 items-center justify-center rounded-full outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
                           !isSameMonth(d, shown) && 'text-muted-foreground',
                           today && !solid && 'font-semibold text-primary',
                           solid && 'bg-primary font-semibold text-primary-foreground hover:bg-primary/90',
@@ -152,6 +161,7 @@ export function MiniMonth({
           ))}
         </tbody>
       </table>
+      {footer}
     </div>
   )
 }

@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
+import { lastAllowedDay, moveWindow, withinWindow } from '@/lib/calendarTasks'
 import { dayKey, parseDayKey } from '@/lib/dates'
 import { formatPickerDate } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
@@ -42,6 +43,10 @@ export function DuePicker({
     { label: t('tasks.tomorrow'), day: shortcuts.tomorrow },
     { label: t('tasks.nextWeek'), day: shortcuts.nextWeek },
   ]
+  // A fixed-day series (FR-17) can't move past its next occurrence: block the days and
+  // shortcuts past the window, and say so below the month.
+  const w = moveWindow(todo)
+  const dayDisabled = (day: Date) => !withinWindow(todo, withDue(todo, { date: dayKey(day), time: dueTime }, tz))
 
   const pickDay = (day: Date) => {
     const input = withDue(todo, { date: dayKey(day), time: dueTime }, tz)
@@ -59,6 +64,7 @@ export function DuePicker({
           size="icon-sm"
           aria-label={t('tasks.changeDue', { title: todo.title || t('event.untitled') })}
           className={className}
+          disabled={todo.ruleUnsupported}
         >
           <CalendarIcon aria-hidden />
         </Button>
@@ -71,6 +77,7 @@ export function DuePicker({
               variant="ghost"
               size="sm"
               className="justify-between font-normal"
+              disabled={dayDisabled(p.day)}
               onClick={() => {
                 pickDay(p.day)
               }}
@@ -88,6 +95,14 @@ export function DuePicker({
             prefs={prefs}
             emphasis="selected"
             onSelect={pickDay}
+            isDisabled={dayDisabled}
+            footer={
+              w && (
+                <p className="px-2 pt-2 text-xs text-muted-foreground">
+                  {t('tasks.moveLimit', { date: formatPickerDate(lastAllowedDay(w), prefs, now) })}
+                </p>
+              )
+            }
           />
         </div>
         {dueDate && (

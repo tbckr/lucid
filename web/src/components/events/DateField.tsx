@@ -1,6 +1,6 @@
 import { format } from 'date-fns'
 import { ChevronDownIcon, XIcon } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { MiniMonth } from '@/components/layout/MiniMonth'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -33,6 +33,8 @@ export function DateField({
   month,
   onClear,
   tone,
+  isDisabled,
+  footer,
 }: {
   id: string
   /** "yyyy-MM-dd". */
@@ -55,6 +57,10 @@ export function DateField({
   onClear?: { label: string; clear: () => void } | undefined
   /** On a calendar's tint: reads as text until hovered or focused. */
   tone?: 'tint'
+  /** A day a bounded series (FR-17) may not move to; passed through to `MiniMonth`. */
+  isDisabled?: (day: Date) => boolean
+  /** Extra content below the month, e.g. the window's last day; passed through to `MiniMonth`. */
+  footer?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -102,6 +108,8 @@ export function DateField({
             onChange(format(d, 'yyyy-MM-dd'))
             setOpen(false)
           }}
+          isDisabled={isDisabled}
+          footer={footer}
         />
         {onClear && day && (
           <div className="mt-2 border-t pt-2">

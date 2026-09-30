@@ -267,6 +267,7 @@
     "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",
     "movedToLast": "Auf {{date}} verschoben.",
     "undone": "Rückgängig gemacht.",
+    "moveLimit": "Bis {{date}}, danach kommt die nächste Wiederholung.",
     "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}"
   },
   "priority": {
