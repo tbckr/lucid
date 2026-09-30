@@ -524,6 +524,35 @@ describe('TaskEditor', () => {
       expect(puts(fetch)).toHaveLength(0)
     })
 
+    it('asks for a date when the due date of the last repeat is cleared, and sends no PUT', async () => {
+      const user = userEvent.setup()
+      const last = { ...series, next: null }
+      const { fetch, dialog } = await openTask(last)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
+    it('asks for a date when the due date of an ordinary interval series is cleared, and sends no PUT', async () => {
+      const user = userEvent.setup()
+      // No window at all (an interval rule, not fixed days), unlike the bounded series above.
+      const interval = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
+      const { fetch, dialog } = await openTask(interval)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
     it('saves a note on an occurrence already moved past the next repeat', async () => {
       const user = userEvent.setup()
       // Due Thu, Oct 9, but the series' own next repeat is already Wed, Oct 8: another

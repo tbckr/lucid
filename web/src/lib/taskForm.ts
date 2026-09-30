@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
-import { withinWindow } from './calendarTasks'
+import { anchorOf, withinWindow } from './calendarTasks'
 import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
 import { todoToInput } from './tasks'
@@ -29,16 +29,19 @@ const taskFormShape = {
  * Task editor form; limits mirror domain.TodoInput.Validate. Messages are i18n keys.
  * `original` lets `validation.repeatNeedsDate` (FR-17) see whether the repeat itself
  * changes: a new task needs a date only if it is given a repeat, and an existing task
- * needs one only when its repeat changes, not for edits that leave the rule alone (a
+ * needs one only when its repeat changes, or when it had a date and both are cleared
+ * while the rule stays (the backend rejects a kept rule without a date either way).
+ * Not for edits that leave both the rule and an already-dateless series alone (a
  * `ruleUnsupported` series can be dateless, and its title must still be editable).
  */
 export function buildTaskFormSchema(original?: Todo) {
   return z.object(taskFormShape).superRefine((v, ctx) => {
     // A rule recurs from the start, else the due date (FR-17). Removing a rule needs
-    // no date, so this only fires while a rule stays set, and only when it is the one
-    // being set: an untouched rule, kept on a task whose dates were never there (or
-    // were cleared without touching the rule), does not need one to be saved.
-    if (v.recurrence !== 'none' && repeatChanged(v, original) && v.startDate === '' && v.dueDate === '') {
+    // no date, so this only fires while a rule stays set, and only when the rule is
+    // the one being set, or a dated series just lost both its dates: an untouched
+    // rule, kept on a task whose dates were never there, does not need one to be saved.
+    const clearedDatedSeries = original !== undefined && anchorOf(original) !== null
+    if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '' && (repeatChanged(v, original) || clearedDatedSeries)) {
       ctx.addIssue({ code: 'custom', message: 'validation.repeatNeedsDate', path: ['recurrence'] })
     }
     if (v.dueTime !== '' && v.dueDate === '') {

@@ -246,6 +246,24 @@ describe('taskForm', () => {
         .error?.issues.map((i) => [i.path.join('.'), i.message])
       expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
     })
+
+    it('needs a date when a series that had one clears both while keeping its rule', () => {
+      // Clearing the dates of a dateful series is a fresh way to reach the same invalid
+      // state as changing the rule: the backend rejects a kept rule without a date either
+      // way, so the form must ask before it tries (FR-17).
+      const v = { ...taskToForm(series, TZ), startDate: '', startTime: '', dueDate: '', dueTime: '' }
+      const issues = buildTaskFormSchema(series)
+        .safeParse(v)
+        .error?.issues.map((i) => [i.path.join('.'), i.message])
+      expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
+    })
+
+    it('still validates a date-less stored series whose dates stay empty and rule stays put', () => {
+      const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
+      const v = { ...taskToForm(dateless, TZ), title: 'Other' }
+      expect(v).toMatchObject({ startDate: '', dueDate: '' })
+      expect(buildTaskFormSchema(dateless).safeParse(v).success).toBe(true)
+    })
   })
 
   describe('formWithDate', () => {
