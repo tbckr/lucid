@@ -385,9 +385,10 @@ export function TaskEditor({
         </DialogClose>
       </div>
 
-      <fieldset disabled={readOnly} className="grid gap-3 px-4 pt-5 pb-2 sm:px-6">
+      {/* A read-only list disables the fields, but not the ⓘ: the repeat row stays outside the disabled fieldsets. */}
+      <div className="grid gap-3 px-4 pt-5 pb-2 sm:px-6">
         <EditorRow icon={<ClockIcon />}>
-          <fieldset className="grid gap-2" disabled={ruleUnsupported}>
+          <fieldset className="grid gap-2" disabled={readOnly || ruleUnsupported}>
             <legend className="sr-only">{t('tasks.when')}</legend>
             {dateRow('start')}
             {dateRow('due')}
@@ -403,7 +404,7 @@ export function TaskEditor({
               control={control}
               name="recurrence"
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange}>
+                <Select value={field.value} onValueChange={field.onChange} disabled={readOnly}>
                   <SelectTrigger
                     id={`${id}-repeat`}
                     className="w-auto min-w-48"
@@ -462,115 +463,117 @@ export function TaskEditor({
           )}
         </EditorRow>
 
-        <EditorRow icon={<FlagIcon />}>
-          <Controller
-            control={control}
-            name="priority"
-            render={({ field }) => (
-              <ToggleGroup
-                type="single"
-                aria-label={t('tasks.priority')}
-                className="mt-0.5"
-                value={priorityLevel(field.value)}
-                onValueChange={(level) => {
-                  // Radix deselects on a second click (""); keep the exact RFC 5545 value while the level stays.
-                  if (level && level !== priorityLevel(field.value)) field.onChange(priorityValue(level as PriorityLevel))
-                }}
-              >
-                {LEVELS.map((l) => (
-                  <ToggleGroupItem key={l} value={l} className={LEVEL_ON[l]}>
-                    {t(`priority.${l}`)}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            )}
-          />
-        </EditorRow>
-
-        <EditorRow icon={<ListChecksIcon />}>
-          <fieldset className="grid">
-            <legend className="sr-only">{t('tasks.checklist')}</legend>
-            {checklist.fields.length > 0 && (
-              <ul className="grid">
-                {checklist.fields.map((f, i) => (
-                  <li key={f.id} className="group flex items-center gap-1">
-                    <Controller
-                      control={control}
-                      name={`checklist.${i}.done`}
-                      render={({ field }) => (
-                        <Checkbox
-                          checked={field.value}
-                          onCheckedChange={(v) => {
-                            field.onChange(v === true)
+        <fieldset disabled={readOnly} className="grid gap-3">
+          <EditorRow icon={<FlagIcon />}>
+            <Controller
+              control={control}
+              name="priority"
+              render={({ field }) => (
+                <ToggleGroup
+                  type="single"
+                  aria-label={t('tasks.priority')}
+                  className="mt-0.5"
+                  value={priorityLevel(field.value)}
+                  onValueChange={(level) => {
+                    // Radix deselects on a second click (""); keep the exact RFC 5545 value while the level stays.
+                    if (level && level !== priorityLevel(field.value)) field.onChange(priorityValue(level as PriorityLevel))
+                  }}
+                >
+                  {LEVELS.map((l) => (
+                    <ToggleGroupItem key={l} value={l} className={LEVEL_ON[l]}>
+                      {t(`priority.${l}`)}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              )}
+            />
+          </EditorRow>
+  
+          <EditorRow icon={<ListChecksIcon />}>
+            <fieldset className="grid">
+              <legend className="sr-only">{t('tasks.checklist')}</legend>
+              {checklist.fields.length > 0 && (
+                <ul className="grid">
+                  {checklist.fields.map((f, i) => (
+                    <li key={f.id} className="group flex items-center gap-1">
+                      <Controller
+                        control={control}
+                        name={`checklist.${i}.done`}
+                        render={({ field }) => (
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={(v) => {
+                              field.onChange(v === true)
+                            }}
+                            aria-label={t('tasks.itemDone', { text: f.text })}
+                          />
+                        )}
+                      />
+                      <Input
+                        className={cn(
+                          'h-8 border-transparent bg-transparent px-2 hover:border-input',
+                          items[i]?.done && 'text-muted-foreground line-through',
+                        )}
+                        aria-label={t('tasks.itemText', { index: i + 1 })}
+                        aria-invalid={formState.errors.checklist?.[i]?.text ? true : undefined}
+                        {...register(`checklist.${i}.text`)}
+                      />
+                      {!readOnly && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          // Shown on hover or focus where there is a pointer to hover with.
+                          className="text-muted-foreground pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100"
+                          aria-label={t('tasks.removeItem', { text: f.text })}
+                          onClick={() => {
+                            checklist.remove(i)
                           }}
-                          aria-label={t('tasks.itemDone', { text: f.text })}
-                        />
+                        >
+                          <XIcon aria-hidden />
+                        </Button>
                       )}
-                    />
-                    <Input
-                      className={cn(
-                        'h-8 border-transparent bg-transparent px-2 hover:border-input',
-                        items[i]?.done && 'text-muted-foreground line-through',
-                      )}
-                      aria-label={t('tasks.itemText', { index: i + 1 })}
-                      aria-invalid={formState.errors.checklist?.[i]?.text ? true : undefined}
-                      {...register(`checklist.${i}.text`)}
-                    />
-                    {!readOnly && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        // Shown on hover or focus where there is a pointer to hover with.
-                        className="text-muted-foreground pointer-fine:opacity-0 pointer-fine:group-focus-within:opacity-100 pointer-fine:group-hover:opacity-100"
-                        aria-label={t('tasks.removeItem', { text: f.text })}
-                        onClick={() => {
-                          checklist.remove(i)
-                        }}
-                      >
-                        <XIcon aria-hidden />
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!readOnly && (
-              <div className="flex items-center gap-1">
-                <PlusIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <Input
-                  className="h-8 border-transparent bg-transparent px-2 hover:border-input"
-                  value={newItem}
-                  placeholder={t('tasks.addItemPlaceholder')}
-                  aria-label={t('tasks.addItem')}
-                  onChange={(e) => {
-                    setNewItem(e.target.value)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      addItem()
-                    }
-                  }}
-                />
-              </div>
-            )}
-            {itemError && <p className="pt-1 text-sm text-destructive">{itemError}</p>}
-          </fieldset>
-        </EditorRow>
-
-        <EditorRow icon={<AlignLeftIcon />}>
-          <Label htmlFor={`${id}-notes`} className="sr-only">
-            {t('tasks.notes')}
-          </Label>
-          <Textarea
-            id={`${id}-notes`}
-            placeholder={readOnly ? undefined : t('tasks.addNotes')}
-            className={cn(quietField, 'max-h-48 min-h-9 resize-none')}
-            {...register('description')}
-          />
-        </EditorRow>
-      </fieldset>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!readOnly && (
+                <div className="flex items-center gap-1">
+                  <PlusIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <Input
+                    className="h-8 border-transparent bg-transparent px-2 hover:border-input"
+                    value={newItem}
+                    placeholder={t('tasks.addItemPlaceholder')}
+                    aria-label={t('tasks.addItem')}
+                    onChange={(e) => {
+                      setNewItem(e.target.value)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addItem()
+                      }
+                    }}
+                  />
+                </div>
+              )}
+              {itemError && <p className="pt-1 text-sm text-destructive">{itemError}</p>}
+            </fieldset>
+          </EditorRow>
+  
+          <EditorRow icon={<AlignLeftIcon />}>
+            <Label htmlFor={`${id}-notes`} className="sr-only">
+              {t('tasks.notes')}
+            </Label>
+            <Textarea
+              id={`${id}-notes`}
+              placeholder={readOnly ? undefined : t('tasks.addNotes')}
+              className={cn(quietField, 'max-h-48 min-h-9 resize-none')}
+              {...register('description')}
+            />
+          </EditorRow>
+        </fieldset>
+      </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:justify-between sm:px-6 sm:pb-5">
         {confirmDelete ? (

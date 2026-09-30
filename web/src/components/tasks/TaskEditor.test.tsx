@@ -354,6 +354,15 @@ describe('TaskEditor', () => {
       expect(info).toHaveTextContent('Repeats can only be completed in order.')
     })
 
+    it('opens the explanation in a read-only list, where the repeat itself cannot change', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(series, calendar({ readOnly: true }))
+
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toBeDisabled()
+      await user.click(within(dialog).getByRole('button', { name: 'How repeating tasks work' }))
+      expect(screen.getByRole('dialog', { name: 'How repeating tasks work' })).toBeInTheDocument()
+    })
+
     it('offers the explanation only for a task that repeats', async () => {
       const { dialog } = await openTask(single)
       expect(within(dialog).queryByRole('button', { name: 'How repeating tasks work' })).toBeNull()
