@@ -253,13 +253,14 @@ function AllDayCell({
     id: `alldaycell:${dayKey(day)}`,
     data: { type: 'day', day } satisfies DropData,
   })
-  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach.
+  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach,
+  // and take no drop highlight, as a drop there changes nothing.
   const hatched = moveWindow != null && outsideWindow(moveWindow, day)
   return (
     <div
       ref={setNodeRef}
       data-draft={draft ? '' : undefined}
-      className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8', hatched && 'hatched')}
+      className={cn('relative border-l border-grid', ((isOver && !hatched) || draft) && 'bg-primary/8', hatched && 'hatched')}
       style={{ height }}
     >
       <button
@@ -302,7 +303,8 @@ function DayColumn({
     id: `col:${dayKey(day)}`,
     data: { type: 'column', day, ref: column } satisfies DropData,
   })
-  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach.
+  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach,
+  // and take no drop highlight, as a drop there changes nothing.
   const hatched = moveWindow != null && outsideWindow(moveWindow, day)
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
@@ -324,7 +326,7 @@ function DayColumn({
   })
 
   return (
-    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5', hatched && 'hatched')}>
+    <div ref={ref} className={cn('relative border-l border-grid', isOver && !hatched && 'bg-primary/5', hatched && 'hatched')}>
       {HOURS.map((h) => (
         <button
           key={h}

@@ -1,11 +1,14 @@
 import { DndContext, type DragStartEvent } from '@dnd-kit/core'
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { api } from '@/lib/api/client'
-import { toCalTask } from '@/lib/calendarTasks'
+import { toCalTask, type MoveWindow } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
@@ -53,8 +56,13 @@ function renderMonth(
   )
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) }
+}
+
 describe('MonthView', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     act(() => {
       useUi.getState().openCreate(null)
     })
@@ -183,6 +191,44 @@ describe('MonthView', () => {
     expect(useUi.getState().create).toBeNull()
     expect(useUi.getState().detail?.item).toBe(events[4])
     useUi.getState().openDetail(null)
+  })
+
+  it('highlights the day under a drag, but not one outside the window of a dragged repeat (FR-17)', async () => {
+    const call = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+    // jsdom lays nothing out: only Friday's cell and the task in it share a box, so the task is over Friday.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.day === '2026-09-25' || this.dataset.taskKey ? rect(0, 0, 100, 100) : rect(1000, 1000, 10, 10)
+    })
+    const view = (moveWindow: MoveWindow | null) => (
+      <DndContext>
+        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow, activeId: null }}>
+          <MonthView
+            date={new Date(2026, 8, 25)}
+            now={new Date(2026, 8, 25, 12)}
+            events={[call]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>
+    )
+    const { rerender, queryClient } = renderWithProviders(view(null))
+    const friday = screen.getByRole('gridcell', { name: /September 25th/ })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Call, 10 AM' }), { code: 'Space', key: ' ' })
+    await waitFor(() => {
+      expect(friday).toHaveClass('bg-primary/8')
+    })
+
+    // The same drag, with Friday past the window: hatched, and no promise of a drop.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
+      </QueryClientProvider>,
+    )
+    expect(friday).toHaveClass('hatched')
+    expect(friday).not.toHaveClass('bg-primary/8')
   })
 
   it('counts tasks apart from events in the cell label', () => {

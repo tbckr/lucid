@@ -1,10 +1,12 @@
 import { DndContext, type DragStartEvent } from '@dnd-kit/core'
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
-import { toCalTask } from '@/lib/calendarTasks'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { toCalTask, type MoveWindow } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
@@ -47,8 +49,13 @@ function renderDay(events: CalItem[] = [], onDragStart?: (e: DragStartEvent) => 
   )
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) }
+}
+
 describe('TimeGridView', () => {
   afterEach(() => {
+    vi.restoreAllMocks()
     useUi.getState().openCreate(null)
   })
 
@@ -163,6 +170,59 @@ describe('TimeGridView', () => {
       event: rent,
       originDay: new Date(2026, 8, 25),
     })
+  })
+
+  it.each([
+    [
+      'the all-day row',
+      toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!,
+      'Pay rent, all day',
+      () => screen.getByRole('button', { name: /^New all-day event/ }).parentElement!,
+      'bg-primary/8',
+    ],
+    [
+      'the day column',
+      toCalTask(todo({ id: 't1', title: 'Call', due: '2026-09-25T08:00:00Z' }))!,
+      'Call, 10 AM',
+      () => screen.getByRole('button', { name: /9:00 AM$/ }).parentElement!,
+      'bg-primary/5',
+    ],
+  ])('highlights %s under a drag, but not outside the window of a dragged repeat (FR-17)', async (_, task, name, target, tint) => {
+    // jsdom lays nothing out: only the target and the task in it share a box, so the task is over the target.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return 'box' in this.dataset || this.dataset.taskKey ? rect(0, 0, 100, 100) : rect(1000, 1000, 10, 10)
+    })
+    const view = (moveWindow: MoveWindow | null) => (
+      <DndContext>
+        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow, activeId: null }}>
+          <TimeGridView
+            days={[new Date(2026, 8, 25)]}
+            now={new Date(2026, 8, 25, 12)}
+            events={[task]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>
+    )
+    const { rerender, queryClient } = renderWithProviders(view(null))
+    const day = target()
+    day.dataset.box = ''
+    fireEvent.keyDown(screen.getByRole('button', { name }), { code: 'Space', key: ' ' })
+    await waitFor(() => {
+      expect(day).toHaveClass(tint)
+    })
+
+    // The same drag, with the day past the window: hatched, and no promise of a drop.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
+      </QueryClientProvider>,
+    )
+    expect(day).toHaveClass('hatched')
+    expect(day).not.toHaveClass(tint)
   })
 
   it('opens the popover for an all-day event from the all-day row', () => {
