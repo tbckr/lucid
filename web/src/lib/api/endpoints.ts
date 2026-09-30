@@ -5,7 +5,9 @@ import {
   eventSchema,
   parseList,
   sessionSchema,
+  todoOccurrenceSchema,
   todoSchema,
+  updatedTodoSchema,
   type ApiEvent,
   type Calendar,
   type CorruptedItem,
@@ -13,6 +15,8 @@ import {
   type Session,
   type Todo,
   type TodoInput,
+  type TodoOccurrence,
+  type UpdatedTodo,
 } from './schemas'
 
 const enc = encodeURIComponent
@@ -33,8 +37,14 @@ export interface TodoList {
   corrupted: CorruptedItem[]
 }
 
+export interface TodoOccurrenceList {
+  occurrences: TodoOccurrence[]
+  corrupted: CorruptedItem[]
+}
+
 const eventsEnvelope = z.object({ events: z.array(z.unknown()).nullish().transform((v) => v ?? []) })
 const todosEnvelope = z.object({ todos: z.array(z.unknown()).nullish().transform((v) => v ?? []) })
+const occurrencesEnvelope = z.object({ occurrences: z.array(z.unknown()).nullish().transform((v) => v ?? []) })
 const calendarsEnvelope = z.object({ calendars: z.array(calendarSchema).nullish().transform((v) => v ?? []) })
 
 /** Typed endpoint functions for docs/API.md. */
@@ -89,11 +99,26 @@ export function createEndpoints(client: ApiClient) {
     createTodo: (calendarId: string, input: TodoInput): Promise<Todo> =>
       client.request(`/calendars/${enc(calendarId)}/todos`, { method: 'POST', body: input, schema: todoSchema }),
 
-    updateTodo: (todoId: string, etag: string, input: TodoInput): Promise<Todo> =>
-      client.request(`/todos/${enc(todoId)}`, { method: 'PUT', body: input, etag, schema: todoSchema }),
+    updateTodo: (todoId: string, etag: string, input: TodoInput): Promise<UpdatedTodo> =>
+      client.request(`/todos/${enc(todoId)}`, { method: 'PUT', body: input, etag, schema: updatedTodoSchema }),
 
     deleteTodo: (todoId: string, etag: string): Promise<undefined> =>
       client.request(`/todos/${enc(todoId)}`, { method: 'DELETE', etag }),
+
+    async listTodoOccurrences(
+      calendarId: string,
+      start: Date,
+      end: Date,
+      signal?: AbortSignal,
+    ): Promise<TodoOccurrenceList> {
+      const qs = `start=${enc(start.toISOString())}&end=${enc(end.toISOString())}`
+      const res = await client.request(`/calendars/${enc(calendarId)}/todos/occurrences?${qs}`, {
+        schema: occurrencesEnvelope,
+        ...(signal ? { signal } : {}),
+      })
+      const { items, corrupted } = parseList(todoOccurrenceSchema, res.occurrences, calendarId)
+      return { occurrences: items, corrupted }
+    },
   }
 }
 

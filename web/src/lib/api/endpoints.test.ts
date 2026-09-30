@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { apiEvent, bodyOf, jsonResponse, todo, urlOf } from '@/test/fixtures'
+import { apiEvent, bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { ApiClient } from './client'
 import { createEndpoints } from './endpoints'
 
@@ -91,6 +91,16 @@ describe('endpoints', () => {
       '/api/v1/todos/t1',
       '/api/v1/todos/t1',
     ])
+  })
+
+  it('lists todo occurrences with an encoded range and isolates corrupted items', async () => {
+    const { api, calls } = setup(jsonResponse(200, { occurrences: [occurrence(), { key: 'broken' }] }))
+    const res = await api.listTodoOccurrences('c1', new Date('2026-09-01T00:00:00Z'), new Date('2026-10-01T00:00:00Z'))
+    expect(calls[0]?.url).toBe(
+      '/api/v1/calendars/c1/todos/occurrences?start=2026-09-01T00%3A00%3A00.000Z&end=2026-10-01T00%3A00%3A00.000Z',
+    )
+    expect(res.occurrences).toHaveLength(1)
+    expect(res.corrupted).toHaveLength(1)
   })
 
   it('getSession delegates to the client', async () => {

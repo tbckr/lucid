@@ -90,8 +90,36 @@ export const todoSchema = z.object({
   priority: z.number().int().min(0).max(9),
   status: todoStatusSchema.catch('NEEDS-ACTION'),
   completed: isoDateTime.nullish(),
+  // FR-17: the fields describing a recurring todo (VTODO with RRULE/RDATE).
+  rrule: z.string().optional().default(''),
+  recurring: z.boolean().optional().default(false),
+  fixedDays: z.boolean().optional().default(false),
+  ruleUnsupported: z.boolean().optional().default(false),
+  next: z.object({ start: isoDateTime.nullish(), due: isoDateTime.nullish() }).nullish(),
 })
 export type Todo = z.infer<typeof todoSchema>
+
+/** PUT /api/v1/todos/{todoId} response: a completed occurrence's copy, when the master rolled to its next one (FR-17). */
+export const updatedTodoSchema = todoSchema.extend({ completedCopy: todoSchema.nullish() })
+export type UpdatedTodo = z.infer<typeof updatedTodoSchema>
+
+export const occurrenceStateSchema = z.enum(['current', 'upcoming', 'done'])
+export type OccurrenceState = z.infer<typeof occurrenceStateSchema>
+
+/** An occurrence of a recurring todo, as returned by GET .../todos/occurrences (FR-17). */
+export const todoOccurrenceSchema = z.object({
+  key: z.string().min(1),
+  todoId: z.string().min(1),
+  calendarId: z.string().min(1),
+  recurrenceId: isoDateTime,
+  title: z.string(),
+  start: isoDateTime.nullish(),
+  startAllDay: z.boolean().optional().default(false),
+  due: isoDateTime.nullish(),
+  dueAllDay: z.boolean().optional().default(false),
+  state: occurrenceStateSchema,
+})
+export type TodoOccurrence = z.infer<typeof todoOccurrenceSchema>
 
 export const errorBodySchema = z.object({
   error: z.object({ code: z.string(), message: z.string().optional().default('') }),
@@ -122,6 +150,10 @@ export interface TodoInput {
   dueAllDay: boolean
   priority: number
   status: TodoStatus
+  /** RFC 5545 RRULE; absent keeps the stored rule, "" removes it (FR-17). */
+  rrule?: string
+  /** IANA zone timed start/due recur in; without it, a series uses UTC. */
+  timezone?: string
 }
 
 /** A list item that failed validation, rendered as "Corrupted" placeholder. */

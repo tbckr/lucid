@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { apiEvent } from '@/test/fixtures'
-import { calendarSchema, eventSchema, parseList, sessionSchema, todoSchema, toCorrupted } from './schemas'
+import { apiEvent, occurrence } from '@/test/fixtures'
+import {
+  calendarSchema,
+  eventSchema,
+  parseList,
+  sessionSchema,
+  todoOccurrenceSchema,
+  todoSchema,
+  toCorrupted,
+  updatedTodoSchema,
+} from './schemas'
 
 describe('schemas', () => {
   it('accepts a documented event and fills optional fields', () => {
@@ -49,6 +58,40 @@ describe('schemas', () => {
     expect(todoSchema.safeParse({ ...t, priority: 12 }).success).toBe(false)
   })
 
+  it('defaults the recurrence fields when a todo omits them', () => {
+    const t = todoSchema.parse({
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    })
+    expect(t.rrule).toBe('')
+    expect(t.recurring).toBe(false)
+    expect(t.fixedDays).toBe(false)
+    expect(t.ruleUnsupported).toBe(false)
+    expect(t.next).toBeUndefined()
+  })
+
+  it('updatedTodoSchema keeps completedCopy, todoSchema strips it', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    const withCopy = { ...base, completedCopy: { ...base, id: 't-copy' } }
+    const updated = updatedTodoSchema.parse(withCopy)
+    expect(updated.completedCopy?.id).toBe('t-copy')
+    const plain = todoSchema.parse(withCopy)
+    expect(plain).not.toHaveProperty('completedCopy')
+  })
+
   it('requires a CSRF token in sessions', () => {
     expect(sessionSchema.safeParse({ authenticated: false }).success).toBe(false)
     expect(sessionSchema.parse({ authenticated: true, username: 'u', csrfToken: 't' }).username).toBe('u')
@@ -57,6 +100,16 @@ describe('schemas', () => {
   it('keeps the server version and tolerates its absence', () => {
     expect(sessionSchema.parse({ authenticated: false, csrfToken: 't', version: '1.2.3' }).version).toBe('1.2.3')
     expect(sessionSchema.parse({ authenticated: false, csrfToken: 't' }).version).toBeUndefined()
+  })
+})
+
+describe('todoOccurrenceSchema', () => {
+  it('accepts a documented occurrence', () => {
+    expect(todoOccurrenceSchema.safeParse(occurrence()).success).toBe(true)
+  })
+
+  it('rejects an occurrence with an unknown state', () => {
+    expect(todoOccurrenceSchema.safeParse(occurrence({ state: 'later' as never })).success).toBe(false)
   })
 })
 

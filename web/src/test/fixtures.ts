@@ -1,4 +1,4 @@
-import { type ApiEvent, type Calendar, type Todo } from '@/lib/api/schemas'
+import { type ApiEvent, type Calendar, type Todo, type TodoOccurrence } from '@/lib/api/schemas'
 
 export function apiEvent(p: Partial<ApiEvent> = {}): ApiEvent {
   return {
@@ -36,6 +36,27 @@ export function todo(p: Partial<Todo> = {}): Todo {
     priority: 0,
     status: 'NEEDS-ACTION',
     completed: null,
+    rrule: '',
+    recurring: false,
+    fixedDays: false,
+    ruleUnsupported: false,
+    next: null,
+    ...p,
+  }
+}
+
+export function occurrence(p: Partial<TodoOccurrence> = {}): TodoOccurrence {
+  return {
+    key: 't1@2026-09-25T00:00:00Z',
+    todoId: 't1',
+    calendarId: 'c1',
+    recurrenceId: '2026-09-25T00:00:00Z',
+    title: 'Task',
+    start: null,
+    startAllDay: false,
+    due: '2026-09-25T00:00:00Z',
+    dueAllDay: true,
+    state: 'current',
     ...p,
   }
 }

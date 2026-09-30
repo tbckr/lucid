@@ -204,7 +204,17 @@ export function previewOf(
   // The task as the calendar places it (FR-16): a point, a span or a day.
   const values = taskForm(ANY_TITLE, when as TaskWhen)
   if (!taskFormSchema.safeParse(values).success) return null
-  return toCalTask({ ...formToTodoInput(values, timeZone), ...draft, title, completed: null })
+  return toCalTask({
+    ...formToTodoInput(values, timeZone),
+    ...draft,
+    title,
+    completed: null,
+    // The preview is never a recurring series (FR-17).
+    rrule: '',
+    recurring: false,
+    fixedDays: false,
+    ruleUnsupported: false,
+  })
 }
 
 /**
