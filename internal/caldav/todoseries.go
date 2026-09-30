@@ -345,17 +345,18 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 //   - the override of the moved occurrence and KDE's pending occurrence go;
 //   - a COUNT no longer counts the rule's instances before the moved
 //     occurrence, which the new DTSTART leaves behind;
-//   - an UNTIL and the references to later occurrences (their overrides with
-//     their dates, EXDATEs) move along, see refShift.
+//   - an UNTIL from the moved occurrence on and the references to later
+//     occurrences (their overrides with their dates, EXDATEs) move along,
+//     see refShift and movedRule.
 //
 // A rule Lucid cannot evaluate (of a completed series) only gets its dates
 // moved. It fails, without changing anything, when in has no date or the
 // rule cannot be walked up to the moved occurrence.
 //
 // Where the moved occurrence lies in the series (the instances before it,
-// whether it is the last, whether the move stays on the grid) is decided on
-// the series as read, s, and the rewritten rule is written last: once
-// shifted, it no longer says where the moved occurrence lay.
+// whether the move stays on the grid) is decided on the series as read, s,
+// and the rewritten rule is written last: once shifted, it no longer says
+// where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
 	start, allDay := in.Start, in.StartAllDay
 	if start == nil {
@@ -373,11 +374,9 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 			return errRuleUnsupported
 		}
 		shift = s.refShift(rid, *start, allDay)
-		last := hasRulePart(s.rrule, "UNTIL") && !s.hasLater(rid)
 		rule := movedRule(s.rrule, before, rid, shift)
-		// UNTIL never ends before the moved series starts, and the last
-		// occurrence stays the last, wherever it goes.
-		if loc := s.anchor.loc(); last || untilBefore(rule, *start, loc) {
+		// UNTIL never ends before the moved series starts.
+		if loc := s.anchor.loc(); untilBefore(rule, *start, loc) {
 			rule = untilAt(rule, *start, loc)
 		}
 		p.Value = rule
@@ -490,7 +489,11 @@ func withoutEnd(rrule string) string {
 
 // movedRule returns rrule for a series moved from its occurrence rid
 // (FR-17): its COUNT without the before instances that preceded rid, at
-// least one; its UNTIL, if after rid, moved by shift (nil: kept).
+// least one; its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
+// on rid itself makes the moved occurrence the last one, and it stays the
+// last: an off-grid move takes UNTIL along, while a move back onto the
+// rule's grid, such as undoing a completion, shifts nothing and so keeps
+// the occurrences UNTIL still covers.
 func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) time.Time) string {
 	rrule = mapRulePart(rrule, "COUNT", func(v string) string {
 		n, err := strconv.Atoi(v)
@@ -504,20 +507,14 @@ func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) ti
 	}
 	return mapRulePart(rrule, "UNTIL", func(v string) string {
 		p := ical.Prop{Value: v}
-		shiftDatePropBy(&p, after(rid, shift))
+		shiftDatePropBy(&p, func(d dateValue) time.Time {
+			if d.t.Before(rid) {
+				return d.t
+			}
+			return shift(d)
+		})
 		return p.Value
 	})
-}
-
-// hasLater reports whether s has an occurrence after rid, done or not; a rule
-// that cannot be walked that far counts as having one (FR-17).
-func (s *todoSeries) hasLater(rid time.Time) bool {
-	later := false
-	err := s.walk(rid, func(o todoOcc) bool {
-		later = o.rid.After(rid)
-		return !later
-	})
-	return later || err != nil
 }
 
 // untilBefore reports whether rrule has an UNTIL before to; a DATE compares

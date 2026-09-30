@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -708,15 +709,11 @@ func TestUpdateTodoKeepsSeriesDates(t *testing.T) {
 	}
 }
 
-// checkTodoOccurrences asserts that got's anchor dates (start, else due) and
-// states match wantDates/wantStates, in order.
-func checkTodoOccurrences(t *testing.T, got []domain.TodoOccurrence, wantDates []time.Time, wantStates []string) {
-	t.Helper()
-	if len(got) != len(wantDates) {
-		t.Fatalf("ListTodoOccurrences = %+v; want %d occurrences at %v", got, len(wantDates), wantDates)
-	}
-	for i := range got {
-		o := &got[i]
+// occurrenceDates returns the anchor dates (start, else due) and states of
+// occs, in order.
+func occurrenceDates(occs []domain.TodoOccurrence) (dates []time.Time, states []string) {
+	for i := range occs {
+		o := &occs[i]
 		d := o.RecurrenceID
 		switch {
 		case o.Start != nil:
@@ -724,8 +721,22 @@ func checkTodoOccurrences(t *testing.T, got []domain.TodoOccurrence, wantDates [
 		case o.Due != nil:
 			d = *o.Due
 		}
-		if !d.Equal(wantDates[i]) || o.State != wantStates[i] {
-			t.Errorf("occurrence %d = %v/%s; want %v/%s", i, d, o.State, wantDates[i], wantStates[i])
+		dates, states = append(dates, d), append(states, o.State)
+	}
+	return dates, states
+}
+
+// checkTodoOccurrences asserts that got's anchor dates (start, else due) and
+// states match wantDates/wantStates, in order.
+func checkTodoOccurrences(t *testing.T, got []domain.TodoOccurrence, wantDates []time.Time, wantStates []string) {
+	t.Helper()
+	if len(got) != len(wantDates) {
+		t.Fatalf("ListTodoOccurrences = %+v; want %d occurrences at %v", got, len(wantDates), wantDates)
+	}
+	dates, states := occurrenceDates(got)
+	for i := range got {
+		if !dates[i].Equal(wantDates[i]) || states[i] != wantStates[i] {
+			t.Errorf("occurrence %d = %v/%s; want %v/%s", i, dates[i], states[i], wantDates[i], wantStates[i])
 		}
 	}
 }
@@ -1502,6 +1513,42 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, occs, []time.Time{date(2025, 4, 7, 9, 0)}, []string{domain.OccurrenceCurrent})
 	})
 
+	// The last occurrence takes UNTIL along off the grid in either direction,
+	// so that it stays the only one left (FR-17).
+	for _, tc := range []struct {
+		name   string
+		master []string
+		by     time.Duration
+		want   []string
+		at     time.Time
+	}{
+		{
+			name:   "a day earlier",
+			master: []string{"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z"},
+			by:     -24 * time.Hour,
+			want:   []string{"DTSTART:20250316T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250316T090000Z\r\n"},
+			at:     date(2025, 3, 16, 9, 0),
+		},
+		{
+			name:   "an hour earlier on fixed days",
+			master: []string{"DTSTART:20250313T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313T090000Z"},
+			by:     -time.Hour,
+			want:   []string{"DTSTART:20250313T080000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313T080000Z\r\n"},
+			at:     date(2025, 3, 13, 8, 0),
+		},
+	} {
+		t.Run("off-grid move of the last occurrence "+tc.name+" keeps it the only one", func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master)
+			moveListed(t, e, id, tc.by)
+			checkStored(t, "master", storedObject(t, e, id), tc.want, nil)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, []time.Time{tc.at}, []string{domain.OccurrenceCurrent})
+		})
+	}
+
 	// Whether the moved occurrence is the last one is decided on the rule as
 	// it was: moved earlier, off the grid, by more than the series has left,
 	// the shifted UNTIL lies before the old occurrence, which is no reason to
@@ -1942,6 +1989,73 @@ func TestUpdateTodoSeries(t *testing.T) {
 				t.Errorf("PUT count = %d; want 0", n)
 			}
 		})
+	}
+}
+
+// Undoing a completion is a plain move back to the completed occurrence's
+// dates: it gives the series back as it was, whatever ends its rule, with
+// only a COUNT turned into the UNTIL of the same last occurrence (FR-17).
+func TestUndoCompletionRestoresSeries(t *testing.T) {
+	t.Parallel()
+	// The series starts on Monday 10 March 2025 at 09:00 (Berlin: 08:00Z), in
+	// three forms; an "@YYYYMMDD" in a rule stands for the UNTIL of that day's
+	// occurrence in the form's own writing.
+	type form struct {
+		name, dtstart string
+		until         func(day string) string
+	}
+	forms := []form{
+		{"utc", "DTSTART:20250310T090000Z", func(day string) string { return day + "T090000Z" }},
+		{"tzid", "DTSTART;TZID=Europe/Berlin:20250310T090000", func(day string) string { return day + "T080000Z" }},
+		{"all-day", "DTSTART;VALUE=DATE:20250310", func(day string) string { return day }},
+	}
+	untilDay := regexp.MustCompile(`@(\d{8})`)
+	inForm := func(rule string, f form) string {
+		return untilDay.ReplaceAllStringFunc(rule, func(m string) string { return f.until(m[1:]) })
+	}
+	rules := []struct {
+		name, rule, want string // want: the rule stored after the completion and its undo
+	}{
+		{"infinite", "FREQ=WEEKLY", "FREQ=WEEKLY"},
+		{"count 2", "FREQ=WEEKLY;COUNT=2", "FREQ=WEEKLY;UNTIL=@20250317"},
+		{"count 3", "FREQ=WEEKLY;COUNT=3", "FREQ=WEEKLY;UNTIL=@20250324"},
+		{"until", "FREQ=WEEKLY;UNTIL=@20250317", "FREQ=WEEKLY;UNTIL=@20250317"},
+		{"fixed days until", "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=@20250313", "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=@20250313"},
+	}
+	for _, r := range rules {
+		for _, f := range forms {
+			t.Run(r.name+", "+f.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, caldavtest.Options{})
+				ctx := t.Context()
+				from, to := date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0)
+				id := seedSeries(t, e, []string{f.dtstart, "RRULE:" + inForm(r.rule, f)})
+				before := listedTodo(t, e, id)
+				occs, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+				mustNoErr(t, err)
+				if len(occs) < 2 {
+					t.Fatalf("ListTodoOccurrences = %+v; want at least two occurrences to complete and undo", occs)
+				}
+
+				done := completeListed(t, e, id)
+				if done.CompletedCopy == nil {
+					t.Fatalf("completion left no copy: %+v", done)
+				}
+				// Undo as the frontend does: the previous dates back onto the master, then the copy goes.
+				got, err := e.svc.UpdateTodo(ctx, id, done.ETag, editInput(&before))
+				mustNoErr(t, err)
+				mustNoErr(t, e.svc.DeleteTodo(ctx, done.CompletedCopy.ID, done.CompletedCopy.ETag))
+
+				if !sameTime(got.Start, before.Start) || !sameTime(got.Due, before.Due) || !sameNext(got.Next, before.Next) {
+					t.Errorf("undone series = %+v; want it back at start %v, due %v, next %+v", got, before.Start, before.Due, before.Next)
+				}
+				checkStored(t, "master", storedObject(t, e, id), []string{f.dtstart, "RRULE:" + inForm(r.want, f) + "\r\n"}, nil)
+				after, err := e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], from, to)
+				mustNoErr(t, err)
+				dates, states := occurrenceDates(occs)
+				checkTodoOccurrences(t, after, dates, states)
+			})
+		}
 	}
 }
 

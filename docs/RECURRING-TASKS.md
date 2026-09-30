@@ -844,19 +844,21 @@ previous dates, status and checklist back, then deletes the copy.
 KDE's pending occurrence. What refers to later occurrences stays with them:
 
 - With an interval rule, their overrides (`RECURRENCE-ID`, `DTSTART`, `DUE`),
-  `EXDATE`s and a later `UNTIL` move by the same amount, in the wall clock of
-  the series, so across a change of daylight saving time too.
+  `EXDATE`s and an `UNTIL` from the moved occurrence on move by the same
+  amount, in the wall clock of the series, so across a change of daylight
+  saving time too.
 - With fixed days they move by the change in time of day only, because the
   rule's days stay.
 - A move that keeps the rule's instances where they are, such as undoing a
-  completion, moves none of them.
+  completion, moves none of them; an `UNTIL` on the occurrence the master
+  had rolled to stays too, so the series ends where it did before the
+  completion.
 
 A `COUNT` no longer counts the rule's instances before the moved occurrence.
-An `UNTIL` before the new date moves onto it, and so does the `UNTIL` of a
-series whose last occurrence moves: clients built on ical.js, such as
-Thunderbird, hide a task whose `DTSTART` lies after its `UNTIL`. The backend
-does not enforce the move window: other clients write any date, and undo has
-to move a series back.
+An `UNTIL` that would end before the new date moves onto it: clients built
+on ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
+`UNTIL`. The backend does not enforce the move window: other clients write
+any date, and undo has to move a series back.
 
 **Setting or changing a rule** applies it from the current occurrence on: its
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
