@@ -238,12 +238,14 @@ For a recurring todo, these four edits are handled specially:
   occurrences stays with them: with an interval rule, their overrides,
   `EXDATE`s and an `UNTIL` from the current occurrence on move by the same
   amount, whole periods of the rule included, in the wall clock of the
-  series; with fixed days by the change in time of day only, because the
-  rule's days stay; after a change between all-day and timed dates they
-  stay. The override of the current occurrence goes. A `COUNT` no longer
-  counts the rule's instances before the moved occurrence, and an `UNTIL`
-  that would end before the new dates moves onto them. The backend does not
-  enforce the move window the UI shows; that is a client-side hint only.
+  series (counted in calendar months, then days, for a `MONTHLY` or
+  `YEARLY` rule); with fixed days by the change in time of day only,
+  because the rule's days stay; after a change between all-day and timed
+  dates they stay. The override of the current occurrence goes. A `COUNT`
+  no longer counts the rule's instances before the moved occurrence, and an
+  `UNTIL` that would end before the new dates moves onto them. The backend
+  does not enforce the move window the UI shows; that is a client-side hint
+  only.
 - **Undoing a completion** (a move as above, with `undoCompletion: true`):
   the completion moved none of the rule's instances, so the series moves
   back to the given dates and nothing else moves: the overrides and

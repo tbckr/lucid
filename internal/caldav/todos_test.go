@@ -1757,8 +1757,8 @@ func TestUpdateTodoSeries(t *testing.T) {
 	})
 
 	// References move in the series' wall clock and keep the form they are
-	// written in; a series anchored on its current occurrence keeps its
-	// COUNT (FR-17).
+	// written in, with a monthly or yearly rule by calendar months; a series
+	// anchored on its current occurrence keeps its COUNT (FR-17).
 	for _, tc := range []struct {
 		name      string
 		master    []string
@@ -1789,6 +1789,47 @@ func TestUpdateTodoSeries(t *testing.T) {
 			overrides: [][]string{{"RECURRENCE-ID:20250317T090000", "STATUS:COMPLETED"}},
 			by:        time.Hour,
 			want:      []string{"DTSTART:20250310T100000\r\n", "RECURRENCE-ID:20250317T100000\r\n"},
+		},
+		{
+			// 10 March to 10 April is a month, not 31 days: 10 June goes to 10 July.
+			name:      "monthly by a month",
+			master:    []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=MONTHLY;UNTIL=20250810", "EXDATE;VALUE=DATE:20250510"},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250610", "DTSTART;VALUE=DATE:20250612"}},
+			by:        31 * 24 * time.Hour,
+			want: []string{
+				"DTSTART;VALUE=DATE:20250410", "RRULE:FREQ=MONTHLY;UNTIL=20250910\r\n", "EXDATE;VALUE=DATE:20250610",
+				"RECURRENCE-ID;VALUE=DATE:20250710", "DTSTART;VALUE=DATE:20250712",
+			},
+		},
+		{
+			// A year on from 10 March 2025 is not 365 days on from 10 March 2027, past 29 February 2028.
+			name: "yearly by a year",
+			master: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=YEARLY;UNTIL=20290310T080000Z",
+				"EXDATE;TZID=Europe/Berlin:20280310T090000",
+			},
+			overrides: [][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20270310T090000", "DTSTART;TZID=Europe/Berlin:20270311T090000"}},
+			by:        365 * 24 * time.Hour,
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20260310T090000", "RRULE:FREQ=YEARLY;UNTIL=20300310T080000Z\r\n",
+				"EXDATE;TZID=Europe/Berlin:20290310T090000", "RECURRENCE-ID;TZID=Europe/Berlin:20280310T090000",
+				"DTSTART;TZID=Europe/Berlin:20280311T090000",
+			},
+		},
+		{
+			name:      "monthly off the grid",
+			master:    []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=MONTHLY"},
+			overrides: [][]string{{"RECURRENCE-ID:20250610T090000Z", "DTSTART:20250612T090000Z"}},
+			by:        5 * 24 * time.Hour,
+			want:      []string{"DTSTART:20250315T090000Z", "RECURRENCE-ID:20250615T090000Z", "DTSTART:20250617T090000Z"},
+		},
+		{
+			// A month and five days: 10 June goes to 15 July, not 36 days on to 16 July.
+			name:      "monthly by a month and days",
+			master:    []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=MONTHLY"},
+			overrides: [][]string{{"RECURRENCE-ID:20250610T090000Z", "DTSTART:20250612T090000Z"}},
+			by:        36 * 24 * time.Hour,
+			want:      []string{"DTSTART:20250415T090000Z", "RECURRENCE-ID:20250715T090000Z", "DTSTART:20250717T090000Z"},
 		},
 	} {
 		t.Run("move shifts later references, "+tc.name, func(t *testing.T) {

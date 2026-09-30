@@ -879,7 +879,10 @@ KDE's pending occurrence. What refers to later occurrences stays with them:
   `EXDATE`s and an `UNTIL` from the moved occurrence on move by the same
   amount, in the wall clock of the series, so across a change of daylight
   saving time too, and by whole periods of the rule as well: a weekly series
-  moved a week earlier also ends a week earlier.
+  moved a week earlier also ends a week earlier. With a monthly or yearly
+  rule the amount is counted in calendar months, then days, because its
+  occurrences keep their day of the month: a series moved from 10 March to
+  10 April moves an override of 10 June to 10 July.
 - With fixed days they move by the change in time of day only, because the
   rule's days stay.
 
@@ -934,9 +937,9 @@ properties and components Lucid does not know.
   instant, so a reader that knows the zone may end the series one occurrence
   early.
 - A move of a `MONTHLY` or `YEARLY` interval series shifts the references to
-  later occurrences by the calendar days the current occurrence moved, not by
-  months, so an override or `EXDATE` can end up off its occurrence when the
-  months differ in length.
+  later occurrences by calendar months and days. A reference on the 29th to
+  31st whose shifted day does not exist in its month runs over into the next
+  month, so it can end up off its occurrence.
 - Removing a rule also removes other clients' overrides, completed ones
   included.
 - Moving an occurrence of a recurring **event** still moves the whole series,

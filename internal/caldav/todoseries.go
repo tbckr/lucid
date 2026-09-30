@@ -159,6 +159,18 @@ func rulePartKey(part string) string {
 	return strings.ToUpper(strings.TrimSpace(key))
 }
 
+// rulePart returns the value of the part key (upper case) of rrule, as
+// written, or "" if it has none.
+func rulePart(rrule, key string) string {
+	for part := range strings.SplitSeq(rrule, ";") {
+		if rulePartKey(part) == key {
+			_, v, _ := strings.Cut(part, "=")
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // walk calls fn for the occurrences with rid >= from, in order, until fn
 // returns false: the anchor and the RRULE instances, without EXDATEs and
 // cancelled overrides (FR-17). It fails when the rule cannot be evaluated
@@ -422,7 +434,9 @@ func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
 // value type allDay) moves the references to later occurrences, or nil when
 // they stay (FR-17):
 //   - for an interval rule by the move, in the wall clock of the series, as
-//     the rule's instances move, by whole periods too;
+//     the rule's instances move, by whole periods too: a monthly or yearly
+//     rule by its calendar months and then days, whose instances keep their
+//     day of the month, any other by its calendar days;
 //   - for fixed days by its change in time of day only, as the instances
 //     stay on the rule's days.
 //
@@ -433,20 +447,26 @@ func (s *todoSeries) refShift(rid, to time.Time, allDay bool) func(dateValue) ti
 	}
 	loc := s.anchor.loc()
 	from, dest := rid.In(loc), to.In(loc)
-	days := 0
-	if !s.fixedDays {
+	var months, days int
+	switch freq := strings.ToUpper(rulePart(s.rrule, "FREQ")); {
+	case s.fixedDays:
+	case freq == "MONTHLY" || freq == "YEARLY":
+		months = (dest.Year()-from.Year())*12 + int(dest.Month()) - int(from.Month())
+		days = dest.Day() - from.Day()
+	default:
 		days = int(civilDate(dest).Sub(civilDate(from)) / (24 * time.Hour))
 	}
 	secs := secondOfDay(dest) - secondOfDay(from)
-	if days == 0 && secs == 0 {
+	if months == 0 && days == 0 && secs == 0 {
 		return nil
 	}
 	return func(d dateValue) time.Time {
 		if d.allDay {
-			return d.t.AddDate(0, 0, days)
+			return d.t.AddDate(0, months, days)
 		}
 		w := d.t.In(loc)
-		return time.Date(w.Year(), w.Month(), w.Day()+days, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)
+		return time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
+			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)
 	}
 }
 
