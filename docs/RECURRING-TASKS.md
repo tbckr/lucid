@@ -949,9 +949,11 @@ properties and components Lucid does not know.
   instant, so a reader that knows the zone may end the series one occurrence
   early.
 - A move of a `MONTHLY` or `YEARLY` interval series shifts the references to
-  later occurrences by calendar months and days. A reference on the 29th to
-  31st whose shifted day does not exist in its month runs over into the next
-  month, so it can end up off its occurrence.
+  later occurrences, and its `UNTIL`, by calendar months and days. Where the
+  shifted day does not exist in the month it lands in, it runs over into
+  the next one and ends up off its occurrence: a series moved from 10 March
+  to 31 March sends an override of 10 April to 1 May, and an `UNTIL` can run
+  over the same way.
 - Removing a rule also removes other clients' overrides, completed ones
   included.
 - Moving an occurrence of a recurring **event** still moves the whole series,
