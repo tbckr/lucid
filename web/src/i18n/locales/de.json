@@ -185,7 +185,8 @@
     "notOver": "Über keinem Ablageziel.",
     "dropped": "Termin verschoben.",
     "taskDropped": "Aufgabe verschoben.",
-    "cancelled": "Verschieben abgebrochen."
+    "cancelled": "Verschieben abgebrochen.",
+    "limit": "Nur bis {{date}} möglich."
   },
   "tasks": {
     "title": "Aufgaben",

@@ -112,3 +112,8 @@
   scrollbar-width: thin;
   scrollbar-color: var(--input) transparent;
 }
+
+/* A day outside a dragged series' move window (FR-17): repeating-linear-gradient(45deg, var(--grid-line) 0 1px, transparent 1px 7px). */
+@utility hatched {
+  background-image: repeating-linear-gradient(45deg, var(--grid-line) 0 1px, transparent 1px 7px);
+}

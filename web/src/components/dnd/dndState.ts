@@ -1,4 +1,5 @@
 import { createContext, use } from 'react'
+import { type MoveWindow } from '@/lib/calendarTasks'
 import { type CalEvent } from '@/lib/events'
 
 export interface DndState {
@@ -8,6 +9,8 @@ export interface DndState {
   pendingTodos: ReadonlySet<string>
   /** Live resize preview: the event being resized, with the end a drop would save. */
   resize: CalEvent | null
+  /** Move window of the active drag's task, when it is a bounded series (FR-17): the views hatch days outside it. */
+  moveWindow: MoveWindow | null
   activeId: string | null
 }
 
@@ -15,6 +18,7 @@ export const DndStateContext = createContext<DndState>({
   pendingKeys: new Set(),
   pendingTodos: new Set(),
   resize: null,
+  moveWindow: null,
   activeId: null,
 })
 

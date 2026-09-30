@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { apiEvent, todo } from '@/test/fixtures'
 import { toCalTask } from './calendarTasks'
-import { acceptsDrop, createRange, dropResult, PX_PER_MINUTE, withDrop, type DragData } from './dnd'
+import { acceptsDrop, createRange, dropBlocked, dropResult, PX_PER_MINUTE, withDrop, type DragData } from './dnd'
 import { toCalEvent } from './events'
 
 const timed = toCalEvent(apiEvent()) // 10:00-11:00 local on 2026-09-25
@@ -86,6 +86,50 @@ describe('dropResult', () => {
     expect(acceptsDrop('event', 'column')).toBe(false)
     expect(acceptsDrop('timed', 'column')).toBe(true)
     expect(acceptsDrop('resize', 'column')).toBe(true)
+  })
+})
+
+describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
+  // Fixed-day series due 10-05, next occurrence due 10-08: window [10-05, 10-08).
+  const fixedTask = toCalTask(
+    todo({
+      id: 't2',
+      due: '2026-10-05T00:00:00Z',
+      dueAllDay: true,
+      recurring: true,
+      fixedDays: true,
+      next: { due: '2026-10-08T00:00:00Z' },
+    }),
+  )!
+  const drag = { type: 'event' as const, event: fixedTask, originDay: new Date(2026, 9, 5) }
+  const drop = (d: number) => ({ type: 'day' as const, day: new Date(2026, 9, d) })
+
+  it('allows a move that still lands before the next occurrence', () => {
+    expect(dropResult(drag, drop(7), 0)).not.toBeNull()
+  })
+
+  it('blocks a move that reaches the next occurrence, naming the last allowed day', () => {
+    expect(dropResult(drag, drop(8), 0)).toBeNull()
+    expect(dropBlocked(drag, drop(8), 0)).toEqual(new Date(2026, 9, 7))
+  })
+
+  it('blocks a move before the window', () => {
+    expect(dropResult(drag, drop(4), 0)).toBeNull()
+  })
+
+  it('lets a non-fixed-day series move past where a fixed one would be blocked', () => {
+    const intervalTask = toCalTask(
+      todo({
+        id: 't3',
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        recurring: true,
+        fixedDays: false,
+        next: { due: '2026-10-08T00:00:00Z' },
+      }),
+    )!
+    const free = { type: 'event' as const, event: intervalTask, originDay: new Date(2026, 9, 5) }
+    expect(dropResult(free, drop(15), 0)).not.toBeNull()
   })
 })
 

@@ -171,6 +171,11 @@ export function lastAllowedDay(w: MoveWindow): Date {
   return startOfDay(new Date(w.until.getTime() - 1))
 }
 
+/** Whether `day` falls outside `w`, so the calendar views can hatch it while dragging (FR-17). */
+export function outsideWindow(w: MoveWindow, day: Date): boolean {
+  return day < startOfDay(w.from) || day > lastAllowedDay(w)
+}
+
 /** A wire date moved like an event (`movedTimes`): all-day by whole dates, timed by local days, then minutes. */
 function movedDate(iso: string | null | undefined, allDay: boolean, days: number, minutes: number): string | null {
   if (!iso) return null

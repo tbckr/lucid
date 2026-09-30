@@ -21,8 +21,9 @@ import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MOVE_EVENT_KEY, usePendingSeries, useMoveEvent, useUpdateTodo, type MoveVars } from '@/hooks/queries'
 import { usePrefs } from '@/hooks/usePrefs'
-import { acceptsDrop, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
-import { formatEventSpan } from '@/lib/format'
+import { moveWindow as windowOfTask } from '@/lib/calendarTasks'
+import { acceptsDrop, dropBlocked, dropResult, SNAP_PX, withDrop, type DragData, type DropData, type DropResult } from '@/lib/dnd'
+import { formatEventSpan, formatPickerDate } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
 import { draggedWhen } from '@/lib/quickCreate'
@@ -131,6 +132,7 @@ export function CalendarDnd({
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
+  const now = useMemo(() => new Date(), [])
   const tz = useMemo(() => browserTimeZone(), [])
   const move = useMoveEvent()
   const setCreateWhen = useUi((s) => s.setCreateWhen)
@@ -139,11 +141,19 @@ export function CalendarDnd({
   // (FR-16). The scope is the one of the last render, which the pick-up has caused.
   const draggedTask = active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined
   const updateTodo = useUpdateTodo(draggedTask)
+  // The move window of the dragged task, fixed for the whole drag (FR-17): hatches days
+  // outside it and bounds the drop, regardless of where the pointer currently is.
+  const moveWindow = active?.data.event.kind === 'task' ? windowOfTask(active.data.event.todo) : null
   /** What a drop right now would save; null while it would change nothing. */
   const [target, setTarget] = useState<DropResult | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
-  // `target` re-renders. `moved`: the drag has had a target since the pick-up.
-  const latest = useRef<{ target: DropResult | null; moved: boolean }>({ target: null, moved: false })
+  // `target` re-renders. `moved`: the drag has had a target since the pick-up. `blocked`: the
+  // last allowed day when the current drop would move a bounded series past it (FR-17).
+  const latest = useRef<{ target: DropResult | null; moved: boolean; blocked: Date | null }>({
+    target: null,
+    moved: false,
+    blocked: null,
+  })
 
   const pending = useMutationState({
     filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
@@ -172,8 +182,10 @@ export function CalendarDnd({
     const announceTarget: Announcements['onDragOver'] = ({ active: a, over }) => {
       const d = dragData(a.data.current)
       if (!d) return undefined
-      const { target: next, moved } = latest.current
+      const { target: next, moved, blocked } = latest.current
       if (next) return t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
+      // A bounded series (FR-17) can't move here: say why instead of "unchanged".
+      if (blocked) return t('dnd.limit', { date: formatPickerDate(blocked, prefs, now) })
       if (!over && d.type !== 'resize') return t('dnd.notOver')
       // Right after the pick-up nothing has changed yet: keep "Picked up …" audible.
       return moved ? t('dnd.unchanged') : undefined
@@ -191,10 +203,10 @@ export function CalendarDnd({
       },
       onDragCancel: () => t('dnd.cancelled'),
     }
-  }, [t, prefs])
+  }, [t, prefs, now])
 
   const onDragStart = (e: DragStartEvent) => {
-    latest.current = { target: null, moved: false }
+    latest.current = { target: null, moved: false, blocked: null }
     const d = dragData(e.active.data.current)
     if (d) setActive({ id: String(e.active.id), data: d })
   }
@@ -204,8 +216,10 @@ export function CalendarDnd({
   const onDragMove = (e: DragMoveEvent | DragOverEvent) => {
     const d = dragData(e.active.data.current)
     if (!d) return
-    const next = dropResult(d, dropData(e.over?.data.current), e.delta.y)
-    latest.current = { target: next, moved: latest.current.moved || next !== null }
+    const drop = dropData(e.over?.data.current)
+    const next = dropResult(d, drop, e.delta.y)
+    const blocked = dropBlocked(d, drop, e.delta.y)
+    latest.current = { target: next, moved: latest.current.moved || next !== null, blocked }
     setTarget((prev) => (sameDrop(prev, next) ? prev : next))
   }
 
@@ -249,8 +263,8 @@ export function CalendarDnd({
   // Stays null while moving, so the context (read by every event) only changes on resize.
   const resize = preview?.type === 'resize' ? preview.event : null
   const state = useMemo(
-    () => ({ pendingKeys, pendingTodos, resize, activeId: active?.id ?? null }),
-    [pendingKeys, pendingTodos, resize, active],
+    () => ({ pendingKeys, pendingTodos, resize, moveWindow, activeId: active?.id ?? null }),
+    [pendingKeys, pendingTodos, resize, moveWindow, active],
   )
 
   return (

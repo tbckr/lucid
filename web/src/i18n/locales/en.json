@@ -185,7 +185,8 @@
     "notOver": "Not over a drop target.",
     "dropped": "Event moved.",
     "taskDropped": "Task moved.",
-    "cancelled": "Move cancelled."
+    "cancelled": "Move cancelled.",
+    "limit": "Only possible until {{date}}."
   },
   "tasks": {
     "title": "Tasks",

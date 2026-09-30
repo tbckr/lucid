@@ -5,7 +5,7 @@ import { createRef, type ReactNode, type RefObject } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskChip } from '@/components/tasks/TaskItems'
 import { api } from '@/lib/api/client'
-import { toCalTask } from '@/lib/calendarTasks'
+import { outsideWindow, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type DragData, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -15,6 +15,7 @@ import { useUi } from '@/stores/ui'
 import { bodyOf, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { CalendarDnd } from './CalendarDnd'
+import { useDndState } from './dndState'
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const colors = eventColors('#3b82f6', false)
@@ -24,11 +25,16 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) }
 }
 
-/** A 100 px day cell at `left`; jsdom lays nothing out, so the cells report their rects themselves. */
+/**
+ * A 100 px day cell at `left`; jsdom lays nothing out, so the cells report their rects
+ * themselves. Hatches like the real views' day cells while a bounded series is dragged (FR-17).
+ */
 function Day({ day, left, children }: { day: Date; left: number; children?: ReactNode }) {
+  const { moveWindow } = useDndState()
   const { setNodeRef } = useDroppable({ id: `day:${day.getDate()}`, data: { type: 'day', day } satisfies DropData })
+  const hatched = moveWindow != null && outsideWindow(moveWindow, day)
   return (
-    <div ref={setNodeRef} data-left={left}>
+    <div ref={setNodeRef} data-left={left} data-testid={`day:${day.getDate()}`} className={hatched ? 'hatched' : undefined}>
       {children}
     </div>
   )
@@ -172,5 +178,63 @@ describe('CalendarDnd', () => {
     expect(create?.anchor).toBe(saturday.current)
     expect(create?.span).toEqual({ startMin: 600, endMin: 660 })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  describe('the move window of a bounded series (FR-17)', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('hatches the days past the next occurrence and announces the limit while over one', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(10, 40, 80, 20)
+      })
+      // Fixed-day series due 10-05, next occurrence due 10-08: window [10-05, 10-08).
+      const bounded = toCalTask(
+        todo({
+          id: 't2',
+          title: 'Water the flowers',
+          due: '2026-10-05T00:00:00Z',
+          dueAllDay: true,
+          recurring: true,
+          fixedDays: true,
+          next: { due: '2026-10-08T00:00:00Z' },
+        }),
+      )!
+      renderWithProviders(
+        <CalendarDnd renderOverlay={() => null}>
+          <Day day={new Date(2026, 9, 5)} left={0}>
+            <TaskChip
+              task={bounded}
+              colors={colors}
+              prefs={prefs}
+              readOnly={false}
+              drag={{ id: 'chip', data: { type: 'event', event: bounded, originDay: new Date(2026, 9, 5) }, disabled: false }}
+            />
+          </Day>
+          <Day day={new Date(2026, 9, 6)} left={100} />
+          <Day day={new Date(2026, 9, 7)} left={200} />
+          <Day day={new Date(2026, 9, 8)} left={300} />
+          <Day day={new Date(2026, 9, 9)} left={400} />
+        </CalendarDnd>,
+      )
+
+      const chip = screen.getByRole('button', { name: 'Water the flowers, all day' })
+      chip.focus()
+      fireEvent.keyDown(chip, { code: 'Space', key: ' ' })
+      await act(() => new Promise((resolve) => setTimeout(resolve)))
+
+      expect(screen.getByTestId('day:9').className).toContain('hatched')
+      expect(screen.getByTestId('day:6').className).not.toContain('hatched')
+
+      for (let i = 0; i < 4; i++) {
+        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+      }
+      expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
+
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+    })
   })
 })

@@ -1,7 +1,7 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import { movedTodo, toCalTask, type CalTask } from './calendarTasks'
+import { lastAllowedDay, movedTodo, moveWindow, toCalTask, withinWindow, type CalTask } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 
@@ -57,9 +57,22 @@ export function acceptsDrop(drag: DragData['type'], drop: DropData['type']): boo
   return drop === 'column'
 }
 
+/** Non-resize drag data, which alone carries an `originDay` to measure a move from. */
+type MoveDrag = Exclude<DragData, { type: 'resize' }>
+
+/** The day/minute offset a drop would apply, or null for a no-op or an incompatible target. */
+function movedDelta(drag: MoveDrag, drop: DropData | null, deltaY: number): { days: number; minutes: number } | null {
+  if (!drop || !acceptsDrop(drag.type, drop.type)) return null
+  const days = differenceInCalendarDays(drop.day, drag.originDay)
+  const minutes = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
+  if (days === 0 && minutes === 0) return null
+  return { days, minutes }
+}
+
 /**
- * What a finished drag saves. Returns null when nothing changes or the drop
- * target is incompatible.
+ * What a finished drag saves. Returns null when nothing changes, the drop
+ * target is incompatible, or a bounded series (FR-17) would move onto or past
+ * its next occurrence.
  */
 export function dropResult(drag: DragData, drop: DropData | null, deltaY: number): DropResult | null {
   if (drag.type === 'resize') {
@@ -71,13 +84,30 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
     if (end === e.endsAt.getTime()) return null
     return { kind: 'event', event: e, times: { start: e.start, end: new Date(end).toISOString() } }
   }
-  if (!drop || !acceptsDrop(drag.type, drop.type)) return null
-  const dayDelta = differenceInCalendarDays(drop.day, drag.originDay)
-  const minuteDelta = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
-  if (dayDelta === 0 && minuteDelta === 0) return null
+  const delta = movedDelta(drag, drop, deltaY)
+  if (!delta) return null
   const e = drag.event
-  if (e.kind === 'task') return { kind: 'task', task: e, input: movedTodo(e.todo, dayDelta, minuteDelta) }
-  return { kind: 'event', event: e, times: movedTimes(e, dayDelta, minuteDelta) }
+  if (e.kind === 'task') {
+    const input = movedTodo(e.todo, delta.days, delta.minutes)
+    if (!withinWindow(e.todo, input)) return null
+    return { kind: 'task', task: e, input }
+  }
+  return { kind: 'event', event: e, times: movedTimes(e, delta.days, delta.minutes) }
+}
+
+/**
+ * The last allowed day when a drop of a bounded series (FR-17) would move it
+ * onto or past its next occurrence, so the UI can explain why nothing was
+ * saved. Null when the drag isn't a bounded task, or the drop is within reach.
+ */
+export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: number): Date | null {
+  if (drag.type === 'resize' || drag.event.kind !== 'task') return null
+  const w = moveWindow(drag.event.todo)
+  if (!w) return null
+  const delta = movedDelta(drag, drop, deltaY)
+  if (!delta) return null
+  const input = movedTodo(drag.event.todo, delta.days, delta.minutes)
+  return withinWindow(drag.event.todo, input) ? null : lastAllowedDay(w)
 }
 
 /** `drag` with its item where `result` puts it, to preview a drop before it is saved. */

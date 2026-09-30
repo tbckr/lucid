@@ -273,6 +273,7 @@ describe('TimeGridView', () => {
             pendingKeys: new Set(),
             pendingTodos: new Set(),
             resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent,
+            moveWindow: null,
             activeId: null,
           }}
         >

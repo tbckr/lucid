@@ -11,7 +11,7 @@ import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventIte
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
-import { canDrag, type CalTask } from '@/lib/calendarTasks'
+import { canDrag, outsideWindow, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -248,15 +248,18 @@ function AllDayCell({
   onCreate: (day: Date, target: HTMLElement) => void
   children: React.ReactNode
 }) {
+  const { moveWindow } = useDndState()
   const { setNodeRef, isOver } = useDroppable({
     id: `alldaycell:${dayKey(day)}`,
     data: { type: 'day', day } satisfies DropData,
   })
+  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach.
+  const hatched = moveWindow != null && outsideWindow(moveWindow, day)
   return (
     <div
       ref={setNodeRef}
       data-draft={draft ? '' : undefined}
-      className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8')}
+      className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8', hatched && 'hatched')}
       style={{ height }}
     >
       <button
@@ -293,12 +296,14 @@ function DayColumn({
   onCreate: (state: CreateState) => void
 }) {
   const { t } = useTranslation()
-  const { resize, pendingTodos } = useDndState()
+  const { resize, pendingTodos, moveWindow } = useDndState()
   const column = useRef<HTMLDivElement>(null)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${dayKey(day)}`,
     data: { type: 'column', day, ref: column } satisfies DropData,
   })
+  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach.
+  const hatched = moveWindow != null && outsideWindow(moveWindow, day)
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
       column.current = el
@@ -319,7 +324,7 @@ function DayColumn({
   })
 
   return (
-    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
+    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5', hatched && 'hatched')}>
       {HOURS.map((h) => (
         <button
           key={h}
