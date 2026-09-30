@@ -252,6 +252,7 @@
     "delete": "Aufgabe löschen",
     "deleted": "Aufgabe gelöscht",
     "confirmDelete": "Diese Aufgabe löschen?",
+    "confirmDeleteSeries": "Diese Aufgabe wiederholt sich. Alle Wiederholungen löschen? Bereits erledigte bleiben.",
     "deleteNamed": "Aufgabe löschen: {{title}}",
     "deletedCount_one": "Aufgabe gelöscht",
     "deletedCount_other": "{{count}} Aufgaben gelöscht",
@@ -262,13 +263,19 @@
     "deleteCompletedNote_one": "Sie wird vom Server gelöscht, auch in anderen Apps.",
     "deleteCompletedNote_other": "Sie werden vom Server gelöscht, auch in anderen Apps.",
     "readOnlyNotice": "Diese Liste ist schreibgeschützt.",
+    "seriesNotice": "Diese Aufgabe wiederholt sich. Änderungen gelten für alle kommenden Wiederholungen.",
+    "ruleUnsupported": "Lucid kann diese Wiederholung nicht auswerten. Abhaken und Verschieben gehen in der App, in der sie angelegt wurde.",
     "nextUp": "Erledigt. Als Nächstes: {{date}}",
     "lastRepeat": "Erledigt. Das war die letzte Wiederholung.",
     "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",
     "movedToLast": "Auf {{date}} verschoben.",
     "undone": "Rückgängig gemacht.",
     "moveLimit": "Bis {{date}}, danach kommt die nächste Wiederholung.",
-    "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}"
+    "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}",
+    "repeat": "Wiederholung",
+    "repeatInfo": "So funktionieren wiederkehrende Aufgaben",
+    "repeatInfoDone": "Beim Abhaken bleibt die erledigte Aufgabe als eigener Eintrag stehen, und die Aufgabe rückt zur nächsten Wiederholung vor. So sehen auch andere Apps wie Apple Erinnerungen oder Tasks.org, was erledigt ist.",
+    "repeatInfoOrder": "Abhaken lassen sich die Wiederholungen nur der Reihe nach. Verschieben verschiebt die Aufgabe ab der aktuellen Wiederholung."
   },
   "priority": {
     "none": "Keine",
@@ -355,6 +362,7 @@
     "tooManyItems": "Eine Checkliste darf höchstens 200 Punkte enthalten.",
     "dateForTime": "Wähle ein Datum für diese Uhrzeit.",
     "startDueType": "Gib beiden Daten eine Uhrzeit oder keinem.",
-    "startAfterDue": "Der Beginn kann nicht nach der Fälligkeit liegen."
+    "startAfterDue": "Der Beginn kann nicht nach der Fälligkeit liegen.",
+    "repeatNeedsDate": "Eine wiederkehrende Aufgabe braucht ein Datum."
   }
 }

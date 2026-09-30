@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { EditorDialog } from '@/components/EditorDialog'
@@ -242,5 +242,184 @@ describe('TaskEditor', () => {
     ])
     await user.click(within(dialog).getByRole('combobox', { name: 'Task list' }))
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Personal'])
+  })
+
+  describe('repeat', () => {
+    // A task due Monday, Oct 5 that repeats on Mondays and Thursdays: it can move until Wednesday.
+    const series = todo({
+      title: 'Water the flowers',
+      due: '2026-10-05T00:00:00Z',
+      dueAllDay: true,
+      rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+      recurring: true,
+      fixedDays: true,
+      next: { start: null, due: '2026-10-08T00:00:00Z' },
+    })
+    const single = todo({ title: 'Slides', due: '2026-10-05T00:00:00Z', dueAllDay: true })
+    const puts = (fetch: Awaited<ReturnType<typeof openTask>>['fetch']) =>
+      fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
+
+    beforeEach(() => {
+      // Only the date: fake timers would stall the requests.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 5, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('names the presets after the task\'s date and saves "Every day" as its rule', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(single)
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Does not repeat')
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'Does not repeat',
+        'Every day',
+        'Every week on Monday',
+        'Every month on day 5',
+        'Every year on October 5',
+      ])
+      await user.click(screen.getByRole('option', { name: 'Every day' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=DAILY', timezone: 'Europe/Berlin' })
+    })
+
+    it('removes the repeat of a series with "Does not repeat"', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(series)
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Custom rule')
+      expect(within(dialog).getByTitle('FREQ=WEEKLY;BYDAY=MO,TH')).toHaveTextContent('Every week on Monday and Thursday')
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await saved(fetch)).toMatchObject({ rrule: '' })
+    })
+
+    it('keeps the rule of a series while the repeat is untouched', async () => {
+      const user = userEvent.setup()
+      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
+      const { fetch, dialog } = await openTask(t)
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Monday')
+
+      await user.type(within(dialog).getByPlaceholderText('Add a title'), ' and the herbs')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      const body = await saved(fetch)
+      expect(body).toMatchObject({ title: 'Water the flowers and the herbs' })
+      expect(body).not.toHaveProperty('rrule')
+    })
+
+    it('asks for a date before a task repeats', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(todo({ title: 'Slides' }))
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Every day' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
+    it('creates a task that repeats', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openNew(slides)
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Every week on Wednesday' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
+
+      await waitFor(() => {
+        expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+      })
+      const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+      expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: 'Europe/Berlin' })
+    })
+
+    it('explains repeating tasks behind the info button', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(series)
+
+      await user.click(within(dialog).getByRole('button', { name: 'How repeating tasks work' }))
+      const info = screen.getByRole('dialog', { name: 'How repeating tasks work' })
+      expect(info).toHaveTextContent('When you complete a repeating task, the completed one stays as its own entry')
+      expect(info).toHaveTextContent('Repeats can only be completed in order.')
+    })
+
+    it('offers the explanation only for a task that repeats', async () => {
+      const { dialog } = await openTask(single)
+      expect(within(dialog).queryByRole('button', { name: 'How repeating tasks work' })).toBeNull()
+      expect(within(dialog).queryByText('This task repeats. Changes apply to all upcoming repeats.')).toBeNull()
+    })
+
+    it('says up front that a series repeats', async () => {
+      const { dialog } = await openTask(series)
+      expect(within(dialog).getByText('This task repeats. Changes apply to all upcoming repeats.')).toBeInTheDocument()
+    })
+
+    it('limits the due date to the days before the next repeat, and says until when', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(series)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      expect(within(month).getByRole('button', { name: 'Friday, October 9th, 2026' })).toHaveAttribute('aria-disabled', 'true')
+      expect(within(month).getByRole('button', { name: 'Wednesday, October 7th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(month).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+    })
+
+    it('does not save a due time past the next repeat', async () => {
+      const user = userEvent.setup()
+      // Due at 9:00 on Monday; the next repeat is due at 9:00 on Thursday.
+      const timed = { ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { start: null, due: '2026-10-08T07:00:00Z' } }
+      const { fetch, dialog } = await openTask(timed)
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+      await user.click(screen.getByRole('option', { name: '8:00 AM' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      await user.click(screen.getByRole('button', { name: 'Thursday, October 8th, 2026' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+      await user.click(screen.getByRole('option', { name: '10:00 AM' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await within(dialog).findByText('Until Thu, Oct 8, then the next repeat is due.')).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
+    it('asks before it deletes every repeat of a series', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(series)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(
+        'This task repeats. Delete all repeats? Completed ones stay.',
+      )
+    })
+
+    it('can only remove a repeat Lucid cannot read, and leaves its dates and completion alone', async () => {
+      const user = userEvent.setup()
+      const unreadable = { ...series, rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, next: null }
+      const { fetch, dialog } = await openTask(unreadable)
+
+      expect(
+        within(dialog).getByText("Lucid can't read this repeat. Complete and move it in the app that created it."),
+      ).toBeInTheDocument()
+      expect(within(dialog).getByRole('checkbox', { name: 'Completed' })).toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' })).toBeDisabled()
+      expect(within(dialog).getByTitle('FREQ=SOMETIMES')).toHaveTextContent('FREQ=SOMETIMES')
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Does not repeat', 'Custom rule'])
+      await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+      expect(await saved(fetch)).toMatchObject({ rrule: '' })
+    })
   })
 })

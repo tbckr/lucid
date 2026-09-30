@@ -15,6 +15,7 @@ import {
   priorityLevel,
   priorityValue,
   removeChecklistItem,
+  ruleChanged,
   selectTaskList,
   todoToInput,
   toggleChecklistItem,
@@ -249,6 +250,28 @@ describe('datesChanged', () => {
     const allDay = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true })
     expect(datesChanged(allDay, todoToInput(allDay, { dueAllDay: false }))).toBe(true)
     expect(datesChanged(t, todoToInput(t, { startAllDay: true }))).toBe(true)
+  })
+})
+
+describe('ruleChanged', () => {
+  const t = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', recurring: true })
+
+  it('is false without a rule in the input, which keeps the stored one', () => {
+    expect(ruleChanged(t, todoToInput(t))).toBe(false)
+  })
+
+  it('is false for the stored rule in any case', () => {
+    expect(ruleChanged(t, todoToInput(t, { rrule: 'freq=weekly;byday=mo,th' }))).toBe(false)
+    expect(ruleChanged(todo(), todoToInput(todo(), { rrule: '' }))).toBe(false)
+  })
+
+  it('is true for another rule, or none', () => {
+    expect(ruleChanged(t, todoToInput(t, { rrule: 'FREQ=DAILY' }))).toBe(true)
+    expect(ruleChanged(t, todoToInput(t, { rrule: '' }))).toBe(true)
+    expect(ruleChanged(todo(), todoToInput(todo(), { rrule: 'FREQ=DAILY' }))).toBe(true)
+    // A series of dates alone has no rule to compare, but "" still ends it.
+    const dates = todo({ ...t, rrule: '', ruleUnsupported: true })
+    expect(ruleChanged(dates, todoToInput(dates, { rrule: '' }))).toBe(true)
   })
 })
 

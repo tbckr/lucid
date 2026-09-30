@@ -1,7 +1,9 @@
 import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
+import { withinWindow } from './calendarTasks'
 import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
 import { todoToInput } from './tasks'
 
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
@@ -21,8 +23,14 @@ export const taskFormSchema = z
     checklist: z
       .array(z.object({ text: z.string().trim().min(1, 'validation.itemRequired').max(1024, 'validation.tooLong'), done: z.boolean() }))
       .max(200, 'validation.tooManyItems'),
+    recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']),
+    customRule: z.string().max(1024, 'validation.tooLong'),
   })
   .superRefine((v, ctx) => {
+    // A rule recurs from the start, else the due date (FR-17).
+    if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '') {
+      ctx.addIssue({ code: 'custom', message: 'validation.repeatNeedsDate', path: ['recurrence'] })
+    }
     if (v.dueTime !== '' && v.dueDate === '') {
       ctx.addIssue({ code: 'custom', message: 'validation.dateForTime', path: ['dueDate'] })
     }
@@ -54,6 +62,32 @@ function fromFields(date: string, time: string, timeZone: string): { value: stri
   return { value: localDateToUtc(parseDayKey(date)).toISOString(), allDay: true }
 }
 
+type RepeatFields = Pick<TaskFormValues, 'recurrence' | 'customRule'>
+
+/**
+ * The repeat of a todo as the editor shows it (FR-17): a preset where the
+ * rule is one, else "custom" with the rule kept verbatim. A rule Lucid can't
+ * read, or a series of dates without a rule, is custom too: it can only be
+ * kept or removed.
+ */
+function repeatOf(todo: Todo | undefined): RepeatFields {
+  if (!todo) return { recurrence: 'none', customRule: '' }
+  const custom = todo.ruleUnsupported || (todo.recurring && !todo.rrule.trim())
+  const recurrence: Recurrence = custom ? 'custom' : recurrenceFromRRule(todo.rrule)
+  return { recurrence, customRule: recurrence === 'custom' ? todo.rrule : '' }
+}
+
+/**
+ * Whether `v` changes the repeat of `original`, or gives a new task one
+ * (FR-17). An untouched repeat is not sent: the preset would write the stored
+ * rule in its own words ("FREQ=WEEKLY" for "FREQ=WEEKLY;INTERVAL=1"), which
+ * the server takes as a new rule, starting the series over.
+ */
+export function repeatChanged(v: RepeatFields, original?: Todo): boolean {
+  const before = repeatOf(original)
+  return v.recurrence !== before.recurrence || (v.recurrence === 'custom' && v.customRule !== before.customRule)
+}
+
 export function taskToForm(todo: Todo, timeZone: string): TaskFormValues {
   const start = toFields(todo.start, todo.startAllDay, timeZone)
   const due = toFields(todo.due, todo.dueAllDay, timeZone)
@@ -67,6 +101,7 @@ export function taskToForm(todo: Todo, timeZone: string): TaskFormValues {
     priority: todo.priority,
     completed: todo.status === 'COMPLETED',
     checklist: todo.checklist.map((c) => ({ ...c })),
+    ...repeatOf(todo),
   }
 }
 
@@ -84,7 +119,43 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
     dueAllDay: due.allDay,
     priority: v.priority,
     status: v.completed ? 'COMPLETED' : keepStatus,
+    // Absent keeps the stored rule, "" removes it (FR-17).
+    ...(repeatChanged(v, original) ? { rrule: buildRRule(v.recurrence, v.customRule) } : {}),
+    timezone: timeZone,
   }
+}
+
+const DATE_FIELDS = {
+  start: { date: 'startDate', time: 'startTime', other: 'dueTime' },
+  due: { date: 'dueDate', time: 'dueTime', other: 'startTime' },
+} as const
+
+/**
+ * `v` with its start or due date set to `day` (FR-14, FR-16): a date that
+ * moves keeps its time; a new one takes the other date's time, as RFC 5545
+ * wants a time on both or neither.
+ */
+export function formWithDate(v: TaskFormValues, which: 'start' | 'due', day: string): TaskFormValues {
+  const f = DATE_FIELDS[which]
+  return { ...v, [f.date]: day, [f.time]: v[f.date] ? v[f.time] : v[f.other] }
+}
+
+/**
+ * Whether the editor may give `todo` the start or due date `day` (FR-17):
+ * the task it would save stays inside the move window of a fixed-day series.
+ * A new or removed rule starts the series over from the dates it gets, so
+ * only a kept rule binds them; without a window, any day will do.
+ */
+export function dayAllowed(
+  todo: Todo | undefined,
+  v: TaskFormValues,
+  which: 'start' | 'due',
+  day: string,
+  timeZone: string,
+): boolean {
+  if (!todo) return true
+  const input = formToTodoInput(formWithDate(v, which, day), timeZone, todo)
+  return input.rrule !== undefined || withinWindow(todo, input)
 }
 
 interface Fields {

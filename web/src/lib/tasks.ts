@@ -130,6 +130,19 @@ export function datesChanged(todo: Todo, input: TodoInput): boolean {
   )
 }
 
+/**
+ * Whether `input` gives `todo` another rule, or removes its recurrence
+ * (FR-17). Like the server: absent keeps the stored rule, "" removes any
+ * recurrence, a series of dates without a rule too, and rules are compared
+ * ignoring case.
+ */
+export function ruleChanged(todo: Todo, input: TodoInput): boolean {
+  if (input.rrule === undefined) return false
+  const rule = input.rrule.trim()
+  if (!rule) return todo.recurring
+  return rule.toUpperCase() !== todo.rrule.trim().toUpperCase()
+}
+
 /** The days the task list offers for a due date: today, tomorrow and the next Monday (FR-14). */
 export function dueShortcuts(now: Date): { today: Date; tomorrow: Date; nextWeek: Date } {
   const today = startOfDay(now)

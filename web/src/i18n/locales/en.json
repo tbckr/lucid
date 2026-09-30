@@ -252,6 +252,7 @@
     "delete": "Delete task",
     "deleted": "Task deleted",
     "confirmDelete": "Delete this task?",
+    "confirmDeleteSeries": "This task repeats. Delete all repeats? Completed ones stay.",
     "deleteNamed": "Delete task: {{title}}",
     "deletedCount_one": "Task deleted",
     "deletedCount_other": "{{count}} tasks deleted",
@@ -262,13 +263,19 @@
     "deleteCompletedNote_one": "It's removed from the server, and from other apps too.",
     "deleteCompletedNote_other": "They're removed from the server, and from other apps too.",
     "readOnlyNotice": "This list is read-only.",
+    "seriesNotice": "This task repeats. Changes apply to all upcoming repeats.",
+    "ruleUnsupported": "Lucid can't read this repeat. Complete and move it in the app that created it.",
     "nextUp": "Done. Next up: {{date}}",
     "lastRepeat": "Done. That was the last repeat.",
     "movedTo": "Moved to {{date}}. Then: {{next}}",
     "movedToLast": "Moved to {{date}}.",
     "undone": "Undone.",
     "moveLimit": "Until {{date}}, then the next repeat is due.",
-    "plannedRepeat": "{{title}}, planned repeat on {{date}}"
+    "plannedRepeat": "{{title}}, planned repeat on {{date}}",
+    "repeat": "Repeat",
+    "repeatInfo": "How repeating tasks work",
+    "repeatInfoDone": "When you complete a repeating task, the completed one stays as its own entry and the task moves on to its next repeat. That way other apps such as Apple Reminders or Tasks.org also see what is done.",
+    "repeatInfoOrder": "Repeats can only be completed in order. Moving the task moves it from the current repeat on."
   },
   "priority": {
     "none": "None",
@@ -355,6 +362,7 @@
     "tooManyItems": "A checklist can hold at most 200 items.",
     "dateForTime": "Choose a date for this time.",
     "startDueType": "Give both dates a time, or neither.",
-    "startAfterDue": "The start can't be after the due date."
+    "startAfterDue": "The start can't be after the due date.",
+    "repeatNeedsDate": "A repeating task needs a date."
   }
 }

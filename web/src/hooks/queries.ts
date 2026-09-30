@@ -27,7 +27,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
-import { datesChanged, isDone, isSeriesCompletion, todoToInput } from '@/lib/tasks'
+import { datesChanged, isDone, isSeriesCompletion, ruleChanged, todoToInput } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
 export const queryKeys = {
@@ -514,7 +514,8 @@ function seriesMessage(
     const next = updated.completedCopy ? anchorOf(updated) : null
     return next ? t('tasks.nextUp', { date: day(next) }) : t('tasks.lastRepeat')
   }
-  if (!todo.recurring || !datesChanged(todo, input)) return null
+  // A new or removed rule starts the series over from its dates: undo could not bring the old rule back.
+  if (!todo.recurring || !datesChanged(todo, input) || ruleChanged(todo, input)) return null
   const moved = anchorOf(input)
   if (!moved) return null
   const next =

@@ -651,6 +651,56 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(toastOf(success.mock.calls, 'Moved to Wed, Oct 7.')).toMatchObject({ duration: 8000, action: 'Undo' })
   })
 
+  it('offers no undo for a move that changes the rule, which undo could not restore', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([
+      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', rrule: 'FREQ=DAILY', fixedDays: false },
+      { ...series, etag: '"3"', due: '2026-10-07T00:00:00Z', rrule: '', recurring: false, next: null },
+    ])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: 'FREQ=DAILY' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: '' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+      expect(result.current.variables?.input.rrule).toBe('')
+    })
+    expect(success).not.toHaveBeenCalled()
+  })
+
+  it('tells about a move that sends the rule again, in whatever case', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([{ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z' }])
+
+    act(() => {
+      const input = todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: 'freq=weekly;byday=mo,th' })
+      result.current.mutate({ todo: series, input })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8')).toMatchObject({ action: 'Undo' })
+  })
+
+  it('tells about a completion that also changes the rule', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([{ ...rolled, rrule: 'FREQ=DAILY', completedCopy: copy }])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED', rrule: 'FREQ=DAILY' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')).toMatchObject({ duration: 8000, action: 'Undo' })
+  })
+
   it('says nothing about other edits of a series', async () => {
     const success = vi.spyOn(toast, 'success')
     const { result } = setup([{ ...series, etag: '"2"', title: 'Water the garden' }])

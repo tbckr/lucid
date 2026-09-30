@@ -180,7 +180,19 @@ export function eventForm(title: string, calendarId: string, when: EventWhen): E
 /** The task editor's values for a new task. */
 export function taskForm(title: string, when: TaskWhen): TaskFormValues {
   const { startDate, startTime, dueDate, dueTime } = when
-  return { title, description: '', startDate, startTime, dueDate, dueTime, priority: 0, completed: false, checklist: [] }
+  return {
+    title,
+    description: '',
+    startDate,
+    startTime,
+    dueDate,
+    dueTime,
+    priority: 0,
+    completed: false,
+    checklist: [],
+    recurrence: 'none',
+    customRule: '',
+  }
 }
 
 /**

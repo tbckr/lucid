@@ -1,5 +1,16 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlignLeftIcon, CheckIcon, ClockIcon, FlagIcon, ListChecksIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
+import {
+  AlignLeftIcon,
+  CheckIcon,
+  ClockIcon,
+  FlagIcon,
+  InfoIcon,
+  ListChecksIcon,
+  PlusIcon,
+  RepeatIcon,
+  Trash2Icon,
+  XIcon,
+} from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -13,6 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DialogClose, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -21,10 +33,21 @@ import { useCreateTodo, useDeleteTodo, useUpdateTodo, useVisibleCalendars } from
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
-import { parseDayKey } from '@/lib/dates'
+import { lastAllowedDay, moveWindow } from '@/lib/calendarTasks'
+import { dayKey, parseDayKey } from '@/lib/dates'
+import { formatPickerDate } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
-import { formToTodoInput, taskFormSchema, taskToForm, type TaskFormValues } from '@/lib/taskForm'
+import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
+import {
+  dayAllowed,
+  formToTodoInput,
+  formWithDate,
+  repeatChanged,
+  taskFormSchema,
+  taskToForm,
+  type TaskFormValues,
+} from '@/lib/taskForm'
 import { isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
@@ -49,8 +72,8 @@ type Which = keyof typeof DATES
 
 /**
  * Edits a task in the editor dialog: title, notes, start and due date,
- * priority, checklist (FR-13, FR-14, FR-15, FR-16). Also creates one, from the
- * create popover or switched from a new event.
+ * repeat, priority, checklist (FR-13, FR-14, FR-15, FR-16, FR-17). Also
+ * creates one, from the create popover or switched from a new event.
  */
 export function TaskEditor({
   state,
@@ -95,16 +118,27 @@ export function TaskEditor({
         ? taskToForm(state.todo, tz)
         : { ...taskForm(state.draft.title, state.draft.task), description: state.draft.description },
   })
-  const { register, control, handleSubmit, formState, setValue, getValues, setFocus } = form
+  const { register, control, handleSubmit, formState, setValue, getValues, setFocus, setError } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
-  const [completed, startDate, startTime, dueDate, dueTime, items] = useWatch({
+  const [completed, startDate, startTime, dueDate, dueTime, items, recurrence] = useWatch({
     control,
-    name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist'],
+    name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence'],
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
   // Overdue as the task list will show it once saved (FR-14).
   const overdue = isOverdue(formToTodoInput({ ...getValues(), completed, dueDate, dueTime }, tz), now)
   const setOpts = { shouldDirty: true, shouldValidate: formState.isSubmitted }
+
+  // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
+  const ruleUnsupported = todo?.ruleUnsupported ?? false
+  const customRule = recurrence === 'custom' ? getValues('customRule') : ''
+  // A fixed-day series stays before its next repeat while it keeps its rule; a new one starts over (FR-17).
+  const w = todo ? moveWindow(todo) : null
+  const bounded = w && !repeatChanged({ recurrence, customRule }, todo) ? w : null
+  const limit = w ? t('tasks.moveLimit', { date: formatPickerDate(lastAllowedDay(w), prefs, now) }) : ''
+  // The presets repeat on the weekday or date of the start, else of the due date; say which.
+  const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
+  const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
 
   useEffect(() => {
     // The footer asks in place: focus its "Cancel", and "Delete task" again once it is back (NFR-27).
@@ -137,6 +171,13 @@ export function TaskEditor({
 
   const onSubmit = handleSubmit((v) => {
     if (todo) {
+      // The pickers block the days past the window, but a time can still take the task there (FR-17).
+      const which: Which = v.startDate ? 'start' : 'due'
+      const field = DATES[which].date
+      if (!dayAllowed(todo, v, which, v[field], tz)) {
+        setError(field, { message: 'tasks.moveLimit' })
+        return
+      }
       update.mutate({ todo, input: formToTodoInput(v, tz, todo) }, { onSuccess: onDone })
       return
     }
@@ -154,9 +195,8 @@ export function TaskEditor({
 
   const setDate = (which: Which, date: string) => {
     const f = DATES[which]
-    const other = DATES[f.other]
     // A new date takes the other date's time: RFC 5545 wants a time on both or neither.
-    if (!getValues(f.date)) setValue(f.time, getValues(other.time), setOpts)
+    setValue(f.time, formWithDate(getValues(), which, date)[f.time], setOpts)
     setValue(f.date, date, setOpts)
   }
 
@@ -165,8 +205,12 @@ export function TaskEditor({
     setValue(DATES[which].time, '', setOpts)
   }
 
-  const msg = (m: string | undefined) => (m ? t(m as 'validation.date') : undefined)
+  const msg = (m: string | undefined) => {
+    if (m === 'tasks.moveLimit') return limit
+    return m ? t(m as 'validation.date') : undefined
+  }
   const titleError = msg(formState.errors.title?.message)
+  const repeatError = msg(formState.errors.recurrence?.message)
   const itemError = msg(formState.errors.checklist?.message ?? formState.errors.checklist?.find?.((e) => e?.text)?.text?.message)
 
   const dateRow = (which: Which) => {
@@ -194,12 +238,14 @@ export function TaskEditor({
                 clearDate(which)
               },
             }}
-            placeholder={readOnly ? t('tasks.noDate') : t('tasks.addDate')}
+            placeholder={readOnly || ruleUnsupported ? t('tasks.noDate') : t('tasks.addDate')}
             month={other ? parseDayKey(other) : undefined}
             prefs={prefs}
             now={now}
             invalid={!!error}
             describedBy={error ? `${id}-${which}-error` : undefined}
+            isDisabled={bounded ? (d) => !dayAllowed(todo, getValues(), which, dayKey(d), tz) : undefined}
+            footer={bounded && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
           />
           {date && (
             <TimeSelect
@@ -253,7 +299,7 @@ export function TaskEditor({
                 role="checkbox"
                 aria-checked={field.value}
                 aria-label={t('tasks.markCompleted')}
-                disabled={readOnly}
+                disabled={readOnly || ruleUnsupported}
                 onClick={() => {
                   field.onChange(!field.value)
                 }}
@@ -323,6 +369,8 @@ export function TaskEditor({
             </div>
           )}
           {readOnly && <p className="text-sm">{t('tasks.readOnlyNotice')}</p>}
+          {todo?.recurring && <p className="text-sm">{t('tasks.seriesNotice')}</p>}
+          {ruleUnsupported && <p className="text-sm">{t('tasks.ruleUnsupported')}</p>}
         </div>
         <DialogClose className="absolute top-3 right-3 rounded-md p-1.5 transition-colors outline-none hover:bg-current/10 focus-visible:ring-[3px] focus-visible:ring-current/50 [&_svg]:size-4">
           <XIcon aria-hidden />
@@ -332,11 +380,79 @@ export function TaskEditor({
 
       <fieldset disabled={readOnly} className="grid gap-3 px-4 pt-5 pb-2 sm:px-6">
         <EditorRow icon={<ClockIcon />}>
-          <fieldset className="grid gap-2">
+          <fieldset className="grid gap-2" disabled={ruleUnsupported}>
             <legend className="sr-only">{t('tasks.when')}</legend>
             {dateRow('start')}
             {dateRow('due')}
           </fieldset>
+        </EditorRow>
+
+        <EditorRow icon={<RepeatIcon />}>
+          <div className="flex items-center gap-1">
+            <Label htmlFor={`${id}-repeat`} className="sr-only">
+              {t('tasks.repeat')}
+            </Label>
+            <Controller
+              control={control}
+              name="recurrence"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger
+                    id={`${id}-repeat`}
+                    className="w-auto min-w-48"
+                    aria-invalid={repeatError ? true : undefined}
+                    aria-describedby={repeatError ? `${id}-repeat-error` : undefined}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(ruleUnsupported ? (['none'] as const) : RECURRENCE_PRESETS).map((r) => (
+                      <SelectItem key={r} value={r}>
+                        {repeatText(buildRRule(r))}
+                      </SelectItem>
+                    ))}
+                    {/* Only a rule the task already has: the presets are all the editor writes. */}
+                    {formState.defaultValues?.recurrence === 'custom' && (
+                      <SelectItem value="custom">{t('recurrence.custom')}</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {/* How repeating tasks behave, for those who want to know; the rest of the UI only shows it (FR-17). */}
+            {recurrence !== 'none' && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="text-muted-foreground"
+                    aria-label={t('tasks.repeatInfo')}
+                  >
+                    <InfoIcon aria-hidden />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="grid gap-2 text-sm" aria-labelledby={`${id}-repeat-info`}>
+                  <h3 id={`${id}-repeat-info`} className="font-semibold">
+                    {t('tasks.repeatInfo')}
+                  </h3>
+                  <p>{t('tasks.repeatInfoDone')}</p>
+                  <p>{t('tasks.repeatInfoOrder')}</p>
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
+          {customRule && (
+            <p className="truncate pt-1 text-xs text-muted-foreground" title={customRule}>
+              {repeatText(customRule) ?? customRule}
+            </p>
+          )}
+          {repeatError && (
+            <p id={`${id}-repeat-error`} className="pt-1 text-sm text-destructive">
+              {repeatError}
+            </p>
+          )}
         </EditorRow>
 
         <EditorRow icon={<FlagIcon />}>
@@ -452,7 +568,9 @@ export function TaskEditor({
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:justify-between sm:px-6 sm:pb-5">
         {confirmDelete ? (
           <div role="alert" className="flex w-full flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-medium">{t('tasks.confirmDelete')}</p>
+            <p className="text-sm font-medium">
+              {todo?.recurring ? t('tasks.confirmDeleteSeries') : t('tasks.confirmDelete')}
+            </p>
             <div className="flex gap-2">
               <Button
                 ref={keepRef}
