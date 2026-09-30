@@ -109,8 +109,8 @@ A repeating task shows up at every repeat in the calendar views. Checking off
 the current repeat moves the task on to its next one and leaves the done one
 behind as a completed entry of its own. Repeats are checked off in order, and
 moving the task moves it from the current repeat on. Apple Reminders and
-Tasks.org handle repeating tasks the same way, so they see what you did in
-Lucid, and Lucid reads what Thunderbird, KDE and others write.
+Tasks.org roll a repeating task forward the same way, so they see what you
+did in Lucid, and Lucid reads what Thunderbird, KDE and others write.
 [docs/RECURRING-TASKS.md](docs/RECURRING-TASKS.md) explains why, with a survey
 of how CalDAV clients handle repeating tasks.
 

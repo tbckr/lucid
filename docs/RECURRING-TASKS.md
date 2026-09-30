@@ -242,6 +242,10 @@ Read at [`626d683`](https://github.com/tasks/tasks/tree/626d68312e3b3075e158bf38
   copy. **code**
   ([RepeatTaskHelper.kt#L41-L78](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/kmp/src/commonMain/kotlin/com/todoroo/astrid/repeats/RepeatTaskHelper.kt#L41-L78),
   [Task.kt#L120-L127](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/data/src/commonMain/kotlin/org/tasks/data/entity/Task.kt#L120-L127))
+- An existing start date moves with the due date; a task without one never
+  gets one on completion (`setDueDateAdjustingHideUntil` only shifts
+  `hideUntil` when it is set). **code**
+  ([Task.kt#L120-L126](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/data/src/commonMain/kotlin/org/tasks/data/entity/Task.kt#L120-L126))
 - On the last occurrence (`COUNT=1`, or the next date is past `UNTIL`) the task
   stays `COMPLETED` with its `RRULE`. **code**
   ([RepeatTaskHelper.kt#L53-L59](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/kmp/src/commonMain/kotlin/com/todoroo/astrid/repeats/RepeatTaskHelper.kt#L53-L59))
@@ -261,6 +265,16 @@ Read at [`626d683`](https://github.com/tasks/tasks/tree/626d68312e3b3075e158bf38
 **Read**
 
 - No expansion: one resource is one task, shown at its `DUE`. **code**
+- `DTSTART` is the task's start date (`hideUntil`, "Starts" in the editor): an
+  all-day `DTSTART` the start of that day, a timed one that instant. **code**
+  ([iCalendar.kt#L346-L354](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/kmp/src/commonMain/kotlin/org/tasks/caldav/iCalendar.kt#L346-L354),
+  [TaskExtensions.kt#L23-L42](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/kmp/src/commonMain/kotlin/org/tasks/data/TaskExtensions.kt#L23-L42))
+- Tasks whose start date lies ahead are shown by default: the filter that
+  hides them only applies while "Show unstarted" in a list's sort menu is
+  off, and `showHidden` defaults to true. **code**
+  ([TaskDao.kt#L265-L274](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/data/src/commonMain/kotlin/org/tasks/data/dao/TaskDao.kt#L265-L274),
+  [SortHelper.kt#L77-L89](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/kmp/src/commonMain/kotlin/com/todoroo/astrid/core/SortHelper.kt#L77-L89),
+  [Preferences.kt#L598-L600](https://github.com/tasks/tasks/blob/626d68312e3b3075e158bf384119e72889a913eb/app/src/main/java/org/tasks/preferences/Preferences.kt#L598-L600))
 - A resource with more than one `VTODO` (a master plus overrides) is rejected:
   `fromVtodo` returns `null` unless there is exactly one, and `fetchChanges`
   then **returns early**. The rest of that calendar's fetch is skipped: later
@@ -471,8 +485,12 @@ and evolution
 - An override appears as its own row, so a Thunderbird completion leaves the
   master looking overdue. **inferred**
   ([e-cal-data-model.c](https://github.com/GNOME/evolution/blob/5ada1374457b80db985059368062b7180695e259/src/calendar/gui/e-cal-data-model.c))
-- The next occurrence is computed from `DTSTART`. Completing a task with only
-  `DUE` probably completes the whole series. **inferred**
+- The next occurrence is walked from `DTSTART`; without one, from the current
+  wall-clock time rather than from `DUE`, so a rule whose instances depend on
+  the anchor (`INTERVAL=2`, `FREQ=MONTHLY` without `BYMONTHDAY`, `COUNT`) can
+  land on an occurrence the rule did not mean. **code**
+  ([e-cal-util.c#L3016-L3046](https://github.com/GNOME/evolution-data-server/blob/c4f57c61c00505ce778e0bee175501675d591298/src/calendar/libecal/e-cal-util.c#L3016-L3046),
+  `e_cal_util_find_next_occurrence`)
 
 ### KDE (KCalendarCore, KOrganizer, Merkuro)
 
@@ -571,6 +589,10 @@ the following applies to third-party CalDAV accounts.
 - Completing the master in place in another client ended the series on iOS
   ([nextcloud/tasks#2276](https://github.com/nextcloud/tasks/issues/2276)).
   **issue**
+- iCloud's CalDAV backend hands a timed `DUE` without a matching `DTSTART`
+  back as a date-only due, the time dropped; with a `DTSTART` at the same
+  instant the time survives
+  ([omacal#124](https://github.com/x3me/omacal/pull/124)). **issue**
 
 ### Nextcloud Tasks
 
@@ -728,9 +750,9 @@ problem: the dates move, but `BYDAY`/`BYMONTHDAY` do not.
 
 - **Series without `DTSTART`** (Tasks.org): Thunderbird expands from `DUE` but
   keeps `DUE` fixed per occurrence, KDE copies `DUE` into `DTSTART`, Evolution
-  and jtx Board don't expand, Nextcloud Calendar drops the task, eM Client
-  failed to sync it. Anchoring on `DUE` in that case matches JSCalendar and
-  Tasks.org.
+  rolls it from the wall clock instead of from `DUE`, jtx Board doesn't expand
+  it, Nextcloud Calendar drops the task, eM Client failed to sync it.
+  Anchoring on `DUE` in that case matches JSCalendar and Tasks.org.
 - **A completed master with `RRULE`** usually means the series has ended
   (Apple, Tasks.org, Evolution, Nextcloud Tasks, Kolab), but it also results
   from clients that complete the master directly (Errands, Endeavour) and from
@@ -838,6 +860,15 @@ last occurrence gets no copy: the master itself becomes `COMPLETED` and keeps
 its `RRULE`, as with Apple, Tasks.org and Evolution. Undo writes the master's
 previous dates, status and checklist back, then deletes the copy.
 
+A series anchored on `DUE` gets its `DTSTART` because RFC 5545 requires one
+with `RRULE`, and because the readers above do better with it: Thunderbird
+then gives every occurrence its own due date, Evolution rolls from the series
+instead of from the wall clock, jtx Board expands the series at all, and
+iCloud keeps the time of a timed due. Tasks.org reads it as the task's start
+date: with its default, "Show unstarted" on, nothing changes there; with it
+off, a timed series shows only from its due time on. Lucid's own editor shows
+the series with a start equal to its due date from the first completion on.
+
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
 `DUE` gets a `DTSTART` here too), and drops that occurrence's override and
@@ -884,6 +915,23 @@ properties and components Lucid does not know.
   before the next occurrence; the time of day is free within those days.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
+- Undoing a completion is a move back onto the completed occurrence, and a
+  move drops the override of the occurrence it moves from: an occurrence
+  another client had moved, which the completion rolled onto and kept, loses
+  that override when the completion is undone.
+- A `COUNT` counts from `DTSTART` (RFC 5545), so a series whose `DTSTART`
+  another client left off its rule has one occurrence more than its `COUNT`
+  says, the anchor itself; the `UNTIL` a completion writes keeps that extra
+  one.
+- A series in a `TZID` Lucid cannot resolve is read at its wall clock as UTC,
+  and the `UNTIL` a completion writes for its `COUNT` is that wall clock as
+  UTC. In a zone west of UTC it lies before the last occurrence's real
+  instant, so a reader that knows the zone may end the series one occurrence
+  early.
+- A move of a `MONTHLY` or `YEARLY` interval series shifts the references to
+  later occurrences by the calendar days the current occurrence moved, not by
+  months, so an override or `EXDATE` can end up off its occurrence when the
+  months differ in length.
 - Removing a rule also removes other clients' overrides, completed ones
   included.
 - Moving an occurrence of a recurring **event** still moves the whole series,
@@ -918,8 +966,8 @@ that repeats are completed in order.
   reachable by keyboard, with "Until *date*, then the next repeat is due."
 - **Dragging**: days outside the move window are hatched. A drop there
   changes nothing, and screen readers hear "Only possible until *date*."
-- **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat." and
-  "Moved to *date*. Then: *date*", each with Undo for 8 seconds, then
-  "Undone."
+- **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
+  "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
+  *date*.", each with Undo for 8 seconds, then "Undone."
 - **Deleting** asks "This task repeats. Delete all repeats? Completed ones
   stay."

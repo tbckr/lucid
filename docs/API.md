@@ -166,8 +166,9 @@ recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   than at a fixed interval from its anchor: an `RRULE` part other than
   `FREQ`/`INTERVAL`/`COUNT`/`UNTIL`/`WKST`, or any `RDATE`.
 - `ruleUnsupported` is `true` for a series Lucid cannot evaluate: an
-  unparsable `RRULE`, neither `start` nor `due` at all, or any `RDATE`. Such a
-  series is reported once, with its stored dates, and does **not** appear in
+  unparsable `RRULE`, one that cannot be evaluated within 100,000 iterations,
+  neither `start` nor `due` at all, or any `RDATE`. Such a series is reported
+  once, with its stored dates, and does **not** appear in
   `GET .../todos/occurrences`.
 - `next` is the earliest open occurrence after the current one (`{ "start",
   "due" }`), or `null` if this is the last (or the series is not recurring,
@@ -232,9 +233,14 @@ For a recurring todo, these three edits are handled specially:
   already-written copy is deleted again and the error is returned.
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
-  (a series without `start` recurs on `due`). Exceptions later than the
-  current occurrence shift by the same offset. The backend does not enforce
-  the move window the UI shows; that is a client-side hint only.
+  (a series without `start` recurs on `due`). What refers to later
+  occurrences stays with them: with an interval rule, their overrides,
+  `EXDATE`s and an `UNTIL` from the current occurrence on move by the same
+  amount, in the wall clock of the series; with fixed days by the change in
+  time of day only, because the rule's days stay. A `COUNT` no longer counts
+  the rule's instances before the moved occurrence, and an `UNTIL` that would
+  end before the new dates moves onto them. The backend does not enforce the
+  move window the UI shows; that is a client-side hint only.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched. It needs a `start`
   or `due` to recur from, otherwise `400 invalid_input`, message *"a
