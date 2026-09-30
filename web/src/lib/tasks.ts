@@ -101,6 +101,35 @@ export function todoToInput(todo: Todo, patch: Partial<TodoInput> = {}): TodoInp
   }
 }
 
+/**
+ * Whether `input` completes the current occurrence of an open series (FR-17):
+ * the server then keeps a completed copy of it and moves the series on to its
+ * next occurrence, or completes the series on its last.
+ */
+export function isSeriesCompletion(todo: Todo, input: TodoInput): boolean {
+  return todo.recurring && !isDone(todo) && input.status === 'COMPLETED'
+}
+
+/** Whether two wire dates are the same instant, however they are written; null only equals null. */
+function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return !a && !b
+  return Date.parse(a) === Date.parse(b)
+}
+
+/**
+ * Whether `input` changes the dates of `todo`: start or due, or their all-day
+ * flags. The server compares them the same way to tell a move of a series
+ * from an edit that keeps it where it is (FR-17).
+ */
+export function datesChanged(todo: Todo, input: TodoInput): boolean {
+  return (
+    !sameInstant(todo.start, input.start) ||
+    todo.startAllDay !== input.startAllDay ||
+    !sameInstant(todo.due, input.due) ||
+    todo.dueAllDay !== input.dueAllDay
+  )
+}
+
 /** The days the task list offers for a due date: today, tomorrow and the next Monday (FR-14). */
 export function dueShortcuts(now: Date): { today: Date; tomorrow: Date; nextWeek: Date } {
   const today = startOfDay(now)

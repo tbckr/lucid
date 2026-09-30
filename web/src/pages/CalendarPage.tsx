@@ -54,10 +54,11 @@ export function CalendarPage() {
   const [mobileTasks, setMobileTasks] = useState(false)
 
   const range = useMemo(() => visibleRange(view, date, prefs.weekStartsOn), [view, date, prefs.weekStartsOn])
-  const { events: allEvents, corrupted, isFetching, errors } = useEvents(range)
+  const { events: allEvents, corrupted: corruptedEvents, isFetching, errors } = useEvents(range)
   const events = useMemo(() => allEvents.filter((e) => overlapsRange(e, range)), [allEvents, range])
-  const tasks = useCalendarTasks(range)
+  const { tasks, corrupted: corruptedRepeats, errors: repeatErrors } = useCalendarTasks(range)
   const items = useMemo<CalItem[]>(() => [...events, ...tasks], [events, tasks])
+  const corrupted = useMemo(() => [...corruptedEvents, ...corruptedRepeats], [corruptedEvents, corruptedRepeats])
   const colorsOf = useCalendarColors()
   const { byId } = useVisibleCalendars()
   const calendarOf = useCallback((id: string) => byId.get(id), [byId])
@@ -76,6 +77,11 @@ export function CalendarPage() {
   useEffect(() => {
     if (firstError) toast.error(t('errors.eventsLoadFailed'), { id: 'events-load' })
   }, [firstError, t])
+
+  const firstRepeatError = repeatErrors[0]
+  useEffect(() => {
+    if (firstRepeatError) toast.error(t('errors.repeatsLoadFailed'), { id: 'repeats-load' })
+  }, [firstRepeatError, t])
 
   const toggleTasks = useCallback(() => {
     if (wide) updateSettings({ tasksOpen: !useSettings.getState().tasksOpen })

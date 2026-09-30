@@ -6,10 +6,12 @@ import {
   addChecklistItem,
   checklistProgress,
   compareTodos,
+  datesChanged,
   dueShortcuts,
   formatDue,
   groupTodos,
   isOverdue,
+  isSeriesCompletion,
   priorityLevel,
   priorityValue,
   removeChecklistItem,
@@ -195,6 +197,58 @@ describe('status', () => {
   it('keeps the start date in the input', () => {
     const t = todo({ start: '2026-09-25T07:00:00Z', startAllDay: false })
     expect(todoToInput(t)).toMatchObject({ start: '2026-09-25T07:00:00Z', startAllDay: false })
+  })
+})
+
+describe('isSeriesCompletion', () => {
+  const series = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true, rrule: 'FREQ=DAILY', recurring: true })
+
+  it('is true when an open series is completed', () => {
+    expect(isSeriesCompletion(series, todoToInput(series, { status: 'COMPLETED' }))).toBe(true)
+    const started = { ...series, status: 'IN-PROCESS' as const }
+    expect(isSeriesCompletion(started, todoToInput(started, { status: 'COMPLETED' }))).toBe(true)
+  })
+
+  it('is false for other edits of a series', () => {
+    expect(isSeriesCompletion(series, todoToInput(series, { title: 'New' }))).toBe(false)
+    expect(isSeriesCompletion(series, todoToInput(series, { status: 'CANCELLED' }))).toBe(false)
+  })
+
+  it('is false for a series that is done already', () => {
+    const done = { ...series, status: 'COMPLETED' as const }
+    expect(isSeriesCompletion(done, todoToInput(done))).toBe(false)
+  })
+
+  it('is false for a single task', () => {
+    const single = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true })
+    expect(isSeriesCompletion(single, todoToInput(single, { status: 'COMPLETED' }))).toBe(false)
+  })
+})
+
+describe('datesChanged', () => {
+  const t = todo({ start: '2026-10-05T07:00:00Z', due: '2026-10-05T08:00:00Z' })
+
+  it('is false for the same dates, however they are written', () => {
+    expect(datesChanged(t, todoToInput(t, { title: 'New' }))).toBe(false)
+    const rewritten = todoToInput(t, { start: '2026-10-05T09:00:00+02:00', due: '2026-10-05T08:00:00.000Z' })
+    expect(datesChanged(t, rewritten)).toBe(false)
+    expect(datesChanged(todo(), todoToInput(todo()))).toBe(false)
+  })
+
+  it('is true when start or due moves', () => {
+    expect(datesChanged(t, todoToInput(t, { start: '2026-10-05T06:00:00Z' }))).toBe(true)
+    expect(datesChanged(t, todoToInput(t, { due: '2026-10-06T08:00:00Z' }))).toBe(true)
+  })
+
+  it('is true when a date is added or removed', () => {
+    expect(datesChanged(t, todoToInput(t, { start: null }))).toBe(true)
+    expect(datesChanged(todo(), todoToInput(todo(), { due: '2026-10-05T08:00:00Z' }))).toBe(true)
+  })
+
+  it('is true when a date changes its kind', () => {
+    const allDay = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true })
+    expect(datesChanged(allDay, todoToInput(allDay, { dueAllDay: false }))).toBe(true)
+    expect(datesChanged(t, todoToInput(t, { startAllDay: true }))).toBe(true)
   })
 })
 

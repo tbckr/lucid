@@ -4,7 +4,8 @@
     "close": "Schließen",
     "loading": "Wird geladen …",
     "retry": "Erneut versuchen",
-    "save": "Speichern"
+    "save": "Speichern",
+    "undo": "Rückgängig"
   },
   "create": {
     "kind": "Art",
@@ -53,6 +54,7 @@
     "not_found": "Diesen Eintrag gibt es nicht mehr. Lucid hat den Kalender neu geladen.",
     "unauthenticated": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
     "eventsLoadFailed": "Einige Termine konnten nicht geladen werden.",
+    "repeatsLoadFailed": "Einige wiederkehrende Aufgaben konnten nicht geladen werden.",
     "generic": "Etwas ist schiefgelaufen. Versuche es erneut."
   },
   "nav": {
@@ -258,7 +260,12 @@
     "confirmDeleteCompleted_other": "Alle {{count}} erledigten Aufgaben löschen?",
     "deleteCompletedNote_one": "Sie wird vom Server gelöscht, auch in anderen Apps.",
     "deleteCompletedNote_other": "Sie werden vom Server gelöscht, auch in anderen Apps.",
-    "readOnlyNotice": "Diese Liste ist schreibgeschützt."
+    "readOnlyNotice": "Diese Liste ist schreibgeschützt.",
+    "nextUp": "Erledigt. Als Nächstes: {{date}}",
+    "lastRepeat": "Erledigt. Das war die letzte Wiederholung.",
+    "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",
+    "movedToLast": "Auf {{date}} verschoben.",
+    "undone": "Rückgängig gemacht."
   },
   "priority": {
     "none": "Keine",

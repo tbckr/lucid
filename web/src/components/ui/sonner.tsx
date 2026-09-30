@@ -9,6 +9,7 @@ function Toaster({ theme, ...props }: ToasterProps) {
         classNames: {
           toast: 'bg-surface! text-foreground! border-border! shadow-float! rounded-lg!',
           description: 'text-muted-foreground!',
+          actionButton: 'bg-primary! text-primary-foreground!',
         },
       }}
       {...props}

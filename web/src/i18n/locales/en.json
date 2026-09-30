@@ -4,7 +4,8 @@
     "close": "Close",
     "loading": "Loading…",
     "retry": "Try again",
-    "save": "Save"
+    "save": "Save",
+    "undo": "Undo"
   },
   "create": {
     "kind": "Type",
@@ -53,6 +54,7 @@
     "not_found": "This item no longer exists. Lucid reloaded the calendar.",
     "unauthenticated": "Your session expired. Sign in again.",
     "eventsLoadFailed": "Some events couldn't be loaded.",
+    "repeatsLoadFailed": "Some repeating tasks couldn't be loaded.",
     "generic": "Something went wrong. Try again."
   },
   "nav": {
@@ -258,7 +260,12 @@
     "confirmDeleteCompleted_other": "Delete all {{count}} completed tasks?",
     "deleteCompletedNote_one": "It's removed from the server, and from other apps too.",
     "deleteCompletedNote_other": "They're removed from the server, and from other apps too.",
-    "readOnlyNotice": "This list is read-only."
+    "readOnlyNotice": "This list is read-only.",
+    "nextUp": "Done. Next up: {{date}}",
+    "lastRepeat": "Done. That was the last repeat.",
+    "movedTo": "Moved to {{date}}. Then: {{next}}",
+    "movedToLast": "Moved to {{date}}.",
+    "undone": "Undone."
   },
   "priority": {
     "none": "None",

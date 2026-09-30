@@ -1,6 +1,7 @@
 import {
   keepPreviousData,
   useMutation,
+  useMutationState,
   useQueries,
   useQuery,
   useQueryClient,
@@ -9,14 +10,24 @@ import {
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
-import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
-import { type Calendar, type CorruptedItem, type EventInput, type Todo, type TodoInput } from '@/lib/api/schemas'
-import { toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { endpoints, type EventList, type TodoList, type TodoOccurrenceList } from '@/lib/api/endpoints'
+import {
+  type Calendar,
+  type CorruptedItem,
+  type EventInput,
+  type Todo,
+  type TodoInput,
+  type TodoOccurrence,
+  type UpdatedTodo,
+} from '@/lib/api/schemas'
+import { anchorOf, occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
-import { isDone } from '@/lib/tasks'
+import { formatPickerDate, type FormatPrefs } from '@/lib/format'
+import { datesChanged, isDone, isSeriesCompletion, todoToInput } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
 export const queryKeys = {
@@ -27,6 +38,9 @@ export const queryKeys = {
   events: (calendarId: string, start: string, end: string) => ['events', calendarId, start, end] as const,
   todosAll: ['todos'] as const,
   todos: (calendarId: string) => ['todos', calendarId] as const,
+  /** Under `todos(calendarId)`, so whatever reloads a task list reloads its occurrences too (FR-17). */
+  todoOccurrences: (calendarId: string, start: string, end: string) =>
+    ['todos', calendarId, 'occurrences', start, end] as const,
 }
 
 /* ------------------------------------------------------------------------ */
@@ -144,30 +158,117 @@ export function useCachedTodo(todo: Todo): Todo {
   return data ?? todo
 }
 
-/** Calendar entries of the loaded todos; module-level so `useQueries` reruns it only on new data. */
-function combineCalendarTasks(results: { data?: TodoList | undefined }[]): CalTask[] {
-  return results.flatMap((r) => (r.data?.todos ?? []).map(toCalTask).filter((t) => t !== null))
+/** The loaded todos; module-level so `useQueries` reruns it only on new data. */
+function combineTodos(results: { data?: TodoList | undefined }[]): Todo[] {
+  return results.flatMap((r) => r.data?.todos ?? [])
+}
+
+interface OccurrencesResult {
+  occurrences: TodoOccurrence[]
+  corrupted: CorruptedItem[]
+  errors: unknown[]
+}
+
+/** The loaded occurrences, broken ones and failed loads; module-level like `combineTodos`. */
+function combineOccurrences(results: { data?: TodoOccurrenceList | undefined; error: unknown }[]): OccurrencesResult {
+  const occurrences: TodoOccurrence[] = []
+  const corrupted: CorruptedItem[] = []
+  const errors: unknown[] = []
+  for (const r of results) {
+    if (r.data) {
+      occurrences.push(...r.data.occurrences)
+      corrupted.push(...r.data.corrupted)
+    }
+    if (r.error) errors.push(r.error)
+  }
+  return { occurrences, corrupted, errors }
+}
+
+/** Whether the views show `todo` by its occurrences instead of by its own dates (FR-17). */
+function placedByOccurrences(todo: Todo): boolean {
+  return todo.recurring && !todo.ruleUnsupported && !isDone(todo)
+}
+
+/**
+ * The calendar entries of `todos` (FR-16, FR-17): a task by its own dates, an
+ * open series Lucid can read by its occurrences, each carrying the series.
+ * Occurrences of a series the list doesn't hold (yet) are left out, so no
+ * task shows both ways.
+ */
+function joinCalendarTasks(todos: Todo[], occurrences: TodoOccurrence[]): CalTask[] {
+  const series = new Map<string, Todo>()
+  const tasks: CalTask[] = []
+  for (const todo of todos) {
+    if (placedByOccurrences(todo)) {
+      series.set(todo.id, todo)
+      continue
+    }
+    const task = toCalTask(todo)
+    if (task) tasks.push(task)
+  }
+  for (const occ of occurrences) {
+    const todo = series.get(occ.todoId)
+    const task = todo ? occurrenceTask(occ, todo) : null
+    if (task) tasks.push(task)
+  }
+  return tasks
+}
+
+/** Whether an entry counts as completed: a done task, or an occurrence another app completed (FR-17). */
+function isDoneTask(task: CalTask): boolean {
+  return isDone(task.todo) || task.occurrence?.state === 'done'
+}
+
+export interface CalendarTasksResult {
+  /** In order of their start. */
+  tasks: CalTask[]
+  /** Occurrences that failed validation, shown as placeholders like events. */
+  corrupted: CorruptedItem[]
+  /** Failed loads of occurrences; the tasks list reports its own. */
+  errors: unknown[]
 }
 
 /**
  * Tasks of visible todo calendars as calendar entries within `range` (FR-05,
- * FR-16), without done ones if the user hides them there. Shares its queries
- * with `useTodos`, so the task list and the views update together.
+ * FR-16, FR-17), without done ones if the user hides them there. Shares its
+ * list queries with `useTodos`, so the task list and the views update
+ * together; recurring tasks come from their occurrences in the range, padded
+ * like events so an all-day occurrence on an edge day isn't lost to the
+ * UTC offset.
  */
-export function useCalendarTasks(range: DateRange): CalTask[] {
+export function useCalendarTasks(range: DateRange): CalendarTasksResult {
   const { visible } = useVisibleCalendars()
   const hideCompleted = useSettings((s) => s.hideCompletedInCalendar)
   const todoCalendars = visible.filter((c) => c.supportsTodos)
-  const tasks = useQueries({
+  const padded = fetchRange(range)
+  const start = padded.start.toISOString()
+  const end = padded.end.toISOString()
+  const todos = useQueries({
     queries: todoCalendars.map((c) => ({
       queryKey: queryKeys.todos(c.id),
       queryFn: ({ signal }: { signal: AbortSignal }) => endpoints.listTodos(c.id, signal),
     })),
-    combine: combineCalendarTasks,
+    combine: combineTodos,
   })
+  const occurrences = useQueries({
+    queries: todoCalendars.map((c) => ({
+      queryKey: queryKeys.todoOccurrences(c.id, start, end),
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        endpoints.listTodoOccurrences(c.id, padded.start, padded.end, signal),
+      placeholderData: keepPreviousData,
+    })),
+    combine: combineOccurrences,
+  })
+  const all = useMemo(() => joinCalendarTasks(todos, occurrences.occurrences), [todos, occurrences.occurrences])
   return useMemo(
-    () => tasks.filter((t) => (!hideCompleted || !isDone(t.todo)) && overlapsRange(t, range)),
-    [tasks, range, hideCompleted],
+    () => ({
+      tasks: all
+        .filter((t) => (!hideCompleted || !isDoneTask(t)) && overlapsRange(t, range))
+        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
+      corrupted: occurrences.corrupted,
+      errors: occurrences.errors,
+    }),
+    [all, occurrences.corrupted, occurrences.errors, range, hideCompleted],
   )
 }
 
@@ -360,37 +461,155 @@ function currentEtag(qc: QueryClient, todo: Todo): string {
   return etag
 }
 
+/** Notes that the client's own update of task `id` replaced ETag `from` with `to`. */
+function replaceEtag(qc: QueryClient, id: string, from: string, to: string): void {
+  const map = ownEtagsOf(qc)
+  map.set(`${id} ${from}`, to)
+  map.delete(`${id} ${to}`)
+}
+
+/**
+ * Puts a task as the API answered an update into its list in the cache. A
+ * completed series brings the copy of the occurrence it completed (FR-17).
+ */
+function putTodo(qc: QueryClient, calendarId: string, { completedCopy, ...todo }: UpdatedTodo): void {
+  qc.setQueryData<TodoList>(queryKeys.todos(calendarId), (old) => {
+    if (!old) return old
+    const todos = old.todos.filter((x) => x.id !== completedCopy?.id).map((x) => (x.id === todo.id ? todo : x))
+    return { ...old, todos: completedCopy ? [...todos, completedCopy] : todos }
+  })
+}
+
+/** Takes a deleted task out of its list in the cache. */
+function removeTodo(qc: QueryClient, todo: Todo): void {
+  qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
+    old ? { ...old, todos: old.todos.filter((x) => x.id !== todo.id) } : old,
+  )
+}
+
+export const UPDATE_TODO_KEY = ['updateTodo'] as const
+
+/** How long a toast with an action stays, so there is time to reach the action. */
+const ACTION_TOAST_MS = 8000
+
+interface UpdateTodoVars {
+  todo: Todo
+  input: TodoInput
+}
+
+/**
+ * What the toast after an update of a series says, or null for an update that
+ * neither completes nor moves one (FR-17): the day the series goes on with,
+ * and after a move also the one after it.
+ */
+function seriesMessage(
+  { todo, input }: UpdateTodoVars,
+  updated: UpdatedTodo,
+  t: TFn,
+  prefs: FormatPrefs,
+  now: Date,
+): string | null {
+  const day = (d: Date) => formatPickerDate(d, prefs, now)
+  if (isSeriesCompletion(todo, input)) {
+    const next = updated.completedCopy ? anchorOf(updated) : null
+    return next ? t('tasks.nextUp', { date: day(next) }) : t('tasks.lastRepeat')
+  }
+  if (!todo.recurring || !datesChanged(todo, input)) return null
+  const moved = anchorOf(input)
+  if (!moved) return null
+  const next =
+    updated.next &&
+    anchorOf({
+      start: updated.next.start,
+      startAllDay: updated.startAllDay,
+      due: updated.next.due,
+      dueAllDay: updated.dueAllDay,
+    })
+  return next
+    ? t('tasks.movedTo', { date: day(moved), next: day(next) })
+    : t('tasks.movedToLast', { date: day(moved) })
+}
+
+/**
+ * Takes back the completion or move of a series (FR-17). There is no undo
+ * endpoint: the series gets its dates, status and checklist from `before`
+ * again, without `rrule`, which keeps the rule. Only then the completed copy
+ * goes, so a failure never loses the completion; one already gone counts as
+ * deleted. `after` is the update's answer, whose ETag the client may have
+ * replaced since.
+ */
+async function undoSeriesChange(qc: QueryClient, t: TFn, before: Todo, after: UpdatedTodo): Promise<void> {
+  const key = queryKeys.todos(before.calendarId)
+  try {
+    const etag = currentEtag(qc, after)
+    const restored = await endpoints.updateTodo(before.id, etag, todoToInput(before))
+    replaceEtag(qc, before.id, etag, restored.etag)
+    putTodo(qc, before.calendarId, restored)
+    const copy = after.completedCopy
+    if (copy) {
+      try {
+        await endpoints.deleteTodo(copy.id, currentEtag(qc, copy))
+      } catch (err) {
+        if (!isApiError(err, 'not_found')) throw err
+      }
+      removeTodo(qc, copy)
+    }
+    toast.success(t('tasks.undone'))
+  } catch (err) {
+    reportMutationError(err, t, qc, key)
+  } finally {
+    await qc.invalidateQueries({ queryKey: key })
+  }
+}
+
 /**
  * Updates a task and shows the change at once (NFR-26). With the task's `id`,
  * its updates run one after another, so the title field, the check and the
  * due date of one row never conflict with each other.
+ *
+ * Completing a series moves it on to its next occurrence instead (FR-17):
+ * the list keeps it until the server answers with the moved series and the
+ * completed copy. Completing or moving a series says where it goes on, with
+ * an Undo, for every caller alike.
  */
 export function useUpdateTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const prefs = usePrefs()
   return useMutation({
+    mutationKey: UPDATE_TODO_KEY,
     ...(id ? { scope: { id: `todo:${id}` } } : {}),
-    mutationFn: async ({ todo, input }: { todo: Todo; input: TodoInput }) => {
+    mutationFn: async ({ todo, input }: UpdateTodoVars) => {
       const etag = currentEtag(qc, todo)
       const updated = await endpoints.updateTodo(todo.id, etag, input)
-      const map = ownEtagsOf(qc)
-      map.set(`${todo.id} ${etag}`, updated.etag)
-      map.delete(`${todo.id} ${updated.etag}`)
+      replaceEtag(qc, todo.id, etag, updated.etag)
       return updated
     },
     onMutate: async ({ todo, input }) => {
       const key = queryKeys.todos(todo.calendarId)
       await qc.cancelQueries({ queryKey: key })
+      if (isSeriesCompletion(todo, input)) return { snapshot: undefined }
       const snapshot = qc.getQueryData<TodoList>(key)
       qc.setQueryData<TodoList>(key, (old) =>
         old ? { ...old, todos: old.todos.map((x) => (x.id === todo.id ? { ...x, ...input } : x)) } : old,
       )
       return { snapshot }
     },
-    onSuccess: (updated, { todo }) => {
-      qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
-        old ? { ...old, todos: old.todos.map((x) => (x.id === todo.id ? updated : x)) } : old,
-      )
+    onSuccess: (updated, vars) => {
+      const { todo } = vars
+      putTodo(qc, todo.calendarId, updated)
+      // `now` only decides whether the date needs its year.
+      const message = seriesMessage(vars, updated, t, prefs, new Date())
+      if (!message) return
+      toast.success(message, {
+        duration: ACTION_TOAST_MS,
+        action: {
+          label: t('common.undo'),
+          onClick: () => {
+            void undoSeriesChange(qc, t, todo, updated)
+          },
+        },
+      })
     },
     onError: (err, { todo }, ctx) => {
       if (ctx?.snapshot) qc.setQueryData(queryKeys.todos(todo.calendarId), ctx.snapshot)
@@ -400,11 +619,19 @@ export function useUpdateTodo(id?: string) {
   })
 }
 
-/** Takes a deleted task out of its list in the cache. */
-function removeTodo(qc: QueryClient, todo: Todo): void {
-  qc.setQueryData<TodoList>(queryKeys.todos(todo.calendarId), (old) =>
-    old ? { ...old, todos: old.todos.filter((x) => x.id !== todo.id) } : old,
-  )
+/**
+ * IDs of the recurring tasks with an update on its way (FR-17): their
+ * occurrences only move once the server has answered and they are reloaded.
+ */
+export function usePendingSeries(): ReadonlySet<string> {
+  const ids = useMutationState({
+    filters: { mutationKey: UPDATE_TODO_KEY, status: 'pending' },
+    select: (m) => {
+      const todo = (m.state.variables as UpdateTodoVars | undefined)?.todo
+      return todo?.recurring ? todo.id : null
+    },
+  })
+  return useMemo(() => new Set(ids.filter((x) => x !== null)), [ids])
 }
 
 /**
