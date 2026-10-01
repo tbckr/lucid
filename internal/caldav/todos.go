@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -585,11 +586,12 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, r
 // completeOccurrence completes the current occurrence of the open series c
 // (FR-15, FR-17), as Apple Reminders, Tasks.org and OpenTasks do:
 //
-//  1. a completed copy of the occurrence becomes a todo of its own, with the
-//     fields of in, the occurrence's dates in the series' form (or in's, if
-//     the client changed them) and no rule or alarms;
-//  2. the master rolls to the next occurrence with in's other fields, an
-//     open checklist and STATUS:NEEDS-ACTION;
+//  1. a completed copy of the occurrence becomes a todo of its own: a clone
+//     of the occurrence as stored (see cloneOccurrence), with the fields the
+//     client changed (see applyChangedFields) and with in's dates if the
+//     client sent other dates than it was given;
+//  2. the master rolls to the next occurrence with in's fields, an open
+//     checklist and STATUS:NEEDS-ACTION;
 //  3. if the master cannot be written, the copy is removed again.
 //
 // It returns the rolled series with the copy as CompletedCopy.
@@ -605,37 +607,17 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	now := s.p.now().UTC()
 	calendarID := encodeID(calPath)
 
-	// The copy is the occurrence as the client describes it: the stored
-	// occurrence unless the client sent other dates than it was given.
-	start, startAllDay, due, dueAllDay := occ.start, occ.startAllDay, occ.due, occ.dueAllDay
-	if !sameDates(todoFromObject(calObject{path: objPath, cal: cal}, "", c), in) {
-		start, startAllDay, due, dueAllDay = in.Start, in.StartAllDay, in.Due, in.DueAllDay
-	}
-	if start == nil && series.onDue {
-		start, startAllDay = due, dueAllDay
-	}
-	// Written like the series' own dates, with the VTIMEZONE a TZID refers
-	// to, which Lucid may not be able to generate.
-	startForm, dueForm := series.startForm, series.dueForm
-	if startForm.allDay != startAllDay {
-		startForm = dateForm{allDay: startAllDay}
-	}
-	if dueForm.allDay != dueAllDay {
-		dueForm = dateForm{allDay: dueAllDay}
-	}
+	// The copy is the occurrence as stored, changed where the client changed
+	// the series as it was given: its dates, its fields.
+	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
 	uid := newUID()
-	copyCal := newCalendar()
-	for _, tz := range cal.Children {
-		if id := text(tz.Props, ical.PropTimezoneID); tz.Name == ical.CompTimezone && id != "" &&
-			(id == startForm.param || id == dueForm.param) {
-			copyCal.Children = append(copyCal.Children, tz)
-		}
+	cc := cloneOccurrence(series, occ, uid, now)
+	if !sameDates(cur, in) {
+		series.setEntryDates(cc, todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay})
 	}
-	cc := newComponent(ical.CompToDo, uid, now)
-	copyCal.Children = append(copyCal.Children, cc)
-	setSeriesDate(copyCal, cc, ical.PropDateTimeStart, start, startForm)
-	setSeriesDate(copyCal, cc, ical.PropDue, due, dueForm)
-	applyTodoFields(cc, in, now)
+	applyChangedFields(cc, in, cur, now)
+	markCompleted(cc, now)
+	copyCal := entryCalendar(cal, cc)
 
 	// Roll the master in memory first: a rule that cannot be evaluated to its
 	// end fails before anything is written.
@@ -676,6 +658,132 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	return t, nil
 }
 
+// cloneOccurrence returns a new VTODO for occ of series s (FR-17): the master's
+// properties overlaid with occ's override, without RRULE, RDATE, EXDATE,
+// RECURRENCE-ID, X-KDE-LIBKCAL-DTRECURRENCE, VALARM children and
+// RELATED-TO;RELTYPE=CHILD, with a new UID and fresh DTSTAMP/CREATED/
+// LAST-MODIFIED/SEQUENCE, and occ's dates in the series' form.
+//
+// An override's property replaces all of the master's with its name, so a
+// full override, as Thunderbird writes it, is cloned as it is, and a minimal
+// one keeps the series' title and categories. The clone has no children: a
+// VTODO holds only VALARMs. Its VTIMEZONEs are entryCalendar's.
+func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time) *ical.Component {
+	c := ical.NewComponent(ical.CompToDo)
+	for name, props := range s.master.Props {
+		c.Props[name] = cloneProps(props)
+	}
+	if occ.override != nil {
+		for name, props := range occ.override.Props {
+			c.Props[name] = cloneProps(props)
+		}
+	}
+	for _, name := range []string{
+		ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates, ical.PropRecurrenceID, propKDEPending,
+	} {
+		c.Props.Del(name)
+	}
+	// The series' subtasks belong to the series, not to one done occurrence.
+	if rel := slices.DeleteFunc(c.Props[ical.PropRelatedTo], func(p ical.Prop) bool {
+		return strings.EqualFold(p.Params.Get(ical.ParamRelationshipType), "CHILD")
+	}); len(rel) > 0 {
+		c.Props[ical.PropRelatedTo] = rel
+	} else {
+		c.Props.Del(ical.PropRelatedTo)
+	}
+	maps.Copy(c.Props, newComponent(ical.CompToDo, uid, now).Props)
+	s.setEntryDates(c, occ)
+	return c
+}
+
+// cloneProps returns a copy of props that shares nothing with them.
+func cloneProps(props []ical.Prop) []ical.Prop {
+	out := make([]ical.Prop, len(props))
+	for i, p := range props {
+		params := make(ical.Params, len(p.Params))
+		for k, v := range p.Params {
+			params[k] = slices.Clone(v)
+		}
+		p.Params = params
+		out[i] = p
+	}
+	return out
+}
+
+// setEntryDates writes the start and due of occ as DTSTART and DUE of c, an
+// entry of its own for an occurrence of s (FR-16, FR-17): in the form the
+// series writes them, a DATE or UTC where the value type differs from the
+// series'. Without a start, a series anchored on DUE gives it DTSTART = DUE,
+// as it has itself. DUE replaces a DURATION, which RFC 5545 does not allow
+// next to it. The VTIMEZONEs are entryCalendar's.
+func (s *todoSeries) setEntryDates(c *ical.Component, occ todoOcc) {
+	start, startAllDay, due, dueAllDay := occ.start, occ.startAllDay, occ.due, occ.dueAllDay
+	if start == nil && s.onDue {
+		start, startAllDay = due, dueAllDay
+	}
+	startForm, dueForm := s.startForm, s.dueForm
+	if startForm.allDay != startAllDay {
+		startForm = dateForm{allDay: startAllDay}
+	}
+	if dueForm.allDay != dueAllDay {
+		dueForm = dateForm{allDay: dueAllDay}
+	}
+	setSeriesDate(nil, c, ical.PropDateTimeStart, start, startForm)
+	setSeriesDate(nil, c, ical.PropDue, due, dueForm)
+	c.Props.Del(ical.PropDuration)
+}
+
+// entryCalendar returns a calendar of its own for c, an entry cloned from a
+// series in src, with the VTIMEZONEs its DTSTART and DUE refer to (FR-17):
+// src's, which Lucid may not be able to generate, else generated ones.
+func entryCalendar(src *ical.Calendar, c *ical.Component) *ical.Calendar {
+	cal := newCalendar()
+	for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
+		p := c.Props.Get(name)
+		if p == nil {
+			continue
+		}
+		tzid := p.Params.Get(ical.ParamTimezoneID)
+		if tzid == "" || findVTimezone(cal, tzid) != nil {
+			continue
+		}
+		if tz := findVTimezone(src, tzid); tz != nil {
+			cal.Children = append(cal.Children, tz)
+		} else if loc := loadLocation(tzid); loc != nil && loc != time.UTC {
+			if d, err := parseDateProp(p); err == nil {
+				ensureVTimezoneAs(cal, tzid, loc, d.t.In(loc).Year())
+			}
+		}
+	}
+	cal.Children = append(cal.Children, c)
+	return cal
+}
+
+// applyChangedFields writes the fields of in that differ from cur (the master
+// as read), so an override's own title or notes survive an unchanged request.
+// The notes and the checklist, which share DESCRIPTION, count on their own:
+// a checked item keeps the notes of c. Status and dates are the caller's, so
+// the time, which only a status needs, goes unused (FR-17).
+func applyChangedFields(c *ical.Component, in domain.TodoInput, cur domain.Todo, _ time.Time) {
+	if in.Title != cur.Title {
+		setText(c.Props, ical.PropSummary, in.Title)
+	}
+	notesChanged, listChanged := in.Description != cur.Description, !slices.Equal(in.Checklist, cur.Checklist)
+	if notesChanged || listChanged {
+		notes, list := splitChecklist(text(c.Props, ical.PropDescription))
+		if notesChanged {
+			notes = in.Description
+		}
+		if listChanged {
+			list = in.Checklist
+		}
+		setText(c.Props, ical.PropDescription, joinChecklist(notes, list))
+	}
+	if in.Priority != cur.Priority {
+		setPriority(c.Props, in.Priority)
+	}
+}
+
 // DeleteTodo implements domain.CalendarService.
 func (s *service) DeleteTodo(ctx context.Context, todoID, etag string) error {
 	return s.deleteByID(ctx, todoID, etag)
@@ -685,26 +793,38 @@ func (s *service) DeleteTodo(ctx context.Context, todoID, etag string) error {
 func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, joinChecklist(in.Description, in.Checklist))
-	if in.Priority == 0 {
-		c.Props.Del(ical.PropPriority)
-	} else {
-		c.Props.Set(rawProp(ical.PropPriority, strconv.Itoa(in.Priority)))
-	}
+	setPriority(c.Props, in.Priority)
 
 	status := cmp.Or(in.Status, domain.TodoNeedsAction)
-	wasCompleted := strings.EqualFold(text(c.Props, ical.PropStatus), domain.TodoCompleted)
-	c.Props.Set(rawProp(ical.PropStatus, status))
 	if status == domain.TodoCompleted {
-		if !wasCompleted || c.Props.Get(ical.PropCompleted) == nil {
-			setUTCNow(c.Props, ical.PropCompleted, now)
-		}
-		c.Props.Set(rawProp(ical.PropPercentComplete, "100"))
+		markCompleted(c, now)
 		return
 	}
+	c.Props.Set(rawProp(ical.PropStatus, status))
 	c.Props.Del(ical.PropCompleted)
 	if p := c.Props.Get(ical.PropPercentComplete); p != nil && strings.TrimSpace(p.Value) == "100" {
 		c.Props.Del(ical.PropPercentComplete)
 	}
+}
+
+// setPriority writes PRIORITY, removing it for 0 (undefined).
+func setPriority(props ical.Props, priority int) {
+	if priority == 0 {
+		props.Del(ical.PropPriority)
+		return
+	}
+	props.Set(rawProp(ical.PropPriority, strconv.Itoa(priority)))
+}
+
+// markCompleted sets STATUS:COMPLETED, PERCENT-COMPLETE:100 and COMPLETED at
+// now; a todo completed before keeps its COMPLETED (FR-15).
+func markCompleted(c *ical.Component, now time.Time) {
+	wasCompleted := strings.EqualFold(text(c.Props, ical.PropStatus), domain.TodoCompleted)
+	c.Props.Set(rawProp(ical.PropStatus, domain.TodoCompleted))
+	if !wasCompleted || c.Props.Get(ical.PropCompleted) == nil {
+		setUTCNow(c.Props, ical.PropCompleted, now)
+	}
+	c.Props.Set(rawProp(ical.PropPercentComplete, "100"))
 }
 
 // applyTodoDates writes the start and due of in (FR-16).

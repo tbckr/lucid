@@ -677,8 +677,9 @@ func countToUntil(rrule string, last time.Time, f dateForm) string {
 //   - floating (a wall clock without "Z") when f.floating;
 //   - else in UTC.
 //
-// A TZID gets a VTIMEZONE in cal unless one with that TZID exists, or Lucid
-// cannot resolve it. A nil t removes the property.
+// A TZID gets a VTIMEZONE in cal unless one with that TZID exists, Lucid
+// cannot resolve it, or cal is nil (see entryCalendar). A nil t removes the
+// property.
 func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.Time, f dateForm) {
 	if t == nil {
 		c.Props.Del(name)
@@ -701,7 +702,7 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 		p.Params.Set(ical.ParamTimezoneID, tzid)
 		p.Value = wall.Truncate(time.Second).Format(icalDateTime)
 		c.Props.Set(p)
-		if loc != nil && loc != time.UTC {
+		if cal != nil && loc != nil && loc != time.UTC {
 			ensureVTimezoneAs(cal, tzid, loc, wall.Year())
 		}
 	case f.floating:

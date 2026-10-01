@@ -1126,6 +1126,107 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 			[]string{"DTSTART:20250311T090000Z", "RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z"}, nil)
 	})
 
+	// The copy is a clone of the stored occurrence: what Lucid does not edit
+	// stays, only the rule and its alarms and children go (FR-17).
+	t.Run("copy keeps the master's other properties", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z",
+			"CATEGORIES:Home", "RELATED-TO:parent-uid", "LOCATION:Desk", "URL:https://x", "X-FOO:bar",
+			"RELATED-TO;RELTYPE=CHILD:kid",
+			"BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M", "DESCRIPTION:Reminder", "END:VALARM",
+		})
+		got := completeListed(t, e, id)
+		if c := got.CompletedCopy; c == nil || c.UID == "" || c.UID == "r" {
+			t.Errorf("completed copy = %+v; want a new UID", c)
+		}
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{
+			"CATEGORIES:Home", "RELATED-TO:parent-uid", "LOCATION:Desk", "URL:https://x", "X-FOO:bar",
+			"STATUS:COMPLETED", "PERCENT-COMPLETE:100", "DTSTART:20250310T090000Z",
+		}, []string{"RRULE", "EXDATE", "BEGIN:VALARM", "RELTYPE=CHILD", "\r\nUID:r\r\n"})
+		// Cloning leaves the series' own properties alone.
+		checkStored(t, "master", storedObject(t, e, id), []string{
+			"RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z", "CATEGORIES:Home", "RELATED-TO:parent-uid",
+			"RELATED-TO;RELTYPE=CHILD:kid", "BEGIN:VALARM", "X-FOO:bar",
+		}, nil)
+	})
+
+	// Probe P3: the frontend knows only the series, so a request that
+	// leaves its title and notes as they are must not overwrite the
+	// override's own (FR-17).
+	t.Run("copy of an overridden occurrence keeps its own fields", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "CATEGORIES:Home", "X-FOO:bar"},
+			[]string{
+				"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T100000Z",
+				"SUMMARY:Moved title", "DESCRIPTION:Override notes", "LOCATION:Here",
+			})
+		got := completeListed(t, e, id)
+		if c := got.CompletedCopy; c == nil || c.Title != "Moved title" || c.Description != "Override notes" {
+			t.Errorf("completed copy = %+v; want the override's title and notes", c)
+		}
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{
+			"SUMMARY:Moved title", "DESCRIPTION:Override notes", "LOCATION:Here", "CATEGORIES:Home", "X-FOO:bar",
+			"DTSTART:20250311T100000Z",
+		}, []string{"SUMMARY:Series", "RECURRENCE-ID"})
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"SUMMARY:Series", "DTSTART:20250317T090000Z"}, []string{"Moved title", "LOCATION"})
+	})
+
+	// Review Focus 3: another client's override with only its dates keeps
+	// the series' title and categories (FR-17).
+	t.Run("copy of a minimal override keeps the series title", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e,
+			[]string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY", "CATEGORIES:Home"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z"})
+		got := completeListed(t, e, id)
+		if c := got.CompletedCopy; c == nil || c.Title != "Series" {
+			t.Errorf("completed copy = %+v; want the series' title", c)
+		}
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{
+			"SUMMARY:Series", "CATEGORIES:Home", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z",
+		}, []string{"RECURRENCE-ID"})
+	})
+
+	// What the client changes while completing goes to the copy, over an
+	// override's own value, and to the series (FR-17).
+	t.Run("a title changed while completing goes to the copy", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "SUMMARY:Moved title"})
+		f := listedTodo(t, e, id)
+		in := completeInput(&f)
+		in.Title, in.Priority = "Renamed", 5
+		got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if c := got.CompletedCopy; got.Title != "Renamed" || c == nil || c.Title != "Renamed" || c.Priority != 5 {
+			t.Errorf("rolled series = %+v, copy = %+v; want both renamed", got, c)
+		}
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"SUMMARY:Renamed", "PRIORITY:5"}, []string{"Moved title"})
+		checkStored(t, "master", storedObject(t, e, id), []string{"SUMMARY:Renamed", "PRIORITY:5"}, nil)
+	})
+
+	// Notes and checklist share DESCRIPTION; a change to one keeps the
+	// override's other (FR-17).
+	t.Run("a checklist checked while completing keeps the override's notes", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", `DESCRIPTION:Notes\n\n- [ ] a`},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DESCRIPTION:Override notes"})
+		f := listedTodo(t, e, id)
+		in := completeInput(&f)
+		in.Checklist = []domain.ChecklistItem{{Text: "a", Done: true}}
+		got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{`DESCRIPTION:Override notes\n\n- [x] a`}, nil)
+		checkStored(t, "master", storedObject(t, e, id), []string{`DESCRIPTION:Notes\n\n- [ ] a`}, nil)
+	})
+
 	t.Run("duration stays", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -1135,7 +1236,8 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 			t.Errorf("due = %v; want 2025-03-11T11:00Z", got.Due)
 		}
 		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250311T090000Z", "DURATION:PT2H"}, []string{"DUE"})
-		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000Z", "DUE:20250310T110000Z"}, nil)
+		// DUE stands for the master's DURATION; RFC 5545 allows only one.
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000Z", "DUE:20250310T110000Z"}, []string{"DURATION"})
 	})
 
 	// A rolled series keeps the date form other clients wrote (FR-17).
@@ -1205,7 +1307,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY", "X-KDE-LIBKCAL-DTRECURRENCE:20250314T090000Z"})
 		got := completeListed(t, e, id)
 		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250315T090000Z"}, []string{"X-KDE-LIBKCAL-DTRECURRENCE"})
-		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250314T090000Z"}, nil)
+		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250314T090000Z"}, []string{"X-KDE-LIBKCAL-DTRECURRENCE"})
 	})
 
 	// The copy is the occurrence as the client describes it; the series

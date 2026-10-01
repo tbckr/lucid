@@ -16,14 +16,22 @@ func ensureVTimezone(cal *ical.Calendar, loc *time.Location, year int) {
 // ensureVTimezoneAs is ensureVTimezone for a TZID other than loc's IANA
 // name, such as "/mozilla.org/20050126_1/Europe/Berlin" (FR-17).
 func ensureVTimezoneAs(cal *ical.Calendar, tzid string, loc *time.Location, year int) {
-	for _, c := range cal.Children {
-		if c.Name == ical.CompTimezone && text(c.Props, ical.PropTimezoneID) == tzid {
-			return
-		}
+	if findVTimezone(cal, tzid) != nil {
+		return
 	}
 	tz := vtimezone(loc, year)
 	tz.Props.SetText(ical.PropTimezoneID, tzid)
 	cal.Children = append([]*ical.Component{tz}, cal.Children...)
+}
+
+// findVTimezone returns the VTIMEZONE of cal with the given TZID, or nil.
+func findVTimezone(cal *ical.Calendar, tzid string) *ical.Component {
+	for _, c := range cal.Children {
+		if c.Name == ical.CompTimezone && text(c.Props, ical.PropTimezoneID) == tzid {
+			return c
+		}
+	}
+	return nil
 }
 
 type transition struct {

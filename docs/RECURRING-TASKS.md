@@ -838,11 +838,22 @@ described in [API.md](API.md#todos).
 **Completing** the current occurrence writes two resources, as Apple
 Reminders does:
 
-1. A completed copy under a new UID (`If-None-Match: *`): the occurrence's
-   dates in the form the series writes them (a `DATE`, the same `TZID` with
-   its `VTIMEZONE`, floating, or UTC), `SUMMARY`, `DESCRIPTION` with the
-   checklist, `PRIORITY`, `STATUS:COMPLETED`, `COMPLETED` and
-   `PERCENT-COMPLETE:100`, but no rule and no alarms.
+1. A completed copy under a new UID (`If-None-Match: *`), a clone of the
+   occurrence as stored: the master's properties, each replaced by the
+   occurrence's override where it has its own. Categories, the parent task,
+   location, URL, `X-` properties and an override's own title and notes
+   stay; a minimal override from another client, with only its dates, keeps
+   the series' title. The rule parts go (`RRULE`, `RDATE`, `EXDATE`,
+   `RECURRENCE-ID`, KDE's `X-KDE-LIBKCAL-DTRECURRENCE`), and so do the
+   alarms, since a done task must not ring, and the links to the series'
+   subtasks (`RELATED-TO;RELTYPE=CHILD`). `DTSTAMP`, `CREATED`,
+   `LAST-MODIFIED` and `SEQUENCE` are new. The occurrence's dates are
+   written in the form the series writes them (a `DATE`, the same `TZID`
+   with its `VTIMEZONE`, floating, or UTC), a `DURATION` as `DUE`. Of the
+   request, the copy takes only what the client changed: the title, the
+   notes, the checklist and the priority, each on its own, and the dates,
+   since the client knows only the series. Last come `STATUS:COMPLETED`,
+   `COMPLETED` and `PERCENT-COMPLETE:100`.
 2. The rolled master (`If-Match`): `DTSTART` and `DUE` move to the next
    occurrence's place in the rule, in the form they are written in. A series
    anchored on `DUE` gets a `DTSTART` equal to `DUE`, since RFC 5545 requires
