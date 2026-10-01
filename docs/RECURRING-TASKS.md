@@ -827,10 +827,12 @@ described in [API.md](API.md#todos).
   `EXDATE` in the value type of `DTSTART`; one of the other type belongs to
   the occurrence on its date: a date in a timed series to the occurrence on
   that date in the series' time zone, a date-time in an all-day series to
-  the one on its date as written. A completed override is a **done**
-  occurrence, also before `DTSTART`, where a rolling client left it behind. An
-  override with other dates moves its occurrence; a cancelled override or an
-  `EXDATE` removes it.
+  the one on its date as written. Where both exist for one occurrence, the
+  one in `DTSTART`'s own value type wins, and the other stays hidden: it is
+  never read as that occurrence's override, done or not. A completed
+  override is a **done** occurrence, also before `DTSTART`, where a rolling
+  client left it behind. An override with other dates moves its occurrence;
+  a cancelled override or an `EXDATE` removes it.
 - An override on none of the rule's occurrences, from `DTSTART` on and
   before the rule's last occurrence, is an occurrence **off the rule**, in
   the order of its `RECURRENCE-ID`; one after the last occurrence is listed
@@ -894,16 +896,16 @@ off the rule, `DTSTART` would move the rule. From an occurrence off the rule
 it rolls as usual, and the override of that occurrence goes with the roll.
 When the next occurrence is one off the rule, the master stays as it is:
 completing an occurrence of the rule writes its copy and an `EXDATE` for
-it, in the form of `DTSTART`, instead of the roll, and completing one off
-the rule writes its copy and drops its override. The `EXDATE` stays behind
-once the master rolls on.
+it, in the form of `DTSTART` (of `DUE` for a series anchored on it), instead
+of the roll, and completing one off the rule writes its copy and drops its
+override. The `EXDATE` stays behind once the master rolls on.
 
 If the master cannot be written, for example because another client changed
 it in the meantime, Lucid deletes the copy again and reports the error. The
 last occurrence gets no copy: the master itself becomes `COMPLETED` and keeps
-its `RRULE`, as with Apple, Tasks.org and Evolution. Undo writes the master's
-previous dates, status and checklist back, marked as the undo of a
-completion (see below), then deletes the copy.
+its `RRULE`, as with Apple, Tasks.org and Evolution. An undo of the
+completion restores the master's resource exactly as it was before the
+write, and removes the copy (see Undo below).
 
 A series anchored on `DUE` gets its `DTSTART` because RFC 5545 requires one
 with `RRULE`, and because the readers above do better with it: Thunderbird
@@ -955,29 +957,23 @@ it: clients built on ical.js, such as Thunderbird, hide a task whose
 that leaves the move window (see Limits), in the series' zone; an undo
 restores the resource as read and is no move.
 
-**Undoing a completion** says so (`undoCompletion` in the API) and puts the
-series back as it was before the completion. The roll moved none of the
-rule's instances, so nothing that refers to them moves back either: later
-overrides, `EXDATE`s and the `UNTIL` stay, and the series ends where it
-did. The master goes back onto the rule date of the completed occurrence,
-the latest one before its current occurrence without an override or
-`EXDATE`, since the roll dropped exactly that override. If another client
-had moved the completed occurrence, the undo writes an override that moves
-it there again. With fixed days, a start off the rule's days at the rule's
-time of day, between that rule date and the current occurrence, becomes
-`DTSTART` again instead: that is what Lucid's own move within the window
-leaves, as clients that read only the master show it. Another client's
-move to another day at the same time is written the same way, as
-`DTSTART` rather than an override; the occurrences are the same, only the
-stored form differs. The override of the occurrence the series had rolled
-onto stays too, so an occurrence another client had moved stays moved.
-
-The undo of the last repeat's completion reopens the master where it is,
-unless the same save also moved it. Then the undo is that move's inverse,
-a move like any other: the later references and an interval rule's `UNTIL`
-move back, and an `UNTIL` that a fixed-day move had pulled onto the new
-date goes back with it, so no repeat is left over. Undoing a move is a
-plain move back by the same amount, which moves all of them back.
+**Undo** restores the todo's resource exactly as it was read before the
+write that returned `undoToken` (a snapshot, kept server-side under the
+token), instead of reversing what that write did. Because the master and
+its overrides live in one calendar resource (RFC 4791 §4.1), one `PUT` of
+those bytes puts back everything the write touched together: a completion's
+roll, a move's shifted references and `UNTIL`, or a rule change's dropped
+overrides and `EXDATE`s. It also removes the completed copy that write
+created, unless another client has since changed it, when the copy stays
+and the response reports `copyKept: true`. A rule change or removal that
+converted other clients' completions into entries of their own (see below)
+returns no `undoToken` to begin with, so those entries are never undone by
+it. Undo itself fails cleanly instead of writing anything partial:
+the todo changed since the write consumes the snapshot (`409`); a token
+that is unknown, expired, already used, or belongs to another todo has no
+snapshot to consume either (`404`, "nothing to undo"); only an unreachable
+or failing CalDAV server keeps the snapshot, so the client can retry
+(`502`).
 
 **Setting or changing a rule** applies it from the current occurrence on: its
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
@@ -995,11 +991,13 @@ without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events.
 Neither loses a completion. Every override with `STATUS:COMPLETED` that
 goes, an occurrence another app completed, first becomes a completed task of
 its own (`If-None-Match: *`): a clone like the copy of a completion, with the
-other app's `COMPLETED` time and nothing of the request. The UI does not
-mention it. Cancelled and open overrides go. If the master cannot be
-written, Lucid deletes those tasks again. A change that creates them cannot
-be undone: restoring the series would bring the overrides back next to
-their tasks.
+other app's `COMPLETED` time and nothing of the request. Two kinds keep no
+entry: one an `EXDATE` excludes is no done occurrence at all, and one of the
+other value type hidden behind an override of the same repeat (see Reading)
+never reads as done either. The UI does not mention the entries it creates.
+Cancelled and open overrides go. If the master cannot be written, Lucid
+deletes those tasks again. A change that creates them cannot be undone:
+restoring the series would bring the overrides back next to their tasks.
 
 **Deleting** a series deletes its resource; completed copies stay. Every write
 keeps the properties and components Lucid does not know.
@@ -1020,13 +1018,17 @@ keeps the properties and components Lucid does not know.
   occurrence to stay before, so it can move to a later day, but not to an
   earlier one. A current occurrence off the rule moves alone, so it stays
   before the next occurrence the same way, also with an interval rule.
+- The move window is counted in the series' zone; the UI converts it to the
+  browser's. Removing a series' time where the two zones differ can land
+  right on an edge: the UI can refuse an edit on the current occurrence's
+  own day that the server would in fact accept, or let it through the
+  editor and answer with a `400` on the next repeat's day. Either way
+  nothing wrong is stored.
+- A view reports at most the first 1,000 occurrences of a series within the
+  requested window; a sub-hourly series can have more, and the rest does
+  not show.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
-- Undoing the completion of an occurrence another client had moved restores
-  its dates, but not the rest of that client's override: the override Lucid
-  writes has the series' summary and is open. On fixed days, a move to
-  another day at the rule's time of day comes back as `DTSTART` instead of
-  an override, with the same occurrences.
 - A series in a `TZID` Lucid cannot resolve is read at its wall clock as
   UTC, so its `COUNT` stays a `COUNT`: an `UNTIL` computed from that wall
   clock would end the series one occurrence early in a reader that knows a
@@ -1041,13 +1043,39 @@ keeps the properties and components Lucid does not know.
   the next one and ends up off its occurrence: a series moved from 10 March
   to 31 March sends an override of 10 April to 1 May, and an `UNTIL` can run
   over the same way.
-- Removing a rule drops all of its overrides, and changing it those from
-  the current occurrence on. Only the completed ones stay, as completed
-  tasks of their own that are not linked to the series; another app's move
-  or cancellation of an occurrence goes.
+- Removing a series' time converts a timed `UNTIL` to a date, the civil date
+  of its instant in the series' zone. One written as a UTC end-of-day
+  instant, as some clients write it, can fall on the next local date in a
+  zone ahead of UTC, so the now all-day series gets one final repeat the
+  timed one did not have.
+- Lucid reads an override with `RANGE=THISANDFUTURE` as one for its own
+  occurrence only, not as a split of the rest of the series; it ignores an
+  override's own `DURATION` and computes its due from its start plus the
+  master's offset instead; and an override without its own `DTSTART` is
+  read at its `RECURRENCE-ID`.
+- On a rule with several repeats a day (such as `BYHOUR=9,17`), an override
+  of the other value type — a date, with no time of day — stands for every
+  repeat on that date: Lucid cannot tell which one it was meant for.
 - A changed rule drops the old rule's `EXDATE`s, so an occurrence skipped
   under the old rule comes back where the new one has an occurrence on the
   same date.
+- Completing a rule occurrence whose next occurrence is off the rule
+  excludes it with an `EXDATE` instead of rolling the master (see Writing).
+  A client that reads only the master, such as Tasks.org or Apple
+  Reminders, then keeps showing the completed occurrence's date as due
+  until a later completion rolls the master past it.
+- Converting other clients' completions into entries of their own, on a
+  rule change or removal, creates them one by one; if the master write then
+  fails, cleanup deletes the entries again, bounded by a fixed time budget.
+  With hundreds of completions that budget can run out before all are
+  removed, leaving some behind; retrying the same change converts those
+  completions again, so the series ends up with duplicate entries for them.
+- Changing only the due date, without the start, changes it for every
+  repeat alike: RFC 5545 keeps one offset between `DTSTART` and `DUE` for
+  the whole series (§3.8.5.3).
+- An absolute alarm trigger (`VALARM` with `TRIGGER;VALUE=DATE-TIME`) stays
+  at its instant when the master rolls or moves; only a relative trigger
+  follows, as with Tasks.org and Evolution.
 - Moving an occurrence of a recurring **event** still moves the whole series,
   without adjusting `BYDAY`/`BYMONTHDAY`.
 - "Repeat from completion date" is not supported; Tasks.org keeps it local,

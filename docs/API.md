@@ -244,8 +244,10 @@ it.
 For a recurring todo, these edits are handled specially:
 
 - **Completing the current occurrence** (`status: COMPLETED` on an open
-  series): the backend creates a completed copy of the occurrence — a new
-  todo, its own `id`/`uid`, no rule, the occurrence's dates — and rolls the
+  series): the backend creates a completed copy — a clone of the occurrence
+  as stored, so it can carry an override's own title and notes, under its
+  own `id`/`uid`, with no rule and the occurrence's dates; alarms and
+  scheduling properties (`ORGANIZER`, `ATTENDEE`) are removed — and rolls the
   master to its next open occurrence (`NEEDS-ACTION`, checklist reset, a
   `COUNT` rule converted to an equivalent `UNTIL` once so the remaining
   occurrence count survives the rewrite). The response is the **rolled
