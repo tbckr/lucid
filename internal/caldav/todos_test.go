@@ -2137,6 +2137,135 @@ func TestUpdateTodoSeries(t *testing.T) {
 			[]string{"DTSTART;TZID=Europe/Berlin:20250313T090000", "DUE;TZID=Europe/Berlin:20250313T100000", "BEGIN:VTIMEZONE"}, nil)
 	})
 
+	// Probe P4: a move that adds or removes the time rewrites what refers to
+	// the rule in the new value type, or a DATE UNTIL would end a timed
+	// series a repeat early (RFC 5545 3.3.10) and other clients' done
+	// repeats and exceptions would match none. A COUNT that a fixed-day move
+	// turns into UNTIL takes the new value type too (FR-17).
+	for _, tc := range []struct {
+		name        string
+		master      []string
+		overrides   [][]string
+		allDay      bool
+		at          time.Time // the moved start and due
+		want, lacks []string
+		dates       []time.Time
+		states      []string
+	}{
+		{
+			name: "adding a time keeps done repeats and the end",
+			master: []string{
+				"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327", "EXDATE;VALUE=DATE:20250320",
+			},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250317", "STATUS:COMPLETED"}},
+			at:        date(2025, 3, 10, 8, 0), // 09:00 in Berlin
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T090000",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z\r\n",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250317T090000", "EXDATE;TZID=Europe/Berlin:20250320T090000",
+			},
+			lacks: []string{"VALUE=DATE"},
+			dates: []time.Time{
+				date(2025, 3, 10, 8, 0), date(2025, 3, 13, 8, 0), date(2025, 3, 17, 8, 0), date(2025, 3, 24, 8, 0), date(2025, 3, 27, 8, 0),
+			},
+			states: []string{
+				domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceDone,
+				domain.OccurrenceUpcoming, domain.OccurrenceUpcoming,
+			},
+		},
+		{
+			// An override's own dates follow too.
+			name: "removing the time converts back to dates",
+			master: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T090000",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327T080000Z", "EXDATE;TZID=Europe/Berlin:20250320T090000",
+			},
+			overrides: [][]string{{
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250317T090000", "DTSTART;TZID=Europe/Berlin:20250317T090000",
+				"DUE;TZID=Europe/Berlin:20250317T100000", "STATUS:COMPLETED",
+			}},
+			allDay: true,
+			at:     date(2025, 3, 10, 0, 0),
+			want: []string{
+				"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327\r\n",
+				"RECURRENCE-ID;VALUE=DATE:20250317", "DTSTART;VALUE=DATE:20250317", "DUE;VALUE=DATE:20250317",
+				"EXDATE;VALUE=DATE:20250320",
+			},
+			lacks: []string{"TZID=", "UNTIL=20250327T"},
+			dates: []time.Time{
+				date(2025, 3, 10, 0, 0), date(2025, 3, 13, 0, 0), date(2025, 3, 17, 0, 0), date(2025, 3, 24, 0, 0), date(2025, 3, 27, 0, 0),
+			},
+			states: []string{
+				domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceDone,
+				domain.OccurrenceUpcoming, domain.OccurrenceUpcoming,
+			},
+		},
+		{
+			name:   "a fixed-day COUNT ends in the new value type, a time added",
+			master: []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=2"},
+			at:     date(2025, 3, 11, 8, 0), // Tuesday 09:00 in Berlin
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250311T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313T080000Z\r\n",
+			},
+			lacks:  []string{"COUNT", "VALUE=DATE"},
+			dates:  []time.Time{date(2025, 3, 11, 8, 0), date(2025, 3, 13, 8, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming},
+		},
+		{
+			name:   "a fixed-day COUNT ends in the new value type, the time removed",
+			master: []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=2"},
+			allDay: true,
+			at:     date(2025, 3, 11, 0, 0), // Tuesday
+			want:   []string{"DTSTART;VALUE=DATE:20250311", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313\r\n"},
+			lacks:  []string{"COUNT", "UNTIL=20250313T"},
+			dates:  []time.Time{date(2025, 3, 11, 0, 0), date(2025, 3, 13, 0, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			in.Start, in.StartAllDay, in.Timezone = ptr(tc.at), tc.allDay, "Europe/Berlin"
+			if f.Due != nil {
+				in.Due, in.DueAllDay = ptr(tc.at), tc.allDay
+			}
+			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "series", storedObject(t, e, id), tc.want, tc.lacks)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 10, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, tc.dates, tc.states)
+		})
+	}
+
+	// A new rule keeps the done repeats before the current one as history,
+	// in the value type of its dates (FR-17).
+	t.Run("a new rule with another value type converts earlier done overrides", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART;VALUE=DATE:20250310", "STATUS:COMPLETED"})
+		f := listedTodo(t, e, id)
+		in := withRule(editInput(&f), "FREQ=WEEKLY")
+		at := date(2025, 3, 11, 8, 0) // 09:00 in Berlin
+		in.Start, in.StartAllDay, in.Due, in.DueAllDay, in.Timezone = &at, false, &at, false, "Europe/Berlin"
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "series", storedObject(t, e, id), []string{
+			"RRULE:FREQ=WEEKLY\r\n", "DTSTART;TZID=Europe/Berlin:20250311T090000",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250310T090000",
+		}, []string{"VALUE=DATE"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 20, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 10, 8, 0), date(2025, 3, 11, 8, 0), date(2025, 3, 18, 8, 0)},
+			[]string{domain.OccurrenceDone, domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
+	})
+
 	t.Run("rrule omitted keeps the rule", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})

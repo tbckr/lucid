@@ -440,15 +440,18 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //   - an UNTIL from the moved occurrence on and the references to later
 //     occurrences (their overrides with their dates, EXDATEs) move along,
 //     see refShift and movedRule;
+//   - a move that adds or removes the time rewrites UNTIL and the
+//     references in the new value type instead, see retypeRefs;
 //   - an UNTIL before the new DTSTART moves onto it.
 //
 // A rule Lucid cannot evaluate (of a completed series) only gets its dates
-// moved. It fails, without changing anything, when in has no date or the
-// rule cannot be walked up to the moved occurrence.
+// moved, and its references converted. It fails, without changing anything,
+// when in has no date or the rule cannot be walked up to the moved
+// occurrence.
 //
 // Where the moved occurrence lies in the series (the instances before it)
-// is decided on the series as read, s, and the rewritten rule is written
-// last: once shifted, it no longer says where the moved occurrence lay.
+// is decided on the series as read, s: once shifted, the rewritten rule no
+// longer says where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
 	start, allDay := in.Start, in.StartAllDay
 	if start == nil {
@@ -460,7 +463,9 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	c := s.master
 	rid := s.reportedRid(status)
 	var shift func(dateValue) time.Time
-	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && s.err == nil && s.rrule != "" {
+	p := c.Props.Get(ical.PropRecurrenceRule)
+	evaluable := p != nil && s.err == nil && s.rrule != ""
+	if evaluable {
 		before, err := s.instancesBefore(rid)
 		if err != nil {
 			return errRuleUnsupported
@@ -474,18 +479,20 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 			rule = countToUntil(rule, last, s.startForm)
 		}
 		shift = s.refShift(rid, *start, allDay)
-		rule = movedRule(rule, before, rid, shift)
-		// UNTIL never ends before the moved series starts.
-		if loc := s.anchor.loc(); untilBefore(rule, *start, loc) {
-			rule = untilAt(rule, *start, loc)
-		}
-		p.Value = rule
+		p.Value = movedRule(rule, before, rid, shift)
 	}
 	writeSeriesDates(cal, c, in, true)
 	dropOverrides(cal, c, rid.Equal)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
 		shiftLaterRefs(cal, c, rid, shift)
+	}
+	to, _ := parseDateProp(c.Props.Get(ical.PropDateTimeStart)) // as just written
+	s.retypeRefs(cal, to)
+	// UNTIL never ends before the moved series starts, compared in the
+	// value type and zone the series now has.
+	if loc := to.loc(); evaluable && untilBefore(p.Value, *start, loc) {
+		p.Value = untilAt(p.Value, *start, loc)
 	}
 	return nil
 }
@@ -517,7 +524,8 @@ func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
 //   - for fixed days by its change in time of day only, as the instances
 //     stay on the rule's days.
 //
-// They stay when the value type changes, which no reference can follow.
+// It returns nil when the value type changes: convertRefs rewrites the
+// references in the new type then, each on its own day (see retypeRefs).
 func (s *todoSeries) refShift(rid, to time.Time, allDay bool) func(dateValue) time.Time {
 	if allDay != s.anchor.allDay {
 		return nil
@@ -678,6 +686,107 @@ func shiftLaterRefs(cal *ical.Calendar, master *ical.Component, rid time.Time, s
 	}
 }
 
+// retypeRefs converts the references of s into the value type of to, the
+// master's DTSTART as just written, when it differs from the anchor's as
+// read (FR-17), see convertRefs: a time added takes to's time of day in
+// to's zone, a time removed takes the date in the zone the series was read
+// in. A series read without an anchor has no value type to convert from.
+func (s *todoSeries) retypeRefs(cal *ical.Calendar, to dateValue) {
+	switch {
+	case errors.Is(s.err, errNoAnchor), to.allDay == s.anchor.allDay:
+	case to.allDay:
+		s.convertRefs(cal, true, 0, s.anchor.loc(), to.form())
+	default:
+		s.convertRefs(cal, false, time.Duration(secondOfDay(to.t))*time.Second, to.loc(), to.form())
+	}
+}
+
+// convertRefs rewrites UNTIL, EXDATE, the overrides' RECURRENCE-ID and their
+// own DTSTART/DUE of master into the value type of the new anchor (FR-17):
+// DATE → DATE-TIME at the new anchor's time of day in the series' zone (UNTIL
+// in UTC, the rest in the series' form); DATE-TIME → DATE as the date in the
+// series' zone.
+//
+// loc is the series' zone: the new anchor's for DATE-TIME, the one the
+// series was read in for DATE; f is the new anchor's form, and a floating
+// one gets a floating UNTIL, as RFC 5545 3.3.10 wants. A reference already
+// of the new value type stays as written, unless it shares an EXDATE with
+// one that is not (see retypeDateProp).
+func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay time.Duration, loc *time.Location, f dateForm) {
+	c := s.master
+	conv := func(d dateValue) time.Time {
+		if toAllDay {
+			return civilDate(d.t.In(loc))
+		}
+		// A DATE is midnight UTC of its day; the time of day is on the wall
+		// clock, also on a day the zone changes its offset.
+		y, m, day := d.t.Date()
+		return time.Date(y, m, day, 0, 0, int(timeOfDay/time.Second), 0, loc)
+	}
+	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil {
+		p.Value = mapRulePart(p.Value, "UNTIL", func(v string) string {
+			d, err := parseDateValue(v, nil)
+			switch {
+			case err != nil || d.allDay == toAllDay:
+				return v
+			case toAllDay:
+				return conv(d).Format(icalDate)
+			case f.floating:
+				return conv(d).UTC().Format(icalDateTime)
+			default:
+				return conv(d).UTC().Format(icalDateTimeUTC)
+			}
+		})
+	}
+	exdates := c.Props[ical.PropExceptionDates]
+	for i := range exdates {
+		retypeDateProp(cal, &exdates[i], toAllDay, f, conv)
+	}
+	for _, o := range cal.Children {
+		if o == c || o.Name != c.Name {
+			continue
+		}
+		for _, name := range []string{ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDue} {
+			vals := o.Props[name]
+			for i := range vals {
+				retypeDateProp(cal, &vals[i], toAllDay, f, conv)
+			}
+		}
+	}
+}
+
+// retypeDateProp rewrites the date property p in the form f when one of its
+// values is not of the value type toAllDay (FR-17): such values by conv, the
+// others at their own instant. Its parameters other than VALUE and TZID
+// stay; one that cannot be read stays as written.
+func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay bool, f dateForm, conv func(dateValue) time.Time) {
+	dvs, err := parseDateList(p)
+	if err != nil || !slices.ContainsFunc(dvs, func(d dateValue) bool { return d.allDay != toAllDay }) {
+		return
+	}
+	var np *ical.Prop
+	vals := make([]string, len(dvs))
+	for i, d := range dvs {
+		t := d.t
+		if d.allDay != toAllDay {
+			t = conv(d)
+		}
+		np = seriesDateProp(cal, p.Name, t, f)
+		vals[i] = np.Value
+	}
+	if p.Params == nil {
+		p.Params = ical.Params{}
+	}
+	for _, k := range []string{ical.ParamValue, ical.ParamTimezoneID} {
+		if v, ok := np.Params[k]; ok {
+			p.Params[k] = v
+		} else {
+			p.Params.Del(k)
+		}
+	}
+	p.Value = strings.Join(vals, ",")
+}
+
 // dropOverrides removes the overrides of master from cal whose
 // RECURRENCE-ID instant drop reports (FR-17).
 func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid time.Time) bool) {
@@ -770,6 +879,12 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 		c.Props.Del(name)
 		return
 	}
+	c.Props.Set(seriesDateProp(cal, name, *t, f))
+}
+
+// seriesDateProp returns the date property name at t in the form f, see
+// setSeriesDate, which also says when it adds a VTIMEZONE to cal (FR-17).
+func seriesDateProp(cal *ical.Calendar, name string, t time.Time, f dateForm) *ical.Prop {
 	tzid := cmp.Or(f.param, f.tzid)
 	var loc *time.Location
 	if tzid != "" {
@@ -777,7 +892,7 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 	}
 	switch {
 	case f.allDay:
-		c.Props.Set(newDateProp(name, *t, true, nil))
+		return newDateProp(name, t, true, nil)
 	case f.param != "" || (loc != nil && loc != time.UTC):
 		wall := t.UTC()
 		if loc != nil {
@@ -786,16 +901,16 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 		p := ical.NewProp(name)
 		p.Params.Set(ical.ParamTimezoneID, tzid)
 		p.Value = wall.Truncate(time.Second).Format(icalDateTime)
-		c.Props.Set(p)
 		if cal != nil && loc != nil && loc != time.UTC {
 			ensureVTimezoneAs(cal, tzid, loc, wall.Year())
 		}
+		return p
 	case f.floating:
 		p := ical.NewProp(name)
 		p.Value = t.UTC().Truncate(time.Second).Format(icalDateTime)
-		c.Props.Set(p)
+		return p
 	default:
-		c.Props.Set(newDateProp(name, *t, false, nil))
+		return newDateProp(name, t, false, nil)
 	}
 }
 

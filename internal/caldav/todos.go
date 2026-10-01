@@ -571,8 +571,9 @@ func newTodoRule(in domain.TodoInput) (string, error) {
 // yet), the rule rr from its current occurrence on (FR-17): the dates of in,
 // which describe that occurrence, become DTSTART and DUE; overrides from it
 // on and KDE's pending occurrence go; completed overrides before it stay as
-// history. A todo that did not recur yet takes the zone of in for timed
-// dates without a TZID.
+// history, and with the EXDATEs and an UNTIL they take the value type of
+// in's dates when it changes (see retypeRefs). A todo that did not recur yet
+// takes the zone of in for timed dates without a TZID.
 func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, rr string, in domain.TodoInput) {
 	if s != nil {
 		from := s.reportedRid(status)
@@ -581,6 +582,9 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, r
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	writeSeriesDates(cal, c, in, s != nil)
 	c.Props.Del(propKDEPending)
+	if to, err := parseDateProp(c.Props.Get(ical.PropDateTimeStart)); s != nil && err == nil {
+		s.retypeRefs(cal, to)
+	}
 }
 
 // completeOccurrence completes the current occurrence of the open series c
