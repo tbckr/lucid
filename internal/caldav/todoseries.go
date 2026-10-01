@@ -535,7 +535,7 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 //   - a repeat off the rule moves alone (A-10), so with a next one it stays
 //     before it the same way in any series, or it would come after it. It
 //     has no rule day of its own to stay from (from zero): an earlier day
-//     brings nothing back.
+//     brings nothing back. Without a next one it moves freely.
 //
 // The days are those of the RECURRENCE-IDs, cur.rid and next.rid, never of
 // the dates another client moved the occurrences to: the window keeps the
@@ -544,7 +544,7 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 // the rule is not passed either. Days count in the series' zone and value
 // type (A-11), see dayStart.
 func (s *todoSeries) ridWindow(cur todoOcc, next *todoOcc) (from, until time.Time, ok bool) {
-	if !s.fixedDays && (!cur.offGrid || next == nil) {
+	if cur.offGrid && next == nil || !cur.offGrid && !s.fixedDays {
 		return time.Time{}, time.Time{}, false
 	}
 	day := s.dayStart(cur.rid)

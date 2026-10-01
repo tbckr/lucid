@@ -192,15 +192,15 @@ describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   when it falls on the current occurrence's rule day (several repeats a
   day, such as `BYHOUR=9,17`); `until` is `null` for the last repeat. A
   current occurrence off the rule (see `PUT`) moves on its own, so with a
-  `next` it has the same `until` in any series, and `from` is `null`: it
-  has no rule day of its own to stay from. `moveWindow` is `null` where a
-  move is free, and for a series that is completed, cancelled or
-  `ruleUnsupported`. When the current occurrence is all-day, `from` and
-  `until` are dates, written as midnight UTC like `start` and `due`; a
-  `next` on the current occurrence's own rule day then ends the window
-  with that day, and the server still holds a time of day before `next`
-  (see `PUT`). Otherwise they are instants. The series' zone need not be
-  the client's, so a day of the client's can lie partly inside the window.
+  `next` it has the same `until` in any series, and `from` is `null`: it has
+  no rule day of its own to stay from; without a `next`, its move is free.
+  `moveWindow` is `null` where a move is free, and for a series that is
+  completed, cancelled or `ruleUnsupported`. When the current occurrence is
+  all-day, `from` and `until` are dates, written as midnight UTC like `start`
+  and `due`; a `next` on the current occurrence's own rule day then ends the
+  window with that day, and the server still holds a time of day before `next`
+  (see `PUT`). Otherwise they are instants. The series' zone need not be the
+  client's, so a day of the client's can lie partly inside the window.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one

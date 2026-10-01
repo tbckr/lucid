@@ -209,10 +209,11 @@ type TodoDates struct {
 // so its current one stays from the day of its own RECURRENCE-ID to before
 // the day of the next one's. Those are the rule's days, which differ from
 // Start and Next's dates when another client moved those occurrences. A
-// current occurrence off the rule moves alone, in any series: it stays
-// before the next one the same way, but has no day of its own to stay from
-// (From nil). When the current occurrence is all-day, From and Until are
-// dates at midnight UTC, as all-day dates are written.
+// current occurrence off the rule moves alone, in any series: it stays before
+// the next one the same way, but has no day of its own to stay from (From
+// nil), and without a next one its move is free. When the current occurrence
+// is all-day, From and Until are dates at midnight UTC, as all-day dates are
+// written.
 type MoveWindow struct {
 	From  *time.Time `json:"from"`  // start of the current occurrence's rule day, series zone; nil for an occurrence off the rule
 	Until *time.Time `json:"until"` // start of next's rule day; next's instant if on the same day; nil for the last repeat

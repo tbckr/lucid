@@ -2766,6 +2766,16 @@ func TestUpdateTodoSeries(t *testing.T) {
 			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"}},
 			start:     ptr(date(2025, 3, 10, 15, 0)),
 		},
+		{
+			// It has no rule day of its own to stay from and no next repeat
+			// to stay before, also on fixed days.
+			name: "the last repeat off a rule on fixed days has no window",
+			master: []string{
+				"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20250316T090000Z", "EXDATE:20250309T090000Z,20250316T090000Z",
+			},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"}},
+			start:     ptr(date(2025, 3, 10, 15, 0)),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
