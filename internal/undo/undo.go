@@ -119,7 +119,7 @@ func (s *Store) Put(owner string, snap domain.TodoSnapshot) (token string, ok bo
 // owner. An expired entry is left for Cleanup/Run to remove, so Get alone
 // never mutates the store.
 func (s *Store) Get(owner, token string) (domain.TodoSnapshot, bool) {
-	if !validToken(token) {
+	if !ValidToken(token) {
 		return domain.TodoSnapshot{}, false
 	}
 	k := hashOwner(owner)
@@ -140,7 +140,7 @@ func (s *Store) Get(owner, token string) (domain.TodoSnapshot, bool) {
 
 // Delete removes one snapshot. Unknown owner/token pairs are ignored.
 func (s *Store) Delete(owner, token string) {
-	if !validToken(token) {
+	if !ValidToken(token) {
 		return
 	}
 	k := hashOwner(owner)
@@ -289,9 +289,14 @@ func randomToken() string {
 
 var tokenLen = base64.RawURLEncoding.EncodedLen(tokenBytes)
 
-// validToken rejects obviously malformed tokens before hashing (cheap DoS
-// guard), the same way internal/session validates session IDs.
-func validToken(token string) bool {
+// ValidToken reports whether token has the shape Put hands out: tokenBytes
+// of base64url without padding. Callers outside the package (the HTTP
+// handler) use it to reject a malformed token as invalid input before ever
+// asking the store, instead of letting it fall through to "not found" like
+// a well-formed but unknown one. The store itself uses it the same way, to
+// reject obviously malformed tokens before hashing (cheap DoS guard), the
+// way internal/session validates session IDs.
+func ValidToken(token string) bool {
 	if len(token) != tokenLen {
 		return false
 	}

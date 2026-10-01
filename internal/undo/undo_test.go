@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -111,6 +112,38 @@ func TestTokenFormat(t *testing.T) {
 	}
 	if _, ok := s.Get("s1", string(bang)); ok {
 		t.Error("Get() with 43-char invalid-charset token ok = true, want false")
+	}
+}
+
+// TestValidToken checks ValidToken directly: internal/httpapi uses it to
+// reject a malformed token as invalid input before ever asking the store,
+// rather than let it fall through to the store's "not found".
+func TestValidToken(t *testing.T) {
+	t.Parallel()
+	s, clk := newStore(t, nil)
+	token, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+	if !ok {
+		t.Fatalf("Put() ok = false")
+	}
+
+	if !ValidToken(token) {
+		t.Errorf("ValidToken(%q) = false, want true for a token Put returned", token)
+	}
+
+	bang := strings.Repeat("!", 43) // 43 chars, but outside the base64url alphabet
+	for _, tt := range []struct {
+		name  string
+		token string
+	}{
+		{"empty", ""},
+		{"too short", "x"},
+		{"too long", token + "x"},
+		{"right length, wrong charset", bang},
+		{"all zero bytes, right length", string(make([]byte, 43))},
+	} {
+		if ValidToken(tt.token) {
+			t.Errorf("ValidToken(%q) = true, want false (%s)", tt.token, tt.name)
+		}
 	}
 }
 

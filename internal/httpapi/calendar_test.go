@@ -31,6 +31,7 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"x"}`},
 		{method: http.MethodPut, path: "/api/v1/todos/t1", body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"x"}`},
 	} {
 		// Anonymous session (valid CSRF token) but not logged in.
 		expectError(t, h.do(t, anon, rq), http.StatusUnauthorized, codeUnauthenticated)
@@ -490,8 +491,19 @@ func TestUndoTodoErrors(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t, withUndo)
 		c := h.login(t)
+		// Well-formed (right length, right charset) but never issued.
 		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + strings.Repeat("A", 43) + `"}`})
 		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+
+	t.Run("malformed token", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		// Syntactically invalid (wrong length/charset), as opposed to a
+		// well-formed but unknown one above: invalid input, not "not found".
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"x"}`})
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
 	})
 
 	t.Run("token for another todo", func(t *testing.T) {

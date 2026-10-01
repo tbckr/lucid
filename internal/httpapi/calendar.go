@@ -9,6 +9,7 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/session"
+	"github.com/tbckr/lucid/internal/undo"
 )
 
 const (
@@ -335,11 +336,20 @@ func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, err)
 		return
 	}
+	// A malformed token is invalid input, distinct from a well-formed one
+	// that is simply unknown/expired/used/foreign (404 below). Checked
+	// before s.undo == nil too, since it is a property of the request, not
+	// of whether undo is wired up.
+	if !undo.ValidToken(in.Token) {
+		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "malformed token")
+		return
+	}
 	if s.undo == nil {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "nothing to undo")
 		return
 	}
-	// s.service above already required a valid session cookie.
+	// s.service above already required a valid session cookie, so this
+	// cannot actually fail; kept defensive rather than ignoring the error.
 	c, err := r.Cookie(CookieName)
 	if err != nil {
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
