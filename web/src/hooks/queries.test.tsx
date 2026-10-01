@@ -485,6 +485,52 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')).toMatchObject({ duration: 8000, action: 'Undo' })
   })
 
+  it('reads the rolled occurrence as a day when a timed series turns all-day (A-04)', async () => {
+    // The series itself is timed; completing it rolls to a current occurrence
+    // that is now all-day (e.g. an override changed its value type). The
+    // "Next up" toast reads the *rolled* todo's own flags directly
+    // (`anchorOf(updated)`, not `.next`), so a near-midnight UTC due pins
+    // that the day, not the time, decides the toast.
+    const success = vi.spyOn(toast, 'success')
+    const timed = todo({
+      id: 't2',
+      calendarId: 'c1',
+      etag: '"1"',
+      title: 'Water the flowers',
+      due: '2026-10-05T07:00:00Z',
+      rrule: 'FREQ=WEEKLY',
+      recurring: true,
+      next: { due: '2026-10-12T07:00:00Z' },
+    })
+    const rolledAllDay = {
+      ...timed,
+      etag: '"2"',
+      due: '2026-10-08T23:30:00Z',
+      dueAllDay: true,
+      next: { due: '2026-10-15T07:00:00Z' },
+      undoToken: 'tok',
+    }
+    const doneCopy = todo({
+      id: 'copy2',
+      calendarId: 'c1',
+      uid: 'u-copy2',
+      etag: '"c2"',
+      title: 'Water the flowers',
+      due: '2026-10-05T07:00:00Z',
+      status: 'COMPLETED',
+      completed: '2026-10-05T10:00:00Z',
+    })
+    const { result } = setup([{ ...rolledAllDay, completedCopy: doneCopy }], { from: timed })
+
+    act(() => {
+      result.current.mutate({ todo: timed, input: todoToInput(timed, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')).toMatchObject({ duration: 8000, action: 'Undo' })
+  })
+
   it('warns and reloads when the series changed elsewhere, without an undo', async () => {
     const success = vi.spyOn(toast, 'success')
     const warning = vi.spyOn(toast, 'warning')
