@@ -40,19 +40,39 @@ var (
 // they were read from, never on a master they have already written.
 type todoSeries struct {
 	master      *ical.Component
-	rrule       string                    // RRULE as read (trimmed), "" if none
-	anchor      dateValue                 // DTSTART, or DUE without DTSTART
-	onDue       bool                      // anchored on DUE
-	startAllDay bool                      // master DTSTART value type (only meaningful when set)
-	dueAllDay   bool                      // master DUE (or DURATION-derived) value type
-	startForm   dateForm                  // how DTSTART is written; DUE's form when anchored on DUE
-	dueForm     dateForm                  // how DUE is written; DTSTART's form without DUE
-	dueOffset   *time.Duration            // DUE (or DURATION) − DTSTART when both exist
-	overrides   map[int64]*ical.Component // by RECURRENCE-ID instant (Unix)
-	exdates     map[int64]bool
-	pending     time.Time // X-KDE-LIBKCAL-DTRECURRENCE, zero if absent
-	fixedDays   bool
-	err         error // non-nil: the rule cannot be evaluated
+	rrule       string         // RRULE as read (trimmed), "" if none
+	anchor      dateValue      // DTSTART, or DUE without DTSTART
+	onDue       bool           // anchored on DUE
+	startAllDay bool           // master DTSTART value type (only meaningful when set)
+	dueAllDay   bool           // master DUE (or DURATION-derived) value type
+	startForm   dateForm       // how DTSTART is written; DUE's form when anchored on DUE
+	dueForm     dateForm       // how DUE is written; DTSTART's form without DUE
+	dueOffset   *time.Duration // DUE (or DURATION) − DTSTART when both exist
+	// overrides holds one override per RECURRENCE-ID Lucid can read, in
+	// RECURRENCE-ID order. atRid and onDay find the override of a rule
+	// instance, exdates and exdays its EXDATE: by instant for the anchor's
+	// value type, by date for the other (see seriesOverride).
+	overrides []seriesOverride
+	atRid     map[int64]*ical.Component     // the anchor's value type, by instant (Unix)
+	onDay     map[time.Time]*ical.Component // the other value type, by date
+	exdates   map[int64]bool                // the anchor's value type, by instant (Unix)
+	exdays    map[time.Time]bool            // the other value type, by date
+	pending   time.Time                     // X-KDE-LIBKCAL-DTRECURRENCE, zero if absent
+	fixedDays bool
+	err       error // non-nil: the rule cannot be evaluated
+}
+
+// seriesOverride is an override of a series, with the place of its
+// RECURRENCE-ID (FR-17). RFC 5545 wants a RECURRENCE-ID and an EXDATE in the
+// anchor's value type, and they match an instance at the same instant, in
+// whatever form they are written. One of the other value type, a date in a
+// timed series or a date-time in an all-day one, stands for the instance on
+// its date in the series' zone, the date it is written with (A-11): day is
+// that date, and rid that day at the anchor's time of day.
+type seriesOverride struct {
+	c   *ical.Component
+	rid time.Time
+	day time.Time // zero for the anchor's value type
 }
 
 // todoOcc is one occurrence: rid is its original start; start/due its effective
@@ -63,6 +83,11 @@ type todoOcc struct {
 	startAllDay, dueAllDay bool
 	done                   bool            // completed by an override
 	override               *ical.Component // nil for rule-generated occurrences
+	// offGrid marks an override off the rule (A-10): its RECURRENCE-ID lies
+	// from the anchor on and before the rule's last instance, but on none
+	// of them, as a move of an interval series to an earlier day leaves the
+	// overrides of the occurrences it moves back past.
+	offGrid bool
 }
 
 // newTodoSeries reads the series of master in cal. It returns nil when master
@@ -75,8 +100,10 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	s := &todoSeries{
 		master:    master,
 		rrule:     rr,
-		overrides: map[int64]*ical.Component{},
+		atRid:     map[int64]*ical.Component{},
+		onDay:     map[time.Time]*ical.Component{},
 		exdates:   map[int64]bool{},
+		exdays:    map[time.Time]bool{},
 		fixedDays: ruleHasFixedDays(rr, master.Props.Get(ical.PropRecurrenceDates) != nil),
 	}
 	start, startErr := parseDateProp(master.Props.Get(ical.PropDateTimeStart))
@@ -117,23 +144,71 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 		}
 		// Instants, not strings: other clients write RECURRENCE-ID in UTC,
 		// with TZID or floating, whatever DTSTART uses.
-		if rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID)); err == nil {
-			s.overrides[rid.t.Unix()] = c
+		rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID))
+		switch {
+		case err != nil:
+		case rid.allDay == s.anchor.allDay:
+			s.atRid[rid.t.Unix()] = c
+		default:
+			s.onDay[civilDate(rid.t)] = c
 		}
 	}
+	for u, c := range s.atRid {
+		s.overrides = append(s.overrides, seriesOverride{c: c, rid: time.Unix(u, 0).UTC()})
+	}
+	for day, c := range s.onDay {
+		// Overrides of both value types for one repeat: the anchor's wins,
+		// as in occurrence.
+		if rid := s.ridOn(day); s.atRid[rid.Unix()] == nil {
+			s.overrides = append(s.overrides, seriesOverride{c: c, rid: rid, day: day})
+		}
+	}
+	slices.SortFunc(s.overrides, func(a, b seriesOverride) int { return a.rid.Compare(b.rid) })
 	for _, p := range master.Props.Values(ical.PropExceptionDates) {
 		dvs, err := parseDateList(&p)
 		if err != nil {
 			continue
 		}
 		for _, d := range dvs {
-			s.exdates[d.t.Unix()] = true
+			if d.allDay == s.anchor.allDay {
+				s.exdates[d.t.Unix()] = true
+			} else {
+				s.exdays[civilDate(d.t)] = true
+			}
 		}
 	}
 	if d, err := parseDateProp(master.Props.Get(propKDEPending)); err == nil {
 		s.pending = d.t
 	}
 	return s
+}
+
+// dayOf returns the date of the instant t in the series' zone (A-11).
+func (s *todoSeries) dayOf(t time.Time) time.Time {
+	return civilDate(t.In(s.anchor.loc()))
+}
+
+// ridOn returns the instant an instance on day would have: day at the
+// anchor's time of day in the series' zone, or day itself in an all-day
+// series (A-11).
+func (s *todoSeries) ridOn(day time.Time) time.Time {
+	if s.anchor.allDay {
+		return day
+	}
+	loc := s.anchor.loc()
+	a := s.anchor.t.In(loc)
+	y, m, d := day.Date()
+	return time.Date(y, m, d, a.Hour(), a.Minute(), a.Second(), 0, loc)
+}
+
+// place compares where the override o lies with the rule instance t: by
+// instant, or by date in the series' zone when o's RECURRENCE-ID has the
+// other value type (A-11).
+func (s *todoSeries) place(o seriesOverride, t time.Time) int {
+	if o.day.IsZero() {
+		return o.rid.Compare(t)
+	}
+	return o.day.Compare(s.dayOf(t))
 }
 
 // zoneKnown reports whether Lucid knows the zone the anchor of s is written
@@ -232,12 +307,28 @@ func (s *todoSeries) ruleIterator() (next func() (time.Time, bool), err error) {
 
 // walk calls fn for the occurrences with rid >= from, in order, until fn
 // returns false: those of ruleIterator, without EXDATEs and cancelled
-// overrides (FR-17). It fails when the rule cannot be evaluated (a series
-// with RDATE included) or hits maxRRuleIterations before fn stops.
+// overrides, and the overrides off the rule (FR-17). An override off the
+// rule (see todoOcc.offGrid) comes in RECURRENCE-ID order among the rule's
+// instances, as an occurrence of its own, without counting against a COUNT
+// (A-10); one past the rule's last instance lies past its end, and walk
+// leaves it out. It fails when the rule cannot be evaluated (a series with
+// RDATE included) or hits maxRRuleIterations before fn stops.
 func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
 	next, err := s.ruleIterator()
 	if err != nil {
 		return err
+	}
+	// The overrides from `from` on, until an instance reaches them: those of
+	// the anchor's value type by instant, the others by date (see place).
+	var byInstant, byDate []seriesOverride
+	for _, o := range s.overrides {
+		switch {
+		case s.place(o, from) < 0:
+		case o.day.IsZero():
+			byInstant = append(byInstant, o)
+		default:
+			byDate = append(byDate, o)
+		}
 	}
 	// The rule advances lazily, so that fn can stop before the next
 	// iteration counts against the cap.
@@ -249,8 +340,29 @@ func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
 		if !ok {
 			return nil
 		}
-		if t.Before(from) {
+		// An override an instance passes without matching it is off the rule.
+		var offGrid []seriesOverride
+		for ; len(byInstant) > 0 && s.place(byInstant[0], t) <= 0; byInstant = byInstant[1:] {
+			if s.place(byInstant[0], t) < 0 {
+				offGrid = append(offGrid, byInstant[0])
+			}
+		}
+		for ; len(byDate) > 0 && s.place(byDate[0], t) <= 0; byDate = byDate[1:] {
+			if s.place(byDate[0], t) < 0 {
+				offGrid = append(offGrid, byDate[0])
+			}
+		}
+		if t.Before(from) { // offGrid is empty: the overrides lie from `from` on
 			continue
+		}
+		slices.SortFunc(offGrid, func(a, b seriesOverride) int { return a.rid.Compare(b.rid) })
+		for _, o := range offGrid {
+			if occ, ok := s.overrideOcc(o); ok {
+				occ.offGrid = true
+				if !fn(occ) {
+					return nil
+				}
+			}
 		}
 		if occ, ok := s.occurrence(t); ok && !fn(occ) {
 			return nil
@@ -258,13 +370,39 @@ func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
 	}
 }
 
-// occurrence returns the occurrence at rid, or false if it is excluded or
-// cancelled.
+// occurrence returns the rule's occurrence at the instance rid, or false if
+// it is excluded or cancelled. Its override and EXDATE are those at rid's
+// instant, or of the other value type, on rid's date (A-11).
 func (s *todoSeries) occurrence(rid time.Time) (todoOcc, bool) {
-	if s.exdates[rid.Unix()] {
+	day := s.dayOf(rid)
+	if s.exdates[rid.Unix()] || s.exdays[day] {
 		return todoOcc{}, false
 	}
-	occ := todoOcc{rid: rid, override: s.overrides[rid.Unix()], startAllDay: s.startAllDay, dueAllDay: s.dueAllDay}
+	ov := s.atRid[rid.Unix()]
+	if ov == nil {
+		ov = s.onDay[day]
+	}
+	return s.occurrenceWith(rid, ov)
+}
+
+// overrideOcc returns the occurrence of the override o at the instant of its
+// RECURRENCE-ID (for the other value type: on its date, see
+// seriesOverride), or false if it is excluded there or cancelled (FR-17).
+func (s *todoSeries) overrideOcc(o seriesOverride) (todoOcc, bool) {
+	day := o.day
+	if day.IsZero() {
+		day = s.dayOf(o.rid)
+	}
+	if s.exdates[o.rid.Unix()] || s.exdays[day] {
+		return todoOcc{}, false
+	}
+	return s.occurrenceWith(o.rid, o.c)
+}
+
+// occurrenceWith returns the occurrence at rid with the override ov (nil if
+// none), or false if ov cancels it.
+func (s *todoSeries) occurrenceWith(rid time.Time, ov *ical.Component) (todoOcc, bool) {
+	occ := todoOcc{rid: rid, override: ov, startAllDay: s.startAllDay, dueAllDay: s.dueAllDay}
 	if s.onDue {
 		occ.due = &rid
 	} else {
@@ -320,16 +458,16 @@ func (s *todoSeries) current() (cur todoOcc, next *todoOcc, err error) {
 	return cur, next, nil
 }
 
-// reportedRid returns the RECURRENCE-ID of the occurrence whose dates a todo
-// read from s with the given status reports (see setSeries): the current
-// occurrence of an open series, else the anchor (FR-17).
-func (s *todoSeries) reportedRid(status string) time.Time {
+// reported returns the occurrence whose dates a todo read from s with the
+// given status reports (see setSeries): the current occurrence of an open
+// series, else one at the anchor, of which only rid is set (FR-17).
+func (s *todoSeries) reported(status string) todoOcc {
 	if status != domain.TodoCompleted && status != domain.TodoCancelled {
 		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() {
-			return cur.rid
+			return cur
 		}
 	}
-	return s.anchor.t
+	return todoOcc{rid: s.anchor.t}
 }
 
 // setSeries fills the series fields of t, a todo read from s.master, and
@@ -384,7 +522,9 @@ func utcPtr(t *time.Time) *time.Time {
 //
 // Next's override, if any, stays and keeps moving that occurrence: the
 // master takes the rule's dates (next.rid), not the override's, or the whole
-// series would shift with it.
+// series would shift with it. Both are instances of the rule: the master
+// cannot take the place of an occurrence off it (see todoOcc.offGrid)
+// without moving the rule.
 func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	c := s.master
 	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(s.rrule, "COUNT") {
@@ -403,9 +543,18 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 		}
 	}
 	s.anchorAt(cal, next.rid)
-	dropOverrides(cal, c, cur.rid.Equal)
+	dropOccurrence(cal, c, cur)
 	c.Props.Del(propKDEPending)
 	return nil
+}
+
+// exclude excludes the completed rule instance occ of s, whose next
+// occurrence lies off the rule, where the master cannot roll (FR-17, A-10):
+// an EXDATE in the form the anchor is written in, and occ's override goes.
+// The next instance completed rolls the master past both.
+func (s *todoSeries) exclude(cal *ical.Calendar, occ todoOcc) {
+	s.master.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, occ.rid, s.startForm))
+	dropOccurrence(cal, s.master, occ)
 }
 
 // anchorAt writes the master's DTSTART and DUE for the rule date t, in the
@@ -445,10 +594,12 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //     the new value type, see retypeRefs;
 //   - an UNTIL before the new DTSTART moves onto it.
 //
-// A rule Lucid cannot evaluate (of a completed series) only gets its dates
-// moved, and its references converted. It fails, without changing anything,
-// when in has no date or the rule cannot be walked up to the moved
-// occurrence.
+// An occurrence off the rule (see todoOcc.offGrid) is no instance of it: it
+// moves on its own, its override taking the dates of in, and the series
+// stays as it is (A-10). A rule Lucid cannot evaluate (of a completed
+// series) only gets its dates moved, and its references converted. It
+// fails, without changing anything, when in has no date or the rule cannot
+// be walked up to the moved occurrence.
 //
 // Where the moved occurrence lies in the series (the instances before it)
 // is decided on the series as read, s: once shifted, the rewritten rule no
@@ -459,7 +610,17 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		return errRuleNeedsDate
 	}
 	c := s.master
-	rid := s.reportedRid(status)
+	occ := s.reported(status)
+	if occ.offGrid {
+		// Without a start, DTSTART = DUE, as for the series.
+		moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
+		if moved.start == nil {
+			moved.start, moved.startAllDay = in.Due, in.DueAllDay
+		}
+		s.setEntryDates(occ.override, moved)
+		return nil
+	}
+	rid := occ.rid
 	p := c.Props.Get(ical.PropRecurrenceRule)
 	evaluable := p != nil && s.err == nil && s.rrule != ""
 	rule, before := s.rrule, 0
@@ -483,7 +644,7 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		shift = s.refShift(rid, to)
 		p.Value = movedRule(rule, before, rid, shift)
 	}
-	dropOverrides(cal, c, rid.Equal)
+	dropOccurrence(cal, c, occ)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
 		shiftLaterRefs(cal, c, rid, shift)
@@ -804,6 +965,16 @@ func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid tim
 		rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
 		return err == nil && drop(rid.t)
 	})
+}
+
+// dropOccurrence removes the overrides of the occurrence occ of master from
+// cal (FR-17): those at occ's instant, and the one it was read with, whose
+// RECURRENCE-ID can be of the other value type (A-11).
+func dropOccurrence(cal *ical.Calendar, master *ical.Component, occ todoOcc) {
+	dropOverrides(cal, master, occ.rid.Equal)
+	if occ.override != nil {
+		cal.Children = slices.DeleteFunc(cal.Children, func(o *ical.Component) bool { return o == occ.override })
+	}
 }
 
 // ruleEnd returns the last occurrence of the rule of s, counted as walk

@@ -152,11 +152,12 @@ func occAnchorTime(o domain.TodoOccurrence) time.Time {
 
 // seriesOccurrences returns the occurrences of the open recurring series s
 // overlapping [start, end), up to maxInstancesPerSeries, walking from its
-// anchor (and KDE's pending occurrence): occurrences before the current one
-// are done by construction, the current one is reported as such, and later
-// ones are upcoming unless a completed override marks them done too.
-// Completed overrides recorded before the anchor are also reported as done:
-// history kept after the series rolled past them (FR-17).
+// anchor (and KDE's pending occurrence), overrides off the rule included
+// (A-10): occurrences before the current one are done by construction, the
+// current one is reported as such, and later ones are upcoming unless a
+// completed override marks them done too. Completed overrides recorded
+// before the anchor are also reported as done: history kept after the
+// series rolled past them (FR-17).
 //
 // The walk itself is bounded by RECURRENCE-ID, not by an occurrence's
 // effective (possibly override-shifted) dates, so it can stop before
@@ -191,11 +192,11 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 		}
 	}
 
-	for ridUnix, c := range s.overrides {
-		if ridUnix >= s.anchor.t.Unix() || !strings.EqualFold(text(c.Props, ical.PropStatus), domain.TodoCompleted) {
+	for _, o := range s.overrides {
+		if s.place(o, s.anchor.t) >= 0 || !strings.EqualFold(text(o.c.Props, ical.PropStatus), domain.TodoCompleted) {
 			continue
 		}
-		if occ, ok := s.occurrence(time.Unix(ridUnix, 0).UTC()); ok {
+		if occ, ok := s.overrideOcc(o); ok {
 			add(occ, domain.OccurrenceDone)
 		}
 	}
@@ -219,14 +220,14 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 
 	// Overrides beyond the RECURRENCE-ID the walk stopped at: it never
 	// visited them, so they were not yet checked against the window.
-	for ridUnix := range s.overrides {
+	for _, o := range s.overrides {
 		if len(occs) >= maxInstancesPerSeries {
 			break
 		}
-		if ridUnix < s.anchor.t.Unix() || ridUnix <= stopRid.Unix() {
+		if s.place(o, s.anchor.t) < 0 || s.place(o, stopRid) <= 0 {
 			continue
 		}
-		if occ, ok := s.occurrence(time.Unix(ridUnix, 0).UTC()); ok {
+		if occ, ok := s.overrideOcc(o); ok {
 			add(occ, stateOf(occ))
 		}
 	}
@@ -576,8 +577,9 @@ func newTodoRule(in domain.TodoInput) (string, error) {
 // takes the zone of in for timed dates without a TZID.
 func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, rr string, in domain.TodoInput) {
 	if s != nil {
-		from := s.reportedRid(status)
-		dropOverrides(cal, c, func(rid time.Time) bool { return !rid.Before(from) })
+		from := s.reported(status)
+		dropOverrides(cal, c, func(rid time.Time) bool { return !rid.Before(from.rid) })
+		dropOccurrence(cal, c, from)
 	}
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	writeSeriesDates(cal, c, in, s != nil)
@@ -597,6 +599,12 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, r
 //  2. the master rolls to the next occurrence with in's fields, an open
 //     checklist and STATUS:NEEDS-ACTION;
 //  3. if the master cannot be written, the copy is removed again.
+//
+// The master rolls only from an instance of the rule onto the next one (see
+// roll). An occurrence off the rule (see todoOcc.offGrid) is none (A-10):
+// completed, it loses its override, and the master stays where it is; as
+// the next occurrence, it keeps the master from rolling, so the completed
+// instance gets an EXDATE instead (see exclude).
 //
 // It returns the rolled series with the copy as CompletedCopy.
 func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput) (domain.Todo, error) {
@@ -625,8 +633,15 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 
 	// Roll the master in memory first: a rule that cannot be evaluated to its
 	// end fails before anything is written.
-	if err := series.roll(cal, occ, *next); err != nil {
-		return domain.Todo{}, errRuleUnsupported
+	switch {
+	case occ.offGrid:
+		dropOccurrence(cal, c, occ)
+	case next.offGrid:
+		series.exclude(cal, occ)
+	default:
+		if err := series.roll(cal, occ, *next); err != nil {
+			return domain.Todo{}, errRuleUnsupported
+		}
 	}
 	rolled := in
 	rolled.Status = domain.TodoNeedsAction
@@ -715,11 +730,12 @@ func cloneProps(props []ical.Prop) []ical.Prop {
 }
 
 // setEntryDates writes the start and due of occ as DTSTART and DUE of c, an
-// entry of its own for an occurrence of s (FR-16, FR-17): in the form the
-// series writes them, a DATE or UTC where the value type differs from the
-// series'. Without a start, a series anchored on DUE gives it DTSTART = DUE,
-// as it has itself. DUE replaces a DURATION, which RFC 5545 does not allow
-// next to it. The VTIMEZONEs are entryCalendar's.
+// entry of its own for an occurrence of s or the override of one off the
+// rule (FR-16, FR-17): in the form the series writes them, a DATE or UTC
+// where the value type differs from the series'. Without a start, a series
+// anchored on DUE gives it DTSTART = DUE, as it has itself. DUE replaces a
+// DURATION, which RFC 5545 does not allow next to it. The VTIMEZONEs are
+// entryCalendar's.
 func (s *todoSeries) setEntryDates(c *ical.Component, occ todoOcc) {
 	start, startAllDay, due, dueAllDay := occ.start, occ.startAllDay, occ.due, occ.dueAllDay
 	if start == nil && s.onDue {

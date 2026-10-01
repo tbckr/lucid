@@ -237,7 +237,13 @@ For a recurring todo, these three edits are handled specially:
   master**, with the copy attached as `completedCopy`. On the series' last
   occurrence there is no next one: the master itself becomes `COMPLETED` and
   `completedCopy` is absent. If writing the rolled master fails, the
-  already-written copy is deleted again and the error is returned.
+  already-written copy is deleted again and the error is returned. An
+  occurrence **off the rule** (an override whose `RECURRENCE-ID` lies on
+  none of the rule's occurrences, such as a move to an earlier day leaves
+  behind) is not one the master can roll from or onto: completing it drops
+  its override and leaves the master's dates as they are, and completing
+  the occurrence before it excludes that one with an `EXDATE` instead of
+  rolling.
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
   (a series without `start` recurs on `due`). What refers to later
@@ -254,8 +260,10 @@ For a recurring todo, these three edits are handled specially:
   change in date; with fixed days they stay on their days. The override of
   the current occurrence goes. A `COUNT` no longer counts the rule's
   instances before the moved occurrence, and an `UNTIL` that would end
-  before the new dates moves onto them. The backend does not enforce the
-  move window the UI shows; that is a client-side hint only.
+  before the new dates moves onto them. A current occurrence off the rule
+  moves on its own: its override takes the new dates, and the series stays.
+  The backend does not enforce the move window the UI shows; that is a
+  client-side hint only.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay, the `EXDATE`s and an `UNTIL` take the new value type

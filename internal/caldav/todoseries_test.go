@@ -64,10 +64,12 @@ func TestNewTodoSeriesNeedsRecurrence(t *testing.T) {
 func TestTodoSeriesWalk(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		lines []string
-		from  time.Time
-		want  []time.Time
+		name      string
+		lines     []string
+		overrides [][]string
+		from      time.Time
+		want      []time.Time
+		offGrid   []time.Time // the RECURRENCE-IDs of want off the rule
 	}{
 		{
 			// RFC 5545: DTSTART is an occurrence even if the rule does not match it.
@@ -87,18 +89,73 @@ func TestTodoSeriesWalk(t *testing.T) {
 			from:  date(2025, 3, 12, 9, 0),
 			want:  []time.Time{date(2025, 3, 12, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 14, 9, 0)},
 		},
+		{
+			// A-10: overrides on no instance take their place by RECURRENCE-ID,
+			// a cancelled one excepted; one past the last instance is past the
+			// rule's end, and does not count against COUNT.
+			name:  "overrides off the rule come in order",
+			lines: []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250311T090000Z", "STATUS:CANCELLED"},
+				{"RECURRENCE-ID:20250316T090000Z", "DTSTART:20250316T150000Z"},
+				{"RECURRENCE-ID:20250317T080000Z"},
+				{"RECURRENCE-ID:20250330T090000Z"},
+			},
+			want: []time.Time{
+				date(2025, 3, 9, 9, 0), date(2025, 3, 10, 9, 0), date(2025, 3, 16, 9, 0),
+				date(2025, 3, 17, 8, 0), date(2025, 3, 23, 9, 0),
+			},
+			offGrid: []time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 17, 8, 0)},
+		},
+		{
+			name:      "from skips earlier overrides off the rule",
+			lines:     []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z"}, {"RECURRENCE-ID:20250317T090000Z"}},
+			from:      date(2025, 3, 16, 9, 0),
+			want:      []time.Time{date(2025, 3, 16, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 23, 9, 0)},
+			offGrid:   []time.Time{date(2025, 3, 17, 9, 0)},
+		},
+		{
+			// A-11: a date in a timed series is off the rule only on a day
+			// without an instance in the series' zone, and stands for the
+			// series' time of day there: 20:00 in New York is midnight UTC
+			// of the next day.
+			name:  "a date override off the rule",
+			lines: []string{"DTSTART;TZID=America/New_York:20250310T200000", "RRULE:FREQ=WEEKLY;COUNT=2"},
+			overrides: [][]string{
+				{"RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID;VALUE=DATE:20250311"},
+			},
+			want:    []time.Time{date(2025, 3, 11, 0, 0), date(2025, 3, 12, 0, 0), date(2025, 3, 18, 0, 0)},
+			offGrid: []time.Time{date(2025, 3, 12, 0, 0)},
+		},
+		{
+			// The override of the anchor's value type wins, as on the rule.
+			name:  "overrides of both value types for one repeat off the rule",
+			lines: []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2"},
+			overrides: [][]string{
+				{"RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250310T090000Z"},
+			},
+			want:    []time.Time{date(2025, 3, 9, 9, 0), date(2025, 3, 10, 9, 0), date(2025, 3, 16, 9, 0)},
+			offGrid: []time.Time{date(2025, 3, 10, 9, 0)},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _ := testSeries(t, tc.lines)
-			var got []time.Time
+			s, _ := testSeries(t, append([][]string{tc.lines}, tc.overrides...)...)
+			var got, offGrid []time.Time
 			err := s.walk(tc.from, func(o todoOcc) bool {
 				got = append(got, o.rid)
+				if o.offGrid {
+					offGrid = append(offGrid, o.rid)
+				}
 				return true
 			})
 			mustNoErr(t, err)
-			if !slices.EqualFunc(got, tc.want, time.Time.Equal) {
-				t.Errorf("walk visited %v; want %v", got, tc.want)
+			if !slices.EqualFunc(got, tc.want, time.Time.Equal) || !slices.EqualFunc(offGrid, tc.offGrid, time.Time.Equal) {
+				t.Errorf("walk visited %v, off the rule %v; want %v, %v", got, offGrid, tc.want, tc.offGrid)
 			}
 		})
 	}
