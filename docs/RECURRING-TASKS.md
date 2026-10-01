@@ -811,6 +811,12 @@ described in [API.md](API.md#todos).
 - A `VTODO` with `RRULE` recurs from its `DTSTART`, or from its `DUE` when it
   has no `DTSTART` (Tasks.org), in the time zone of its `TZID`. The due of an
   occurrence is its start plus the master's `DUE − DTSTART` (or `DURATION`).
+- `DTSTART` is the first occurrence, also where the rule does not match it,
+  and it counts against a `COUNT`, as RFC 5545 §3.3.10 says: `DTSTART` on a
+  Tuesday with `BYDAY=MO,TH;COUNT=3` gives that Tuesday and the next two
+  Mondays or Thursdays. rrule-go, which Lucid expands rules with, leaves such
+  a `DTSTART` out and yields three rule days besides it, so Lucid takes only
+  the first two of them.
 - The **current occurrence** is the earliest one that no override completes
   or cancels and no `EXDATE` excludes, counted from `DTSTART` or from KDE's
   `X-KDE-LIBKCAL-DTRECURRENCE`, whichever is later. The task list and the API
@@ -859,11 +865,14 @@ Reminders does:
    anchored on `DUE` gets a `DTSTART` equal to `DUE`, since RFC 5545 requires
    `DTSTART` with `RRULE`. The master is open again (`STATUS:NEEDS-ACTION`,
    no `COMPLETED` or `PERCENT-COMPLETE`), with its checklist unchecked. A
-   `COUNT` becomes the `UNTIL` of the rule's last instance, in the form of
-   `DTSTART`, so that later rolls keep the end without counting down. The
-   override of the completed occurrence and KDE's pending occurrence go; an
-   override of the next occurrence stays, so that an occurrence moved in
-   another client stays moved.
+   `COUNT` becomes the `UNTIL` of the series' last occurrence, in the form of
+   `DTSTART`, so that later rolls keep the end without counting down. In a
+   `TZID` Lucid cannot resolve, that `UNTIL` would be off by the zone's
+   offset, so the `COUNT` stays and goes down by the occurrences the new
+   `DTSTART` leaves behind, as OpenTasks does. The override of the completed
+   occurrence and KDE's pending occurrence go; an override of the next
+   occurrence stays, so that an occurrence moved in another client stays
+   moved.
 
 If the master cannot be written, for example because another client changed
 it in the meantime, Lucid deletes the copy again and reports the error. The
@@ -897,11 +906,16 @@ KDE's pending occurrence. What refers to later occurrences stays with them:
 - With fixed days they move by the change in time of day only, because the
   rule's days stay.
 
-A `COUNT` no longer counts the rule's instances before the moved occurrence.
-An `UNTIL` that would end before the new date moves onto it: clients built
-on ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
-`UNTIL`. The backend does not enforce the move window: other clients write
-any date, and undo has to move a series back.
+With an interval rule, `DTSTART` stays on the rule, and a `COUNT` no longer
+counts the occurrences before the moved one. With fixed days, the new
+`DTSTART` can lie off the rule's days, where readers disagree on what a
+`COUNT` counts, so the `COUNT` first becomes the `UNTIL` of the series' last
+occurrence, as for a completion, and then moves like any `UNTIL`. In a
+`TZID` Lucid cannot resolve, the `COUNT` stays, lowered as with an interval
+rule (see Limits). An `UNTIL` that would end before the new date moves onto
+it: clients built on ical.js, such as Thunderbird, hide a task whose
+`DTSTART` lies after its `UNTIL`. The backend does not enforce the move
+window: other clients write any date, and undo has to move a series back.
 
 **Undoing a completion** says so (`undoCompletion` in the API) and puts the
 series back as it was before the completion. The roll moved none of the
@@ -958,15 +972,14 @@ properties and components Lucid does not know.
   writes has the series' summary and is open. On fixed days, a move to
   another day at the rule's time of day comes back as `DTSTART` instead of
   an override, with the same occurrences.
-- A `COUNT` counts from `DTSTART` (RFC 5545), so a series whose `DTSTART`
-  another client left off its rule has one occurrence more than its `COUNT`
-  says, the anchor itself; the `UNTIL` a completion writes keeps that extra
-  one.
-- A series in a `TZID` Lucid cannot resolve is read at its wall clock as UTC,
-  and the `UNTIL` a completion writes for its `COUNT` is that wall clock as
-  UTC. In a zone west of UTC it lies before the last occurrence's real
-  instant, so a reader that knows the zone may end the series one occurrence
-  early.
+- A series in a `TZID` Lucid cannot resolve is read at its wall clock as
+  UTC, so its `COUNT` stays a `COUNT`: an `UNTIL` computed from that wall
+  clock would end the series one occurrence early in a reader that knows a
+  zone west of UTC. A move on fixed days that leaves `DTSTART` off the
+  rule's days then keeps the `COUNT` too, and no form ends such a series
+  alike in every reader: one that counts `DTSTART` as the first occurrence,
+  as RFC 5545 and Lucid do, ends it where Lucid does; one that counts
+  `COUNT` rule days besides `DTSTART` shows one occurrence more.
 - A move of a `MONTHLY` or `YEARLY` interval series shifts the references to
   later occurrences, and its `UNTIL`, by calendar months and days. Where the
   shifted day does not exist in the month it lands in, it runs over into

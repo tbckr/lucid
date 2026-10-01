@@ -76,6 +76,12 @@ func TestTodoSeriesWalk(t *testing.T) {
 			want:  []time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 11, 9, 0), date(2025, 3, 18, 9, 0)},
 		},
 		{
+			// RFC 5545 3.3.10: DTSTART is the first of COUNT occurrences, also off the rule.
+			name:  "anchor off the rule counts for COUNT",
+			lines: []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3"},
+			want:  []time.Time{date(2025, 3, 11, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0)},
+		},
+		{
 			name:  "from skips earlier occurrences",
 			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=5"},
 			from:  date(2025, 3, 12, 9, 0),
@@ -93,6 +99,83 @@ func TestTodoSeriesWalk(t *testing.T) {
 			mustNoErr(t, err)
 			if !slices.EqualFunc(got, tc.want, time.Time.Equal) {
 				t.Errorf("walk visited %v; want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// instancesBefore and ruleEnd count as walk does: the anchor first, on the
+// rule or off it, and COUNT occurrences in all (FR-17).
+func TestTodoSeriesCounting(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		lines  []string
+		before time.Time // instancesBefore(before) = n
+		n      int
+		end    time.Time
+	}{
+		{
+			name:   "anchor on the rule",
+			lines:  []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3"},
+			before: date(2025, 3, 17, 9, 0), n: 2,
+			end: date(2025, 3, 17, 9, 0),
+		},
+		{
+			name:   "anchor off the rule",
+			lines:  []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3"},
+			before: date(2025, 3, 13, 9, 0), n: 1,
+			end: date(2025, 3, 17, 9, 0),
+		},
+		{
+			name:   "anchor off the rule is the only one of COUNT=1",
+			lines:  []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=1"},
+			before: date(2025, 3, 13, 9, 0), n: 1,
+			end: date(2025, 3, 11, 9, 0),
+		},
+		{
+			name:   "anchor off the rule with UNTIL",
+			lines:  []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250317T090000Z"},
+			before: date(2025, 3, 17, 9, 0), n: 2,
+			end: date(2025, 3, 17, 9, 0),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _ := testSeries(t, tc.lines)
+			n, err := s.instancesBefore(tc.before)
+			mustNoErr(t, err)
+			if n != tc.n {
+				t.Errorf("instancesBefore(%v) = %d; want %d", tc.before, n, tc.n)
+			}
+			end, err := s.ruleEnd()
+			mustNoErr(t, err)
+			if !end.Equal(tc.end) {
+				t.Errorf("ruleEnd() = %v; want %v", end, tc.end)
+			}
+		})
+	}
+}
+
+func TestTodoSeriesZoneKnown(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		start string
+		want  bool
+	}{
+		{name: "utc", start: "DTSTART:20250310T090000Z", want: true},
+		{name: "floating", start: "DTSTART:20250310T090000", want: true},
+		{name: "all-day", start: "DTSTART;VALUE=DATE:20250310", want: true},
+		{name: "iana", start: "DTSTART;TZID=Europe/Berlin:20250310T090000", want: true},
+		{name: "prefixed", start: "DTSTART;TZID=/mozilla.org/20050126_1/Europe/Berlin:20250310T090000", want: true},
+		{name: "unknown", start: "DTSTART;TZID=W. Europe Standard Time:20250310T090000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _ := testSeries(t, []string{tc.start, "RRULE:FREQ=WEEKLY"})
+			if got := s.zoneKnown(); got != tc.want {
+				t.Errorf("zoneKnown() = %v; want %v", got, tc.want)
 			}
 		})
 	}

@@ -866,6 +866,20 @@ func TestListTodoOccurrences(t *testing.T) {
 		}
 	})
 
+	// Probe P1: RFC 5545 3.3.10 counts DTSTART as the first occurrence, also
+	// off the rule's days; rrule-go leaves it out and counts three more
+	// (FR-17).
+	t.Run("count includes an off-rule start", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		seedSeries(t, e, []string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 11, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+	})
+
 	t.Run("completed master, unsupported rule and single todo", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -1271,6 +1285,24 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		checkStored(t, "master", storedObject(t, e, id),
 			[]string{"DTSTART:20250311T090000\r\n", "RRULE:FREQ=DAILY;UNTIL=20250312T090000\r\n"}, nil)
 		checkStored(t, "copy", storedCopy(t, e, &got), []string{"DTSTART:20250310T090000\r\n"}, nil)
+	})
+
+	// Lucid reads the wall clock of a zone it cannot resolve as UTC, so an
+	// UNTIL it computed would miss the last occurrence's real instant by the
+	// zone's offset; the COUNT goes down by the occurrence left behind
+	// instead (FR-17).
+	t.Run("unknown zone lowers COUNT instead of writing UNTIL", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=W. Europe Standard Time:20250310T090000", "RRULE:FREQ=WEEKLY;COUNT=3"})
+		completeListed(t, e, id)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART;TZID=W. Europe Standard Time:20250317T090000", "RRULE:FREQ=WEEKLY;COUNT=2\r\n"}, []string{"UNTIL"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
 	})
 
 	for _, tc := range []struct{ name, tzid string }{
@@ -1973,6 +2005,50 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkTodoOccurrences(t, occs,
 			[]time.Time{date(2025, 3, 11, 10, 0), date(2025, 3, 13, 10, 0), date(2025, 3, 17, 10, 0)},
 			[]string{domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming})
+	})
+
+	// Probe P9: a move off the rule's days leaves DTSTART off the rule, where
+	// readers disagree on what a COUNT counts; the UNTIL of the series' last
+	// occurrence, as read, ends it in every reader (FR-17).
+	t.Run("a fixed-day move turns COUNT into UNTIL", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=2"})
+		moveListed(t, e, id, 24*time.Hour) // Monday to Tuesday
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250313T090000Z\r\n"}, []string{"COUNT"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 11, 9, 0), date(2025, 3, 13, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
+	})
+
+	// An interval rule recurs from the new DTSTART, which stays on it (FR-17).
+	t.Run("an interval move keeps COUNT", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3"})
+		moveListed(t, e, id, 24*time.Hour)
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3\r\n"}, []string{"UNTIL"})
+	})
+
+	// In a zone Lucid cannot resolve, an UNTIL would be off by the zone's
+	// offset, so the COUNT stays, lowered as for an interval rule; the moved
+	// DTSTART counts as its first occurrence (FR-17).
+	t.Run("unknown zone, fixed-day move keeps a lowered COUNT", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=W. Europe Standard Time:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3"})
+		moveListed(t, e, id, 24*time.Hour) // Monday to Tuesday
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{"DTSTART;TZID=W. Europe Standard Time:20250311T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=3\r\n"}, []string{"UNTIL="})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 11, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
 	})
 
 	// Moving a series back after its completion is a move like any other:

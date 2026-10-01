@@ -136,6 +136,14 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	return s
 }
 
+// zoneKnown reports whether Lucid knows the zone the anchor of s is written
+// in: it has no TZID, or one Lucid resolves (FR-17). Lucid reads the wall
+// clock of any other TZID as UTC, so an instant it derives from the series,
+// such as an UNTIL, would be off by the zone's offset.
+func (s *todoSeries) zoneKnown() bool {
+	return s.anchor.param == "" || s.anchor.tzid != ""
+}
+
 // ruleHasFixedDays reports whether a series recurs on fixed days rather than
 // at a fixed interval from its anchor: an RRULE with a part other than FREQ,
 // INTERVAL, COUNT, UNTIL or WKST, or any RDATE (FR-17).
@@ -171,42 +179,83 @@ func rulePart(rrule, key string) string {
 	return ""
 }
 
-// walk calls fn for the occurrences with rid >= from, in order, until fn
-// returns false: the anchor and the RRULE instances, without EXDATEs and
-// cancelled overrides (FR-17). It fails when the rule cannot be evaluated
-// (a series with RDATE included) or hits maxRRuleIterations before fn stops.
-func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
+// ruleIterator returns an iterator over the occurrences the rule of s
+// yields, in order (FR-17): the anchor, then the rule's instances after it.
+// The anchor is the first occurrence also where the rule does not match it,
+// and it counts against a COUNT (RFC 5545 3.3.10), so a COUNT rule yields
+// COUNT occurrences in all. rrule-go leaves such an anchor out and yields
+// COUNT instances besides it, so after it at most COUNT − 1 follow. A series
+// without a rule yields its anchor only. It fails when the rule cannot be
+// evaluated, a series with RDATE included.
+//
+// walk, instancesBefore and ruleEnd all count with it, so that a write
+// (roll, move) counts the occurrences as Lucid reads them.
+func (s *todoSeries) ruleIterator() (next func() (time.Time, bool), err error) {
 	if s.err != nil {
-		return s.err
+		return nil, s.err
 	}
+	anchor := s.anchor.t
 	var ruleNext func() (time.Time, bool)
+	left := -1 // instances still allowed after the anchor; < 0: no COUNT
 	if s.rrule != "" {
-		r, err := newRRule(s.rrule, s.anchor.t)
+		r, err := newRRule(s.rrule, anchor)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ruleNext = r.Iterator()
-	}
-	// The anchor, then the rule's instances (the first may be the anchor
-	// again). The rule advances lazily, so that fn can stop before the next
-	// iteration counts against the cap.
-	var prev time.Time
-	for t, more, steps := s.anchor.t, true, 0; more; steps++ {
-		if !t.Equal(prev) && !t.Before(from) {
-			prev = t
-			if occ, ok := s.occurrence(t); ok && !fn(occ) {
-				return nil
-			}
+		if n := r.OrigOptions.Count; n > 0 {
+			left = n - 1
 		}
-		switch {
-		case ruleNext == nil:
-			return nil
-		case steps == maxRRuleIterations:
+	}
+	started := false
+	return func() (time.Time, bool) {
+		if !started {
+			started = true
+			return anchor, true
+		}
+		if ruleNext == nil || left == 0 {
+			return time.Time{}, false
+		}
+		t, ok := ruleNext()
+		if ok && t.Equal(anchor) { // the rule's first instance: the anchor on the rule
+			t, ok = ruleNext()
+		}
+		if !ok {
+			return time.Time{}, false
+		}
+		if left > 0 {
+			left--
+		}
+		return t, true
+	}, nil
+}
+
+// walk calls fn for the occurrences with rid >= from, in order, until fn
+// returns false: those of ruleIterator, without EXDATEs and cancelled
+// overrides (FR-17). It fails when the rule cannot be evaluated (a series
+// with RDATE included) or hits maxRRuleIterations before fn stops.
+func (s *todoSeries) walk(from time.Time, fn func(todoOcc) bool) error {
+	next, err := s.ruleIterator()
+	if err != nil {
+		return err
+	}
+	// The rule advances lazily, so that fn can stop before the next
+	// iteration counts against the cap.
+	for steps := 0; ; steps++ {
+		if steps == maxRRuleIterations {
 			return errRRuleCap
 		}
-		t, more = ruleNext()
+		t, ok := next()
+		if !ok {
+			return nil
+		}
+		if t.Before(from) {
+			continue
+		}
+		if occ, ok := s.occurrence(t); ok && !fn(occ) {
+			return nil
+		}
 	}
-	return nil
 }
 
 // occurrence returns the occurrence at rid, or false if it is excluded or
@@ -326,8 +375,12 @@ func utcPtr(t *time.Time) *time.Time {
 // DTSTART and DUE (DTSTART = DUE for a series anchored on DUE, as RFC 5545
 // wants DTSTART with RRULE) move to next's place in the rule, a COUNT
 // becomes the UNTIL of the last occurrence, and the override of cur and
-// KDE's pending occurrence go. It fails, without changing anything, when
-// the rule cannot be evaluated to its end.
+// KDE's pending occurrence go. In a zone Lucid cannot resolve (see
+// zoneKnown) that UNTIL would be off by the zone's offset, so the COUNT
+// stays instead, lowered by the occurrences before next, which the new
+// DTSTART on the rule leaves behind. It fails, without changing anything,
+// when the rule cannot be evaluated to its end (up to next for a COUNT that
+// stays).
 //
 // Next's override, if any, stays and keeps moving that occurrence: the
 // master takes the rule's dates (next.rid), not the override's, or the whole
@@ -335,11 +388,19 @@ func utcPtr(t *time.Time) *time.Time {
 func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	c := s.master
 	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(s.rrule, "COUNT") {
-		last, err := s.ruleEnd()
-		if err != nil {
-			return err
+		if !s.zoneKnown() {
+			before, err := s.instancesBefore(next.rid)
+			if err != nil {
+				return err
+			}
+			p.Value = lowerCount(s.rrule, before)
+		} else {
+			last, err := s.ruleEnd()
+			if err != nil {
+				return err
+			}
+			p.Value = countToUntil(s.rrule, last, s.startForm)
 		}
-		p.Value = countToUntil(s.rrule, last, s.startForm)
 	}
 	s.anchorAt(cal, next.rid)
 	dropOverrides(cal, c, cur.rid.Equal)
@@ -369,8 +430,13 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 // moved occurrence is the current one and the others stay as they were:
 //   - the dates become DTSTART and DUE in the form the series is written in;
 //   - the override of the moved occurrence and KDE's pending occurrence go;
-//   - a COUNT no longer counts the rule's instances before the moved
-//     occurrence, which the new DTSTART leaves behind;
+//   - with fixed days, a COUNT first becomes the UNTIL of the series' last
+//     occurrence as read: the new DTSTART can lie off the rule's days, where
+//     readers disagree on what a COUNT counts;
+//   - a COUNT that stays, of an interval rule (whose DTSTART stays on it)
+//     or in a zone Lucid cannot resolve (see zoneKnown), no longer counts
+//     the occurrences before the moved one, which the new DTSTART leaves
+//     behind;
 //   - an UNTIL from the moved occurrence on and the references to later
 //     occurrences (their overrides with their dates, EXDATEs) move along,
 //     see refShift and movedRule;
@@ -399,8 +465,16 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		if err != nil {
 			return errRuleUnsupported
 		}
+		rule := s.rrule
+		if s.fixedDays && hasRulePart(rule, "COUNT") && s.zoneKnown() {
+			last, err := s.ruleEnd()
+			if err != nil {
+				return errRuleUnsupported
+			}
+			rule = countToUntil(rule, last, s.startForm)
+		}
 		shift = s.refShift(rid, *start, allDay)
-		rule := movedRule(s.rrule, before, rid, shift)
+		rule = movedRule(rule, before, rid, shift)
 		// UNTIL never ends before the moved series starts.
 		if loc := s.anchor.loc(); untilBefore(rule, *start, loc) {
 			rule = untilAt(rule, *start, loc)
@@ -416,14 +490,14 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	return nil
 }
 
-// instancesBefore returns the number of instances of the rule of s before
-// t, iterated from the anchor as ruleEnd does (FR-17).
+// instancesBefore returns the number of occurrences of the rule of s before
+// t, counted as walk and ruleEnd count them (see ruleIterator): an anchor
+// off the rule counts too, as it does against a COUNT (FR-17).
 func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
-	r, err := newRRule(s.rrule, s.anchor.t)
+	next, err := s.ruleIterator()
 	if err != nil {
 		return 0, err
 	}
-	next := r.Iterator()
 	for n := range maxRRuleIterations {
 		i, ok := next()
 		if !ok || !i.Before(t) {
@@ -485,18 +559,12 @@ func secondOfDay(t time.Time) int {
 }
 
 // movedRule returns rrule for a series moved from its occurrence rid
-// (FR-17): its COUNT without the before instances that preceded rid, at
-// least one; its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
+// (FR-17): its COUNT without the before occurrences that preceded rid (see
+// lowerCount); its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
 // on rid itself makes the moved occurrence the last one, and it stays the
 // last wherever it moves.
 func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) time.Time) string {
-	rrule = mapRulePart(rrule, "COUNT", func(v string) string {
-		n, err := strconv.Atoi(v)
-		if err != nil || before == 0 {
-			return v
-		}
-		return strconv.Itoa(max(n-before, 1))
-	})
+	rrule = lowerCount(rrule, before)
 	if shift == nil {
 		return rrule
 	}
@@ -509,6 +577,18 @@ func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) ti
 			return shift(d)
 		})
 		return p.Value
+	})
+}
+
+// lowerCount returns rrule with its COUNT lowered by the before occurrences
+// that a new DTSTART leaves behind, to at least one (FR-17).
+func lowerCount(rrule string, before int) string {
+	return mapRulePart(rrule, "COUNT", func(v string) string {
+		n, err := strconv.Atoi(v)
+		if err != nil || before == 0 {
+			return v
+		}
+		return strconv.Itoa(max(n-before, 1))
 	})
 }
 
@@ -610,19 +690,16 @@ func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid tim
 	})
 }
 
-// ruleEnd returns the last instance of the RRULE of s, iterated from the
-// anchor as walk does (so an anchor off the rule still counts extra for
-// COUNT), or the anchor when the rule yields none. It fails for a rule that
-// does not end within maxRRuleIterations (FR-17).
+// ruleEnd returns the last occurrence of the rule of s, counted as walk
+// counts them (see ruleIterator), so an anchor off the rule is one of a
+// COUNT; that is the anchor when the rule yields nothing after it. It fails
+// for a rule that does not end within maxRRuleIterations (FR-17).
 func (s *todoSeries) ruleEnd() (time.Time, error) {
-	if s.err != nil {
-		return time.Time{}, s.err
-	}
-	r, err := newRRule(s.rrule, s.anchor.t)
+	next, err := s.ruleIterator()
 	if err != nil {
 		return time.Time{}, err
 	}
-	last, next := s.anchor.t, r.Iterator()
+	var last time.Time
 	for range maxRRuleIterations {
 		t, ok := next()
 		if !ok {
@@ -644,12 +721,13 @@ func hasRulePart(rrule, key string) bool {
 }
 
 // countToUntil replaces the COUNT of rrule by an UNTIL at last, the final
-// occurrence, so that the rule keeps its end when DTSTART rolls forward
-// (FR-17). UNTIL follows DTSTART's form f (RFC 5545 3.3.10): a DATE for an
-// all-day series, floating for a floating one, UTC otherwise (for a TZID
-// Lucid cannot resolve, its wall clock was read as UTC). An UNTIL next to
-// the COUNT (not allowed by RFC 5545) is replaced too. A rule without COUNT
-// is returned unchanged.
+// occurrence, so that the rule keeps its end when DTSTART rolls forward or
+// leaves the rule (FR-17). UNTIL follows DTSTART's form f (RFC 5545
+// 3.3.10): a DATE for an all-day series, floating for a floating one, UTC
+// otherwise. For a TZID Lucid cannot resolve, last would be the wall clock
+// read as UTC, so callers keep the COUNT then (see zoneKnown). An UNTIL next
+// to the COUNT (not allowed by RFC 5545) is replaced too. A rule without
+// COUNT is returned unchanged.
 func countToUntil(rrule string, last time.Time, f dateForm) string {
 	if !hasRulePart(rrule, "COUNT") {
 		return rrule
