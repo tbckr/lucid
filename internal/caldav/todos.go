@@ -1,8 +1,10 @@
 package caldav
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -327,34 +329,35 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 }
 
 // UpdateTodo implements domain.CalendarService. Unknown properties and
-// components are preserved.
-func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (domain.Todo, error) {
+// components are preserved. The change of a recurring todo returns a
+// snapshot of the resource as read, see snapshot (FR-17).
+func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (domain.Todo, *domain.TodoSnapshot, error) {
 	if s.err != nil {
-		return domain.Todo{}, s.err
+		return domain.Todo{}, nil, s.err
 	}
 	objPath, calPath, err := decodeObjectID(s.homePath, todoID)
 	if err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
 	if err := requireETag(etag); err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
 	if err := in.Validate(); err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
 	if err := s.checkWritable(ctx, calPath, ""); err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
-	cal, current, err := s.getObject(ctx, objPath)
+	cal, current, raw, err := s.getObject(ctx, objPath)
 	if err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
 	if current != "" && current != etag {
-		return domain.Todo{}, fmt.Errorf("%w: etag mismatch", domain.ErrConflict)
+		return domain.Todo{}, nil, fmt.Errorf("%w: etag mismatch", domain.ErrConflict)
 	}
 	c := mainComponent(cal, ical.CompToDo)
 	if c == nil {
-		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
+		return domain.Todo{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
 	// Keep DTSTART for clients that predate `start`, and for recurring todos
@@ -365,17 +368,17 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	unchanged := sameDates(cur, in)
 	if !unchanged {
 		if err := in.ValidateDates(); err != nil {
-			return domain.Todo{}, err
+			return domain.Todo{}, nil, err
 		}
 	}
 	edit, rr, err := ruleEditOf(c, in)
 	if err != nil {
-		return domain.Todo{}, err
+		return domain.Todo{}, nil, err
 	}
 	// A rule Lucid cannot evaluate can be kept or removed, but moving its
 	// series or replacing it needs its occurrences (FR-17).
 	if cur.RuleUnsupported && (edit == ruleSet || (edit == ruleKeep && !unchanged)) {
-		return domain.Todo{}, errRuleUnsupported
+		return domain.Todo{}, nil, errRuleUnsupported
 	}
 
 	series := newTodoSeries(cal, c)
@@ -398,14 +401,18 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if series != nil && in.Status == domain.TodoCompleted &&
 		cur.Status != domain.TodoCompleted && cur.Status != domain.TodoCancelled {
 		if cur.RuleUnsupported {
-			return domain.Todo{}, errRuleUnsupported
+			return domain.Todo{}, nil, errRuleUnsupported
 		}
 		_, next, err := series.current()
 		if err != nil {
-			return domain.Todo{}, errRuleUnsupported
+			return domain.Todo{}, nil, errRuleUnsupported
 		}
 		if next != nil {
-			return s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, series, in)
+			t, err := s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, series, in)
+			if err != nil {
+				return domain.Todo{}, nil, err
+			}
+			return t, s.snapshot(todoID, cur, raw, t), nil
 		}
 	}
 
@@ -414,8 +421,8 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
-		if err := series.move(cal, cur.Status, in, now); err != nil {
-			return domain.Todo{}, err
+		if err := series.move(cal, cur.Status, in); err != nil {
+			return domain.Todo{}, nil, err
 		}
 	default:
 		// A series reports its current occurrence, not its stored dates.
@@ -430,9 +437,85 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
 	if err != nil {
+		return domain.Todo{}, nil, err
+	}
+	t := todoFromObject(o, encodeID(calPath), c)
+	return t, s.snapshot(todoID, cur, raw, t), nil
+}
+
+// snapshot returns what undoes a change of the todo todoID, read as cur from
+// raw, that left t (FR-17): raw itself, the ETag the change gave it and the
+// completed copy the change left. Only the change of a recurring todo gets
+// one, and only when its new ETag is known: without it, an undo could not
+// tell another client's change from its own.
+func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo) *domain.TodoSnapshot {
+	if !cur.Recurring || t.ETag == "" {
+		return nil
+	}
+	snap := &domain.TodoSnapshot{TodoID: todoID, ETag: t.ETag, Data: raw, Account: s.identity(), TakenAt: s.p.now()}
+	if c := t.CompletedCopy; c != nil {
+		snap.CopyID, snap.CopyETag = c.ID, c.ETag
+	}
+	return snap
+}
+
+// RestoreTodo implements domain.CalendarService. It writes the resource of
+// snap back as it is, if it still has the ETag the change gave it, and then
+// removes the completed copy the change left, see removeCopy (FR-17).
+func (s *service) RestoreTodo(ctx context.Context, snap domain.TodoSnapshot) (domain.Todo, error) {
+	if s.err != nil {
+		return domain.Todo{}, s.err
+	}
+	objPath, calPath, err := decodeObjectID(s.homePath, snap.TodoID)
+	if err != nil {
 		return domain.Todo{}, err
 	}
-	return todoFromObject(o, encodeID(calPath), c), nil
+	if snap.Account != s.identity() {
+		return domain.Todo{}, fmt.Errorf("%w: snapshot of another account", domain.ErrNotFound)
+	}
+	if err := s.checkWritable(ctx, calPath, ""); err != nil {
+		return domain.Todo{}, err
+	}
+	// Parsed before the write, so that nothing is written that could not be
+	// reported; UpdateTodo parsed the same data when it read it.
+	cal, err := ical.NewDecoder(bytes.NewReader(snap.Data)).Decode()
+	if err != nil {
+		return domain.Todo{}, fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
+	}
+	c := mainComponent(cal, ical.CompToDo)
+	if c == nil {
+		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
+	}
+
+	defer s.invalidate(calPath)
+	o := calObject{path: objPath, cal: cal}
+	if o.etag, err = s.putBytes(ctx, objPath, snap.Data, snap.ETag, false); err != nil {
+		return domain.Todo{}, err
+	}
+	t := todoFromObject(o, encodeID(calPath), c)
+	if snap.CopyID != "" {
+		t.CopyKept = !s.removeCopy(ctx, snap.CopyID, snap.CopyETag)
+	}
+	return t, nil
+}
+
+// removeCopy deletes the completed copy copyID a change left, unless it no
+// longer has the ETag etag (unknown: any), and reports whether it is gone
+// (FR-17). It runs on after the request is cancelled: the series is
+// restored, and a closed tab would leave the copy next to its occurrence.
+func (s *service) removeCopy(ctx context.Context, copyID, etag string) bool {
+	copyPath, _, err := decodeObjectID(s.homePath, copyID)
+	if err == nil {
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+		defer cancel()
+		err = s.deleteObject(dctx, copyPath, cmp.Or(etag, "*"))
+	}
+	if err == nil || errors.Is(err, domain.ErrNotFound) {
+		return true
+	}
+	// Paths and errors only, never task content.
+	s.p.log.WarnContext(ctx, "keeping the copy of a completed occurrence on undo", "path", copyPath, "error", err)
+	return false
 }
 
 // ruleEdit is what an update does to the rule of a todo (FR-17).

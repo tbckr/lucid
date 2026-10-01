@@ -388,7 +388,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if err := s.checkWritable(ctx, calPath, ""); err != nil {
 		return domain.Event{}, err
 	}
-	cal, current, err := s.getObject(ctx, objPath)
+	cal, current, _, err := s.getObject(ctx, objPath)
 	if err != nil {
 		return domain.Event{}, err
 	}

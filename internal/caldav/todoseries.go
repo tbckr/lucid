@@ -366,29 +366,8 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //     occurrence, which the new DTSTART leaves behind;
 //   - an UNTIL from the moved occurrence on and the references to later
 //     occurrences (their overrides with their dates, EXDATEs) move along,
-//     see refShift and movedRule.
-//
-// The undo of a completion (in.UndoCompletion) takes back a roll, or the
-// completion of the last occurrence.
-//   - A roll moved none of the rule's instances: nothing shifts, and the
-//     override of the moved occurrence stays, the one the completion
-//     rolled to, which another client may have moved. The series goes back
-//     onto the rule date of the occurrence it rolled from (see rolledFrom),
-//     and when in has other dates than the rule gives that occurrence,
-//     another client had moved it: an override moves it there again, since
-//     the roll dropped the one it had. On fixed days, a start off the rule
-//     that a move within the window left becomes DTSTART again instead (see
-//     leftInWindow). Without such a rule date the dates of in become
-//     DTSTART and DUE.
-//   - A completed master, reopened, keeps its dates when in has those of
-//     the occurrence it then reports. Else the completing request moved it
-//     too, and the undo is the inverse move, a move like any other; moved
-//     back, an UNTIL on the moved occurrence, which fixed days had pulled
-//     onto it, goes back onto the dates of in.
-//
-// KDE's pending occurrence still goes, a COUNT is counted as for any move
-// (the moved occurrence is the anchor after a roll, so it stays), and an
-// UNTIL before the new DTSTART moves onto it.
+//     see refShift and movedRule;
+//   - an UNTIL before the new DTSTART moves onto it.
 //
 // A rule Lucid cannot evaluate (of a completed series) only gets its dates
 // moved. It fails, without changing anything, when in has no date or the
@@ -397,7 +376,7 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 // Where the moved occurrence lies in the series (the instances before it)
 // is decided on the series as read, s, and the rewritten rule is written
 // last: once shifted, it no longer says where the moved occurrence lay.
-func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput, now time.Time) error {
+func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
 	start, allDay := in.Start, in.StartAllDay
 	if start == nil {
 		start, allDay = in.Due, in.DueAllDay
@@ -405,209 +384,29 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	if start == nil {
 		return errRuleNeedsDate
 	}
-	undo, inverse := in.UndoCompletion, false
-	if undo && status == domain.TodoCompleted {
-		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() && hasDates(cur, in) {
-			return nil
-		}
-		undo, inverse = false, true
-	}
 	c := s.master
 	rid := s.reportedRid(status)
-	anchor, unroll := *start, false
 	var shift func(dateValue) time.Time
 	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && s.err == nil && s.rrule != "" {
 		before, err := s.instancesBefore(rid)
 		if err != nil {
 			return errRuleUnsupported
 		}
-		if undo {
-			if from, ok := s.rolledFrom(rid); ok && !s.leftInWindow(from, rid, *start, allDay) {
-				anchor, unroll = from, true
-			}
-		} else {
-			shift = s.refShift(rid, *start, allDay)
-		}
+		shift = s.refShift(rid, *start, allDay)
 		rule := movedRule(s.rrule, before, rid, shift)
-		loc := s.anchor.loc()
-		if inverse && start.Before(rid) && untilOn(s.rrule, rid, loc) {
-			rule = untilAt(rule, *start, loc)
-		}
 		// UNTIL never ends before the moved series starts.
-		if untilBefore(rule, anchor, loc) {
-			rule = untilAt(rule, anchor, loc)
+		if loc := s.anchor.loc(); untilBefore(rule, *start, loc) {
+			rule = untilAt(rule, *start, loc)
 		}
 		p.Value = rule
 	}
-	if unroll {
-		s.unroll(cal, anchor, in, now)
-	} else {
-		writeSeriesDates(cal, c, in, true)
-	}
-	if !undo {
-		dropOverrides(cal, c, rid.Equal)
-	}
+	writeSeriesDates(cal, c, in, true)
+	dropOverrides(cal, c, rid.Equal)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
 		shiftLaterRefs(cal, c, rid, shift)
 	}
 	return nil
-}
-
-// rolledFrom returns the rule date of the occurrence a completion rolled
-// the series from onto rid (FR-17): the latest instance of the rule,
-// carried on backwards, before rid that has neither an override nor an
-// EXDATE. The roll dropped exactly that occurrence's override, while the
-// done ones in between stay. The rule is iterated without its end from
-// ever earlier starts a whole number of its periods before rid; a start
-// that does not lead to rid is off the rule's grid and skipped. It reports
-// false when no such instance turns up within maxRRuleIterations.
-func (s *todoSeries) rolledFrom(rid time.Time) (time.Time, bool) {
-	rule := withoutEnd(s.rrule)
-	freq := strings.ToUpper(rulePart(s.rrule, "FREQ"))
-	interval, err := strconv.Atoi(rulePart(s.rrule, "INTERVAL"))
-	if err != nil || interval < 1 {
-		interval = 1
-	}
-	at := rid.In(s.anchor.loc())
-	for n, steps := interval, 0; steps < maxRRuleIterations; n += interval {
-		steps++
-		from, ok := periodsBefore(at, freq, n)
-		if !ok {
-			continue
-		}
-		r, err := newRRule(rule, from)
-		if err != nil {
-			return time.Time{}, false
-		}
-		var earlier []time.Time
-		next, aligned := r.Iterator(), false
-		for ; steps < maxRRuleIterations; steps++ {
-			t, ok := next()
-			if !ok || !t.Before(rid) {
-				aligned = ok && t.Equal(rid)
-				break
-			}
-			earlier = append(earlier, t)
-		}
-		if !aligned {
-			continue
-		}
-		for _, t := range slices.Backward(earlier) {
-			if s.overrides[t.Unix()] == nil && !s.exdates[t.Unix()] {
-				return t, true
-			}
-		}
-	}
-	return time.Time{}, false
-}
-
-// leftInWindow reports whether start, of the value type allDay, is a
-// DTSTART off a fixed-day rule that Lucid's own move within the window
-// left between the rule date from and the current occurrence rid (FR-17):
-// not an instance of the rule, at the rule's time of day and value type.
-// Another client's move that also changed the time of day is not one.
-func (s *todoSeries) leftInWindow(from, rid, start time.Time, allDay bool) bool {
-	if !s.fixedDays || allDay != s.anchor.allDay || !start.After(from) || !start.Before(rid) {
-		return false
-	}
-	loc := s.anchor.loc()
-	if secondOfDay(start.In(loc)) != secondOfDay(from.In(loc)) {
-		return false
-	}
-	r, err := newRRule(withoutEnd(s.rrule), from.In(loc))
-	if err != nil {
-		return false
-	}
-	next := r.Iterator()
-	for range maxRRuleIterations {
-		t, ok := next()
-		if !ok || t.After(start) {
-			return true
-		}
-		if t.Equal(start) {
-			return false
-		}
-	}
-	return false
-}
-
-// periodsBefore returns t moved back by n periods of freq, an RRULE FREQ,
-// on its wall clock; false when its day of the month does not exist there.
-func periodsBefore(t time.Time, freq string, n int) (time.Time, bool) {
-	y, m, d := t.Date()
-	h, mi, sec := t.Clock()
-	switch freq {
-	case "YEARLY":
-		y -= n
-	case "MONTHLY":
-		m -= time.Month(n)
-	case "WEEKLY":
-		d -= 7 * n
-	case "DAILY":
-		d -= n
-	case "HOURLY":
-		h -= n
-	case "MINUTELY":
-		mi -= n
-	default:
-		sec -= n
-	}
-	b := time.Date(y, m, d, h, mi, sec, t.Nanosecond(), t.Location())
-	if (freq == "YEARLY" || freq == "MONTHLY") && b.Day() != t.Day() {
-		return b, false
-	}
-	return b, true
-}
-
-// withoutEnd returns rrule without its COUNT and UNTIL.
-func withoutEnd(rrule string) string {
-	var out []string
-	for part := range strings.SplitSeq(rrule, ";") {
-		if k := rulePartKey(part); k != "COUNT" && k != "UNTIL" {
-			out = append(out, part)
-		}
-	}
-	return strings.Join(out, ";")
-}
-
-// unroll moves the master of s back onto rid, the rule date of the
-// occurrence a completion rolled it from (FR-17). When in has other dates
-// than the rule gives that occurrence, another client had moved it, and
-// the roll dropped its override: an override as another client writes one
-// moves it there again, open, with the master's SUMMARY.
-func (s *todoSeries) unroll(cal *ical.Calendar, rid time.Time, in domain.TodoInput, now time.Time) {
-	s.anchorAt(cal, rid)
-	if occ, ok := s.occurrence(rid); ok && hasDates(occ, in) {
-		return
-	}
-	c := s.master
-	o := newComponent(ical.CompToDo, text(c.Props, ical.PropUID), now)
-	setSeriesDate(cal, o, ical.PropRecurrenceID, &rid, s.startForm)
-	start, allDay := in.Start, in.StartAllDay
-	if start == nil {
-		start, allDay = in.Due, in.DueAllDay
-	}
-	setSeriesDate(cal, o, ical.PropDateTimeStart, start, seriesForm(s.startForm, allDay, true, in.Timezone))
-	setSeriesDate(cal, o, ical.PropDue, in.Due, seriesForm(s.dueForm, in.DueAllDay, true, in.Timezone))
-	setText(o.Props, ical.PropSummary, text(c.Props, ical.PropSummary))
-	o.Props.Set(rawProp(ical.PropStatus, domain.TodoNeedsAction))
-	cal.Children = append(cal.Children, o)
-}
-
-// hasDates reports whether in has the dates of o: the same anchor (start,
-// else due) and due, of the same value types (FR-17).
-func hasDates(o todoOcc, in domain.TodoInput) bool {
-	start, startAllDay := in.Start, in.StartAllDay
-	if start == nil {
-		start, startAllDay = in.Due, in.DueAllDay
-	}
-	oStart, oStartAllDay := o.start, o.startAllDay
-	if oStart == nil {
-		oStart, oStartAllDay = o.due, o.dueAllDay
-	}
-	return sameInstant(start, oStart) && startAllDay == oStartAllDay &&
-		sameInstant(in.Due, o.due) && (in.Due == nil || in.DueAllDay == o.dueAllDay)
 }
 
 // instancesBefore returns the number of instances of the rule of s before
@@ -682,8 +481,7 @@ func secondOfDay(t time.Time) int {
 // (FR-17): its COUNT without the before instances that preceded rid, at
 // least one; its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
 // on rid itself makes the moved occurrence the last one, and it stays the
-// last wherever it moves. Kept by the undo of a completion, UNTIL ends the
-// series where it did before the completion.
+// last wherever it moves.
 func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) time.Time) string {
 	rrule = mapRulePart(rrule, "COUNT", func(v string) string {
 		n, err := strconv.Atoi(v)
@@ -726,24 +524,6 @@ func untilBefore(rrule string, to time.Time, loc *time.Location) bool {
 		}
 	}
 	return false
-}
-
-// untilOn reports whether rrule has an UNTIL on t; a DATE compares with
-// t's date in loc (FR-17).
-func untilOn(rrule string, t time.Time, loc *time.Location) bool {
-	v := rulePart(rrule, "UNTIL")
-	if v == "" {
-		return false
-	}
-	d, err := parseDateValue(v, nil)
-	switch {
-	case err != nil:
-		return false
-	case d.allDay:
-		return d.t.Equal(civilDate(t.In(loc)))
-	default:
-		return d.t.Equal(t)
-	}
 }
 
 // untilAt returns rrule with its UNTIL at to, written in the UNTIL's own

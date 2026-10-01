@@ -298,7 +298,7 @@ func (s *Server) handleUpdateTodo(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	todo, err := svc.UpdateTodo(r.Context(), id, etag, in)
+	todo, _, err := svc.UpdateTodo(r.Context(), id, etag, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return

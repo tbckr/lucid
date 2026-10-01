@@ -173,7 +173,8 @@ func TestInvalidAccount(t *testing.T) {
 	checks["DeleteEvent"] = svc.DeleteEvent(ctx, "x", "e")
 	_, checks["ListTodos"] = svc.ListTodos(ctx, "x")
 	_, checks["CreateTodo"] = svc.CreateTodo(ctx, "x", domain.TodoInput{})
-	_, checks["UpdateTodo"] = svc.UpdateTodo(ctx, "x", "e", domain.TodoInput{})
+	_, _, checks["UpdateTodo"] = svc.UpdateTodo(ctx, "x", "e", domain.TodoInput{})
+	_, checks["RestoreTodo"] = svc.RestoreTodo(ctx, domain.TodoSnapshot{TodoID: "x"})
 	checks["DeleteTodo"] = svc.DeleteTodo(ctx, "x", "e")
 	for name, err := range checks {
 		if !errors.Is(err, domain.ErrUpstream) {

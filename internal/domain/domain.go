@@ -181,6 +181,11 @@ type Todo struct {
 	RuleUnsupported bool       `json:"ruleUnsupported"`
 	Next            *TodoDates `json:"next"`
 	CompletedCopy   *Todo      `json:"completedCopy,omitempty"`
+	// UndoToken undoes the change whose response carries it. CopyKept, in
+	// the response of an undo, reports that the completed copy the change
+	// left stays, because another client changed it (FR-17).
+	UndoToken string `json:"undoToken,omitempty"`
+	CopyKept  bool   `json:"copyKept,omitempty"`
 }
 
 // TodoDates are the start and due of one occurrence (FR-16).
@@ -229,16 +234,6 @@ type TodoInput struct {
 	// RRuleOmitted is set when a JSON body has no "rrule" at all, like StartOmitted.
 	RRuleOmitted bool   `json:"-"`
 	Timezone     string `json:"timezone,omitempty"`
-	// UndoCompletion marks the PUT that takes back the completion of a
-	// series' occurrence by moving the series back (FR-17). The undo of a
-	// roll puts the series back onto that occurrence's rule date, with
-	// another client's move of it restored, and keeps the references to
-	// later occurrences, the rule's end and the override of the occurrence
-	// it had rolled to. The undo of the last occurrence's completion keeps
-	// the dates, or, when that completion also moved the series, moves it
-	// back as the inverse move. It is ignored unless the PUT moves a series
-	// and keeps its rule.
-	UndoCompletion bool `json:"undoCompletion,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly (unknown fields are errors, as for every
@@ -367,7 +362,15 @@ type CalendarService interface {
 	// todos overlapping [start, end) (FR-16, FR-17).
 	ListTodoOccurrences(ctx context.Context, calendarID string, start, end time.Time) ([]TodoOccurrence, error)
 	CreateTodo(ctx context.Context, calendarID string, in TodoInput) (Todo, error)
-	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, error)
+	// UpdateTodo replaces the todo. etag must match (If-Match), otherwise
+	// ErrConflict. The change of a recurring todo returns the snapshot that
+	// RestoreTodo undoes it with, or nil when it cannot be undone (FR-17).
+	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, *TodoSnapshot, error)
+	// RestoreTodo undoes a change of a todo by writing back the resource as
+	// the change read it, unless the todo changed since (ErrConflict), and
+	// removes the completed copy the change left, unless that changed since:
+	// then it stays, and the todo reports CopyKept (FR-17).
+	RestoreTodo(ctx context.Context, snap TodoSnapshot) (Todo, error)
 	DeleteTodo(ctx context.Context, todoID, etag string) error
 }
 

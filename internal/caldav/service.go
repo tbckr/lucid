@@ -79,10 +79,16 @@ type calEntry struct {
 	checked   atomic.Int64 // unix nanoseconds of the last validation
 }
 
+// identity returns the account the service is bound to: the origin of its
+// calendar home and its username.
+func (s *service) identity() string {
+	return s.home.Scheme + "://" + s.home.Host + "\x00" + s.acct.Username
+}
+
 func (s *service) cacheKey(calPath, comp string) string {
 	// Endpoint (origin of the home set) + username + path: no cross-user or
 	// cross-server leakage.
-	return strings.Join([]string{s.home.Scheme + "://" + s.home.Host, s.acct.Username, calPath, comp}, "\x00")
+	return strings.Join([]string{s.identity(), calPath, comp}, "\x00")
 }
 
 func (s *service) invalidate(calPath string) {
@@ -229,26 +235,33 @@ func canWrite(ps *privilegeSet) bool {
 	return false
 }
 
-// getObject fetches and parses one object.
-func (s *service) getObject(ctx context.Context, objPath string) (*ical.Calendar, string, error) {
+// getObject fetches and parses one object. It also returns the object's data
+// as read, raw.
+func (s *service) getObject(ctx context.Context, objPath string) (cal *ical.Calendar, etag string, raw []byte, err error) {
 	resp, err := s.t.do(ctx, request{method: http.MethodGet, url: s.urlFor(objPath)})
 	if err != nil {
-		return nil, "", mapError(err)
+		return nil, "", nil, mapError(err)
 	}
-	cal, err := ical.NewDecoder(bytes.NewReader(resp.body)).Decode()
+	cal, err = ical.NewDecoder(bytes.NewReader(resp.body)).Decode()
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
+		return nil, "", nil, fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
 	}
-	return cal, resp.header.Get("ETag"), nil
+	return cal, resp.header.Get("ETag"), resp.body, nil
 }
 
-// putObject stores cal at objPath. Exactly one of ifMatch / create must be
-// used: create sends If-None-Match: *.
+// putObject encodes cal and stores it at objPath, see putBytes.
 func (s *service) putObject(ctx context.Context, objPath string, cal *ical.Calendar, ifMatch string, create bool) (string, error) {
 	var buf bytes.Buffer
 	if err := ical.NewEncoder(&buf).Encode(cal); err != nil {
 		return "", fmt.Errorf("%w: encoding iCalendar: %w", domain.ErrInvalidInput, err)
 	}
+	return s.putBytes(ctx, objPath, buf.Bytes(), ifMatch, create)
+}
+
+// putBytes stores the iCalendar data at objPath as it is and returns the
+// object's new ETag, "" if the server tells none. Exactly one of ifMatch /
+// create must be used: create sends If-None-Match: *.
+func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifMatch string, create bool) (string, error) {
 	headers := map[string]string{}
 	if create {
 		headers["If-None-Match"] = "*"
@@ -258,7 +271,7 @@ func (s *service) putObject(ctx context.Context, objPath string, cal *ical.Calen
 	resp, err := s.t.do(ctx, request{
 		method:  http.MethodPut,
 		url:     s.urlFor(objPath),
-		body:    buf.Bytes(),
+		body:    data,
 		ctype:   "text/calendar; charset=utf-8",
 		headers: headers,
 	})
