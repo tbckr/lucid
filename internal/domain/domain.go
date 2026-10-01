@@ -336,6 +336,19 @@ func (e *ValidationError) Error() string { return "invalid input: " + e.Msg }
 // Is reports ErrInvalidInput as a match.
 func (e *ValidationError) Is(target error) bool { return target == ErrInvalidInput }
 
+// TodoSnapshot captures a todo's resource exactly as it was before a write,
+// so that write can be undone (FR-17). It is kept in the undo store, keyed by
+// a token handed to the client.
+type TodoSnapshot struct {
+	TodoID   string // master ID
+	ETag     string // master ETag after the write: If-Match of the restore
+	Data     []byte // the resource exactly as read before the write
+	CopyID   string // completed copy created by the write, "" if none
+	CopyETag string
+	Account  string // origin + "\x00" + username
+	TakenAt  time.Time
+}
+
 // CalendarService is bound to one account. Implementations must be safe for
 // concurrent use.
 type CalendarService interface {
