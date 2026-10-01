@@ -682,16 +682,22 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	return t, nil
 }
 
+// propExRule is RFC 2445's EXRULE, which RFC 5545 deprecates but which is a
+// rule part all the same.
+const propExRule = "EXRULE"
+
 // cloneOccurrence returns a new VTODO for occ of series s (FR-17): the master's
 // properties overlaid with occ's override, without RRULE, RDATE, EXDATE,
-// RECURRENCE-ID, X-KDE-LIBKCAL-DTRECURRENCE, VALARM children and
-// RELATED-TO;RELTYPE=CHILD, with a new UID and fresh DTSTAMP/CREATED/
-// LAST-MODIFIED/SEQUENCE, and occ's dates in the series' form.
+// EXRULE, RECURRENCE-ID, X-KDE-LIBKCAL-DTRECURRENCE, VALARM children,
+// RELATED-TO;RELTYPE=CHILD, ORGANIZER and ATTENDEE, with a new UID and fresh
+// DTSTAMP/CREATED/LAST-MODIFIED/SEQUENCE, and occ's dates in the series' form.
 //
 // An override's property replaces all of the master's with its name, so a
 // full override, as Thunderbird writes it, is cloned as it is, and a minimal
-// one keeps the series' title and categories. The clone has no children: a
-// VTODO holds only VALARMs. Its VTIMEZONEs are entryCalendar's.
+// one keeps the series' title and categories. A completed entry is a private
+// record: a new resource with ORGANIZER and ATTENDEE could make the server
+// send scheduling messages for every completion (RFC 6638). The clone has no
+// children: a VTODO holds only VALARMs. Its VTIMEZONEs are entryCalendar's.
 func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time) *ical.Component {
 	c := ical.NewComponent(ical.CompToDo)
 	for name, props := range s.master.Props {
@@ -703,7 +709,8 @@ func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time) *ica
 		}
 	}
 	for _, name := range []string{
-		ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates, ical.PropRecurrenceID, propKDEPending,
+		ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates, propExRule, ical.PropRecurrenceID,
+		propKDEPending, ical.PropOrganizer, ical.PropAttendee,
 	} {
 		c.Props.Del(name)
 	}

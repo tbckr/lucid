@@ -1373,14 +1373,16 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 	}
 
 	// The copy is a clone of the stored occurrence: what Lucid does not edit
-	// stays, only the rule and its alarms and children go (FR-17).
+	// stays, only the rule and its alarms and children go, and so do the
+	// scheduling properties of a private record (FR-17).
 	t.Run("copy keeps the master's other properties", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{
-			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z",
+			"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z", "EXRULE:FREQ=MONTHLY",
 			"CATEGORIES:Home", "RELATED-TO:parent-uid", "LOCATION:Desk", "URL:https://x", "X-FOO:bar",
-			"RELATED-TO;RELTYPE=CHILD:kid",
+			"RELATED-TO;RELTYPE=CHILD:kid", "ORGANIZER:mailto:me@example.com", "ATTENDEE:mailto:you@example.com",
+			"SEQUENCE:7", "CREATED:20200101T000000Z",
 			"BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M", "DESCRIPTION:Reminder", "END:VALARM",
 		})
 		got := completeListed(t, e, id)
@@ -1390,11 +1392,16 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		checkStored(t, "copy", storedCopy(t, e, &got), []string{
 			"CATEGORIES:Home", "RELATED-TO:parent-uid", "LOCATION:Desk", "URL:https://x", "X-FOO:bar",
 			"STATUS:COMPLETED", "PERCENT-COMPLETE:100", "DTSTART:20250310T090000Z",
-		}, []string{"RRULE", "EXDATE", "BEGIN:VALARM", "RELTYPE=CHILD", "\r\nUID:r\r\n"})
+			"SEQUENCE:0\r\n", "CREATED:20250301T120000Z",
+		}, []string{
+			"RRULE", "EXDATE", "EXRULE", "BEGIN:VALARM", "RELTYPE=CHILD", "\r\nUID:r\r\n", "ORGANIZER", "ATTENDEE",
+			"SEQUENCE:7", "CREATED:20200101T000000Z",
+		})
 		// Cloning leaves the series' own properties alone.
 		checkStored(t, "master", storedObject(t, e, id), []string{
-			"RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z", "CATEGORIES:Home", "RELATED-TO:parent-uid",
-			"RELATED-TO;RELTYPE=CHILD:kid", "BEGIN:VALARM", "X-FOO:bar",
+			"RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z", "EXRULE:FREQ=MONTHLY", "CATEGORIES:Home",
+			"RELATED-TO:parent-uid", "RELATED-TO;RELTYPE=CHILD:kid", "BEGIN:VALARM", "X-FOO:bar",
+			"ORGANIZER:mailto:me@example.com", "ATTENDEE:mailto:you@example.com",
 		}, nil)
 	})
 
@@ -1428,14 +1435,16 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e,
 			[]string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY", "CATEGORIES:Home"},
-			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z"})
+			[]string{
+				"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z", "STATUS:IN-PROCESS",
+			})
 		got := completeListed(t, e, id)
-		if c := got.CompletedCopy; c == nil || c.Title != "Series" {
-			t.Errorf("completed copy = %+v; want the series' title", c)
+		if c := got.CompletedCopy; c == nil || c.Title != "Series" || c.Status != domain.TodoCompleted {
+			t.Errorf("completed copy = %+v; want the series' title, completed", c)
 		}
 		checkStored(t, "copy", storedCopy(t, e, &got), []string{
-			"SUMMARY:Series", "CATEGORIES:Home", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z",
-		}, []string{"RECURRENCE-ID"})
+			"SUMMARY:Series", "CATEGORIES:Home", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z", "STATUS:COMPLETED",
+		}, []string{"RECURRENCE-ID", "IN-PROCESS"})
 	})
 
 	// What the client changes while completing goes to the copy, over an
