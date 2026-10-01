@@ -2257,6 +2257,26 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250309T150000Z"}, []string{"RECURRENCE-ID", "Moved"})
 	})
 
+	// An EXDATE with a date in a timed series lies on its date in the
+	// series' zone: 18:00 in Los Angeles on 10 March is 11 March in UTC,
+	// after the date 11 March's midnight UTC. Moved a day later, the series
+	// takes the excluded 11 March along to the 12th, instead of excluding
+	// the moved repeat (A-11, FR-17).
+	t.Run("a move shifts a later date EXDATE by its date", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{
+			"DTSTART;TZID=America/Los_Angeles:20250310T180000", "RRULE:FREQ=DAILY", "EXDATE;VALUE=DATE:20250311",
+		})
+		got := moveListed(t, e, id, 24*time.Hour)
+		if !sameTime(got.Start, ptr(date(2025, 3, 12, 1, 0))) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 14, 1, 0))}) {
+			t.Errorf("moved series = %+v; want 11 March 18:00 in Los Angeles, then the 13th", got)
+		}
+		checkStored(t, "series", storedObject(t, e, id),
+			[]string{"DTSTART;TZID=America/Los_Angeles:20250311T180000", "EXDATE;VALUE=DATE:20250312"}, nil)
+	})
+
 	t.Run("start null writes DTSTART = DUE", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -2542,6 +2562,32 @@ func TestUpdateTodoSeries(t *testing.T) {
 		checkStored(t, "master", storedObject(t, e, id),
 			[]string{"RRULE:FREQ=WEEKLY", "DTSTART:20250310T090000Z", "RECURRENCE-ID:20250309T090000Z"},
 			[]string{"FREQ=DAILY", "RECURRENCE-ID:20250312T090000Z", "DTSTART:20250312T150000Z"})
+	})
+
+	// A done override with a date in a timed series lies on its date in the
+	// series' zone: 18:00 in Los Angeles on 10 March is 11 March in UTC,
+	// after the date 11 March's midnight UTC. The one after the current
+	// repeat goes with a new rule, the one before stays (A-11, FR-17).
+	t.Run("a new rule places later date overrides by their date", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=America/Los_Angeles:20250309T180000", "RRULE:FREQ=DAILY"},
+			[]string{"RECURRENCE-ID;VALUE=DATE:20250309", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID;VALUE=DATE:20250311", "STATUS:COMPLETED"},
+		)
+		f := listedTodo(t, e, id)
+		if !sameTime(f.Start, ptr(date(2025, 3, 11, 1, 0))) {
+			t.Fatalf("current occurrence = %+v; want 10 March 18:00 in Los Angeles", f)
+		}
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "FREQ=WEEKLY"))
+		mustNoErr(t, err)
+		checkStored(t, "series", storedObject(t, e, id),
+			[]string{"RRULE:FREQ=WEEKLY", "RECURRENCE-ID;VALUE=DATE:20250309"}, []string{"RECURRENCE-ID;VALUE=DATE:20250311"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 20, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 10, 1, 0), date(2025, 3, 11, 1, 0), date(2025, 3, 18, 1, 0)},
+			[]string{domain.OccurrenceDone, domain.OccurrenceCurrent, domain.OccurrenceUpcoming})
 	})
 
 	t.Run("same rrule keeps overrides", func(t *testing.T) {

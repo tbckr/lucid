@@ -211,6 +211,17 @@ func (s *todoSeries) place(o seriesOverride, t time.Time) int {
 	return o.day.Compare(s.dayOf(t))
 }
 
+// placeRef compares where d, a RECURRENCE-ID or EXDATE value as written,
+// lies with the rule instance t, as place does (A-11): a value of the other
+// value type by its date. A date is midnight UTC, so west of UTC its instant
+// lies before an instance on the day before it.
+func (s *todoSeries) placeRef(d dateValue, t time.Time) int {
+	if d.allDay == s.anchor.allDay {
+		return d.t.Compare(t)
+	}
+	return civilDate(d.t).Compare(s.dayOf(t))
+}
+
 // zoneKnown reports whether Lucid knows the zone the anchor of s is written
 // in: it has no TZID, or one Lucid resolves (FR-17). Lucid reads the wall
 // clock of any other TZID as UTC, so an instant it derives from the series,
@@ -647,7 +658,7 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	dropOccurrence(cal, c, occ)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
-		shiftLaterRefs(cal, c, rid, shift)
+		s.shiftLaterRefs(cal, rid, shift)
 	}
 	s.retypeRefs(cal, to)
 	// UNTIL never ends before the moved series starts, compared in the
@@ -820,25 +831,27 @@ func mapRulePart(rrule, key string, f func(string) string) string {
 	return strings.Join(parts, ";")
 }
 
-// after returns shift for values after rid; it keeps the others.
-func after(rid time.Time, shift func(dateValue) time.Time) func(dateValue) time.Time {
+// after returns shift for references of s after the instance rid (see
+// placeRef); it keeps the others.
+func (s *todoSeries) after(rid time.Time, shift func(dateValue) time.Time) func(dateValue) time.Time {
 	return func(d dateValue) time.Time {
-		if !d.t.After(rid) {
+		if s.placeRef(d, rid) <= 0 {
 			return d.t
 		}
 		return shift(d)
 	}
 }
 
-// shiftLaterRefs moves the references of master in cal to occurrences after
-// rid by shift (FR-17): the RECURRENCE-ID, DTSTART and DUE of their
-// overrides, and EXDATE values.
-func shiftLaterRefs(cal *ical.Calendar, master *ical.Component, rid time.Time, shift func(dateValue) time.Time) {
+// shiftLaterRefs moves the references of the master of s in cal to
+// occurrences after the instance rid, placed by placeRef, by shift (FR-17):
+// the RECURRENCE-ID, DTSTART and DUE of their overrides, and EXDATE values.
+func (s *todoSeries) shiftLaterRefs(cal *ical.Calendar, rid time.Time, shift func(dateValue) time.Time) {
+	master := s.master
 	for _, o := range cal.Children {
 		if o == master || o.Name != master.Name {
 			continue
 		}
-		if r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err != nil || !r.t.After(rid) {
+		if r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err != nil || s.placeRef(r, rid) <= 0 {
 			continue
 		}
 		for _, name := range []string{ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDue} {
@@ -850,7 +863,7 @@ func shiftLaterRefs(cal *ical.Calendar, master *ical.Component, rid time.Time, s
 	}
 	vals := master.Props[ical.PropExceptionDates]
 	for i := range vals {
-		shiftDatePropBy(&vals[i], after(rid, shift))
+		shiftDatePropBy(&vals[i], s.after(rid, shift))
 	}
 }
 
@@ -956,14 +969,14 @@ func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay bool, f dateForm,
 }
 
 // dropOverrides removes the overrides of master from cal whose
-// RECURRENCE-ID instant drop reports (FR-17).
-func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid time.Time) bool) {
+// RECURRENCE-ID drop reports (FR-17).
+func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid dateValue) bool) {
 	cal.Children = slices.DeleteFunc(cal.Children, func(o *ical.Component) bool {
 		if o == master || o.Name != master.Name {
 			return false
 		}
 		rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
-		return err == nil && drop(rid.t)
+		return err == nil && drop(rid)
 	})
 }
 
@@ -971,7 +984,7 @@ func dropOverrides(cal *ical.Calendar, master *ical.Component, drop func(rid tim
 // cal (FR-17): those at occ's instant, and the one it was read with, whose
 // RECURRENCE-ID can be of the other value type (A-11).
 func dropOccurrence(cal *ical.Calendar, master *ical.Component, occ todoOcc) {
-	dropOverrides(cal, master, occ.rid.Equal)
+	dropOverrides(cal, master, func(rid dateValue) bool { return rid.t.Equal(occ.rid) })
 	if occ.override != nil {
 		cal.Children = slices.DeleteFunc(cal.Children, func(o *ical.Component) bool { return o == occ.override })
 	}
