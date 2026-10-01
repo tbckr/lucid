@@ -364,8 +364,8 @@ type TodoSnapshot struct {
 	Data     []byte // the resource exactly as read before the write
 	CopyID   string // completed copy created by the write, "" if none
 	CopyETag string
-	Account  string // origin + "\x00" + username
-	TakenAt  time.Time
+	Account  string    // origin + "\x00" + username
+	TakenAt  time.Time // when the undo store took it in: stamped by the store, not by the service
 }
 
 // CalendarService is bound to one account. Implementations must be safe for

@@ -29,7 +29,7 @@ const tokenBytes = 32 // 256-bit undo tokens
 
 // Options configures a Store.
 type Options struct {
-	// TTL is how long a snapshot stays undoable after it was taken
+	// TTL is how long a snapshot stays undoable after Put stored it
 	// (domain.TodoSnapshot.TakenAt). Default DefaultTTL.
 	TTL time.Duration
 	// PerOwner caps the number of snapshots kept per owner; a Put beyond it
@@ -82,12 +82,15 @@ func New(opts Options) *Store {
 }
 
 // Put stores snap under owner and returns a token to retrieve it. It reports
-// ok=false, storing nothing, when snap.Data exceeds MaxSnapshot.
+// ok=false, storing nothing, when snap.Data exceeds MaxSnapshot. The store
+// stamps TakenAt with its own clock, whatever the caller set: expiry and
+// eviction are judged by that clock alone.
 func (s *Store) Put(owner string, snap domain.TodoSnapshot) (token string, ok bool) {
 	size := int64(len(snap.Data))
 	if size > s.opts.MaxSnapshot {
 		return "", false
 	}
+	snap.TakenAt = s.opts.Now()
 	tok := randomToken()
 	k := hashOwner(owner)
 

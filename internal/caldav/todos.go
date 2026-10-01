@@ -480,12 +480,13 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 // one, and only when its new ETag is known: without it, an undo could not
 // tell another client's change from its own. A change that turned completed
 // overrides into the entries entries gets none: restoring raw would bring
-// the overrides back next to their entries (A-18).
+// the overrides back next to their entries (A-18). The undo store stamps
+// when it took the snapshot in, by its own clock.
 func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.TodoSnapshot {
 	if !cur.Recurring || t.ETag == "" || len(entries) > 0 {
 		return nil
 	}
-	snap := &domain.TodoSnapshot{TodoID: todoID, ETag: t.ETag, Data: raw, Account: s.identity(), TakenAt: s.p.now()}
+	snap := &domain.TodoSnapshot{TodoID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
 	if c := t.CompletedCopy; c != nil {
 		snap.CopyID, snap.CopyETag = c.ID, c.ETag
 	}

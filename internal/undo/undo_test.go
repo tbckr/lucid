@@ -44,7 +44,8 @@ func newStore(t *testing.T, mod func(*Options)) (*Store, *fakeClock) {
 	return New(opts), clk
 }
 
-func snapAt(now time.Time, data []byte) domain.TodoSnapshot {
+// snapshot returns a snapshot of data; Put stamps its TakenAt.
+func snapshot(data []byte) domain.TodoSnapshot {
 	return domain.TodoSnapshot{
 		TodoID:   "todo-1",
 		ETag:     "etag-1",
@@ -52,14 +53,13 @@ func snapAt(now time.Time, data []byte) domain.TodoSnapshot {
 		CopyID:   "copy-1",
 		CopyETag: "copy-etag-1",
 		Account:  "https://dav.example.com\x00tim",
-		TakenAt:  now,
 	}
 }
 
 func TestPutGet(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, nil)
-	snap := snapAt(clk.Now(), []byte("resource bytes"))
+	snap := snapshot([]byte("resource bytes"))
 
 	token, ok := s.Put("s1", snap)
 	if !ok {
@@ -72,8 +72,8 @@ func TestPutGet(t *testing.T) {
 	}
 	if got.TodoID != snap.TodoID || got.ETag != snap.ETag || !bytes.Equal(got.Data, snap.Data) ||
 		got.CopyID != snap.CopyID || got.CopyETag != snap.CopyETag || got.Account != snap.Account ||
-		!got.TakenAt.Equal(snap.TakenAt) {
-		t.Errorf("Get() = %+v, want %+v", got, snap)
+		!got.TakenAt.Equal(clk.Now()) {
+		t.Errorf("Get() = %+v, want %+v taken at %v", got, snap, clk.Now())
 	}
 
 	if _, ok := s.Get("s2", token); ok {
@@ -81,10 +81,40 @@ func TestPutGet(t *testing.T) {
 	}
 }
 
-func TestTokenFormat(t *testing.T) {
+// The store stamps TakenAt with its own clock: a snapshot's expiry never
+// depends on the clock of whoever made it, so a stale or zero TakenAt from
+// the caller cannot make a token dead on arrival.
+func TestPutStampsTakenAt(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, nil)
-	token, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+	for _, tc := range []struct {
+		name    string
+		takenAt time.Time
+	}{
+		{"zero", time.Time{}},
+		{"an hour ago", clk.Now().Add(-time.Hour)},
+		{"an hour ahead", clk.Now().Add(time.Hour)},
+	} {
+		snap := snapshot([]byte("x"))
+		snap.TakenAt = tc.takenAt
+		token, ok := s.Put("s1", snap)
+		if !ok {
+			t.Fatalf("Put(%s) ok = false", tc.name)
+		}
+		got, ok := s.Get("s1", token)
+		if !ok {
+			t.Fatalf("Get() after Put(%s) ok = false, want the token alive", tc.name)
+		}
+		if !got.TakenAt.Equal(clk.Now()) {
+			t.Errorf("TakenAt after Put(%s) = %v, want the store's clock %v", tc.name, got.TakenAt, clk.Now())
+		}
+	}
+}
+
+func TestTokenFormat(t *testing.T) {
+	t.Parallel()
+	s, _ := newStore(t, nil)
+	token, ok := s.Put("s1", snapshot([]byte("x")))
 	if !ok {
 		t.Fatalf("Put() ok = false")
 	}
@@ -120,8 +150,8 @@ func TestTokenFormat(t *testing.T) {
 // rather than let it fall through to the store's "not found".
 func TestValidToken(t *testing.T) {
 	t.Parallel()
-	s, clk := newStore(t, nil)
-	token, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+	s, _ := newStore(t, nil)
+	token, ok := s.Put("s1", snapshot([]byte("x")))
 	if !ok {
 		t.Fatalf("Put() ok = false")
 	}
@@ -150,7 +180,7 @@ func TestValidToken(t *testing.T) {
 func TestExpiry(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, nil)
-	token, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+	token, ok := s.Put("s1", snapshot([]byte("x")))
 	if !ok {
 		t.Fatalf("Put() ok = false")
 	}
@@ -169,14 +199,14 @@ func TestPerOwnerCap(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, nil)
 
-	otherToken, ok := s.Put("s2", snapAt(clk.Now(), []byte("other")))
+	otherToken, ok := s.Put("s2", snapshot([]byte("other")))
 	if !ok {
 		t.Fatalf("Put(s2) ok = false")
 	}
 
 	var tokens []string
 	for range 9 {
-		tok, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+		tok, ok := s.Put("s1", snapshot([]byte("x")))
 		if !ok {
 			t.Fatalf("Put(s1) ok = false")
 		}
@@ -201,12 +231,12 @@ func TestByteBudget(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, func(o *Options) { o.MaxBytes = 10 })
 
-	first, ok := s.Put("s1", snapAt(clk.Now(), []byte("123456")))
+	first, ok := s.Put("s1", snapshot([]byte("123456")))
 	if !ok {
 		t.Fatalf("Put() first ok = false")
 	}
 	clk.Advance(time.Millisecond)
-	second, ok := s.Put("s1", snapAt(clk.Now(), []byte("789012")))
+	second, ok := s.Put("s1", snapshot([]byte("789012")))
 	if !ok {
 		t.Fatalf("Put() second ok = false")
 	}
@@ -221,10 +251,10 @@ func TestByteBudget(t *testing.T) {
 
 func TestTooLarge(t *testing.T) {
 	t.Parallel()
-	s, clk := newStore(t, func(o *Options) { o.MaxSnapshot = 10 })
+	s, _ := newStore(t, func(o *Options) { o.MaxSnapshot = 10 })
 
 	data := make([]byte, 11)
-	token, ok := s.Put("s1", snapAt(clk.Now(), data))
+	token, ok := s.Put("s1", snapshot(data))
 	if ok {
 		t.Fatalf("Put() ok = true, want false")
 	}
@@ -238,17 +268,17 @@ func TestTooLarge(t *testing.T) {
 
 func TestDeleteAndDeleteOwner(t *testing.T) {
 	t.Parallel()
-	s, clk := newStore(t, nil)
+	s, _ := newStore(t, nil)
 
-	a1, ok := s.Put("s1", snapAt(clk.Now(), []byte("a1")))
+	a1, ok := s.Put("s1", snapshot([]byte("a1")))
 	if !ok {
 		t.Fatalf("Put() a1 ok = false")
 	}
-	a2, ok := s.Put("s1", snapAt(clk.Now(), []byte("a2")))
+	a2, ok := s.Put("s1", snapshot([]byte("a2")))
 	if !ok {
 		t.Fatalf("Put() a2 ok = false")
 	}
-	b1, ok := s.Put("s2", snapAt(clk.Now(), []byte("b1")))
+	b1, ok := s.Put("s2", snapshot([]byte("b1")))
 	if !ok {
 		t.Fatalf("Put() b1 ok = false")
 	}
@@ -272,8 +302,8 @@ func TestDeleteAndDeleteOwner(t *testing.T) {
 
 func TestOwnerHashed(t *testing.T) {
 	t.Parallel()
-	s, clk := newStore(t, nil)
-	if _, ok := s.Put("s1", snapAt(clk.Now(), []byte("x"))); !ok {
+	s, _ := newStore(t, nil)
+	if _, ok := s.Put("s1", snapshot([]byte("x"))); !ok {
 		t.Fatalf("Put() ok = false")
 	}
 
@@ -291,7 +321,7 @@ func TestRun(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		s, clk := newStore(t, nil)
-		token, ok := s.Put("s1", snapAt(clk.Now(), []byte("x")))
+		token, ok := s.Put("s1", snapshot([]byte("x")))
 		if !ok {
 			t.Fatalf("Put() ok = false")
 		}
