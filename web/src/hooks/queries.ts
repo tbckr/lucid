@@ -1,5 +1,6 @@
 import {
   keepPreviousData,
+  MutationObserver,
   useMutation,
   useMutationState,
   useQueries,
@@ -17,6 +18,7 @@ import {
   type Calendar,
   type CorruptedItem,
   type EventInput,
+  type RestoredTodo,
   type Todo,
   type TodoInput,
   type TodoOccurrence,
@@ -27,7 +29,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
-import { datesChanged, isDone, isSeriesCompletion, ruleChanged, todoToInput } from '@/lib/tasks'
+import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
 export const queryKeys = {
@@ -532,42 +534,42 @@ function seriesMessage(
 }
 
 /**
- * Takes back the completion or move of a series (FR-17). There is no undo
- * endpoint: the series gets its dates, status and checklist from `before`
- * again, without `rrule`, which keeps the rule. The undo of a `completion`
- * says so, since the completion moved nothing that refers to later repeats
- * and the series' end, and moving back must not shift them either; a move
- * is undone by moving back, which shifts them back. Only then the completed
- * copy goes, so a failure never loses the completion; one already gone
- * counts as deleted. `after` is the update's answer, whose ETag the client
- * may have replaced since.
+ * Takes back a series change using the server's undo token (FR-17): an exact
+ * restore of the snapshot the change had read, rather than a reconstruction.
+ * Run through a `MutationObserver` sharing `UPDATE_TODO_KEY` and the task's
+ * scope, so `usePendingSeries` marks the series busy and a later drag waits,
+ * just like the change it undoes. `after` is the update's answer that
+ * carried the token; its copy, if any, leaves the cache unless the server
+ * kept it (`copyKept`, changed by another app in the meantime).
  */
-async function undoSeriesChange(
-  qc: QueryClient,
-  t: TFn,
-  before: Todo,
-  after: UpdatedTodo,
-  completion: boolean,
-): Promise<void> {
-  const key = queryKeys.todos(before.calendarId)
+async function undoSeriesChange(qc: QueryClient, t: TFn, after: UpdatedTodo): Promise<void> {
+  const token = after.undoToken
+  if (!token) return
+  const key = queryKeys.todos(after.calendarId)
+  const observer = new MutationObserver<RestoredTodo, unknown, { todo: Todo }>(qc, {
+    mutationKey: UPDATE_TODO_KEY,
+    scope: { id: `todo:${after.id}` },
+    mutationFn: ({ todo }) => endpoints.undoTodo(todo.id, token),
+  })
   try {
+    const restored = await observer.mutate({ todo: after })
     const etag = currentEtag(qc, after)
-    const input = todoToInput(before, completion ? { undoCompletion: true } : {})
-    const restored = await endpoints.updateTodo(before.id, etag, input)
-    replaceEtag(qc, before.id, etag, restored.etag)
-    putTodo(qc, before.calendarId, restored)
-    const copy = after.completedCopy
-    if (copy) {
-      try {
-        await endpoints.deleteTodo(copy.id, currentEtag(qc, copy))
-      } catch (err) {
-        if (!isApiError(err, 'not_found')) throw err
-      }
-      removeTodo(qc, copy)
+    replaceEtag(qc, after.id, etag, restored.etag)
+    putTodo(qc, after.calendarId, restored)
+    if (restored.copyKept) {
+      toast.warning(t('tasks.undoneCopyKept'))
+    } else {
+      if (after.completedCopy) removeTodo(qc, after.completedCopy)
+      toast.success(t('tasks.undone'))
     }
-    toast.success(t('tasks.undone'))
   } catch (err) {
-    reportMutationError(err, t, qc, key)
+    if (isApiError(err, 'not_found')) {
+      toast.error(t('tasks.undoGone'))
+    } else if (isApiError(err, 'conflict')) {
+      toast.error(t('tasks.undoConflict'))
+    } else {
+      reportMutationError(err, t, qc, key)
+    }
   } finally {
     await qc.invalidateQueries({ queryKey: key })
   }
@@ -607,20 +609,24 @@ export function useUpdateTodo(id?: string) {
       return { snapshot }
     },
     onSuccess: (updated, vars) => {
-      const { todo, input } = vars
+      const { todo } = vars
       putTodo(qc, todo.calendarId, updated)
       // `now` only decides whether the date needs its year.
       const message = seriesMessage(vars, updated, t, prefs, new Date())
       if (!message) return
-      const completion = isSeriesCompletion(todo, input)
       toast.success(message, {
+        id: `series:${todo.id}`,
         duration: ACTION_TOAST_MS,
-        action: {
-          label: t('common.undo'),
-          onClick: () => {
-            void undoSeriesChange(qc, t, todo, updated, completion)
-          },
-        },
+        ...(updated.undoToken
+          ? {
+              action: {
+                label: t('common.undo'),
+                onClick: () => {
+                  void undoSeriesChange(qc, t, updated)
+                },
+              },
+            }
+          : {}),
       })
     },
     onError: (err, { todo }, ctx) => {

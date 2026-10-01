@@ -4,6 +4,7 @@ import {
   calendarSchema,
   eventSchema,
   parseList,
+  restoredTodoSchema,
   sessionSchema,
   todoOccurrenceSchema,
   todoSchema,
@@ -90,6 +91,34 @@ describe('schemas', () => {
     expect(updated.completedCopy?.id).toBe('t-copy')
     const plain = todoSchema.parse(withCopy)
     expect(plain).not.toHaveProperty('completedCopy')
+  })
+
+  it('updatedTodoSchema carries an undo token, absent by default', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    expect(updatedTodoSchema.parse(base).undoToken).toBeUndefined()
+    expect(updatedTodoSchema.parse({ ...base, undoToken: 'tok' }).undoToken).toBe('tok')
+  })
+
+  it('restoredTodoSchema defaults copyKept to false', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    expect(restoredTodoSchema.parse(base).copyKept).toBe(false)
+    expect(restoredTodoSchema.parse({ ...base, copyKept: true }).copyKept).toBe(true)
   })
 
   it('requires a CSRF token in sessions', () => {

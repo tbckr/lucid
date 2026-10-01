@@ -93,6 +93,17 @@ describe('endpoints', () => {
     ])
   })
 
+  it('undoes a todo with its token, no If-Match', async () => {
+    const t = { ...todo(), copyKept: true }
+    const { api, calls } = setup(jsonResponse(200, t))
+    const restored = await api.undoTodo('t1', 'tok')
+    expect(calls[0]?.url).toBe('/api/v1/todos/t1/undo')
+    expect(calls[0]?.init.method).toBe('POST')
+    expect(bodyOf(calls[0]?.init)).toEqual({ token: 'tok' })
+    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBeUndefined()
+    expect(restored.copyKept).toBe(true)
+  })
+
   it('lists todo occurrences with an encoded range and isolates corrupted items', async () => {
     const { api, calls } = setup(jsonResponse(200, { occurrences: [occurrence(), { key: 'broken' }] }))
     const res = await api.listTodoOccurrences('c1', new Date('2026-09-01T00:00:00Z'), new Date('2026-10-01T00:00:00Z'))

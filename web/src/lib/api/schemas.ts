@@ -99,9 +99,20 @@ export const todoSchema = z.object({
 })
 export type Todo = z.infer<typeof todoSchema>
 
-/** PUT /api/v1/todos/{todoId} response: a completed occurrence's copy, when the master rolled to its next one (FR-17). */
-export const updatedTodoSchema = todoSchema.extend({ completedCopy: todoSchema.nullish() })
+/**
+ * PUT /api/v1/todos/{todoId} response: a completed occurrence's copy, when
+ * the master rolled to its next one (FR-17), and an undo token when the
+ * change can be undone (recurring todos only).
+ */
+export const updatedTodoSchema = todoSchema.extend({
+  completedCopy: todoSchema.nullish(),
+  undoToken: z.string().nullish(),
+})
 export type UpdatedTodo = z.infer<typeof updatedTodoSchema>
+
+/** POST /api/v1/todos/{todoId}/undo response: the restored series (FR-17). */
+export const restoredTodoSchema = todoSchema.extend({ copyKept: z.boolean().optional().default(false) })
+export type RestoredTodo = z.infer<typeof restoredTodoSchema>
 
 export const occurrenceStateSchema = z.enum(['current', 'upcoming', 'done'])
 export type OccurrenceState = z.infer<typeof occurrenceStateSchema>
@@ -154,12 +165,6 @@ export interface TodoInput {
   rrule?: string
   /** IANA zone timed start/due recur in; without it, a series uses UTC. */
   timezone?: string
-  /**
-   * Marks the PUT that takes back the completion of a series' repeat (FR-17):
-   * the series moves back without shifting what refers to later repeats or
-   * its end. Absent for every other update, the undo of a move included.
-   */
-  undoCompletion?: boolean
 }
 
 /** A list item that failed validation, rendered as "Corrupted" placeholder. */

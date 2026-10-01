@@ -5,7 +5,7 @@ import { toast, type Action } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
 import { endpoints, type TodoList } from '@/lib/api/endpoints'
-import { type Todo, type UpdatedTodo } from '@/lib/api/schemas'
+import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
 import { todoToInput } from '@/lib/tasks'
 import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -342,7 +342,13 @@ describe('useUpdateTodo with a recurring task', () => {
     fixedDays: true,
     next: { due: '2026-10-08T00:00:00Z' },
   })
-  const rolled = { ...series, etag: '"2"', due: '2026-10-08T00:00:00Z', next: { due: '2026-10-12T00:00:00Z' } }
+  const rolled = {
+    ...series,
+    etag: '"2"',
+    due: '2026-10-08T00:00:00Z',
+    next: { due: '2026-10-12T00:00:00Z' },
+    undoToken: 'tok',
+  }
   const copy = todo({
     id: 'copy1',
     calendarId: 'c1',
@@ -365,40 +371,41 @@ describe('useUpdateTodo with a recurring task', () => {
     vi.useRealTimers()
   })
 
-  type Answer = UpdatedTodo | Response
+  type Answer = UpdatedTodo | RestoredTodo | Response
 
   interface SetupOptions {
     /** The series as the list shows it. */
     from?: Todo
-    /** The answer to a DELETE. */
-    deleted?: () => Response
   }
 
   /**
-   * A client showing the task list with `from`, and a server that answers each
-   * PUT with the next of `answers` and keeps what it stored, deletions included,
-   * so the reloads after a change show the server's state.
+   * A client showing the task list with `from`, and a server that answers
+   * each PUT (a series change) or POST .../undo with the next of `answers`
+   * and keeps what it stored, so the reloads after a change show the
+   * server's state. Undo is a single request: the server removes the
+   * completed copy itself, unless the answer carries `copyKept`.
    */
-  function setup(
-    answers: (Answer | Promise<Answer>)[],
-    { from = series, deleted = () => new Response(null, { status: 204 }) }: SetupOptions = {},
-  ) {
+  function setup(answers: (Answer | Promise<Answer>)[], { from = series }: SetupOptions = {}) {
     api.setCsrfToken('tok')
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [from], corrupted: [] })
     let stored: Todo[] = [from]
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const id = urlOf(input).split('/').at(-1) ?? ''
-      if (init?.method === 'DELETE') {
-        stored = stored.filter((x) => x.id !== id)
-        return deleted()
-      }
-      if (init?.method !== 'PUT') return jsonResponse(200, { todos: stored, corrupted: [] })
+      const url = urlOf(input)
+      const undoing = url.endsWith('/undo')
+      const id = (undoing ? url.slice(0, -'/undo'.length) : url).split('/').at(-1) ?? ''
+      const mutating = init?.method === 'PUT' || (init?.method === 'POST' && undoing)
+      if (!mutating) return jsonResponse(200, { todos: stored, corrupted: [] })
       const answer = await answers.shift()
-      if (!answer) throw new Error(`unexpected PUT of ${id}`)
+      if (!answer) throw new Error(`unexpected ${init.method} of ${id}`)
       if (answer instanceof Response) return answer
-      const { completedCopy, ...master } = answer
-      stored = [...stored.map((x) => (x.id === id ? master : x)), ...(completedCopy ? [completedCopy] : [])]
+      if (undoing) {
+        const { copyKept, ...master } = answer as RestoredTodo
+        stored = stored.filter((x) => x.id !== copy.id || copyKept).map((x) => (x.id === id ? master : x))
+      } else {
+        const { completedCopy, ...master } = answer as UpdatedTodo
+        stored = [...stored.map((x) => (x.id === id ? master : x)), ...(completedCopy ? [completedCopy] : [])]
+      }
       return jsonResponse(200, answer)
     })
     const wrap = ({ children }: { children: ReactNode }) => (
@@ -439,6 +446,13 @@ describe('useUpdateTodo with a recurring task', () => {
     }
   }
 
+  /** The current `Undo` action of the live toast `series:<todoId>`, sonner's own state (A-26 dedup). */
+  function seriesToastAction(todoId: string): Action | undefined {
+    const entry = toast.getToasts().find((x) => x.id === `series:${todoId}`)
+    if (!entry || !('action' in entry)) return undefined
+    return entry.action as Action | undefined
+  }
+
   it('completes a series without showing it done, and keeps the completed repeat', async () => {
     const success = vi.spyOn(toast, 'success')
     let answer: (a: Answer) => void = () => undefined
@@ -471,78 +485,6 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')).toMatchObject({ duration: 8000, action: 'Undo' })
   })
 
-  it('undoes a completion: the series goes back, then the completed repeat goes', async () => {
-    const success = vi.spyOn(toast, 'success')
-    let answerUndo: (a: Answer) => void = () => undefined
-    const { result, cached, writes } = setup([
-      { ...rolled, completedCopy: copy },
-      new Promise<Answer>((resolve) => (answerUndo = resolve)),
-    ])
-    act(() => {
-      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
-    })
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true)
-    })
-
-    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
-    await waitFor(() => {
-      expect(writes()).toHaveLength(2)
-    })
-    const undo = writes()[1]
-    expect(undo?.request).toBe('PUT /api/v1/todos/t2')
-    expect(undo?.etag).toBe('"2"')
-    expect(undo?.body).toMatchObject({
-      due: '2026-10-05T00:00:00Z',
-      dueAllDay: true,
-      status: 'NEEDS-ACTION',
-      undoCompletion: true,
-    })
-    expect(undo?.body).not.toHaveProperty('rrule')
-    // The completed repeat stays until the series is back.
-    await new Promise((r) => setTimeout(r, 20))
-    expect(writes()).toHaveLength(2)
-
-    answerUndo({ ...series, etag: '"3"' })
-    await waitFor(() => {
-      expect(success).toHaveBeenCalledWith('Undone.')
-    })
-    expect(writes().map((w) => w.request)).toEqual([
-      'PUT /api/v1/todos/t2',
-      'PUT /api/v1/todos/t2',
-      'DELETE /api/v1/todos/copy1',
-    ])
-    expect(writes()[2]?.etag).toBe('"c"')
-    await waitFor(() => {
-      expect(cached()?.map((x) => [x.id, x.due, x.etag])).toEqual([['t2', '2026-10-05T00:00:00Z', '"3"']])
-    })
-  })
-
-  it('counts a completed repeat already gone as undone', async () => {
-    const success = vi.spyOn(toast, 'success')
-    const warning = vi.spyOn(toast, 'warning')
-    const { result, writes } = setup([{ ...rolled, completedCopy: copy }, { ...series, etag: '"3"' }], {
-      deleted: () => jsonResponse(404, { error: { code: 'not_found', message: 'x' } }),
-    })
-    act(() => {
-      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
-    })
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true)
-    })
-
-    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
-    await waitFor(() => {
-      expect(success).toHaveBeenCalledWith('Undone.')
-    })
-    expect(warning).not.toHaveBeenCalled()
-    expect(writes().map((w) => w.request)).toEqual([
-      'PUT /api/v1/todos/t2',
-      'PUT /api/v1/todos/t2',
-      'DELETE /api/v1/todos/copy1',
-    ])
-  })
-
   it('warns and reloads when the series changed elsewhere, without an undo', async () => {
     const success = vi.spyOn(toast, 'success')
     const warning = vi.spyOn(toast, 'warning')
@@ -561,37 +503,16 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(cached()).toEqual([series])
   })
 
-  it('warns when the undo finds the series changed elsewhere, and reloads', async () => {
-    const success = vi.spyOn(toast, 'success')
-    const warning = vi.spyOn(toast, 'warning')
-    const { queryClient, result, writes } = setup([
-      { ...rolled, completedCopy: copy },
-      jsonResponse(412, { error: { code: 'conflict', message: 'x' } }),
-    ])
-    act(() => {
-      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
-    })
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true)
-    })
-    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
-
-    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
-    await waitFor(() => {
-      expect(warning).toHaveBeenCalledTimes(1)
-    })
-    await waitFor(() => {
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.todos('c1') })
-    })
-    // The completed repeat stays: the series did not go back.
-    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'PUT /api/v1/todos/t2'])
-    expect(success).not.toHaveBeenCalledWith('Undone.')
-  })
-
   it('says so when the last repeat is done', async () => {
     const success = vi.spyOn(toast, 'success')
     const last = { ...series, next: null }
-    const done = { ...last, etag: '"2"', status: 'COMPLETED' as const, completed: '2026-10-05T10:00:00Z' }
+    const done = {
+      ...last,
+      etag: '"2"',
+      status: 'COMPLETED' as const,
+      completed: '2026-10-05T10:00:00Z',
+      undoToken: 'tok',
+    }
     const { result, cached } = setup([done], { from: last })
 
     act(() => {
@@ -607,34 +528,10 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(cached()?.map((x) => [x.id, x.status])).toEqual([['t2', 'COMPLETED']])
   })
 
-  it('undoes the completion of the last repeat as a completion too', async () => {
-    const success = vi.spyOn(toast, 'success')
-    const last = { ...series, next: null }
-    const done = { ...last, etag: '"2"', status: 'COMPLETED' as const, completed: '2026-10-05T10:00:00Z' }
-    const { result, writes } = setup([done, { ...last, etag: '"3"' }], { from: last })
-
-    act(() => {
-      result.current.mutate({ todo: last, input: todoToInput(last, { status: 'COMPLETED' }) })
-    })
-    await waitFor(() => {
-      expect(result.current.isSuccess).toBe(true)
-    })
-    act(toastOf(success.mock.calls, 'Done. That was the last repeat.').click)
-    await waitFor(() => {
-      expect(success).toHaveBeenCalledWith('Undone.')
-    })
-    // The series itself was completed: there is no completed repeat to delete.
-    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'PUT /api/v1/todos/t2'])
-    expect(writes()[1]?.body).toMatchObject({ status: 'NEEDS-ACTION', undoCompletion: true })
-  })
-
-  it('tells where a moved series is and when it repeats, and moves it back', async () => {
+  it('tells where a moved series is and when it repeats, with an undo', async () => {
     const success = vi.spyOn(toast, 'success')
     let answerMove: (a: Answer) => void = () => undefined
-    const { result, cached, writes } = setup([
-      new Promise<Answer>((resolve) => (answerMove = resolve)),
-      { ...series, etag: '"3"' },
-    ])
+    const { result, cached, writes } = setup([new Promise<Answer>((resolve) => (answerMove = resolve))])
 
     act(() => {
       result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }) })
@@ -645,7 +542,7 @@ describe('useUpdateTodo with a recurring task', () => {
     // A move shows at once.
     expect(cached()?.[0]?.due).toBe('2026-10-07T00:00:00.000Z')
 
-    answerMove({ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z' })
+    answerMove({ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok' })
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
@@ -653,22 +550,14 @@ describe('useUpdateTodo with a recurring task', () => {
       duration: 8000,
       action: 'Undo',
     })
-
-    act(toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8').click)
-    await waitFor(() => {
-      expect(success).toHaveBeenCalledWith('Undone.')
-    })
-    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'PUT /api/v1/todos/t2'])
-    expect(writes()[1]?.etag).toBe('"2"')
-    expect(writes()[1]?.body).toMatchObject({ due: '2026-10-05T00:00:00Z', status: 'NEEDS-ACTION' })
-    // A move is undone by moving back: the server shifts what refers to later repeats back too.
-    expect(writes()[1]?.body).not.toHaveProperty('undoCompletion')
   })
 
   it('tells where a series moved on its last repeat', async () => {
     const success = vi.spyOn(toast, 'success')
     const last = { ...series, next: null }
-    const { result } = setup([{ ...last, etag: '"2"', due: '2026-10-07T00:00:00Z' }], { from: last })
+    const { result } = setup([{ ...last, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok' }], {
+      from: last,
+    })
 
     act(() => {
       result.current.mutate({ todo: last, input: todoToInput(last, { due: '2026-10-07T00:00:00.000Z' }) })
@@ -704,7 +593,7 @@ describe('useUpdateTodo with a recurring task', () => {
 
   it('tells about a move that sends the rule again, in whatever case', async () => {
     const success = vi.spyOn(toast, 'success')
-    const { result } = setup([{ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z' }])
+    const { result } = setup([{ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok' }])
 
     act(() => {
       const input = todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: 'freq=weekly;byday=mo,th' })
@@ -744,6 +633,183 @@ describe('useUpdateTodo with a recurring task', () => {
       expect(result.current.isSuccess).toBe(true)
     })
     expect(success).not.toHaveBeenCalled()
+  })
+
+  it('undoes a series change with its token', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result, cached, writes } = setup([{ ...rolled, completedCopy: copy }, { ...series, etag: '"3"' }])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(cached()?.map((x) => x.id)).toEqual(['t2', 'copy1'])
+
+    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    const undoWrites = writes().filter((w) => w.request.includes('/undo'))
+    expect(undoWrites).toHaveLength(1)
+    expect(undoWrites[0]?.request).toBe('POST /api/v1/todos/t2/undo')
+    expect(undoWrites[0]?.body).toEqual({ token: 'tok' })
+    // The completed copy is gone, undone by the server's restore itself.
+    expect(cached()?.map((x) => x.id)).toEqual(['t2'])
+  })
+
+  it('offers no undo without a token', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([{ ...rolled, completedCopy: copy, undoToken: undefined }])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')
+    expect(shown.duration).toBe(8000)
+    expect(shown.action).toBeUndefined()
+  })
+
+  it('replaces the undo toast of an earlier change', async () => {
+    const { result, writes } = setup([
+      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok1' },
+      { ...series, etag: '"3"', due: '2026-10-09T00:00:00Z', undoToken: 'tok2' },
+    ])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const after1 = result.current.data!
+
+    act(() => {
+      result.current.mutate({ todo: after1, input: todoToInput(after1, { due: '2026-10-09T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    await waitFor(() => {
+      expect(seriesToastAction('t2')?.label).toBe('Undo')
+    })
+    expect(toast.getToasts().filter((x) => x.id === 'series:t2')).toHaveLength(1)
+
+    const action = seriesToastAction('t2')
+    act(() => {
+      action?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    const undo = writes()[2]
+    expect(undo?.request).toBe('POST /api/v1/todos/t2/undo')
+    expect(undo?.body).toEqual({ token: 'tok2' })
+  })
+
+  it('reports a gone undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const error = vi.spyOn(toast, 'error')
+    const { result, writes } = setup([
+      { ...rolled, completedCopy: copy },
+      jsonResponse(404, { error: { code: 'not_found', message: 'x' } }),
+    ])
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+
+    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith('Nothing to undo anymore.')
+    })
+    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'POST /api/v1/todos/t2/undo'])
+  })
+
+  it('reports an undo conflict', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const error = vi.spyOn(toast, 'error')
+    const { queryClient, result } = setup([
+      { ...rolled, completedCopy: copy },
+      jsonResponse(409, { error: { code: 'conflict', message: 'x' } }),
+    ])
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith("Couldn't undo: the task was changed elsewhere in the meantime.")
+    })
+    await waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.todos('c1') })
+    })
+  })
+
+  it('keeps a changed completed entry', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const warning = vi.spyOn(toast, 'warning')
+    const { result, cached, writes } = setup([
+      { ...rolled, completedCopy: copy },
+      { ...series, etag: '"3"', copyKept: true },
+    ])
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+
+    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
+    await waitFor(() => {
+      expect(warning).toHaveBeenCalledWith('Undone. The completed entry was changed in another app and stays.')
+    })
+    expect(writes().map((w) => w.request)).toEqual(['PUT /api/v1/todos/t2', 'POST /api/v1/todos/t2/undo'])
+    // The completed copy was not removed: it stays in the list.
+    expect(cached()?.map((x) => x.id)).toEqual(['t2', 'copy1'])
+    expect(success).not.toHaveBeenCalledWith('Undone.')
+  })
+
+  it('marks the series busy while undoing', async () => {
+    const success = vi.spyOn(toast, 'success')
+    let answerUndo: (a: Answer) => void = () => undefined
+    const { queryClient, result, writes } = setup([
+      { ...rolled, completedCopy: copy },
+      new Promise<Answer>((resolve) => (answerUndo = resolve)),
+    ])
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const pending = renderHook(() => usePendingSeries(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { status: 'COMPLETED' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(pending.result.current.size).toBe(0)
+
+    act(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8').click)
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect([...pending.result.current]).toEqual(['t2'])
+
+    answerUndo({ ...series, etag: '"3"' })
+    await waitFor(() => {
+      expect(pending.result.current.size).toBe(0)
+    })
   })
 })
 

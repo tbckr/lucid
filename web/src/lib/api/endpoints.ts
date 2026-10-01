@@ -4,6 +4,7 @@ import {
   calendarSchema,
   eventSchema,
   parseList,
+  restoredTodoSchema,
   sessionSchema,
   todoOccurrenceSchema,
   todoSchema,
@@ -12,6 +13,7 @@ import {
   type Calendar,
   type CorruptedItem,
   type EventInput,
+  type RestoredTodo,
   type Session,
   type Todo,
   type TodoInput,
@@ -104,6 +106,10 @@ export function createEndpoints(client: ApiClient) {
 
     deleteTodo: (todoId: string, etag: string): Promise<undefined> =>
       client.request(`/todos/${enc(todoId)}`, { method: 'DELETE', etag }),
+
+    /** Undoes the change that returned `token` as `undoToken` (FR-17); no `If-Match`, the token is the concurrency control. */
+    undoTodo: (todoId: string, token: string): Promise<RestoredTodo> =>
+      client.request(`/todos/${enc(todoId)}/undo`, { method: 'POST', body: { token }, schema: restoredTodoSchema }),
 
     async listTodoOccurrences(
       calendarId: string,
