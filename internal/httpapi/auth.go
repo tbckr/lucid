@@ -144,6 +144,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(CookieName); err == nil {
 		s.sessions.Delete(c.Value)
+		if s.undo != nil {
+			s.undo.DeleteOwner(c.Value)
+		}
 	}
 	s.sec.Log(r, middleware.EventLogout)
 	s.clearCookie(w)

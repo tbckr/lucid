@@ -148,6 +148,11 @@ applied to the **whole series** (shifted by `start - instanceStart`).
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
 `NEEDS-ACTION | IN-PROCESS | COMPLETED | CANCELLED`.
 
+`undoToken` and `copyKept` are response-only fields, never part of `TodoInput`
+and never seen here: `undoToken` appears on the `PUT` response below when the
+change can be undone, and `copyKept` on the undo endpoint's response when the
+completed copy it had created could not be removed.
+
 `start` is the todo's `DTSTART`. A todo with `DTSTART` and `DURATION` but no
 `DUE` reports `start + duration` as `due`. When both `start` and `due` are
 set, they must both be dates or both have a time, and `start` must not be
@@ -201,11 +206,10 @@ a todo's `id`.
 
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
-Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone", "undoCompletion" }` → `201` `Todo`.
+Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
 (`supportsTodos: false`). `timezone` is the IANA zone timed `start`/`due`
-recur in; without it, a series uses UTC. `undoCompletion` is an optional
-boolean that only a `PUT` uses (see below).
+recur in; without it, a series uses UTC.
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 
@@ -220,7 +224,7 @@ non-recurring task at the current occurrence's dates), any other value sets
 it. Setting `status` to `COMPLETED` sets `completed`; any other status clears
 it.
 
-For a recurring todo, these four edits are handled specially:
+For a recurring todo, these three edits are handled specially:
 
 - **Completing the current occurrence** (`status: COMPLETED` on an open
   series): the backend creates a completed copy of the occurrence — a new
@@ -246,34 +250,6 @@ For a recurring todo, these four edits are handled specially:
   `UNTIL` that would end before the new dates moves onto them. The backend
   does not enforce the move window the UI shows; that is a client-side hint
   only.
-- **Undoing a completion** (a move as above, with `undoCompletion: true`):
-  - Of a roll: the roll moved none of the rule's instances, so nothing that
-    refers to them moves: the overrides and `EXDATE`s of later occurrences
-    and the `UNTIL` stay where they are, and so does the override of the
-    occurrence the completion rolled onto, which another client may have
-    moved. The master goes back onto the rule date of the occurrence it
-    rolled from: the latest instance of the rule before its current
-    occurrence without an override or `EXDATE`. When the given dates are
-    not that occurrence's own, another client had moved it, and an
-    override (`RECURRENCE-ID` of that date, the given dates, the master's
-    `SUMMARY`, `NEEDS-ACTION`) moves it there again. With fixed days, a
-    given start off the rule's days after that date and before the current
-    occurrence, at the rule's time of day and value type, becomes `DTSTART`
-    itself instead: that is where a move within the window leaves a series,
-    and also where another client's move to another day at the same time
-    ends up. Without such an instance the given dates become
-    `DTSTART`/`DUE`.
-  - Of the last occurrence, which completed the master itself: the master
-    is reopened. It keeps its dates when the given ones are those of the
-    occurrence it then reports. Otherwise the completing `PUT` also moved
-    it, and the undo is that move's inverse, a move as above to the given
-    dates: the later references and the `UNTIL` move back, and on a move
-    back an `UNTIL` on the master's date, which a fixed-day move had pulled
-    onto it, goes back onto the given date.
-
-  KDE's pending occurrence goes, and an `UNTIL` before the new `DTSTART`
-  still moves onto it. `undoCompletion` is ignored on a `PUT` that does not
-  move a series or that changes its `rrule`.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched. It needs a `start`
   or `due` to recur from, otherwise `400 invalid_input`, message *"a
@@ -285,13 +261,31 @@ cannot be evaluated"*. Removing its rule (`rrule: ""`) and other field edits
 (title, description, checklist, priority, status other than completing it)
 still work.
 
-There is no dedicated undo endpoint. Undoing a move or a completion replays
-the previous state: `PUT` the master with its previous `start`/`due`/
-`status`/`checklist`, then, for a completion, `DELETE` the `completedCopy`
-it created. The `PUT` that undoes a completion, with or without a copy,
-sends `undoCompletion: true`; the one that undoes a move does not, because
-moving back by the same amount moves the later references and the `UNTIL`
-back as well.
+Undo is its own endpoint (`POST /api/v1/todos/{todoId}/undo`, below) rather
+than another `PUT`: it restores the todo's resource exactly as the change
+that returned `undoToken` had read it, instead of replaying that edit in
+reverse. It also removes the completed copy that change left, if any, unless
+another client has since changed it (`copyKept: true`).
+
+### `POST /api/v1/todos/{todoId}/undo` → `200` `Todo`
+
+Body: `{ "token": "..." }`, strictly decoded; no `If-Match` (the token itself,
+single-use and short-lived, is the concurrency control).
+
+Undoes the change that returned `undoToken`. Response `200` with the restored
+`Todo` (new `etag`, no `completedCopy`); `copyKept: true` when the completed
+copy the change had created could not be removed and still exists.
+
+| Status | code             | Meaning                                                                      |
+|--------|------------------|-------------------------------------------------------------------------------|
+| 400    | `invalid_input`  | Malformed body or token                                                     |
+| 401    | `unauthenticated`| No/expired session, as elsewhere                                            |
+| 403    | `csrf_invalid`   | Missing/wrong CSRF token                                                    |
+| 403    | `read_only`      | Calendar is read-only                                                       |
+| 404    | `not_found`      | Token unknown, expired, already used, or belongs to another todo ("nothing to undo") |
+| 409    | `conflict`       | Todo changed or was deleted since (`If-Match` would have failed)            |
+| 429    | `rate_limited`   | Too many requests                                                           |
+| 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
 
 ### `DELETE /api/v1/todos/{todoId}` (header `If-Match`) → `204`
 

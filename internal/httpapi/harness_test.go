@@ -59,6 +59,8 @@ type fakeService struct {
 	occurrences []domain.TodoOccurrence
 	// updateTodoResult overrides UpdateTodo's default response, if set.
 	updateTodoResult *domain.Todo
+	// updateTodoSnapshot is returned as UpdateTodo's snapshot, if set.
+	updateTodoSnapshot *domain.TodoSnapshot
 
 	calls    []string
 	gotCal   string
@@ -158,14 +160,15 @@ func (f *fakeService) CreateTodo(_ context.Context, cal string, in domain.TodoIn
 func (f *fakeService) UpdateTodo(_ context.Context, id, etag string, in domain.TodoInput) (domain.Todo, *domain.TodoSnapshot, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotTodo = id, etag, in
+	snap := f.updateTodoSnapshot
 	f.mu.Unlock()
 	if err := f.record("UpdateTodo"); err != nil {
 		return domain.Todo{}, nil, err
 	}
 	if f.updateTodoResult != nil {
-		return *f.updateTodoResult, nil, nil
+		return *f.updateTodoResult, snap, nil
 	}
-	return domain.Todo{ID: id, Title: in.Title, Checklist: in.Checklist}, nil, nil
+	return domain.Todo{ID: id, Title: in.Title, Checklist: in.Checklist}, snap, nil
 }
 
 func (f *fakeService) RestoreTodo(_ context.Context, snap domain.TodoSnapshot) (domain.Todo, error) {

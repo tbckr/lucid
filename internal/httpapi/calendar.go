@@ -298,12 +298,70 @@ func (s *Server) handleUpdateTodo(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	todo, _, err := svc.UpdateTodo(r.Context(), id, etag, in)
+	todo, snap, err := svc.UpdateTodo(r.Context(), id, etag, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	if snap != nil && s.undo != nil {
+		if c, cerr := r.Cookie(CookieName); cerr == nil {
+			if token, ok := s.undo.Put(c.Value, *snap); ok {
+				todo.UndoToken = token
+			}
+		}
+	}
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
+}
+
+// undoRequest is the strictly decoded body of handleUndoTodo.
+type undoRequest struct {
+	Token string `json:"token"`
+}
+
+// handleUndoTodo undoes the recurring-todo change that returned Token, by
+// restoring the snapshot it is associated with (FR-17). There is no If-Match:
+// the token itself, single-use and short-lived, is the concurrency control.
+func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "todoId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	var in undoRequest
+	if err := decodeJSON(r, &in); err != nil {
+		s.writeError(w, r, err)
+		return
+	}
+	if s.undo == nil {
+		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "nothing to undo")
+		return
+	}
+	// s.service above already required a valid session cookie.
+	c, err := r.Cookie(CookieName)
+	if err != nil {
+		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
+		return
+	}
+	snap, ok := s.undo.Get(c.Value, in.Token)
+	if !ok || snap.TodoID != id {
+		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "nothing to undo")
+		return
+	}
+	restored, err := svc.RestoreTodo(r.Context(), snap)
+	if err != nil {
+		// A temporary upstream failure keeps the snapshot so the client can
+		// retry; everything else (conflict, gone) consumes it.
+		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+			s.undo.Delete(c.Value, in.Token)
+		}
+		s.fail(w, r, err)
+		return
+	}
+	s.undo.Delete(c.Value, in.Token)
+	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(restored))
 }
 
 func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {

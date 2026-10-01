@@ -13,6 +13,7 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/session"
+	"github.com/tbckr/lucid/internal/undo"
 )
 
 // CookieName is the session cookie.
@@ -39,6 +40,10 @@ type Options struct {
 	Provider domain.Provider
 	// Sessions stores sessions. Required.
 	Sessions SessionStore
+	// Undo stores the short-lived snapshots that undo a recurring-todo
+	// change (FR-17). nil means no undo tokens are ever issued, and the
+	// undo route always answers 404 "nothing to undo".
+	Undo *undo.Store
 	// Logger receives access and error logs. Default slog.Default().
 	Logger *slog.Logger
 	// Security receives security events. Optional.
@@ -66,6 +71,7 @@ type Options struct {
 type Server struct {
 	provider domain.Provider
 	sessions SessionStore
+	undo     *undo.Store
 	logger   *slog.Logger
 	sec      *middleware.Security
 	insecure bool
@@ -85,6 +91,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{
 		provider: opts.Provider,
 		sessions: opts.Sessions,
+		undo:     opts.Undo,
 		logger:   opts.Logger,
 		sec:      opts.Security,
 		insecure: opts.CookieInsecure,
@@ -110,6 +117,7 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/calendars/{calendarId}/todos", s.handleCreateTodo)
 	mux.HandleFunc("PUT /api/v1/todos/{todoId}", s.handleUpdateTodo)
 	mux.HandleFunc("DELETE /api/v1/todos/{todoId}", s.handleDeleteTodo)
+	mux.HandleFunc("POST /api/v1/todos/{todoId}/undo", s.handleUndoTodo)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "no such API endpoint")
 	})

@@ -11,6 +11,7 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/session"
+	"github.com/tbckr/lucid/internal/undo"
 )
 
 func TestNewRequiresDeps(t *testing.T) {
@@ -265,6 +266,38 @@ func TestLogout(t *testing.T) {
 	}
 	// Without a valid session the CSRF check fails.
 	expectError(t, h.do(t, &client{}, req{method: http.MethodPost, path: "/api/v1/auth/logout"}), http.StatusForbidden, middleware.CodeCSRFInvalid)
+}
+
+// TestLogoutDropsUndo checks that logout calls DeleteOwner, so a change made
+// just before logout cannot be undone afterwards (review focus: the session
+// ending between the change and the undo). A full round trip through the
+// undo route itself cannot observe this directly once the session is gone,
+// because the CSRF check (which needs a live session) rejects the request
+// before the route ever runs; this asserts the effect on the store that the
+// route itself relies on.
+func TestLogoutDropsUndo(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, func(o *Options) { o.Undo = undo.New(undo.Options{}) })
+	c := h.login(t)
+	h.svc.todos = []domain.Todo{{ID: "t1", Title: "Water plants"}}
+	h.svc.updateTodoSnapshot = &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+	w := h.do(t, c, req{
+		method: http.MethodPut, path: "/api/v1/todos/t1",
+		body:    `{"title":"Water plants","status":"COMPLETED"}`,
+		headers: map[string]string{"If-Match": `"t-etag"`},
+	})
+	var todo domain.Todo
+	decode(t, w, http.StatusOK, &todo)
+	if todo.UndoToken == "" {
+		t.Fatalf("no undo token")
+	}
+	owner := c.cookie
+
+	decode(t, h.do(t, c, req{method: http.MethodPost, path: "/api/v1/auth/logout"}), http.StatusNoContent, nil)
+
+	if _, ok := h.srv.undo.Get(owner, todo.UndoToken); ok {
+		t.Error("logout did not drop the undo token")
+	}
 }
 
 func TestSessionExpiry(t *testing.T) {

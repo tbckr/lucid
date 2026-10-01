@@ -34,6 +34,7 @@ import (
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/safehttp"
 	"github.com/tbckr/lucid/internal/session"
+	"github.com/tbckr/lucid/internal/undo"
 	"github.com/tbckr/lucid/web"
 )
 
@@ -165,6 +166,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	if err != nil {
 		return err
 	}
+	undoStore := undo.New(undo.Options{})
 	sec, err := middleware.NewSecurity(logger, reg)
 	if err != nil {
 		return err
@@ -184,6 +186,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	opts := httpapi.Options{
 		Provider:          provider,
 		Sessions:          store,
+		Undo:              undoStore,
 		Logger:            logger,
 		Security:          sec,
 		Metrics:           metrics,
@@ -206,6 +209,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	bg, cancelBg := context.WithCancel(ctx)
 	defer cancelBg()
 	go store.Run(bg, janitorInterval)
+	go undoStore.Run(bg, janitorInterval)
 	go apiLimiter.Run(bg, janitorInterval)
 	go loginLimiter.Run(bg, janitorInterval)
 

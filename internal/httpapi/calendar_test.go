@@ -11,6 +11,7 @@ import (
 
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
+	"github.com/tbckr/lucid/internal/undo"
 )
 
 const eventBody = `{"title":"Lunch","start":"2025-01-06T12:00:00Z","end":"2025-01-06T13:00:00Z","allDay":false,"timezone":"Europe/Berlin"}`
@@ -397,4 +398,168 @@ func TestUpdateTodoCompletedCopy(t *testing.T) {
 	if strings.Count(body, `"checklist":[]`) != 2 {
 		t.Errorf("master and copy both need an empty checklist array: %s", body)
 	}
+}
+
+// withUndo gives a harness an undo store, the way cmd/lucid/main.go does.
+func withUndo(o *Options) { o.Undo = undo.New(undo.Options{}) }
+
+const completeBody = `{"title":"Water plants","status":"COMPLETED"}`
+
+var completeIfMatch = map[string]string{"If-Match": `"t-etag"`}
+
+// putTodoSnapshot drives a PUT that the fake answers with snap as the
+// change's snapshot, and returns the decoded response.
+func putTodoSnapshot(t *testing.T, h *harness, c *client, id string, snap *domain.TodoSnapshot) domain.Todo {
+	t.Helper()
+	h.svc.todos = []domain.Todo{{ID: id, Title: "Water plants"}}
+	h.svc.updateTodoSnapshot = snap
+	w := h.do(t, c, req{method: http.MethodPut, path: "/api/v1/todos/" + id, body: completeBody, headers: completeIfMatch})
+	var todo domain.Todo
+	decode(t, w, http.StatusOK, &todo)
+	return todo
+}
+
+func TestUpdateTodoReturnsUndoToken(t *testing.T) {
+	t.Parallel()
+	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
+
+	h := newHarness(t, withUndo)
+	c := h.login(t)
+	todo := putTodoSnapshot(t, h, c, "t1", snap)
+	if len(todo.UndoToken) != 43 {
+		t.Fatalf("undoToken = %q, want length 43", todo.UndoToken)
+	}
+
+	// Options.Undo == nil: no token at all.
+	h2 := newHarness(t, nil)
+	c2 := h2.login(t)
+	todo2 := putTodoSnapshot(t, h2, c2, "t1", snap)
+	if todo2.UndoToken != "" {
+		t.Errorf("undoToken = %q, want empty with Options.Undo == nil", todo2.UndoToken)
+	}
+}
+
+func TestUndoTodo(t *testing.T) {
+	t.Parallel()
+	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
+
+	h := newHarness(t, withUndo)
+	c := h.login(t)
+	todo := putTodoSnapshot(t, h, c, "t1", snap)
+	token := todo.UndoToken
+	if token == "" {
+		t.Fatalf("no undo token")
+	}
+
+	w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+	var restored domain.Todo
+	decode(t, w, http.StatusOK, &restored)
+	if restored.ID != "t1" {
+		t.Errorf("restored = %+v", restored)
+	}
+	if h.svc.gotSnap.TodoID != "t1" || string(h.svc.gotSnap.Data) != "snapshot bytes" || h.svc.gotSnap.ETag != `"2"` {
+		t.Errorf("RestoreTodo got %+v", h.svc.gotSnap)
+	}
+
+	// Single use: a second POST with the same token finds nothing to undo.
+	w = h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+	expectError(t, w, http.StatusNotFound, codeNotFound)
+	if !strings.Contains(w.Body.String(), "nothing to undo") {
+		t.Errorf("message = %s", w.Body)
+	}
+}
+
+func TestUndoTodoErrors(t *testing.T) {
+	t.Parallel()
+	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+
+	// tokenHarness logs in, performs a PUT that yields a token, and returns
+	// the harness, its client and the token.
+	tokenHarness := func(t *testing.T) (*harness, *client, string) {
+		t.Helper()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		todo := putTodoSnapshot(t, h, c, "t1", snap)
+		if todo.UndoToken == "" {
+			t.Fatalf("no undo token")
+		}
+		return h, c, todo.UndoToken
+	}
+
+	t.Run("unknown token", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + strings.Repeat("A", 43) + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+
+	t.Run("token for another todo", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/other/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+		// The token still works for its own todo.
+		w = h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		decode(t, w, http.StatusOK, nil)
+	})
+
+	t.Run("conflict consumes the token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		h.svc.err = domain.ErrConflict
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusConflict, codeConflict)
+		h.svc.err = nil
+		w = h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+
+	t.Run("upstream error keeps the token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		h.svc.err = domain.ErrUpstream
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusBadGateway, codeUpstreamError)
+		h.svc.err = nil
+		w = h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		decode(t, w, http.StatusOK, nil)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		t.Parallel()
+		h, c, _ := tokenHarness(t)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":`})
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
+	})
+
+	t.Run("extra field", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `","extra":1}`})
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
+	})
+
+	t.Run("no session cookie", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		anon := h.anonymous(t)
+		w := h.do(t, anon, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + strings.Repeat("A", 43) + `"}`})
+		expectError(t, w, http.StatusUnauthorized, codeUnauthenticated)
+	})
+
+	t.Run("missing csrf token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`, noCSRF: true})
+		expectError(t, w, http.StatusForbidden, middleware.CodeCSRFInvalid)
+	})
+
+	t.Run("token from another session", func(t *testing.T) {
+		t.Parallel()
+		h, _, token := tokenHarness(t)
+		other := h.login(t)
+		w := h.do(t, other, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
 }
