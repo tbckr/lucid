@@ -983,14 +983,26 @@ plain move back by the same amount, which moves all of them back.
 dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
 timed dates with the browser's time zone as `TZID` (and a `VTIMEZONE`), like
 a recurring event. Overrides from the current occurrence on go; earlier
-ones, the completed occurrences, stay. A rule needs a start or due date. The
-editor only sends a rule the user changed: a preset writes a stored rule in
-its own words, which would count as a new rule and start the series over.
+ones, the completed occurrences, stay. The old rule's `EXDATE`s go too: they
+would remove the new rule's occurrences on the same dates. A rule needs a
+start or due date. The editor only sends a rule the user changed: a preset
+writes a stored rule in its own words, which would count as a new rule and
+start the series over.
 
 **Removing the rule** leaves a single task at the current occurrence's dates,
-without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events. **Deleting** a
-series deletes its resource; completed copies stay. Every write keeps the
-properties and components Lucid does not know.
+without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events.
+
+Neither loses a completion. Every override with `STATUS:COMPLETED` that
+goes, an occurrence another app completed, first becomes a completed task of
+its own (`If-None-Match: *`): a clone like the copy of a completion, with the
+other app's `COMPLETED` time and nothing of the request. The UI does not
+mention it. Cancelled and open overrides go. If the master cannot be
+written, Lucid deletes those tasks again. A change that creates them cannot
+be undone: restoring the series would bring the overrides back next to
+their tasks.
+
+**Deleting** a series deletes its resource; completed copies stay. Every write
+keeps the properties and components Lucid does not know.
 
 ### Limits
 
@@ -1029,8 +1041,13 @@ properties and components Lucid does not know.
   the next one and ends up off its occurrence: a series moved from 10 March
   to 31 March sends an override of 10 April to 1 May, and an `UNTIL` can run
   over the same way.
-- Removing a rule also removes other clients' overrides, completed ones
-  included.
+- Removing a rule drops all of its overrides, and changing it those from
+  the current occurrence on. Only the completed ones stay, as completed
+  tasks of their own that are not linked to the series; another app's move
+  or cancellation of an occurrence goes.
+- A changed rule drops the old rule's `EXDATE`s, so an occurrence skipped
+  under the old rule comes back where the new one has an occurrence on the
+  same date.
 - Moving an occurrence of a recurring **event** still moves the whole series,
   without adjusting `BYDAY`/`BYMONTHDAY`.
 - "Repeat from completion date" is not supported; Tasks.org keeps it local,

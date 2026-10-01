@@ -2865,6 +2865,14 @@ func TestUpdateTodoSeries(t *testing.T) {
 		mustNoErr(t, err)
 		checkStored(t, "series", storedObject(t, e, id),
 			[]string{"RRULE:FREQ=WEEKLY", "RECURRENCE-ID;VALUE=DATE:20250309"}, []string{"RECURRENCE-ID;VALUE=DATE:20250311"})
+		// The done override that goes is placed the same way, and kept as
+		// an entry of its own (A-18).
+		entries := otherObjects(t, e, id)
+		if len(entries) != 1 {
+			t.Fatalf("entries = %q; want the done repeat of 11 March", entries)
+		}
+		checkStored(t, "entry", entries[0],
+			[]string{"DTSTART;TZID=America/Los_Angeles:20250311T180000", "STATUS:COMPLETED"}, []string{"RECURRENCE-ID"})
 		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 20, 0, 0))
 		mustNoErr(t, err)
 		checkTodoOccurrences(t, occs,
@@ -3010,6 +3018,305 @@ func TestUpdateTodoSeries(t *testing.T) {
 			}
 		})
 	}
+}
+
+// otherObjects returns the stored data of the objects in the tasks calendar
+// other than the todo with the given ID.
+func otherObjects(t *testing.T, e *env, id string) []string {
+	t.Helper()
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	var out []string
+	for _, p := range e.mock.ObjectPaths(e.paths["tasks"]) {
+		if p == objPath {
+			continue
+		}
+		data, ok := e.mock.Object(p)
+		if !ok {
+			t.Fatalf("no object %s", p)
+		}
+		out = append(out, data)
+	}
+	return out
+}
+
+// entryWith returns the one object of objs that has the content line line.
+func entryWith(t *testing.T, objs []string, line string) string {
+	t.Helper()
+	var found []string
+	for _, data := range objs {
+		if strings.Contains(data, "\r\n"+line+"\r\n") {
+			found = append(found, data)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d objects with %q in %q; want 1", len(found), line, objs)
+	}
+	return found[0]
+}
+
+// Removing or changing a rule drops overrides; those another app completed
+// become completed entries of their own first, cloned as completing one in
+// Lucid clones it, and a new rule drops the old one's EXDATEs (FR-17, A-17,
+// A-18).
+func TestRuleChangeKeepsCompletions(t *testing.T) {
+	t.Parallel()
+
+	// Review Focus 3: the minimal override keeps the series' title and
+	// categories. The cancelled and the open override go with the rule.
+	t.Run("removing the rule keeps other apps' completions", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "tasks", "r.ics",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Water", "CATEGORIES:Garden",
+			"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250407T090000Z", "END:VTODO",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z",
+			"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED", "END:VTODO",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "RECURRENCE-ID:20250310T090000Z",
+			"SUMMARY:Done there", "CATEGORIES:Home", "STATUS:COMPLETED", "COMPLETED:20250311T070000Z", "END:VTODO",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z",
+			"RECURRENCE-ID:20250324T090000Z", "STATUS:CANCELLED", "END:VTODO",
+			"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z",
+			"RECURRENCE-ID:20250331T090000Z", "DTSTART:20250401T090000Z", "END:VTODO",
+		)
+		f := listedTodo(t, e, id)
+		if !sameTime(f.Start, ptr(date(2025, 3, 17, 9, 0))) {
+			t.Fatalf("current occurrence = %+v; want 17 March", f)
+		}
+		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+		mustNoErr(t, err)
+		if snap != nil {
+			t.Errorf("snapshot for %s; want none", snap.TodoID)
+		}
+		if got.Recurring || !sameTime(got.Start, ptr(date(2025, 3, 17, 9, 0))) || got.CompletedCopy != nil {
+			t.Errorf("single task = %+v; want it at 17 March without a rule", got)
+		}
+		master := storedObject(t, e, id)
+		checkStored(t, "master", master, []string{"SUMMARY:Water", "CATEGORIES:Garden", "DTSTART:20250317T090000Z"},
+			[]string{"RRULE", "RECURRENCE-ID", "EXDATE", "CANCELLED", "Done there", "Home", "20250401"})
+		if n := strings.Count(master, "BEGIN:VTODO"); n != 1 {
+			t.Errorf("master has %d VTODOs; want 1", n)
+		}
+
+		entries := otherObjects(t, e, id)
+		if len(entries) != 2 {
+			t.Fatalf("entries = %q; want the two completed repeats", entries)
+		}
+		lacks := []string{"RECURRENCE-ID", "RRULE", "EXDATE", "\r\nUID:r\r\n"}
+		checkStored(t, "entry of 3 March", entryWith(t, entries, "DTSTART:20250303T090000Z"),
+			[]string{"SUMMARY:Water", "CATEGORIES:Garden", "STATUS:COMPLETED", "PERCENT-COMPLETE:100", "\r\nCOMPLETED:"},
+			lacks)
+		checkStored(t, "entry of 10 March", entryWith(t, entries, "DTSTART:20250310T090000Z"),
+			[]string{"SUMMARY:Done there", "CATEGORIES:Home", "STATUS:COMPLETED", "COMPLETED:20250311T070000Z"},
+			append(lacks, "SUMMARY:Water", "Garden"))
+	})
+
+	// The overrides before the current repeat stay in the series; the open
+	// one after it goes (FR-17, A-18).
+	t.Run("changing the rule keeps other apps' completions from the current repeat on", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "SUMMARY:Ahead", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250331T090000Z", "DTSTART:20250401T090000Z"},
+		)
+		f := listedTodo(t, e, id)
+		if !sameTime(f.Start, ptr(date(2025, 3, 17, 9, 0))) {
+			t.Fatalf("current occurrence = %+v; want 17 March", f)
+		}
+		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "FREQ=DAILY"))
+		mustNoErr(t, err)
+		if snap != nil {
+			t.Errorf("snapshot for %s; want none", snap.TodoID)
+		}
+		if got.RRule != "FREQ=DAILY" || !sameTime(got.Start, ptr(date(2025, 3, 17, 9, 0))) {
+			t.Errorf("updated series = %+v", got)
+		}
+		checkStored(t, "master", storedObject(t, e, id),
+			[]string{
+				"RRULE:FREQ=DAILY\r\n", "DTSTART:20250317T090000Z",
+				"RECURRENCE-ID:20250303T090000Z", "RECURRENCE-ID:20250310T090000Z",
+			},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "Ahead", "RECURRENCE-ID:20250331T090000Z", "20250401"})
+		entries := otherObjects(t, e, id)
+		if len(entries) != 1 {
+			t.Fatalf("entries = %q; want the completed repeat of 24 March", entries)
+		}
+		checkStored(t, "entry", entries[0],
+			[]string{"DTSTART:20250324T090000Z", "SUMMARY:Ahead", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID", "RRULE", "\r\nUID:r\r\n"})
+	})
+
+	// An EXDATE of the old rule would remove a repeat of the new one that
+	// falls on it (A-17).
+	t.Run("changing the rule drops old exclusions", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250324T090000Z"})
+		f := listedTodo(t, e, id)
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "FREQ=DAILY"))
+		mustNoErr(t, err)
+		checkStored(t, "master", storedObject(t, e, id), []string{"RRULE:FREQ=DAILY\r\n", "DTSTART:20250317T090000Z"}, []string{"EXDATE"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 24, 0, 0), date(2025, 3, 25, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs, []time.Time{date(2025, 3, 24, 9, 0)}, []string{domain.OccurrenceUpcoming})
+	})
+
+	// The entries go again when the master cannot be written, or the
+	// completions would be there twice: as entries and as overrides (A-18).
+	for _, tc := range []struct {
+		name    string
+		rrule   string
+		entries int
+	}{
+		{"removed", "", 3},
+		{"changed", "FREQ=DAILY", 1},
+	} {
+		t.Run("a failed master write removes the converted entries, rule "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY"},
+				[]string{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+				[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+				[]string{"RECURRENCE-ID:20250324T090000Z", "STATUS:COMPLETED"},
+			)
+			before := storedObject(t, e, id)
+			f := listedTodo(t, e, id)
+			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			mustNoErr(t, err)
+			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method == http.MethodPut && r.URL.Path == objPath {
+					w.WriteHeader(http.StatusInternalServerError)
+					return true
+				}
+				return false
+			})
+			e.mock.ResetCounts()
+			_, _, err = e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), tc.rrule))
+			mustErr(t, err, domain.ErrUpstream)
+			if n := e.mock.Count(http.MethodPut); n != tc.entries+1 {
+				t.Errorf("PUT count = %d; want %d entries and the master", n, tc.entries)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.entries {
+				t.Errorf("DELETE count = %d; want %d", n, tc.entries)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want only the series", paths)
+			}
+			if after := storedObject(t, e, id); after != before {
+				t.Errorf("master = %q; want it unchanged: %q", after, before)
+			}
+		})
+	}
+
+	// An entry that cannot be created stops the change before the master is
+	// written, and the entries created before it go again (A-18).
+	t.Run("a failed entry removes the entries created before it", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"},
+		)
+		before := storedObject(t, e, id)
+		f := listedTodo(t, e, id)
+		var creates atomic.Int32
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut && r.Header.Get("If-None-Match") == "*" && creates.Add(1) == 2 {
+				w.WriteHeader(http.StatusForbidden)
+				return true
+			}
+			return false
+		})
+		e.mock.ResetCounts()
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+		mustErr(t, err, domain.ErrReadOnly)
+		if n := e.mock.Count(http.MethodPut); n != 2 {
+			t.Errorf("PUT count = %d; want the two entries' only", n)
+		}
+		if n := e.mock.Count(http.MethodDelete); n != 1 {
+			t.Errorf("DELETE count = %d; want 1", n)
+		}
+		if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != 1 {
+			t.Errorf("objects = %v; want only the series", paths)
+		}
+		if after := storedObject(t, e, id); after != before {
+			t.Errorf("master = %q; want it unchanged: %q", after, before)
+		}
+	})
+
+	// An EXDATE removes the repeat a done override would complete: no app
+	// shows that completion, so none is kept (FR-17).
+	t.Run("an excluded done override records no completion", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250317T090000Z"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"})
+		f := listedTodo(t, e, id)
+		_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+		mustNoErr(t, err)
+		if entries := otherObjects(t, e, id); len(entries) != 0 {
+			t.Errorf("entries = %q; want none", entries)
+		}
+		if snap == nil {
+			t.Error("no snapshot; want one, as no entry was created")
+		}
+	})
+
+	// A change that fails before the master is written leaves nothing
+	// behind either: here the new rule's COUNT cannot be walked to its end
+	// when the same save completes the current repeat (FR-17).
+	t.Run("a change rejected after the conversion removes the converted entries", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"})
+		before := storedObject(t, e, id)
+		f := listedTodo(t, e, id)
+		e.mock.ResetCounts()
+		in := withRule(completeInput(&f), fmt.Sprintf("FREQ=DAILY;COUNT=%d", maxRRuleIterations+1))
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustErr(t, err, domain.ErrInvalidInput)
+		if n := e.mock.Count(http.MethodDelete); n != 1 {
+			t.Errorf("DELETE count = %d; want 1", n)
+		}
+		if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != 1 {
+			t.Errorf("objects = %v; want only the series", paths)
+		}
+		if after := storedObject(t, e, id); after != before {
+			t.Errorf("master = %q; want it unchanged: %q", after, before)
+		}
+	})
+
+	// Only a failed write takes the entries back: a master that is written
+	// but whose new ETag cannot be read keeps them (A-01).
+	t.Run("a master written with an unknown etag keeps the converted entries", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
+		objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+		mustNoErr(t, err)
+		answerWithFailingETagReadback(e.mock, objPath)
+		f := listedTodo(t, e, id)
+		e.mock.ResetCounts()
+		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+		mustNoErr(t, err)
+		if got.ETag != "" || got.Recurring || snap != nil {
+			t.Errorf("single task = %+v, snapshot %t; want no ETag and no snapshot", got, snap != nil)
+		}
+		if n := e.mock.Count(http.MethodDelete); n != 0 {
+			t.Errorf("DELETE count = %d; want 0", n)
+		}
+		entries := otherObjects(t, e, id)
+		if len(entries) != 1 {
+			t.Fatalf("entries = %q; want the completed repeat of 10 March", entries)
+		}
+		checkStored(t, "entry", entries[0], []string{"DTSTART:20250310T090000Z", "STATUS:COMPLETED"}, []string{"RECURRENCE-ID"})
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250317T090000Z"}, []string{"RRULE", "RECURRENCE-ID"})
+	})
 }
 
 // Undoing a change of a recurring todo writes back the resource exactly as

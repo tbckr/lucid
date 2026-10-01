@@ -333,7 +333,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 // UpdateTodo implements domain.CalendarService. Unknown properties and
 // components are preserved. The change of a recurring todo returns a
 // snapshot of the resource as read, see snapshot (FR-17).
-func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (domain.Todo, *domain.TodoSnapshot, error) {
+func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (_ domain.Todo, _ *domain.TodoSnapshot, err error) {
 	if s.err != nil {
 		return domain.Todo{}, nil, s.err
 	}
@@ -384,15 +384,36 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	}
 
 	series := newTodoSeries(cal, c)
+	now := s.p.now().UTC()
+	// The completions other apps recorded in the overrides a rule edit drops
+	// become entries of their own first. They go again when the master is
+	// not written: every error from here on comes before its PUT or from it,
+	// and a PUT whose new ETag is unknown is no error (A-01, A-18).
+	var entries []calObject
+	defer func() {
+		if err != nil {
+			s.removeEntries(ctx, calPath, entries)
+		}
+	}()
 	switch edit {
 	case ruleRemove:
 		// The task stays at the current occurrence, whose dates in carries
 		// (FR-17).
+		if entries, err = s.convertDoneOverrides(ctx, calPath, cal, series, func(dateValue) bool { return true }, now); err != nil {
+			return domain.Todo{}, nil, err
+		}
 		removeRecurrence(cal, c)
 		c.Props.Del(propKDEPending)
 		series = nil
 	case ruleSet:
-		setTodoRule(cal, c, series, cur.Status, rr, in)
+		var from todoOcc
+		if series != nil {
+			from = series.reported(cur.Status)
+			if entries, err = s.convertDoneOverrides(ctx, calPath, cal, series, series.refsFrom(from.rid), now); err != nil {
+				return domain.Todo{}, nil, err
+			}
+		}
+		setTodoRule(cal, c, series, from, rr, in)
 		series = newTodoSeries(cal, c)
 	case ruleKeep:
 	}
@@ -414,11 +435,10 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 			if err != nil {
 				return domain.Todo{}, nil, err
 			}
-			return t, s.snapshot(todoID, cur, raw, t), nil
+			return t, s.snapshot(todoID, cur, raw, t, entries), nil
 		}
 	}
 
-	now := s.p.now().UTC()
 	switch {
 	case series == nil:
 		applyTodoDates(c.Props, in)
@@ -447,16 +467,18 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, nil, err
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
-	return t, s.snapshot(todoID, cur, raw, t), nil
+	return t, s.snapshot(todoID, cur, raw, t, entries), nil
 }
 
 // snapshot returns what undoes a change of the todo todoID, read as cur from
 // raw, that left t (FR-17): raw itself, the ETag the change gave it and the
 // completed copy the change left. Only the change of a recurring todo gets
 // one, and only when its new ETag is known: without it, an undo could not
-// tell another client's change from its own.
-func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo) *domain.TodoSnapshot {
-	if !cur.Recurring || t.ETag == "" {
+// tell another client's change from its own. A change that turned completed
+// overrides into the entries entries gets none: restoring raw would bring
+// the overrides back next to their entries (A-18).
+func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.TodoSnapshot {
+	if !cur.Recurring || t.ETag == "" || len(entries) > 0 {
 		return nil
 	}
 	snap := &domain.TodoSnapshot{TodoID: todoID, ETag: t.ETag, Data: raw, Account: s.identity(), TakenAt: s.p.now()}
@@ -574,18 +596,21 @@ func newTodoRule(in domain.TodoInput) (string, error) {
 }
 
 // setTodoRule gives the todo c, with the series s (nil if it does not recur
-// yet), the rule rr from its current occurrence on (FR-17): the dates of in,
-// which describe that occurrence, become DTSTART and DUE; overrides from it
-// on (see placeRef) and KDE's pending occurrence go; completed overrides
-// before it stay as history, and with the EXDATEs and an UNTIL they take the
-// value type of in's dates when it changes (see retypeRefs). A todo that did
-// not recur yet takes the zone of in for timed dates without a TZID.
-func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, rr string, in domain.TodoInput) {
+// yet), the rule rr from the occurrence from on, the one the todo reports
+// (see reported) (FR-17): the dates of in, which describe that occurrence,
+// become DTSTART and DUE; overrides from it on (see refsFrom) and KDE's
+// pending occurrence go, the completed ones turned into entries of their own
+// before (see convertDoneOverrides); the EXDATEs go too, as they would
+// exclude the new rule's instances on the old rule's dates (A-17); completed
+// overrides before it stay as history, and with an UNTIL they take the
+// value type of in's dates when it changes (see retypeRefs). A todo that
+// did not recur yet takes the zone of in for timed dates without a TZID.
+func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todoOcc, rr string, in domain.TodoInput) {
 	if s != nil {
-		from := s.reported(status)
-		dropOverrides(cal, c, func(rid dateValue) bool { return s.placeRef(rid, from.rid) >= 0 })
+		dropOverrides(cal, c, s.refsFrom(from.rid))
 		dropOccurrence(cal, c, from)
 	}
+	c.Props.Del(ical.PropExceptionDates)
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	writeSeriesDates(cal, c, in, s != nil)
 	c.Props.Del(propKDEPending)
@@ -680,6 +705,60 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	t := todoFromObject(o, calendarID, c)
 	t.CompletedCopy = &copyTodo
 	return t, nil
+}
+
+// convertDoneOverrides creates a completed entry (cloneOccurrence) for every
+// override of series in cal with STATUS:COMPLETED whose RECURRENCE-ID drop
+// reports, before the master is written; it returns their paths and ETags
+// so a failed master write can remove them again (FR-17, A-18, see
+// removeEntries). Another app's completion never goes with a rule.
+//
+// An entry is the occurrence as stored, with the other app's COMPLETED (see
+// markCompleted). It takes nothing of the request, which edits the series,
+// not a past completion. An override that an EXDATE excludes is no done
+// occurrence and records no completion. Each entry is created with
+// If-None-Match; if one cannot be, those created before go again.
+func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal *ical.Calendar, series *todoSeries, drop func(rid dateValue) bool, now time.Time) ([]calObject, error) {
+	var entries []calObject
+	for _, o := range series.overrides {
+		rid, err := parseDateProp(o.c.Props.Get(ical.PropRecurrenceID))
+		if err != nil || !drop(rid) {
+			continue
+		}
+		occ, ok := series.overrideOcc(o)
+		if !ok || !occ.done {
+			continue
+		}
+		uid := newUID()
+		c := cloneOccurrence(series, occ, uid, now)
+		markCompleted(c, now)
+		entry := calObject{path: objectPath(calPath, uid+".ics"), cal: entryCalendar(cal, c)}
+		if entry.etag, err = s.putObject(ctx, entry.path, entry.cal, "", true); err != nil {
+			s.removeEntries(ctx, calPath, entries)
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// removeEntries deletes the entries in calPath a change created before its
+// master could not be written, unless they changed since (FR-17). It runs on
+// after the request is cancelled: a closed tab would leave them next to the
+// overrides they were made from.
+func (s *service) removeEntries(ctx context.Context, calPath string, entries []calObject) {
+	if len(entries) == 0 {
+		return
+	}
+	defer s.invalidate(calPath)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+	defer cancel()
+	for _, o := range entries {
+		// Paths and errors only, never task content.
+		if err := s.deleteObject(dctx, o.path, cmp.Or(o.etag, "*")); err != nil {
+			s.p.log.WarnContext(ctx, "could not remove the entry of a completed repeat", "path", o.path, "error", err)
+		}
+	}
 }
 
 // propExRule is RFC 2445's EXRULE, which RFC 5545 deprecates but which is a

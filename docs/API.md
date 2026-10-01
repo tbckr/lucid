@@ -241,7 +241,7 @@ non-recurring task at the current occurrence's dates), any other value sets
 it. Setting `status` to `COMPLETED` sets `completed`; any other status clears
 it.
 
-For a recurring todo, these three edits are handled specially:
+For a recurring todo, these edits are handled specially:
 
 - **Completing the current occurrence** (`status: COMPLETED` on an open
   series): the backend creates a completed copy of the occurrence — a new
@@ -292,10 +292,20 @@ For a recurring todo, these three edits are handled specially:
   resource.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
-  overrides that stay, the `EXDATE`s and an `UNTIL` take the new value type
-  when the dates change between all-day and timed, as for a move. It needs
-  a `start` or `due` to recur from, otherwise `400 invalid_input`, message
+  overrides that stay and an `UNTIL` take the new value type when the dates
+  change between all-day and timed, as for a move. The overrides from the
+  current occurrence on go, and so do the old rule's `EXDATE`s. It needs a
+  `start` or `due` to recur from, otherwise `400 invalid_input`, message
   *"a repeating task needs a start or due date"*.
+- **Removing `rrule`** (`""`): the todo keeps the current occurrence's dates
+  and loses its overrides and `EXDATE`s.
+- **Completions from other clients**: when changing or removing `rrule`
+  drops an override with `STATUS:COMPLETED`, the backend first creates a
+  completed todo of its own for it (`If-None-Match: *`), a clone of the
+  occurrence like a completed copy that keeps the `COMPLETED` time the other
+  client recorded; the response does not report it. If writing the master
+  fails, these todos are deleted again and the error is returned. A change
+  that created any returns no `undoToken`.
 
 A series with `ruleUnsupported: true` cannot be completed, moved, or given a
 new `rrule`: any of those is `400 invalid_input`, message *"the repeat rule

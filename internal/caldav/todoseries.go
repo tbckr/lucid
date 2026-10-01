@@ -226,6 +226,13 @@ func (s *todoSeries) placeRef(d dateValue, t time.Time) int {
 	return civilDate(d.t).Compare(s.dayOf(t))
 }
 
+// refsFrom returns whether a RECURRENCE-ID or EXDATE value lies on or after
+// the rule instance t, as placeRef places it: what a new rule from t on
+// replaces (FR-17).
+func (s *todoSeries) refsFrom(t time.Time) func(d dateValue) bool {
+	return func(d dateValue) bool { return s.placeRef(d, t) >= 0 }
+}
+
 // zoneKnown reports whether Lucid knows the zone the anchor of s is written
 // in: it has no TZID, or one Lucid resolves (FR-17). Lucid reads the wall
 // clock of any other TZID as UTC, so an instant it derives from the series,
