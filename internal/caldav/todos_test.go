@@ -899,11 +899,11 @@ func TestListTodoOccurrences(t *testing.T) {
 	})
 
 	// The done repeat that the move above left off the rule, reopened by
-	// the other client: it comes after the current repeat, and completing it
-	// writes its entry and drops its override, with the master's dates as
-	// they are. Completing the repeat before it cannot roll the master onto
-	// it without moving the rule, so that repeat is excluded instead (A-10,
-	// FR-17).
+	// the other client: it comes after the current repeat. Completing the
+	// repeat before it cannot roll the master onto it without moving the
+	// rule, so that repeat is excluded instead; completing it writes its
+	// entry, and the master rolls from it onto the next instance, past the
+	// EXDATE, which stays behind (A-10, FR-17).
 	t.Run("an open repeat off the rule can be completed", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -941,10 +941,15 @@ func TestListTodoOccurrences(t *testing.T) {
 		checkStored(t, "entry", storedCopy(t, e, &got),
 			[]string{"DTSTART:20250310T150000Z", "STATUS:COMPLETED"}, []string{"RECURRENCE-ID", "RRULE"})
 		checkStored(t, "series", storedObject(t, e, id),
-			[]string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY\r\n"}, []string{"RECURRENCE-ID"})
+			[]string{"DTSTART:20250316T090000Z", "RRULE:FREQ=WEEKLY\r\n", "EXDATE:20250309T090000Z"}, []string{"RECURRENCE-ID"})
 		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 3 {
 			t.Errorf("%d objects; want the series and two entries", n)
 		}
+		occs, err = e.svc.ListTodoOccurrences(ctx, e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 31, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 3, 16, 9, 0), date(2025, 3, 23, 9, 0), date(2025, 3, 30, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
 	})
 
 	// Probe P10: an EXDATE of the other value type matches the repeat on its
@@ -1289,6 +1294,82 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		}
 		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250311T090000Z"}, []string{"RECURRENCE-ID", "Moved"})
 	})
+
+	// A repeat off the rule followed by another one off the rule: the
+	// master cannot roll onto the next, so only the completed repeat's
+	// override goes. The change can be undone like any completion (A-10,
+	// FR-17).
+	t.Run("a repeat off the rule before another completes on its own", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250309T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"},
+			[]string{"RECURRENCE-ID:20250311T090000Z"},
+		)
+		f := listedTodo(t, e, id)
+		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+		mustNoErr(t, err)
+		c := got.CompletedCopy
+		if c == nil || !sameTime(c.Start, ptr(date(2025, 3, 10, 15, 0))) {
+			t.Fatalf("completed copy = %+v; want one at 2025-03-10T15:00Z", c)
+		}
+		if snap == nil || snap.CopyID != c.ID || snap.CopyETag != c.ETag || snap.ETag != got.ETag {
+			t.Errorf("snapshot = %+v; want one with the copy %s (%s)", snap, c.ID, c.ETag)
+		}
+		if !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) ||
+			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 16, 9, 0))}) {
+			t.Errorf("series = %+v; want 11 March current, then 16 March", got)
+		}
+		checkStored(t, "series", storedObject(t, e, id),
+			[]string{"DTSTART:20250309T090000Z", "EXDATE:20250309T090000Z", "RECURRENCE-ID:20250311T090000Z"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"})
+	})
+
+	// The EXDATE that keeps the master from rolling onto a repeat off the
+	// rule has the form of DTSTART, or of DUE for a series anchored on it
+	// (A-10, FR-17).
+	for _, tc := range []struct {
+		name        string
+		master      []string
+		override    string
+		start, due  *time.Time
+		has, lacks  []string
+		startAllDay bool
+	}{
+		{
+			name:     "tzid",
+			master:   []string{"DTSTART;TZID=Europe/Berlin:20250309T090000", "RRULE:FREQ=WEEKLY"},
+			override: "RECURRENCE-ID;TZID=Europe/Berlin:20250311T090000",
+			start:    ptr(date(2025, 3, 11, 8, 0)),
+			has:      []string{"DTSTART;TZID=Europe/Berlin:20250309T090000", "EXDATE;TZID=Europe/Berlin:20250309T090000"},
+		},
+		{
+			name:     "date",
+			master:   []string{"DTSTART;VALUE=DATE:20250309", "RRULE:FREQ=WEEKLY"},
+			override: "RECURRENCE-ID;VALUE=DATE:20250311",
+			start:    ptr(date(2025, 3, 11, 0, 0)), startAllDay: true,
+			has: []string{"DTSTART;VALUE=DATE:20250309", "EXDATE;VALUE=DATE:20250309"},
+		},
+		{
+			name:     "anchored on due",
+			master:   []string{"DUE:20250309T090000Z", "RRULE:FREQ=WEEKLY"},
+			override: "RECURRENCE-ID:20250311T090000Z",
+			due:      ptr(date(2025, 3, 11, 9, 0)),
+			has:      []string{"DUE:20250309T090000Z", "EXDATE:20250309T090000Z"},
+			lacks:    []string{"DTSTART"},
+		},
+	} {
+		t.Run("a repeat before one off the rule is excluded, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, []string{tc.override})
+			got := completeListed(t, e, id)
+			if got.CompletedCopy == nil || !sameTime(got.Start, tc.start) || got.StartAllDay != tc.startAllDay || !sameTime(got.Due, tc.due) {
+				t.Errorf("series = %+v; want the repeat off the rule current, at %v/%v", got, tc.start, tc.due)
+			}
+			checkStored(t, "series", storedObject(t, e, id), tc.has, tc.lacks)
+		})
+	}
 
 	// The copy is a clone of the stored occurrence: what Lucid does not edit
 	// stays, only the rule and its alarms and children go (FR-17).

@@ -240,10 +240,11 @@ For a recurring todo, these three edits are handled specially:
   already-written copy is deleted again and the error is returned. An
   occurrence **off the rule** (an override whose `RECURRENCE-ID` lies on
   none of the rule's occurrences, such as a move to an earlier day leaves
-  behind) is not one the master can roll from or onto: completing it drops
-  its override and leaves the master's dates as they are, and completing
-  the occurrence before it excludes that one with an `EXDATE` instead of
-  rolling.
+  behind) is not one the master can roll onto. When it is the next
+  occurrence, the master's dates stay: completing an occurrence of the rule
+  excludes it with an `EXDATE` instead of rolling, and completing one off
+  the rule drops its override. Otherwise the master rolls as usual, also
+  from an occurrence off the rule.
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
   (a series without `start` recurs on `due`). What refers to later

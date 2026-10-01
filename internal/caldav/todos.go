@@ -600,11 +600,11 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, status, r
 //     checklist and STATUS:NEEDS-ACTION;
 //  3. if the master cannot be written, the copy is removed again.
 //
-// The master rolls only from an instance of the rule onto the next one (see
-// roll). An occurrence off the rule (see todoOcc.offGrid) is none (A-10):
-// completed, it loses its override, and the master stays where it is; as
-// the next occurrence, it keeps the master from rolling, so the completed
-// instance gets an EXDATE instead (see exclude).
+// The master rolls only onto an instance of the rule (see roll), also from
+// an occurrence off the rule (see todoOcc.offGrid), whose override goes
+// with the roll (A-10). When the next occurrence lies off the rule, the
+// master stays where it is: a completed occurrence off the rule only loses
+// its override, and a completed instance gets an EXDATE (see exclude).
 //
 // It returns the rolled series with the copy as CompletedCopy.
 func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput) (domain.Todo, error) {
@@ -634,7 +634,7 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	// Roll the master in memory first: a rule that cannot be evaluated to its
 	// end fails before anything is written.
 	switch {
-	case occ.offGrid:
+	case next.offGrid && occ.offGrid:
 		dropOccurrence(cal, c, occ)
 	case next.offGrid:
 		series.exclude(cal, occ)

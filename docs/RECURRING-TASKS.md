@@ -823,9 +823,10 @@ described in [API.md](API.md#todos).
   show the series at this occurrence, with the one after it as `next`.
 - An override belongs to the occurrence whose `RECURRENCE-ID` is the same
   instant, in whatever form it is written. RFC 5545 wants `RECURRENCE-ID` and
-  `EXDATE` in the value type of `DTSTART`; one of the other type, a date in a
-  timed series or a date-time in an all-day one, belongs to the occurrence on
-  its date in the series' time zone. A completed override is a **done**
+  `EXDATE` in the value type of `DTSTART`; one of the other type belongs to
+  the occurrence on its date: a date in a timed series to the occurrence on
+  that date in the series' time zone, a date-time in an all-day series to
+  the one on its date as written. A completed override is a **done**
   occurrence, also before `DTSTART`, where a rolling client left it behind. An
   override with other dates moves its occurrence; a cancelled override or an
   `EXDATE` removes it.
@@ -885,13 +886,14 @@ Reminders does:
    occurrence stays, so that an occurrence moved in another client stays
    moved.
 
-The master rolls only from one of the rule's occurrences onto the next: on
-an occurrence off the rule, `DTSTART` would move the rule. Completing an
-occurrence off the rule writes its copy and drops its override, and the
-master stays as it is. When the next occurrence is one off the rule,
-completing the occurrence before it writes that one's copy and an `EXDATE`
-for it, in the form of `DTSTART`, instead of the roll; completing the next
-occurrence of the rule rolls the master on as usual.
+The master rolls only onto one of the rule's occurrences: on an occurrence
+off the rule, `DTSTART` would move the rule. From an occurrence off the rule
+it rolls as usual, and the override of that occurrence goes with the roll.
+When the next occurrence is one off the rule, the master stays as it is:
+completing an occurrence of the rule writes its copy and an `EXDATE` for
+it, in the form of `DTSTART`, instead of the roll, and completing one off
+the rule writes its copy and drops its override. The `EXDATE` stays behind
+once the master rolls on.
 
 If the master cannot be written, for example because another client changed
 it in the meantime, Lucid deletes the copy again and reports the error. The
@@ -990,13 +992,14 @@ properties and components Lucid does not know.
 
 - Only the current occurrence can be completed, so occurrences are completed
   in order. Later ones are a preview, and none can be skipped.
-- An occurrence cannot be moved on its own, except one off the rule: moving
-  it moves the series from the current occurrence on. With an interval rule
-  the later occurrences move along. With fixed days the calendar, the editor
-  and the date picker in the task list keep the move between the current
-  occurrence's day and the day before the next occurrence; the time of day
-  is free within those days. The last repeat has no next occurrence to stay
-  before, so it can move to a later day, but not to an earlier one.
+- Only an occurrence off the rule can be moved on its own. Moving any other
+  occurrence moves the series from the current occurrence on. With an
+  interval rule the later occurrences move along. With fixed days the
+  calendar, the editor and the date picker in the task list keep the move
+  between the current occurrence's day and the day before the next
+  occurrence; the time of day is free within those days. The last repeat
+  has no next occurrence to stay before, so it can move to a later day, but
+  not to an earlier one.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
 - Undoing the completion of an occurrence another client had moved restores

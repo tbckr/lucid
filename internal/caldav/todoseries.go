@@ -533,9 +533,10 @@ func utcPtr(t *time.Time) *time.Time {
 //
 // Next's override, if any, stays and keeps moving that occurrence: the
 // master takes the rule's dates (next.rid), not the override's, or the whole
-// series would shift with it. Both are instances of the rule: the master
+// series would shift with it. Next is an instance of the rule: the master
 // cannot take the place of an occurrence off it (see todoOcc.offGrid)
-// without moving the rule.
+// without moving the rule. Cur can lie off it: everything between cur and
+// next is done, and cur's override goes like any other (A-10).
 func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	c := s.master
 	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil && hasRulePart(s.rrule, "COUNT") {
@@ -562,7 +563,8 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 // exclude excludes the completed rule instance occ of s, whose next
 // occurrence lies off the rule, where the master cannot roll (FR-17, A-10):
 // an EXDATE in the form the anchor is written in, and occ's override goes.
-// The next instance completed rolls the master past both.
+// The first later completion whose next occurrence is an instance rolls the
+// master past it.
 func (s *todoSeries) exclude(cal *ical.Calendar, occ todoOcc) {
 	s.master.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, occ.rid, s.startForm))
 	dropOccurrence(cal, s.master, occ)
