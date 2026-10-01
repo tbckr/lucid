@@ -258,16 +258,12 @@ func (s *service) putObject(ctx context.Context, objPath string, cal *ical.Calen
 	return s.putBytes(ctx, objPath, buf.Bytes(), ifMatch, create)
 }
 
-// errETagUnknown marks a write whose PUT succeeded but whose new ETag could
-// not be read back, so it must not be treated as a failed write (A-01):
-// completeOccurrence and UpdateTodo's plain PUT path report success with an
-// unknown ETag instead of undoing the write.
-var errETagUnknown = errors.New("etag unknown after a successful write")
-
 // putBytes stores the iCalendar data at objPath as it is and returns the
-// object's new ETag, "" if the server tells none (a weak one counts as
-// none, like a weak one from the PUT response itself). Exactly one of
-// ifMatch / create must be used: create sends If-None-Match: *.
+// object's new ETag, "" if the server tells none: a weak one counts as none,
+// like a weak one from the PUT response itself, and so does a failure to
+// read it back (A-01) — the PUT already succeeded by then, so that failure
+// must not be reported as a failed write. Exactly one of ifMatch / create
+// must be used: create sends If-None-Match: *.
 func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifMatch string, create bool) (string, error) {
 	headers := map[string]string{}
 	if create {
@@ -289,12 +285,13 @@ func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifM
 		return etag, nil
 	}
 	// The server may have modified the data and therefore omitted the ETag,
-	// or sent a weak one: read it back. The PUT itself already succeeded, so
-	// a failure here leaves the write in place with an unknown ETag, not
-	// undone.
+	// or sent a weak one: read it back.
 	ms, _, err := s.t.propfind(ctx, s.urlFor(objPath), "0", []xml.Name{propGetETag}, false)
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", domain.ErrUpstream, errETagUnknown)
+		// The PUT itself already succeeded: a failure here only leaves the
+		// new ETag unknown, not the write undone (A-01).
+		s.p.log.WarnContext(ctx, "could not read back the etag of a write", "path", objPath, "error", err)
+		return "", nil
 	}
 	for _, r := range ms.Responses {
 		if etag := str(r.ok().ETag); etag != "" && !strings.HasPrefix(etag, "W/") {

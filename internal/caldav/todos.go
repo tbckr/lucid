@@ -436,9 +436,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	o := calObject{path: objPath, cal: cal}
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
-	// The write itself succeeded even when its new ETag could not be read
-	// back (A-01): report it with an unknown ETag instead of failing.
-	if err != nil && !errors.Is(err, errETagUnknown) {
+	if err != nil {
 		return domain.Todo{}, nil, err
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
@@ -661,11 +659,7 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 		return domain.Todo{}, err
 	}
 	o := calObject{path: objPath, cal: cal}
-	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
-	// The master PUT itself may have succeeded with its new ETag unknown
-	// (A-01): that is not a failed write, so the copy that records the
-	// completion stays, and only a genuine failure compensates by removing it.
-	if err != nil && !errors.Is(err, errETagUnknown) {
+	if o.etag, err = s.putObject(ctx, objPath, cal, etag, false); err != nil {
 		// The copy goes even when the client has gone: on the request's
 		// context, a closed tab would leave it next to the open occurrence.
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)

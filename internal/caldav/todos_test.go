@@ -2524,6 +2524,51 @@ func TestCompleteKeepsCopyWhenETagUnknown(t *testing.T) {
 	}
 }
 
+// answerCreateWithFailingETagReadback makes mock strip the ETag from any PUT
+// of a calendar object under calPath and fail the PROPFIND that would read
+// it back, regardless of the object's name: a create's path is only known
+// after the write, unlike an update's.
+func answerCreateWithFailingETagReadback(mock *caldavtest.Server, calPath string) {
+	var inner atomic.Bool // the hook passes the PUT on to mock, which calls it again
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasPrefix(r.URL.Path, calPath) || !strings.HasSuffix(r.URL.Path, ".ics") || inner.Load() {
+			return false
+		}
+		switch r.Method {
+		case http.MethodPut:
+			inner.Store(true)
+			defer inner.Store(false)
+			mock.ServeHTTP(withoutETag{w}, r)
+			return true
+		case "PROPFIND":
+			w.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+}
+
+// putBytes treats a failed ETag read-back the same for every caller, not
+// just completeOccurrence/UpdateTodo: a create whose PUT succeeds is kept,
+// not reported as failed (A-01 regression: every other caller must see a
+// successful write with an unknown ETag, not an error).
+func TestCreateTodoKeepsObjectWhenETagUnknown(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	answerCreateWithFailingETagReadback(e.mock, e.paths["tasks"])
+
+	got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{Title: "Buy milk"})
+	mustNoErr(t, err)
+	if got.ETag != "" {
+		t.Errorf("created todo = %+v; want no ETag", got)
+	}
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), got.ID)
+	mustNoErr(t, err)
+	if data, ok := e.mock.Object(objPath); !ok || !strings.Contains(data, "SUMMARY:Buy milk") {
+		t.Errorf("object %s not stored as created; want the write kept", objPath)
+	}
+}
+
 // withoutETag drops the ETag header of a response.
 type withoutETag struct{ http.ResponseWriter }
 
