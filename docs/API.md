@@ -260,14 +260,17 @@ For a recurring todo, these edits are handled specially:
   master**, with the copy attached as `completedCopy`. On the series' last
   occurrence there is no next one: the master itself becomes `COMPLETED` and
   `completedCopy` is absent. If writing the rolled master fails, the
-  already-written copy is deleted again and the error is returned. An
-  occurrence **off the rule** (an override whose `RECURRENCE-ID` lies on
-  none of the rule's occurrences, such as a move to an earlier day leaves
-  behind) is not one the master can roll onto. When it is the next
-  occurrence, the master's dates stay: completing an occurrence of the rule
-  excludes it with an `EXDATE` instead of rolling, and completing one off
-  the rule drops its override. Otherwise the master rolls as usual, also
-  from an occurrence off the rule.
+  already-written copy is deleted again and the error is returned. After a
+  failure without the server's clear answer (`5xx`, none at all), the backend
+  reads the master's ETag back first: unchanged, the copy goes; changed, the
+  completion succeeds without `etag` and without `undoToken`; unreadable, the
+  copy stays and the error is returned. An occurrence **off the rule** (an
+  override whose `RECURRENCE-ID` lies on none of the rule's occurrences, such
+  as a move to an earlier day leaves behind) is not one the master can roll
+  onto. When it is the next occurrence, the master's dates stay: completing an
+  occurrence of the rule excludes it with an `EXDATE` instead of rolling, and
+  completing one off the rule drops its override. Otherwise the master rolls
+  as usual, also from an occurrence off the rule.
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
   (a series without `start` recurs on `due`). What refers to later
@@ -314,7 +317,8 @@ For a recurring todo, these edits are handled specially:
   completed todo of its own for it (`If-None-Match: *`), a clone of the
   occurrence like a completed copy that keeps the `COMPLETED` time the other
   client recorded; the response does not report it. If writing the master
-  fails, these todos are deleted again and the error is returned. A change
+  fails, these todos are deleted again and the error is returned, after a
+  failure without a clear answer only as for a completed copy. A change
   that created any returns no `undoToken`.
 
 A series with `ruleUnsupported: true` cannot be completed, moved, or given a

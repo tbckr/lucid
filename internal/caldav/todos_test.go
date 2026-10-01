@@ -4058,6 +4058,51 @@ func TestCompensateOnlyWhenWriteRefused(t *testing.T) {
 	}
 }
 
+// A change that wrote nothing before its master write has nothing to
+// compensate, so an ambiguous failure of that write is its error, also when
+// the master's ETag changed meanwhile: that can be another client's write,
+// which a check of the ETag would take for the change's own (FR-17, A-01).
+func TestAmbiguousFailureOfPlainEditIsAnError(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{"series", []string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Task", "DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY", "END:VTODO"}},
+		{"single task", []string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Task", "END:VTODO"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "tasks", "r.ics", tc.lines...)
+			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			mustNoErr(t, err)
+			other := strings.Replace(ics(tc.lines...), "SUMMARY:Task", "SUMMARY:Other", 1)
+			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPut || r.URL.Path != objPath {
+					return false
+				}
+				// Another client's write lands, Lucid's does not, and a proxy
+				// answers 502.
+				if _, err := e.mock.PutObject(e.paths["tasks"], "r.ics", other); err != nil {
+					t.Errorf("PutObject: %v", err)
+				}
+				w.WriteHeader(http.StatusBadGateway)
+				return true
+			})
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			in.Title = "Edited"
+			_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustErr(t, err, domain.ErrUpstream)
+			if snap != nil {
+				t.Errorf("snapshot = %+v; want none", snap)
+			}
+			checkStored(t, "task", storedObject(t, e, id), []string{"SUMMARY:Other"}, []string{"Edited"})
+		})
+	}
+}
+
 // answerCreateWithoutETag makes mock answer the PUT that creates an object
 // under calPath without an ETag, and the PROPFIND that would read it back
 // without getetag, as a server that rewrites what it stores may, so the new

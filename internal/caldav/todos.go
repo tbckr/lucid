@@ -464,7 +464,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	o := calObject{path: objPath, cal: cal}
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
-	if err != nil {
+	if err != nil && len(entries) > 0 {
 		err = s.settleWrite(ctx, objPath, etag, err)
 	}
 	if err != nil {
@@ -793,18 +793,22 @@ var errWriteUnverified = errors.New("the write could not be verified")
 //   - the server refused it (see writeRefused): the write was not applied,
 //     and err is returned, so that the caller removes what it wrote before;
 //   - an ambiguous failure, and the master's ETag is no longer etag: the
-//     write was applied all the same, as behind a reverse proxy whose read
-//     timeout fired after the server committed. The change succeeded, and
-//     nil is returned: the caller goes on with the new ETag unknown, as
-//     after a write whose ETag cannot be read back;
+//     write counts as applied all the same, as behind a reverse proxy whose
+//     read timeout fired after the server committed. The change succeeded,
+//     and nil is returned: the caller goes on with the new ETag unknown, as
+//     after a write whose ETag cannot be read back. Another client's write
+//     in the meantime looks the same; what the change wrote before then
+//     stays as a duplicate the user can see;
 //   - an ambiguous failure, and the ETag is still etag: not applied, err;
 //   - an ambiguous failure, and the ETag cannot be read, or the server tells
 //     none: err wrapped in errWriteUnverified, so that the caller keeps what
 //     it wrote. A stray copy or entry is a duplicate the user can see and
 //     delete; a completion deleted on doubt is a loss nobody sees.
 //
-// The verification runs on after the request is cancelled, like the
-// compensation it decides on.
+// A change that wrote nothing before has nothing to decide on and returns
+// its error as it is: a changed ETag can as well be another client's write
+// while its own was lost. The verification runs on after the request is
+// cancelled, like the compensation it decides on.
 func (s *service) settleWrite(ctx context.Context, objPath, etag string, err error) error {
 	if writeRefused(err) {
 		return err

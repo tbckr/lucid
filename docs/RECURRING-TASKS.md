@@ -903,11 +903,17 @@ of the roll, and completing one off the rule writes its copy and drops its
 override. The `EXDATE` stays behind once the master rolls on.
 
 If the master cannot be written, for example because another client changed
-it in the meantime, Lucid deletes the copy again and reports the error. The
-last occurrence gets no copy: the master itself becomes `COMPLETED` and keeps
-its `RRULE`, as with Apple, Tasks.org and Evolution. An undo of the
-completion restores the master's resource exactly as it was before the
-write, and removes the copy (see Undo below).
+it in the meantime, Lucid deletes the copy again and reports the error. A
+failure without the server's clear answer, a `5xx` or none at all, may come
+after the server stored the master, so Lucid reads the master's ETag back
+first: unchanged, the copy goes as before; changed, the completion counts as
+saved and the copy stays; unreadable, the copy stays and the error is
+reported. A stray copy is a duplicate the user can see and delete; a copy
+deleted on doubt would be a lost completion. The last occurrence gets no
+copy: the master itself becomes `COMPLETED` and keeps its `RRULE`, as with
+Apple, Tasks.org and Evolution. An undo of the completion restores the
+master's resource exactly as it was before the write, and removes the copy
+(see Undo below).
 
 A series anchored on `DUE` gets its `DTSTART` because RFC 5545 requires one
 with `RRULE`, and because the readers above do better with it: Thunderbird
@@ -998,8 +1004,10 @@ entry: one an `EXDATE` excludes is no done occurrence at all, and one of the
 other value type hidden behind an override of the same repeat (see Reading)
 never reads as done either. The UI does not mention the entries it creates.
 Cancelled and open overrides go. If the master cannot be written, Lucid
-deletes those tasks again. A change that creates them cannot be undone:
-restoring the series would bring the overrides back next to their tasks.
+deletes those tasks again; after a failure without a clear answer, it
+decides as for a completion's copy (see above). A change that creates them
+cannot be undone: restoring the series would bring the overrides back next
+to their tasks.
 
 **Deleting** a series deletes its resource; completed copies stay. Every write
 keeps the properties and components Lucid does not know.
