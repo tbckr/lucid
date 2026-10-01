@@ -258,9 +258,16 @@ func (s *service) putObject(ctx context.Context, objPath string, cal *ical.Calen
 	return s.putBytes(ctx, objPath, buf.Bytes(), ifMatch, create)
 }
 
+// errETagUnknown marks a write whose PUT succeeded but whose new ETag could
+// not be read back, so it must not be treated as a failed write (A-01):
+// completeOccurrence and UpdateTodo's plain PUT path report success with an
+// unknown ETag instead of undoing the write.
+var errETagUnknown = errors.New("etag unknown after a successful write")
+
 // putBytes stores the iCalendar data at objPath as it is and returns the
-// object's new ETag, "" if the server tells none. Exactly one of ifMatch /
-// create must be used: create sends If-None-Match: *.
+// object's new ETag, "" if the server tells none (a weak one counts as
+// none, like a weak one from the PUT response itself). Exactly one of
+// ifMatch / create must be used: create sends If-None-Match: *.
 func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifMatch string, create bool) (string, error) {
 	headers := map[string]string{}
 	if create {
@@ -281,13 +288,16 @@ func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifM
 	if etag := resp.header.Get("ETag"); etag != "" && !strings.HasPrefix(etag, "W/") {
 		return etag, nil
 	}
-	// The server may have modified the data and therefore omitted the ETag.
+	// The server may have modified the data and therefore omitted the ETag,
+	// or sent a weak one: read it back. The PUT itself already succeeded, so
+	// a failure here leaves the write in place with an unknown ETag, not
+	// undone.
 	ms, _, err := s.t.propfind(ctx, s.urlFor(objPath), "0", []xml.Name{propGetETag}, false)
 	if err != nil {
-		return "", mapError(err)
+		return "", fmt.Errorf("%w: %w", domain.ErrUpstream, errETagUnknown)
 	}
 	for _, r := range ms.Responses {
-		if etag := str(r.ok().ETag); etag != "" {
+		if etag := str(r.ok().ETag); etag != "" && !strings.HasPrefix(etag, "W/") {
 			return etag, nil
 		}
 	}

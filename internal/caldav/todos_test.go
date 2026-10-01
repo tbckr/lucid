@@ -2343,18 +2343,40 @@ func TestRestoreTodoFailures(t *testing.T) {
 		}
 	})
 
+	// snapshot never hands out one without an ETag, but RestoreTodo must
+	// refuse it anyway rather than send an empty If-Match (review minor).
+	t.Run("no etag refused", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, _, snap := complete(t, e)
+		rolled := storedObject(t, e, id)
+		snap.ETag = ""
+		e.mock.ResetCounts()
+		_, err := e.svc.RestoreTodo(t.Context(), snap)
+		mustErr(t, err, domain.ErrNotFound)
+		if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+			t.Errorf("%d writes; want none", n)
+		}
+		if stored := storedObject(t, e, id); stored != rolled {
+			t.Errorf("series:\n%s\nwant unchanged:\n%s", stored, rolled)
+		}
+	})
+
 	// Without the series' new ETag, an undo could not tell another change
-	// from its own.
+	// from its own; a weak one counts the same as none (review minor).
 	for _, a := range []struct {
-		name  string
-		input func(f *domain.Todo) domain.TodoInput
+		name        string
+		input       func(f *domain.Todo) domain.TodoInput
+		hook        func(mock *caldavtest.Server, objPath string)
+		wantObjects int // after the change: the series, plus a copy for a completion
 	}{
-		{"no etag after a completion", completeInput},
+		{"no etag after a completion", completeInput, answerWithoutETag, 2},
 		{"no etag after a move", func(f *domain.Todo) domain.TodoInput {
 			in := editInput(f)
 			in.Start = ptr(f.Start.Add(24 * time.Hour))
 			return in
-		}},
+		}, answerWithoutETag, 1},
+		{"weak etag after a completion", completeInput, answerWithWeakETag, 2},
 	} {
 		t.Run(a.name, func(t *testing.T) {
 			t.Parallel()
@@ -2362,12 +2384,26 @@ func TestRestoreTodoFailures(t *testing.T) {
 			id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
 			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
-			answerWithoutETag(e.mock, objPath)
+			a.hook(e.mock, objPath)
 			f := listedTodo(t, e, id)
 			got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, a.input(&f))
 			mustNoErr(t, err)
 			if got.ETag != "" || snap != nil {
 				t.Errorf("changed series = %+v, snapshot %+v; want no ETag and no snapshot", got, snap)
+			}
+			if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != a.wantObjects {
+				t.Errorf("%d objects; want %d", n, a.wantObjects)
+			}
+
+			// The hook stays installed, yet the next write still works
+			// (Review Focus 2): the unknown ETag of the last change does not
+			// wedge the series for the one after it.
+			next := listedTodo(t, e, id)
+			if next.ETag == "" {
+				t.Fatalf("re-listed series = %+v; want a real etag", next)
+			}
+			if _, _, err := e.svc.UpdateTodo(t.Context(), id, next.ETag, editInput(&next)); err != nil {
+				t.Errorf("next UpdateTodo failed: %v", err)
 			}
 		})
 	}
@@ -2396,6 +2432,96 @@ func answerWithoutETag(mock *caldavtest.Server, objPath string) {
 		}
 		return false
 	})
+}
+
+// answerWithWeakETag makes mock answer a PUT of objPath without an ETag, and
+// a PROPFIND of it with a weak one, as a server that only revalidates its
+// own representation may: a weak ETag counts as unknown too (review minor).
+func answerWithWeakETag(mock *caldavtest.Server, objPath string) {
+	var inner atomic.Bool // the hook passes the PUT on to mock, which calls it again
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != objPath || inner.Load() {
+			return false
+		}
+		switch r.Method {
+		case http.MethodPut:
+			inner.Store(true)
+			defer inner.Store(false)
+			mock.ServeHTTP(withoutETag{w}, r)
+			return true
+		case "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<d:multistatus xmlns:d="DAV:"><d:response><d:href>`+objPath+`</d:href>`+
+				`<d:propstat><d:prop><d:getetag>W/&quot;stale&quot;</d:getetag></d:prop>`+
+				`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
+			return true
+		}
+		return false
+	})
+}
+
+// answerWithFailingETagReadback makes mock answer a PUT of objPath without an
+// ETag, and fail the PROPFIND that would read it back, as a server that
+// rewrites what it stores and then errors on revalidation may (A-01): the
+// write itself still succeeded upstream.
+func answerWithFailingETagReadback(mock *caldavtest.Server, objPath string) {
+	var inner atomic.Bool // the hook passes the PUT on to mock, which calls it again
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != objPath || inner.Load() {
+			return false
+		}
+		switch r.Method {
+		case http.MethodPut:
+			inner.Store(true)
+			defer inner.Store(false)
+			mock.ServeHTTP(withoutETag{w}, r)
+			return true
+		case "PROPFIND":
+			w.WriteHeader(http.StatusInternalServerError)
+			return true
+		}
+		return false
+	})
+}
+
+// Completing a series still keeps the completed copy that records it when
+// the master PUT succeeds but its new ETag cannot be read back afterwards:
+// only a genuinely failed write compensates by removing the copy (A-01).
+func TestCompleteKeepsCopyWhenETagUnknown(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	answerWithFailingETagReadback(e.mock, objPath)
+	f := listedTodo(t, e, id)
+	e.mock.ResetCounts()
+
+	got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+	mustNoErr(t, err)
+	if got.ETag != "" || got.CompletedCopy == nil {
+		t.Errorf("completed series = %+v; want no ETag and a completed copy", got)
+	}
+	if snap != nil {
+		t.Errorf("snapshot = %+v; want none", snap)
+	}
+	if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 2 {
+		t.Errorf("%d objects; want the series and its copy", n)
+	}
+	if n := e.mock.Count(http.MethodDelete); n != 0 {
+		t.Errorf("DELETE count = %d; want 0", n)
+	}
+	checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART:20250317T090000Z"}, nil)
+
+	// The hook stays installed, yet the next write still works (Review Focus
+	// 2): the unknown ETag of the completion does not wedge the series.
+	next := listedTodo(t, e, id)
+	if next.ETag == "" {
+		t.Fatalf("re-listed series = %+v; want a real etag", next)
+	}
+	if _, _, err := e.svc.UpdateTodo(t.Context(), id, next.ETag, editInput(&next)); err != nil {
+		t.Errorf("next UpdateTodo failed: %v", err)
+	}
 }
 
 // withoutETag drops the ETag header of a response.
