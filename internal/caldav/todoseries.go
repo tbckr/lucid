@@ -277,13 +277,10 @@ func rulePart(rrule, key string) string {
 }
 
 // ruleIterator returns an iterator over the occurrences the rule of s
-// yields, in order (FR-17): the anchor, then the rule's instances after it.
-// The anchor is the first occurrence also where the rule does not match it,
-// and it counts against a COUNT (RFC 5545 3.3.10), so a COUNT rule yields
-// COUNT occurrences in all. rrule-go leaves such an anchor out and yields
-// COUNT instances besides it, so after it at most COUNT − 1 follow. A series
-// without a rule yields its anchor only. It fails when the rule cannot be
-// evaluated, a series with RDATE included.
+// yields, in order, see ruleInstances (FR-17): the anchor, then the rule's
+// instances after it, the anchor counting against a COUNT also where the
+// rule does not match it. It fails when the rule cannot be evaluated, a
+// series with RDATE included.
 //
 // walk, instancesBefore and ruleEnd all count with it, so that a write
 // (roll, move) counts the occurrences as Lucid reads them.
@@ -291,40 +288,7 @@ func (s *todoSeries) ruleIterator() (next func() (time.Time, bool), err error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	anchor := s.anchor.t
-	var ruleNext func() (time.Time, bool)
-	left := -1 // instances still allowed after the anchor; < 0: no COUNT
-	if s.rrule != "" {
-		r, err := newRRule(s.rrule, anchor)
-		if err != nil {
-			return nil, err
-		}
-		ruleNext = r.Iterator()
-		if n := r.OrigOptions.Count; n > 0 {
-			left = n - 1
-		}
-	}
-	started := false
-	return func() (time.Time, bool) {
-		if !started {
-			started = true
-			return anchor, true
-		}
-		if ruleNext == nil || left == 0 {
-			return time.Time{}, false
-		}
-		t, ok := ruleNext()
-		if ok && t.Equal(anchor) { // the rule's first instance: the anchor on the rule
-			t, ok = ruleNext()
-		}
-		if !ok {
-			return time.Time{}, false
-		}
-		if left > 0 {
-			left--
-		}
-		return t, true
-	}, nil
+	return ruleInstances(s.rrule, s.anchor.t)
 }
 
 // walk calls fn for the occurrences with rid >= from, in order, until fn

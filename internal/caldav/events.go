@@ -247,8 +247,9 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 	return out, err
 }
 
-// expandSeries returns the start times of the series in [from, to): DTSTART,
-// RRULE instances and RDATEs, in the series' location, sorted and unique.
+// expandSeries returns the start times of the series in [from, to): DTSTART
+// and the RRULE instances after it, counted as ruleInstances does, and
+// RDATEs, in the series' location, sorted and unique.
 func expandSeries(c *ical.Component, st dateValue, from, to time.Time) ([]time.Time, error) {
 	loc := st.loc()
 	var out []time.Time
@@ -259,20 +260,17 @@ func expandSeries(c *ical.Component, st dateValue, from, to time.Time) ([]time.T
 			out = append(out, t.In(loc))
 		}
 	}
-	add(st.t)
 
-	var err error
-	if rr := rruleString(c); rr != "" {
-		var r *rrule.RRule
-		if r, err = newRRule(rr, st.t); err == nil {
-			next := r.Iterator()
-			for range maxRRuleIterations {
-				t, ok := next()
-				if !ok || !t.Before(to) || len(out) >= maxInstancesPerSeries {
-					break
-				}
-				add(t)
+	next, err := ruleInstances(rruleString(c), st.t)
+	if err != nil {
+		add(st.t)
+	} else {
+		for range maxRRuleIterations {
+			t, ok := next()
+			if !ok || !t.Before(to) || len(out) >= maxInstancesPerSeries {
+				break
 			}
+			add(t)
 		}
 	}
 	for _, p := range c.Props.Values(ical.PropRecurrenceDates) {
@@ -300,6 +298,49 @@ func newRRule(value string, dtstart time.Time) (*rrule.RRule, error) {
 		return nil, fmt.Errorf("invalid RRULE: %w", err)
 	}
 	return r, nil
+}
+
+// ruleInstances returns an iterator over the occurrences of a series from
+// dtstart with the RRULE value rule ("" for none), in order: dtstart, then
+// the rule's instances after it (FR-17). DTSTART is the first occurrence also
+// where the rule does not match it, and it counts against a COUNT (RFC 5545
+// 3.3.10), so a COUNT rule yields COUNT occurrences in all. rrule-go leaves
+// such a DTSTART out and yields COUNT instances besides it, so after it at
+// most COUNT − 1 follow. A series without a rule yields dtstart only.
+func ruleInstances(rule string, dtstart time.Time) (next func() (time.Time, bool), err error) {
+	var ruleNext func() (time.Time, bool)
+	left := -1 // instances still allowed after dtstart; < 0: no COUNT
+	if rule != "" {
+		r, err := newRRule(rule, dtstart)
+		if err != nil {
+			return nil, err
+		}
+		ruleNext = r.Iterator()
+		if n := r.OrigOptions.Count; n > 0 {
+			left = n - 1
+		}
+	}
+	started := false
+	return func() (time.Time, bool) {
+		if !started {
+			started = true
+			return dtstart, true
+		}
+		if ruleNext == nil || left == 0 {
+			return time.Time{}, false
+		}
+		t, ok := ruleNext()
+		if ok && t.Equal(dtstart) { // the rule's first instance: DTSTART on the rule
+			t, ok = ruleNext()
+		}
+		if !ok {
+			return time.Time{}, false
+		}
+		if left > 0 {
+			left--
+		}
+		return t, true
+	}, nil
 }
 
 // normalizeEventInput validates in and returns the normalized RRULE.

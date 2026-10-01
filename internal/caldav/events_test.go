@@ -164,6 +164,19 @@ func TestListEventsExpansion(t *testing.T) {
 			},
 		},
 		{
+			// RFC 5545 3.3.10: DTSTART is the first of COUNT occurrences, also
+			// on a day the rule does not match.
+			name: "DTSTART off the rule counts for COUNT",
+			lines: ev("UID:1", "SUMMARY:Series", "DTSTART:20250309T100000Z", "DTEND:20250309T110000Z",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=3"),
+			from: date(2025, 3, 1, 0, 0), to: date(2025, 4, 1, 0, 0),
+			want: []occ{
+				{title: "Series", start: date(2025, 3, 9, 10, 0), end: date(2025, 3, 9, 11, 0), rid: ptr(date(2025, 3, 9, 10, 0))},
+				{title: "Series", start: date(2025, 3, 10, 10, 0), end: date(2025, 3, 10, 11, 0), rid: ptr(date(2025, 3, 10, 10, 0))},
+				{title: "Series", start: date(2025, 3, 17, 10, 0), end: date(2025, 3, 17, 11, 0), rid: ptr(date(2025, 3, 17, 10, 0))},
+			},
+		},
+		{
 			name:  "yearly all-day with EXDATE as date",
 			lines: ev("UID:1", "SUMMARY:Birthday", "DTSTART;VALUE=DATE:20200310", "RRULE:FREQ=YEARLY", "EXDATE;VALUE=DATE:20240310"),
 			from:  date(2023, 1, 1, 0, 0), to: date(2026, 1, 1, 0, 0),
