@@ -44,7 +44,10 @@ interface TaskItemProps {
   readOnly: boolean
 }
 
-/** The dashed, decorative stand-in for the checkbox on an upcoming occurrence (FR-17). */
+/**
+ * The dashed, decorative stand-in for the checkbox on an upcoming occurrence (FR-17). Items place it inside
+ * the button that opens the details, so a click on what looks like a disabled checkbox shows why it is one.
+ */
 export function PencilMark({ color, className }: { color: string; className?: string }) {
   return (
     <span
@@ -194,11 +197,7 @@ export function TaskChip({
         className,
       )}
     >
-      {upcoming ? (
-        <span className="flex shrink-0 items-center px-1.5">
-          <PencilMark color={colors.solid} />
-        </span>
-      ) : (
+      {!upcoming && (
         <TaskCheck
           title={title}
           done={done}
@@ -215,8 +214,12 @@ export function TaskChip({
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          upcoming && 'pl-1.5',
+        )}
       >
+        {upcoming && <PencilMark color={colors.solid} />}
         {!task.allDay && (
           <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(task.startsAt, prefs)}</span>
         )}
@@ -269,11 +272,7 @@ export function TaskBar({
       )}
       style={upcoming ? { borderColor: colors.solid, ...style } : { backgroundColor: colors.solid, color: colors.onSolid, ...style }}
     >
-      {upcoming ? (
-        <span className="flex shrink-0 items-center pr-1 pl-1.5">
-          <PencilMark color={colors.solid} />
-        </span>
-      ) : (
+      {!upcoming && (
         <TaskCheck
           title={title}
           done={done}
@@ -290,8 +289,12 @@ export function TaskBar({
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
-        className="flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
+          upcoming && 'pl-1.5',
+        )}
       >
+        {upcoming && <PencilMark color={colors.solid} />}
         {!task.allDay && !continuesBefore && (
           <span className="tabular shrink-0 opacity-85">{formatShortTime(task.startsAt, prefs)}</span>
         )}
@@ -330,10 +333,8 @@ export function TaskBlock({
       className={cn('absolute px-px', done && 'opacity-60', isDragging && 'opacity-40')}
       style={{ ...style, color: upcoming ? undefined : colors.onTint }}
     >
-      {/* The whole block opens the task; the checkbox sits on top of it, left of the text. */}
-      {upcoming ? (
-        <PencilMark color={colors.solid} className={markClassName} />
-      ) : (
+      {/* The whole block opens the task; the checkbox sits on top of it, left of the text, the pencil mark inside it. */}
+      {!upcoming && (
         <TaskCheck
           title={title}
           done={done}
@@ -358,6 +359,7 @@ export function TaskBlock({
         )}
         style={upcoming ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
       >
+        {upcoming && <PencilMark color={colors.solid} className={markClassName} />}
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
           <RecurringMark
@@ -374,7 +376,8 @@ export function TaskBlock({
 
 /**
  * Task row in the agenda: time, checkbox, title. The button spans the row with
- * the same columns as event rows; the checkbox sits on top of the middle one.
+ * the same columns as event rows; the checkbox sits on top of the middle one,
+ * the pencil mark inside it, at the same spot.
  */
 export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemProps & { time: string }) {
   const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
@@ -383,9 +386,7 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
   const markClassName = 'absolute top-1/2 left-[10.125rem] z-10 -translate-x-1/2 -translate-y-1/2 max-sm:left-[7.625rem]'
   return (
     <div data-task-key={task.key} data-calendar-id={task.calendarId} className={cn('relative', INK_IN, done && 'opacity-60')}>
-      {upcoming ? (
-        <PencilMark color={colors.solid} className={markClassName} />
-      ) : (
+      {!upcoming && (
         <TaskCheck
           title={title}
           done={done}
@@ -403,6 +404,7 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
         aria-label={titleLabel(t, task, title, time, prefs, now)}
         className="grid w-full grid-cols-[8.5rem_0.75rem_1fr] items-center gap-3 rounded-md px-2 py-2.5 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring max-sm:grid-cols-[6rem_0.75rem_1fr]"
       >
+        {upcoming && <PencilMark color={colors.solid} className={markClassName} />}
         <span className="tabular truncate text-muted-foreground">{time}</span>
         <span />
         <span className="flex min-w-0 items-center gap-1.5">

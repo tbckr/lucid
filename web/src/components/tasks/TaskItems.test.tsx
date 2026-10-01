@@ -151,6 +151,34 @@ describe('task items', () => {
       expect(button).not.toHaveAttribute('aria-roledescription')
     })
 
+    it('opens the details from the pencil mark of an upcoming occurrence, not the cell underneath', async () => {
+      const t = occurrenceOf({
+        due: '2026-10-08T17:00:00Z',
+        state: 'upcoming',
+        recurrenceId: '2026-10-08T17:00:00Z',
+        key: 't1@2026-10-08T17:00:00Z',
+      })
+      const user = userEvent.setup()
+      const items = [
+        <TaskChip key="chip" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+        <TaskBar key="bar" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+        <TaskBlock key="block" task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />,
+        <TaskAgendaRow key="agenda" task={t} time="5 PM" colors={colors} prefs={prefs} readOnly={false} />,
+      ]
+      // The month cell creates an event from a click that reaches it.
+      const cell = vi.fn()
+      document.body.addEventListener('click', cell)
+      for (const item of items) {
+        const { container, unmount } = renderWithProviders(item)
+        await user.click(container.querySelector('.rounded-full.border-dashed')!)
+        expect(useUi.getState().detail).toEqual({ item: t, anchor: screen.getByRole('button', { name: /Water the flowers/ }) })
+        useUi.getState().openDetail(null)
+        unmount()
+      }
+      document.body.removeEventListener('click', cell)
+      expect(cell).not.toHaveBeenCalled()
+    })
+
     it('shows a done occurrence with a checked, disabled checkbox', () => {
       const t = occurrenceOf({
         due: '2026-10-01T00:00:00Z',
