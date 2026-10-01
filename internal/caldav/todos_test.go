@@ -8,9 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1653,7 +1656,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 			copyPath = paths[1]
 		}
 		checkStored(t, "log", logs.String(),
-			[]string{"could not remove the copy of a completed occurrence", "path=" + copyPath, "error="}, []string{"Series"})
+			[]string{"could not remove the entry of a completed repeat", "path=" + copyPath, "error="}, []string{"Series"})
 	})
 
 	// The client may go away between the two PUTs (a closed tab): the copy
@@ -3705,6 +3708,45 @@ func TestRestoreTodoFailures(t *testing.T) {
 		checkStored(t, "copy", storedObject(t, e, done.CompletedCopy.ID), []string{"SUMMARY:Changed"}, nil)
 	})
 
+	// Probe E: a server that tells no ETag for a new object leaves the copy's
+	// ETag unknown. An undo then keeps the copy rather than delete it with
+	// If-Match: *, which would take another client's change with it.
+	t.Run("the copy's etag is unknown", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		ctx := t.Context()
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+		seeded := storedObject(t, e, id)
+		answerCreateWithoutETag(e.mock, e.paths["tasks"], "")
+		f := listedTodo(t, e, id)
+		done, snap, err := e.svc.UpdateTodo(ctx, id, f.ETag, completeInput(&f))
+		mustNoErr(t, err)
+		if done.CompletedCopy == nil || done.CompletedCopy.ETag != "" || snap == nil || snap.CopyETag != "" {
+			t.Fatalf("completion = %+v, snapshot %+v; want a copy without ETag and a snapshot", done, snap)
+		}
+		copyPath, _, err := decodeObjectID(e.mock.HomePath(), done.CompletedCopy.ID)
+		mustNoErr(t, err)
+		other := strings.Replace(storedObject(t, e, done.CompletedCopy.ID), "SUMMARY:Series", "SUMMARY:Other", 1)
+		if _, err := e.mock.PutObject(e.paths["tasks"], path.Base(copyPath), other); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+		e.mock.ResetCounts()
+		got, err := e.svc.RestoreTodo(ctx, *snap)
+		mustNoErr(t, err)
+		if !got.CopyKept {
+			t.Errorf("restored todo = %+v; want the copy kept", got)
+		}
+		if n := e.mock.Count(http.MethodDelete); n != 0 {
+			t.Errorf("DELETE count = %d; want 0", n)
+		}
+		if stored := storedObject(t, e, id); stored != seeded {
+			t.Errorf("restored resource:\n%s\nwant the seeded one:\n%s", stored, seeded)
+		}
+		if stored := storedObject(t, e, done.CompletedCopy.ID); stored != other {
+			t.Errorf("copy:\n%s\nwant the other change kept:\n%s", stored, other)
+		}
+	})
+
 	t.Run("another account", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
@@ -3898,6 +3940,189 @@ func TestCompleteKeepsCopyWhenETagUnknown(t *testing.T) {
 	if _, _, err := e.svc.UpdateTodo(t.Context(), id, next.ETag, editInput(&next)); err != nil {
 		t.Errorf("next UpdateTodo failed: %v", err)
 	}
+}
+
+// answerPutWith makes mock answer a PUT of objPath with status, applying it
+// first when apply is set, as a reverse proxy whose read timeout fires after
+// the server committed does; with propfindStatus set, a PROPFIND of objPath
+// fails with it, so the write cannot be verified either.
+func answerPutWith(mock *caldavtest.Server, objPath string, apply bool, status, propfindStatus int) {
+	var inner atomic.Bool // the hook passes the PUT on to mock, which calls it again
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != objPath || inner.Load() {
+			return false
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if apply {
+				inner.Store(true)
+				defer inner.Store(false)
+				mock.ServeHTTP(httptest.NewRecorder(), r)
+			}
+			w.WriteHeader(status)
+			return true
+		case "PROPFIND":
+			if propfindStatus != 0 {
+				w.WriteHeader(propfindStatus)
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// A compensating delete runs only when the master write is known not to
+// have been applied: after the server's definite refusal (a 4xx), or after
+// an ambiguous failure (a 5xx, no answer) whose verification finds the
+// master's ETag unchanged. A proxy that answers 502 after the server
+// committed has the change applied: the copy or the entries stay, and the
+// change succeeds without an ETag and without a snapshot, as a write whose
+// ETag cannot be read back does (A-01). When the verification fails too,
+// they stay as well, logged, and the error is returned (FR-17).
+func TestCompensateOnlyWhenWriteRefused(t *testing.T) {
+	t.Parallel()
+	// Completing the series leaves a copy; removing the rule of a series
+	// with another app's completed repeat leaves an entry (A-18).
+	changes := []struct {
+		name      string
+		overrides [][]string
+		input     func(f *domain.Todo) domain.TodoInput
+		wantCopy  bool
+		applied   []string // on the master once the write landed
+		gone      []string
+	}{
+		{"completion", nil, completeInput, true, []string{"DTSTART:20250317T090000Z"}, nil},
+		{
+			"rule removal",
+			[][]string{{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"}},
+			func(f *domain.Todo) domain.TodoInput { return withRule(editInput(f), "") },
+			false, nil,
+			[]string{"RRULE", "RECURRENCE-ID"},
+		},
+	}
+	for _, tc := range []struct {
+		name           string
+		apply          bool
+		status         int
+		propfindStatus int
+		wantErr        error // nil: the change succeeded
+		wantObjects    int
+		wantDeletes    int
+		wantLog        string
+	}{
+		{name: "applied, then 502", apply: true, status: http.StatusBadGateway, wantObjects: 2},
+		{name: "refused with 502", status: http.StatusBadGateway, wantErr: domain.ErrUpstream, wantObjects: 1, wantDeletes: 1},
+		{name: "refused with 412", status: http.StatusPreconditionFailed, wantErr: domain.ErrConflict, wantObjects: 1, wantDeletes: 1},
+		{
+			name: "refused with 502, unverifiable", status: http.StatusBadGateway, propfindStatus: http.StatusInternalServerError,
+			wantErr: domain.ErrUpstream, wantObjects: 2, wantLog: "keeping what a change wrote before a write that could not be verified",
+		},
+	} {
+		for _, c := range changes {
+			t.Run(c.name+", "+tc.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, caldavtest.Options{})
+				var logs bytes.Buffer
+				e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
+				id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}, c.overrides...)
+				before := storedObject(t, e, id)
+				objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+				mustNoErr(t, err)
+				f := listedTodo(t, e, id)
+				answerPutWith(e.mock, objPath, tc.apply, tc.status, tc.propfindStatus)
+				e.mock.ResetCounts()
+				got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, c.input(&f))
+				if tc.wantErr != nil {
+					mustErr(t, err, tc.wantErr)
+					if after := storedObject(t, e, id); after != before {
+						t.Errorf("master = %q; want it unchanged: %q", after, before)
+					}
+				} else {
+					mustNoErr(t, err)
+					if got.ETag != "" || snap != nil || (got.CompletedCopy != nil) != c.wantCopy {
+						t.Errorf("changed series = %+v, snapshot %+v; want no ETag, no snapshot, copy %v", got, snap, c.wantCopy)
+					}
+					checkStored(t, "master", storedObject(t, e, id), c.applied, c.gone)
+				}
+				if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != tc.wantObjects {
+					t.Errorf("%d objects; want %d", n, tc.wantObjects)
+				}
+				if n := e.mock.Count(http.MethodDelete); n != tc.wantDeletes {
+					t.Errorf("DELETE count = %d; want %d", n, tc.wantDeletes)
+				}
+				if tc.wantLog != "" {
+					checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + objPath}, []string{"Series"})
+				}
+			})
+		}
+	}
+}
+
+// answerCreateWithoutETag makes mock answer the PUT that creates an object
+// under calPath without an ETag, and the PROPFIND that would read it back
+// without getetag, as a server that rewrites what it stores may, so the new
+// object's ETag stays unknown; an update keeps its ETag. With refusePath
+// set, a PUT of it is refused with 412 instead.
+func answerCreateWithoutETag(mock *caldavtest.Server, calPath, refusePath string) {
+	var inner atomic.Bool // the hook passes the PUT on to mock, which calls it again
+	var created sync.Map  // the paths created without an ETag
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasPrefix(r.URL.Path, calPath) || inner.Load() {
+			return false
+		}
+		switch {
+		case r.Method == http.MethodPut && refusePath != "" && r.URL.Path == refusePath:
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return true
+		case r.Method == http.MethodPut && r.Header.Get("If-None-Match") == "*":
+			created.Store(r.URL.Path, true)
+			inner.Store(true)
+			defer inner.Store(false)
+			mock.ServeHTTP(withoutETag{w}, r)
+			return true
+		case r.Method == "PROPFIND":
+			if _, ok := created.Load(r.URL.Path); !ok {
+				return false
+			}
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<d:multistatus xmlns:d="DAV:"><d:response><d:href>`+r.URL.Path+`</d:href>`+
+				`<d:propstat><d:prop/><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
+			return true
+		}
+		return false
+	})
+}
+
+// A compensating delete never weakens its precondition to If-Match: *: a
+// copy whose ETag is unknown stays when the master write is refused,
+// logged, rather than be deleted whatever another client did to it since
+// (FR-17).
+func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	var logs bytes.Buffer
+	e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
+	id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	answerCreateWithoutETag(e.mock, e.paths["tasks"], objPath)
+	f := listedTodo(t, e, id)
+	e.mock.ResetCounts()
+	_, _, err = e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+	mustErr(t, err, domain.ErrConflict)
+	paths := e.mock.ObjectPaths(e.paths["tasks"])
+	if len(paths) != 2 {
+		t.Fatalf("objects = %v; want the series and the kept copy", paths)
+	}
+	if n := e.mock.Count(http.MethodDelete); n != 0 {
+		t.Errorf("DELETE count = %d; want 0", n)
+	}
+	copyPath := paths[0]
+	if copyPath == objPath {
+		copyPath = paths[1]
+	}
+	checkStored(t, "log", logs.String(),
+		[]string{"keeping the entry of a completed repeat whose etag is unknown", "path=" + copyPath}, []string{"Series"})
 }
 
 // answerCreateWithFailingETagReadback makes mock strip the ETag from any PUT

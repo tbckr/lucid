@@ -388,10 +388,11 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	// The completions other apps recorded in the overrides a rule edit drops
 	// become entries of their own first. They go again when the master is
 	// not written: every error from here on comes before its PUT or from it,
-	// and a PUT whose new ETag is unknown is no error (A-01, A-18).
+	// and a PUT whose new ETag is unknown is no error (A-01, A-18). One that
+	// may have been applied all the same keeps them (see settleWrite).
 	var entries []calObject
 	defer func() {
-		if err != nil {
+		if err != nil && !errors.Is(err, errWriteUnverified) {
 			s.removeEntries(ctx, calPath, entries)
 		}
 	}()
@@ -464,6 +465,9 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
 	if err != nil {
+		err = s.settleWrite(ctx, objPath, etag, err)
+	}
+	if err != nil {
 		return domain.Todo{}, nil, err
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
@@ -535,15 +539,24 @@ func (s *service) RestoreTodo(ctx context.Context, snap domain.TodoSnapshot) (do
 }
 
 // removeCopy deletes the completed copy copyID a change left, unless it no
-// longer has the ETag etag (unknown: any), and reports whether it is gone
-// (FR-17). It runs on after the request is cancelled: the series is
-// restored, and a closed tab would leave the copy next to its occurrence.
+// longer has the ETag etag, and reports whether it is gone (FR-17). An
+// unknown ETag keeps it: a delete could not tell a copy another client
+// changed since from the one the change left, so it never weakens its
+// precondition to If-Match: *. It runs on after the request is cancelled:
+// the series is restored, and a closed tab would leave the copy next to its
+// occurrence.
 func (s *service) removeCopy(ctx context.Context, copyID, etag string) bool {
 	copyPath, _, err := decodeObjectID(s.homePath, copyID)
-	if err == nil {
+	switch {
+	case err != nil:
+	case etag == "":
+		// Paths only, never task content.
+		s.p.log.WarnContext(ctx, "keeping the copy of a completed occurrence on undo: its etag is unknown", "path", copyPath)
+		return false
+	default:
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
 		defer cancel()
-		err = s.deleteObject(dctx, copyPath, cmp.Or(etag, "*"))
+		err = s.deleteObject(dctx, copyPath, etag)
 	}
 	if err == nil || errors.Is(err, domain.ErrNotFound) {
 		return true
@@ -628,7 +641,8 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 //     client sent other dates than it was given;
 //  2. the master rolls to the next occurrence with in's fields, an open
 //     checklist and STATUS:NEEDS-ACTION;
-//  3. if the master cannot be written, the copy is removed again.
+//  3. if the master is known not to have been written, the copy is removed
+//     again (see settleWrite).
 //
 // The master rolls only onto an instance of the rule (see roll), also from
 // an occurrence off the rule (see todoOcc.offGrid), whose override goes
@@ -691,13 +705,11 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 	}
 	o := calObject{path: objPath, cal: cal}
 	if o.etag, err = s.putObject(ctx, objPath, cal, etag, false); err != nil {
-		// The copy goes even when the client has gone: on the request's
-		// context, a closed tab would leave it next to the open occurrence.
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
-		defer cancel()
-		// Paths and errors only, never task content.
-		if derr := s.deleteObject(dctx, copyObj.path, cmp.Or(copyObj.etag, "*")); derr != nil {
-			s.p.log.WarnContext(ctx, "could not remove the copy of a completed occurrence", "path", copyObj.path, "error", derr)
+		err = s.settleWrite(ctx, objPath, etag, err)
+	}
+	if err != nil {
+		if !errors.Is(err, errWriteUnverified) {
+			s.removeEntries(ctx, calPath, []calObject{copyObj})
 		}
 		return domain.Todo{}, err
 	}
@@ -743,9 +755,12 @@ func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal 
 }
 
 // removeEntries deletes the entries in calPath a change created before its
-// master could not be written, unless they changed since (FR-17). It runs on
-// after the request is cancelled: a closed tab would leave them next to the
-// overrides they were made from.
+// master was not written, a completed copy or the entries of other apps'
+// completions, unless they changed since (FR-17). One whose ETag is unknown
+// stays, logged: a delete could not tell it from one another client changed
+// since, so it never weakens its precondition to If-Match: *. It runs on
+// after the request is cancelled: a closed tab would leave the entries next
+// to the occurrences they were made from.
 func (s *service) removeEntries(ctx context.Context, calPath string, entries []calObject) {
 	if len(entries) == 0 {
 		return
@@ -755,10 +770,57 @@ func (s *service) removeEntries(ctx context.Context, calPath string, entries []c
 	defer cancel()
 	for _, o := range entries {
 		// Paths and errors only, never task content.
-		if err := s.deleteObject(dctx, o.path, cmp.Or(o.etag, "*")); err != nil {
+		if o.etag == "" {
+			s.p.log.WarnContext(ctx, "keeping the entry of a completed repeat whose etag is unknown", "path", o.path)
+			continue
+		}
+		if err := s.deleteObject(dctx, o.path, o.etag); err != nil {
 			s.p.log.WarnContext(ctx, "could not remove the entry of a completed repeat", "path", o.path, "error", err)
 		}
 	}
+}
+
+// errWriteUnverified marks the error of a master PUT that failed without the
+// server's definite refusal and whose outcome could not be verified either,
+// see settleWrite: the write may have been applied, so what the change
+// wrote before it stays.
+var errWriteUnverified = errors.New("the write could not be verified")
+
+// settleWrite settles the failure err of the PUT of objPath with If-Match
+// etag, the master write of a change that wrote other objects before it, a
+// completed copy or the entries of other apps' completions (FR-17, A-01):
+//   - the server refused it (see writeRefused): the write was not applied,
+//     and err is returned, so that the caller removes what it wrote before;
+//   - an ambiguous failure, and the master's ETag is no longer etag: the
+//     write was applied all the same, as behind a reverse proxy whose read
+//     timeout fired after the server committed. The change succeeded, and
+//     nil is returned: the caller goes on with the new ETag unknown, as
+//     after a write whose ETag cannot be read back;
+//   - an ambiguous failure, and the ETag is still etag: not applied, err;
+//   - an ambiguous failure, and the ETag cannot be read, or the server tells
+//     none: err wrapped in errWriteUnverified, so that the caller keeps what
+//     it wrote. A stray copy or entry is a duplicate the user can see and
+//     delete; a completion deleted on doubt is a loss nobody sees.
+//
+// The verification runs on after the request is cancelled, like the
+// compensation it decides on.
+func (s *service) settleWrite(ctx context.Context, objPath, etag string, err error) error {
+	if writeRefused(err) {
+		return err
+	}
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+	defer cancel()
+	current, verr := s.objectETag(vctx, objPath)
+	switch {
+	case verr != nil || current == "":
+		// Paths and errors only, never task content.
+		s.p.log.WarnContext(ctx, "keeping what a change wrote before a write that could not be verified",
+			"path", objPath, "error", err, "verification_error", verr)
+		return fmt.Errorf("%w: %w", err, errWriteUnverified)
+	case current == etag:
+		return err
+	}
+	return nil
 }
 
 // propExRule is RFC 2445's EXRULE, which RFC 5545 deprecates but which is a

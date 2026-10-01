@@ -286,15 +286,28 @@ func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifM
 	}
 	// The server may have modified the data and therefore omitted the ETag,
 	// or sent a weak one: read it back.
-	ms, _, err := s.t.propfind(ctx, s.urlFor(objPath), "0", []xml.Name{propGetETag}, false)
+	etag, err := s.objectETag(ctx, objPath)
 	if err != nil {
 		// The PUT itself already succeeded: a failure here only leaves the
 		// new ETag unknown, not the write undone (A-01).
 		s.p.log.WarnContext(ctx, "could not read back the etag of a write", "path", objPath, "error", err)
 		return "", nil
 	}
+	if strings.HasPrefix(etag, "W/") {
+		return "", nil
+	}
+	return etag, nil
+}
+
+// objectETag reads the ETag of the object at objPath, "" if the server tells
+// none.
+func (s *service) objectETag(ctx context.Context, objPath string) (string, error) {
+	ms, _, err := s.t.propfind(ctx, s.urlFor(objPath), "0", []xml.Name{propGetETag}, false)
+	if err != nil {
+		return "", mapError(err)
+	}
 	for _, r := range ms.Responses {
-		if etag := str(r.ok().ETag); etag != "" && !strings.HasPrefix(etag, "W/") {
+		if etag := str(r.ok().ETag); etag != "" {
 			return etag, nil
 		}
 	}
@@ -319,6 +332,16 @@ func mapWriteError(err error) error {
 		return fmt.Errorf("%w: %w", domain.ErrConflict, err)
 	}
 	return mapError(err)
+}
+
+// writeRefused reports whether err, of a PUT or DELETE, is the server's
+// definite refusal, a 4xx, after which the write was not applied. Any other
+// failure is ambiguous: no answer at all (a network error, a timeout) or a
+// 5xx, which a reverse proxy answers when its read timeout fires after the
+// server behind it committed the write (FR-17, A-01); see settleWrite.
+func writeRefused(err error) bool {
+	code := statusCode(err)
+	return code >= 400 && code < 500
 }
 
 // requireETag validates the client supplied ETag.
