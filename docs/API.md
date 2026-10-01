@@ -183,18 +183,24 @@ describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   of the current occurrence's or the master's.
 - `moveWindow` (`{ "from", "until" }`) is where a move of the current
   occurrence must keep its anchor (`start`, else `due`): from `from` on and
-  before `until`, see `PUT` below. A series on fixed days has one: `from` is
-  the start of the current occurrence's day and `until` the start of
-  `next`'s day, both in the series' zone, or `next`'s own instant when it
-  falls on the current occurrence's day (several repeats a day, such as
-  `BYHOUR=9,17`); `until` is `null` for the last repeat. A current
-  occurrence off the rule (see `PUT`) moves on its own, so with a `next` it
-  has the same window in any series. `moveWindow` is `null` where a move is
-  free, and for a series that is completed, cancelled or `ruleUnsupported`.
-  When the current occurrence is all-day, `from` and `until` are dates,
-  written as midnight UTC like `start` and `due`; otherwise they are
-  instants. The series' zone need not be the client's, so a day of the
-  client's can lie partly inside the window.
+  before `until`, see `PUT` below. Its bounds are the **rule's days**, the
+  days of the current and the next occurrence's `RECURRENCE-ID` in the
+  series' zone; they differ from `start`/`due` and `next` when another
+  client moved those occurrences to other dates. A series on fixed days has
+  one: `from` is the start of the current occurrence's rule day and `until`
+  the start of `next`'s rule day, or `next`'s own `RECURRENCE-ID` instant
+  when it falls on the current occurrence's rule day (several repeats a
+  day, such as `BYHOUR=9,17`); `until` is `null` for the last repeat. A
+  current occurrence off the rule (see `PUT`) moves on its own, so with a
+  `next` it has the same `until` in any series, and `from` is `null`: it
+  has no rule day of its own to stay from. `moveWindow` is `null` where a
+  move is free, and for a series that is completed, cancelled or
+  `ruleUnsupported`. When the current occurrence is all-day, `from` and
+  `until` are dates, written as midnight UTC like `start` and `due`; a
+  `next` on the current occurrence's own rule day then ends the window
+  with that day, and the server still holds a time of day before `next`
+  (see `PUT`). Otherwise they are instants. The series' zone need not be
+  the client's, so a day of the client's can lie partly inside the window.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
@@ -283,11 +289,13 @@ For a recurring todo, these edits are handled specially:
   A move whose anchor (`start`, else `due`) leaves `moveWindow` is
   `400 invalid_input`, and nothing is written: before `from`, message *"a
   repeat on fixed days cannot move before its own day"*; from `until` on,
-  *"a repeat on fixed days must stay before its next repeat"*. An anchor of the
-  other value type than the current occurrence counts on its day: a date as
-  that day in the series' zone, a time on its date in the zone it is
-  written in (the series' own, or `timezone` for an all-day series that
-  gains a time). The last repeat completed with new dates moves the master
+  *"a repeat on fixed days must stay before its next repeat"*. The check
+  counts the rule's days in the series' own value type, so a time given to
+  an all-day current occurrence of a timed series must still stay before a
+  `next` on the same day. An anchor of the other value type than the series
+  counts on its day: a date as that day in the series' zone, a time on its
+  date in the zone it is written in (the series' own, or `timezone` for an
+  all-day series that gains a time). The last repeat completed with new dates moves the master
   and is checked the same way; an earlier one leaves them on its completed
   copy, which is no move. A move together with a new `rrule` starts the
   series over and is not checked, nor is the undo below, which restores the

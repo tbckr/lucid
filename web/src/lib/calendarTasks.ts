@@ -145,11 +145,14 @@ export function canDrag(task: CalTask): boolean {
 
 /** The window a recurring series may move within (FR-17), as local `Date`s. */
 export interface MoveWindow {
-  /** The start of the current occurrence's day, in the series' zone. */
-  from: Date
   /**
-   * Exclusive: the start of the next occurrence's day, or the next occurrence itself when it falls on the same day;
-   * null without an upper bound.
+   * The start of the current occurrence's rule day (its RECURRENCE-ID's), in the series' zone; null without a lower
+   * bound, for a repeat off the rule.
+   */
+  from: Date | null
+  /**
+   * Exclusive: the start of the next occurrence's rule day, or the next occurrence itself when it falls on the same
+   * day; null without an upper bound.
    */
   until: Date | null
 }
@@ -158,24 +161,28 @@ export interface MoveWindow {
  * The move window of a recurring series, or null when it isn't bounded
  * (FR-17): the server's (`Todo.moveWindow`), which also refuses a move that
  * leaves it. A fixed-day series keeps its later occurrences on their days,
- * so a move must stay from the start of the current occurrence's day to
- * before the next one's, and so must a repeat off the rule, which moves
- * alone. Days count in the series' own zone, which need not be the
- * browser's: a local day can be covered only in part. The hatch keeps such a
- * day open (`outsideWindow`), while a drop or a picked date is checked at its
- * exact time (`withinWindow`), as the server checks it. The last repeat has
- * no next occurrence to stay before (`until: null`), so it only must not land
- * on a day before its own. Other series move freely, like `ruleUnsupported`
- * ones can't move at all (`canDrag`). An all-day current occurrence counts
- * dates, which the wire writes as midnight UTC, and they become local
- * midnights like its own dates (`anchorOf`).
+ * so a move must stay from the start of the current occurrence's rule day to
+ * before the next one's. Those are the days of their RECURRENCE-IDs, not the
+ * dates the occurrences are shown on, which another client may have moved:
+ * the window follows the server, not `start`/`due` or `next`. A repeat off
+ * the rule moves alone: it also stays before the next one, but has no rule
+ * day of its own to stay from (`from: null`). Days count in the series' own
+ * zone, which need not be the browser's: a local day can be covered only in
+ * part. The hatch keeps such a day open (`outsideWindow`), while a drop or a
+ * picked date is checked at its exact time (`withinWindow`), as the server
+ * checks it. The last repeat has no next occurrence to stay before
+ * (`until: null`), so it only must not land on a day before its own. Other
+ * series move freely, like `ruleUnsupported` ones can't move at all
+ * (`canDrag`). An all-day current occurrence counts dates, which the wire
+ * writes as midnight UTC, and they become local midnights like its own dates
+ * (`anchorOf`).
  */
 export function moveWindow(todo: Todo): MoveWindow | null {
   const w = todo.moveWindow
   if (!w) return null
   const allDay = todo.start ? todo.startAllDay : todo.dueAllDay
   const at = (iso: string) => (allDay ? utcDateToLocal(iso) : new Date(iso))
-  return { from: at(w.from), until: w.until ? at(w.until) : null }
+  return { from: w.from ? at(w.from) : null, until: w.until ? at(w.until) : null }
 }
 
 /** Whether `input`'s anchor still falls inside `todo`'s move window; true when it has none (FR-17). */
@@ -184,7 +191,7 @@ export function withinWindow(todo: Todo, input: TaskDates): boolean {
   if (!w) return true
   const anchor = anchorOf(input)
   if (!anchor) return false
-  return anchor >= w.from && (w.until === null || anchor < w.until)
+  return (w.from === null || anchor >= w.from) && (w.until === null || anchor < w.until)
 }
 
 /**
@@ -193,8 +200,8 @@ export function withinWindow(todo: Todo, input: TaskDates): boolean {
  * submit guard, so a move and a typed date name the same edge the same way.
  */
 export function windowEdge(w: MoveWindow, anchor: Date): { edge: 'from' | 'until'; date: Date } | null {
-  if (anchor < w.from) return { edge: 'from', date: w.from }
-  const { until } = w
+  const { from, until } = w
+  if (from !== null && anchor < from) return { edge: 'from', date: from }
   if (until !== null && anchor >= until) return { edge: 'until', date: startOfDay(new Date(until.getTime() - 1)) }
   return null
 }
@@ -206,12 +213,12 @@ export function lastAllowedDay(w: MoveWindow): Date | null {
 
 /**
  * Whether `day` falls outside `w`, so the calendar views can hatch it while
- * dragging (FR-17): before `from` always; past the last allowed day only
- * when `w` has one.
+ * dragging (FR-17): before `from` only when `w` has one; past the last
+ * allowed day only when `w` has one.
  */
 export function outsideWindow(w: MoveWindow, day: Date): boolean {
   const last = lastAllowedDay(w)
-  return day < startOfDay(w.from) || (last !== null && day > last)
+  return (w.from !== null && day < startOfDay(w.from)) || (last !== null && day > last)
 }
 
 /** A wire date moved like an event (`movedTimes`): all-day by whole dates, timed by local days, then minutes. */

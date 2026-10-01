@@ -348,6 +348,46 @@ describe('moveWindow', () => {
     expect(moveWindow({ ...t, moveWindow: null })).toBeNull()
   })
 
+  it("follows the server's rule days, not the date another client moved the occurrence to", () => {
+    // Another client moved Monday's repeat to Tuesday: the window still starts on the rule's Monday, before the
+    // task's own start. The series is in UTC, so its days start at 01:00 in Berlin (CET in March).
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      start: '2025-03-11T09:00:00Z',
+      next: { start: '2025-03-13T09:00:00Z', startAllDay: false, due: null, dueAllDay: false },
+      moveWindow: { from: '2025-03-10T00:00:00Z', until: '2025-03-13T00:00:00Z' },
+    })
+    const w = moveWindow(t)!
+    expect(w).toEqual({ from: new Date('2025-03-10T00:00:00Z'), until: new Date('2025-03-13T00:00:00Z') })
+    expect(outsideWindow(w, new Date(2025, 2, 9))).toBe(true)
+    expect(outsideWindow(w, new Date(2025, 2, 10))).toBe(false)
+    const startAt = (iso: string) => ({ start: iso, startAllDay: false, due: null, dueAllDay: false })
+    expect(withinWindow(t, startAt('2025-03-10T09:00:00Z'))).toBe(true) // back onto its own Monday
+    expect(withinWindow(t, startAt('2025-03-09T23:30:00Z'))).toBe(false) // Monday 00:30 in Berlin, before the series' day
+    expect(windowEdge(w, new Date('2025-03-09T23:30:00Z'))).toEqual({ edge: 'from', date: w.from })
+  })
+
+  it('has no lower bound for a repeat off the rule', () => {
+    // Shown on 10 March, before the weekly rule's next instance on Sunday the 16th: it may move earlier at will.
+    const t = todo({
+      recurring: true,
+      start: '2025-03-10T15:00:00Z',
+      next: { start: '2025-03-16T09:00:00Z', startAllDay: false, due: null, dueAllDay: false },
+      moveWindow: { from: null, until: '2025-03-16T00:00:00Z' },
+    })
+    const w = moveWindow(t)!
+    expect(w).toEqual({ from: null, until: new Date('2025-03-16T00:00:00Z') })
+    expect(outsideWindow(w, new Date(2025, 2, 1))).toBe(false)
+    expect(outsideWindow(w, new Date(2025, 2, 16))).toBe(false) // covered until 01:00 local
+    expect(outsideWindow(w, new Date(2025, 2, 17))).toBe(true)
+    const startAt = (iso: string) => ({ start: iso, startAllDay: false, due: null, dueAllDay: false })
+    expect(withinWindow(t, startAt('2025-03-01T15:00:00Z'))).toBe(true)
+    expect(withinWindow(t, startAt('2025-03-16T08:00:00Z'))).toBe(false)
+    expect(windowEdge(w, new Date('2025-03-01T15:00:00Z'))).toBeNull()
+    expect(windowEdge(w, new Date('2025-03-16T08:00:00Z'))).toEqual({ edge: 'until', date: new Date(2025, 2, 16) })
+  })
+
   it('ends where the server says, not at the day of the next occurrence (A-15)', () => {
     // Twice a day, 09:00 and 17:00 local: the window ends at the next one, on the same day.
     const t = todo({

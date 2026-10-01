@@ -804,8 +804,10 @@ described in [API.md](API.md#todos).
   rule on fixed days, a move past the next occurrence would drop the
   occurrences in between, and a move before the current one would bring it
   back (see [Moving one occurrence](#moving-one-occurrence)). The server
-  refuses such a move, whatever the client, counting days in the series'
-  zone; the UI shows the window it reports.
+  refuses such a move, whatever the client, counting the rule's days in the
+  series' zone: the days of the occurrences' `RECURRENCE-ID`s, which differ
+  from the dates another client moved them to; the UI shows the window it
+  reports.
 
 ### Reading
 
@@ -1009,15 +1011,20 @@ keeps the properties and components Lucid does not know.
 - Only an occurrence off the rule can be moved on its own. Moving any other
   occurrence moves the series from the current occurrence on. With an
   interval rule the later occurrences move along. With fixed days a move
-  stays from the start of the current occurrence's day to before the start
-  of the next occurrence's day, both in the series' zone, or before the
-  next occurrence itself when it falls on the same day (several repeats a
-  day); the time of day is free within those days. The server refuses any
-  other move, and the calendar, the editor and the date picker in the task
-  list keep to the window it reports. The last repeat has no next
-  occurrence to stay before, so it can move to a later day, but not to an
-  earlier one. A current occurrence off the rule moves alone, so it stays
-  before the next occurrence the same way, also with an interval rule.
+  stays from the start of the current occurrence's rule day to before the
+  start of the next occurrence's rule day, both in the series' zone, or
+  before the next occurrence itself when it falls on the same day (several
+  repeats a day); the time of day is free within those days. The rule days
+  are those of the occurrences' `RECURRENCE-ID`s: where another client
+  moved the current or the next occurrence to another date, the window
+  keeps to the rule's days, not to the dates they are shown on, so that no
+  rule instance is skipped or brought back. The server refuses any other
+  move, and the calendar, the editor and the date picker in the task list
+  keep to the window it reports. The last repeat has no next occurrence to
+  stay before, so it can move to a later day, but not to an earlier one. A
+  current occurrence off the rule moves alone, so it stays before the next
+  occurrence the same way, also with an interval rule, and has no rule day
+  of its own to stay from: it can move to an earlier day.
 - The move window is counted in the series' zone; the UI converts it to the
   browser's. Removing a series' time where the two zones differ can land
   right on an edge: the UI can refuse an edit on the current occurrence's

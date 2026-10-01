@@ -523,50 +523,88 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 	t.MoveWindow = s.moveWindow(cur, next)
 }
 
-// moveWindow returns the window a move of the current occurrence cur, with
-// the next one next (nil for the last), must keep its anchor in, or nil where
-// a move is free (FR-17, A-13, A-14, A-15):
+// ridWindow returns the window a move of the current occurrence cur, with
+// the next one next (nil for the last), must keep its anchor in, [from,
+// until), by the rule's days, or ok false where a move is free (FR-17, A-13,
+// A-14, A-15):
 //   - on fixed days the later repeats stay on their days, so cur stays from
 //     the start of its own day to the start of next's day, or to next itself
 //     when next falls on cur's day (several repeats a day). The last repeat
-//     only stays from its own day on: before it, its day would come back as
-//     a repeat still to do;
+//     only stays from its own day on (until zero): before it, its day would
+//     come back as a repeat still to do;
 //   - a repeat off the rule moves alone (A-10), so with a next one it stays
-//     before it the same way in any series, or it would come after it.
+//     before it the same way in any series, or it would come after it. It
+//     has no rule day of its own to stay from (from zero): an earlier day
+//     brings nothing back.
 //
-// Days count in the series' zone (A-11). With an all-day cur the window
-// counts dates, at midnight UTC as all-day dates are written, see windowDay.
-func (s *todoSeries) moveWindow(cur todoOcc, next *todoOcc) *domain.MoveWindow {
+// The days are those of the RECURRENCE-IDs, cur.rid and next.rid, never of
+// the dates another client moved the occurrences to: the window keeps the
+// rule's instances in order, and only those lie on the rule's days. Next is
+// the one current returns, in RECURRENCE-ID order, so an open override off
+// the rule is not passed either. Days count in the series' zone and value
+// type (A-11), see dayStart.
+func (s *todoSeries) ridWindow(cur todoOcc, next *todoOcc) (from, until time.Time, ok bool) {
 	if !s.fixedDays && (!cur.offGrid || next == nil) {
-		return nil
+		return time.Time{}, time.Time{}, false
 	}
-	inDates := occAnchorAllDay(cur)
-	w := &domain.MoveWindow{From: s.windowDay(occAnchor(cur), inDates, inDates)}
+	day := s.dayStart(cur.rid)
+	if !cur.offGrid {
+		from = day
+	}
 	if next != nil {
-		at := occAnchor(*next)
-		until := s.windowDay(at, occAnchorAllDay(*next), inDates)
-		if until.Equal(w.From) {
-			until = at.UTC()
+		until = s.dayStart(next.rid)
+		if until.Equal(day) {
+			until = next.rid
 		}
-		w.Until = &until
 	}
-	return w
+	return from, until, true
 }
 
-// windowDay returns the start of the day of t, a date when allDay, else a
-// time on its date in the series' zone (A-11): midnight UTC of that date when
-// the window counts dates (inDates), else its midnight in the series' zone,
-// in UTC (FR-17).
-func (s *todoSeries) windowDay(t time.Time, allDay, inDates bool) time.Time {
-	day := civilDate(t.UTC())
-	if !allDay {
-		day = s.dayOf(t)
-	}
-	if inDates {
+// dayStart returns the start of the day of the rule instance t: its date in
+// an all-day series, at midnight UTC as dates are written, else midnight of
+// its date in the series' zone (A-11).
+func (s *todoSeries) dayStart(t time.Time) time.Time {
+	day := s.dayOf(t)
+	if s.anchor.allDay {
 		return day
 	}
 	y, m, d := day.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc()).UTC()
+	return time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc())
+}
+
+// moveWindow returns the window of ridWindow as the todo reports it, or nil
+// where a move is free (FR-17): in UTC, and in the value type the todo
+// reports its dates in, cur's own. An all-day cur of a timed series (an
+// override of the other value type) counts dates, at midnight UTC as all-day
+// dates are written: the rule's days by date, and a next on cur's own day
+// ends the window with that day, the nearest a date comes to it; checkMove
+// still holds the time of day before it.
+func (s *todoSeries) moveWindow(cur todoOcc, next *todoOcc) *domain.MoveWindow {
+	from, until, ok := s.ridWindow(cur, next)
+	if !ok {
+		return nil
+	}
+	toDates := occAnchorAllDay(cur) && !s.anchor.allDay
+	w := &domain.MoveWindow{}
+	if !from.IsZero() {
+		if toDates {
+			from = s.dayOf(from)
+		}
+		from = from.UTC()
+		w.From = &from
+	}
+	if !until.IsZero() {
+		if toDates {
+			day := s.dayOf(until)
+			if day.Equal(s.dayOf(cur.rid)) {
+				day = day.AddDate(0, 0, 1)
+			}
+			until = day
+		}
+		until = until.UTC()
+		w.Until = &until
+	}
+	return w
 }
 
 // occAnchorAllDay reports whether the anchor of o (see occAnchor) is a date.
@@ -580,40 +618,45 @@ func occAnchorAllDay(o todoOcc) bool {
 // checkMove returns errBeforeWindow or errPastWindow when moving the todo t,
 // read from s, to the dates of in leaves the move window t reports, see
 // moveWindow, and nil when its anchor (start, else due) stays inside, or t
-// has no window (FR-17, A-13). The window counts the days of t's current
-// occurrence. An anchor of the other value type counts on its day: a date
-// as that day in the series' zone, a time on its date in the zone the move
-// writes it in (see writeSeriesDates): the series' own, or in's zone for a
-// series that gains a time.
+// has no window (FR-17, A-13). It checks against the window by the rule's
+// days (see ridWindow), in the series' value type, so that a next on the
+// current occurrence's day holds the time of day also when that occurrence
+// was made a date. An anchor of the other value type than the series counts
+// on its day: a date as that day in the series' zone, a time on its date in
+// the zone the move writes it in (see writeSeriesDates): the series' own,
+// or in's zone for a series that gains a time.
 func (s *todoSeries) checkMove(t domain.Todo, in domain.TodoInput) error {
 	at, allDay := in.Start, in.StartAllDay
 	if at == nil {
 		at, allDay = in.Due, in.DueAllDay
 	}
-	w := t.MoveWindow
-	if w == nil || at == nil {
+	if t.MoveWindow == nil || at == nil {
 		return nil
 	}
-	inDates := t.DueAllDay
-	if t.Start != nil {
-		inDates = t.StartAllDay
+	cur, next, err := s.current()
+	if err != nil {
+		return errRuleUnsupported
+	}
+	from, until, ok := s.ridWindow(cur, next)
+	if !ok {
+		return nil
 	}
 	anchor := *at
 	switch {
-	case inDates && !allDay:
+	case s.anchor.allDay && !allDay:
 		loc := s.anchor.loc()
-		if l := loadLocation(in.Timezone); s.anchor.allDay && l != nil {
+		if l := loadLocation(in.Timezone); l != nil {
 			loc = l
 		}
 		anchor = civilDate(anchor.In(loc))
-	case !inDates && allDay:
+	case !s.anchor.allDay && allDay:
 		y, m, d := anchor.UTC().Date()
 		anchor = time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc())
 	}
 	switch {
-	case anchor.Before(w.From):
+	case !from.IsZero() && anchor.Before(from):
 		return errBeforeWindow
-	case w.Until != nil && !anchor.Before(*w.Until):
+	case !until.IsZero() && !anchor.Before(until):
 		return errPastWindow
 	}
 	return nil
@@ -696,7 +739,7 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 }
 
 // move moves the series s from the occurrence a todo with the given status
-// reports (see reportedRid) to the dates of in (FR-10, FR-17), so that the
+// reports (see reported) to the dates of in (FR-10, FR-17), so that the
 // moved occurrence is the current one and the others stay as they were:
 //   - the dates become DTSTART and DUE in the form the series is written in;
 //   - the override of the moved occurrence and KDE's pending occurrence go;

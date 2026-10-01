@@ -1796,11 +1796,11 @@ func moveListed(t *testing.T, e *env, id string, d time.Duration) domain.Todo {
 	return got
 }
 
-// checkMoveWindow asserts that w is the window [from, until), until nil for
+// checkMoveWindow asserts that w is the window [from, until), each nil for
 // none.
-func checkMoveWindow(t *testing.T, w *domain.MoveWindow, from time.Time, until *time.Time) {
+func checkMoveWindow(t *testing.T, w *domain.MoveWindow, from, until *time.Time) {
 	t.Helper()
-	if w == nil || !w.From.Equal(from) || !sameTime(w.Until, until) {
+	if w == nil || !sameTime(w.From, from) || !sameTime(w.Until, until) {
 		t.Errorf("moveWindow = %+v; want from %v until %v", w, from, until)
 	}
 }
@@ -2421,7 +2421,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			master := []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"}
 			id := seedSeries(t, e, master)
 			f := listedTodo(t, e, id)
-			checkMoveWindow(t, f.MoveWindow, date(2025, 3, 10, 0, 0), ptr(date(2025, 3, 13, 0, 0)))
+			checkMoveWindow(t, f.MoveWindow, ptr(date(2025, 3, 10, 0, 0)), ptr(date(2025, 3, 13, 0, 0)))
 			in := editInput(&f)
 			in.Start, in.Due = ptr(tc.at), ptr(tc.at)
 			e.mock.ResetCounts()
@@ -2441,7 +2441,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250310"})
 		f := listedTodo(t, e, id)
-		checkMoveWindow(t, f.MoveWindow, date(2025, 3, 10, 0, 0), nil)
+		checkMoveWindow(t, f.MoveWindow, ptr(date(2025, 3, 10, 0, 0)), nil)
 		in := editInput(&f)
 		in.Start = ptr(date(2025, 3, 9, 0, 0))
 		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
@@ -2460,7 +2460,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYHOUR=9,17"})
 		f := listedTodo(t, e, id)
-		checkMoveWindow(t, f.MoveWindow, date(2025, 3, 10, 0, 0), ptr(date(2025, 3, 10, 17, 0)))
+		checkMoveWindow(t, f.MoveWindow, ptr(date(2025, 3, 10, 0, 0)), ptr(date(2025, 3, 10, 17, 0)))
 		in := editInput(&f)
 		in.Start = ptr(date(2025, 3, 10, 18, 0))
 		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
@@ -2481,7 +2481,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20250310T233000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"})
 		f := listedTodo(t, e, id)
-		checkMoveWindow(t, f.MoveWindow, date(2025, 3, 9, 23, 0), ptr(date(2025, 3, 12, 23, 0)))
+		checkMoveWindow(t, f.MoveWindow, ptr(date(2025, 3, 9, 23, 0)), ptr(date(2025, 3, 12, 23, 0)))
 		in := editInput(&f)
 		in.Start = ptr(date(2025, 3, 12, 23, 30)) // Thursday 00:30 in Berlin, Wednesday in UTC
 		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
@@ -2500,7 +2500,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART;TZID=America/New_York:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"})
 		f := listedTodo(t, e, id)
-		checkMoveWindow(t, f.MoveWindow, date(2025, 3, 10, 4, 0), ptr(date(2025, 3, 13, 4, 0)))
+		checkMoveWindow(t, f.MoveWindow, ptr(date(2025, 3, 10, 4, 0)), ptr(date(2025, 3, 13, 4, 0)))
 		in := editInput(&f)
 		in.Start, in.StartAllDay = ptr(date(2025, 3, 13, 0, 0)), true
 		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
@@ -2530,25 +2530,215 @@ func TestUpdateTodoSeries(t *testing.T) {
 
 	// A repeat off the rule moves alone (A-10): past the next repeat it would
 	// come after it, so it stays before it also in an interval series, which
-	// otherwise moves freely (FR-17).
+	// otherwise moves freely. It has no rule day of its own to stay from, so
+	// an earlier day is fine: nothing comes back (FR-17).
 	t.Run("a repeat off the rule stays before the next one", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250309T090000Z", "DUE:20250309T100000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250309T090000Z"},
 			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z", "DUE:20250310T160000Z"})
 		f := listedTodo(t, e, id)
-		checkMoveWindow(t, f.MoveWindow, date(2025, 3, 10, 0, 0), ptr(date(2025, 3, 16, 0, 0)))
-		for _, at := range []time.Time{date(2025, 3, 16, 8, 0), date(2025, 3, 9, 15, 0)} {
-			in := editInput(&f)
-			in.Start, in.Due = ptr(at), ptr(at.Add(time.Hour))
-			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
-			mustErr(t, err, domain.ErrInvalidInput)
+		checkMoveWindow(t, f.MoveWindow, nil, ptr(date(2025, 3, 16, 0, 0)))
+		in := editInput(&f)
+		in.Start, in.Due = ptr(date(2025, 3, 16, 8, 0)), ptr(date(2025, 3, 16, 9, 0))
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustWindowErr(t, err, "a repeat on fixed days must stay before its next repeat")
+		got := moveListed(t, e, id, -24*time.Hour) // Sunday 9 March, the day before: it moves alone
+		if !sameTime(got.Start, ptr(date(2025, 3, 9, 15, 0))) || !sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 16, 9, 0)), Due: ptr(date(2025, 3, 16, 10, 0))}) {
+			t.Errorf("moved repeat = %+v; want 9 March 15:00, then the 16th", got)
 		}
-		got := moveListed(t, e, id, 5*24*time.Hour) // Saturday 15 March, still before Sunday
-		if !sameTime(got.Start, ptr(date(2025, 3, 15, 15, 0))) {
-			t.Errorf("moved repeat = %+v; want 15 March 15:00", got)
-		}
+		checkStored(t, "override", storedObject(t, e, id), []string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250309T150000Z", "DTSTART:20250309T090000Z"}, nil)
 	})
+
+	// The window is bounded by the rule's days, the RECURRENCE-IDs of the
+	// current and the next repeat, not by the dates another client moved them
+	// to: within the rule's days a move neither skips a repeat nor brings one
+	// back, wherever the repeats are shown (FR-17, A-13). The series recurs
+	// on Monday and Thursday at 09:00 from Monday 10 March.
+	type move struct {
+		at     time.Time
+		allDay bool
+		msg    string // the refusal; "" for a move that is accepted
+	}
+	timed := func(at time.Time, msg string) move { return move{at: at, msg: msg} }
+	for _, tc := range []struct {
+		name       string
+		master     []string
+		overrides  [][]string
+		start      *time.Time // the current repeat as listed
+		from       *time.Time
+		until      *time.Time
+		moves      []move // refusals, then the one accepted
+		wantStart  *time.Time
+		wantNext   *domain.TodoDates
+		stored     []string
+		lacks      []string
+		wantOccs   []time.Time // 10 to 20 March, if checked
+		wantStates []string
+	}{
+		{
+			// Probe B: Monday done, Thursday moved to Wednesday. A move to
+			// Wednesday evening would leave the rule's Thursday to come back
+			// as a repeat still to do.
+			name:      "the current repeat was moved earlier",
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"}, {"RECURRENCE-ID:20250313T090000Z", "DTSTART:20250312T090000Z"}},
+			start:     ptr(date(2025, 3, 12, 9, 0)),
+			from:      ptr(date(2025, 3, 13, 0, 0)),
+			until:     ptr(date(2025, 3, 17, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 12, 18, 0), "a repeat on fixed days cannot move before its own day"),
+				timed(date(2025, 3, 13, 18, 0), ""),
+			},
+			wantStart:  ptr(date(2025, 3, 13, 18, 0)),
+			wantNext:   &domain.TodoDates{Start: ptr(date(2025, 3, 17, 18, 0))},
+			stored:     []string{"DTSTART:20250313T180000Z", "RECURRENCE-ID:20250310T090000Z"},
+			lacks:      []string{"RECURRENCE-ID:20250313"},
+			wantOccs:   []time.Time{date(2025, 3, 10, 9, 0), date(2025, 3, 13, 18, 0), date(2025, 3, 17, 18, 0)},
+			wantStates: []string{domain.OccurrenceDone, domain.OccurrenceCurrent, domain.OccurrenceUpcoming},
+		},
+		{
+			// Probe C: Monday moved to Tuesday. Back onto its own Monday is
+			// fine; the Sunday before is not.
+			name:      "the current repeat was moved later",
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z"}},
+			start:     ptr(date(2025, 3, 11, 9, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 13, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 9, 9, 0), "a repeat on fixed days cannot move before its own day"),
+				timed(date(2025, 3, 10, 9, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 10, 9, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))},
+			stored:    []string{"DTSTART:20250310T090000Z"},
+			lacks:     []string{"RECURRENCE-ID"},
+		},
+		{
+			// Thursday moved to Wednesday: the window still runs to the
+			// rule's Thursday, and the moved repeat moves along by the change
+			// in time of day.
+			name:      "the next repeat was moved earlier",
+			overrides: [][]string{{"RECURRENCE-ID:20250313T090000Z", "DTSTART:20250312T090000Z"}},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 13, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 13, 9, 0), "a repeat on fixed days must stay before its next repeat"),
+				timed(date(2025, 3, 12, 18, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 12, 18, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 12, 18, 0))},
+			stored:    []string{"DTSTART:20250312T180000Z", "RECURRENCE-ID:20250313T180000Z"},
+		},
+		{
+			// Probe A: Thursday moved to Saturday. Friday would pass the
+			// rule's Thursday and orphan the other client's repeat.
+			name:      "the next repeat was moved later",
+			overrides: [][]string{{"RECURRENCE-ID:20250313T090000Z", "DTSTART:20250315T090000Z"}},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 13, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 14, 9, 0), "a repeat on fixed days must stay before its next repeat"),
+				timed(date(2025, 3, 12, 9, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 12, 9, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 15, 9, 0))},
+			stored:    []string{"DTSTART:20250312T090000Z", "RECURRENCE-ID:20250313T090000Z", "DTSTART:20250315T090000Z"},
+		},
+		{
+			// An open repeat off the rule on Tuesday is the next one: the
+			// window ends with its day, so that it is not passed and
+			// orphaned (A-10).
+			name:      "the next repeat is off the rule",
+			overrides: [][]string{{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z"}},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 11, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 11, 8, 0), "a repeat on fixed days must stay before its next repeat"),
+				timed(date(2025, 3, 10, 12, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 10, 12, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 11, 18, 0))},
+			stored:    []string{"DTSTART:20250310T120000Z", "RECURRENCE-ID:20250311T120000Z", "DTSTART:20250311T180000Z"},
+		},
+		{
+			// Thursday turned into Friday's date by another client (the
+			// other value type, A-11): the window still ends with the rule's
+			// Thursday.
+			name:      "the next repeat was moved to a date",
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250313", "DTSTART;VALUE=DATE:20250314"}},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 13, 0, 0)),
+			moves: []move{
+				timed(date(2025, 3, 13, 9, 0), "a repeat on fixed days must stay before its next repeat"),
+				timed(date(2025, 3, 12, 9, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 12, 9, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 14, 0, 0)), StartAllDay: true},
+			stored:    []string{"DTSTART:20250312T090000Z", "RECURRENCE-ID;VALUE=DATE:20250313", "DTSTART;VALUE=DATE:20250314"},
+		},
+		{
+			// Twice a day, and another client made today's first repeat a
+			// date (A-15, A-11): it counts dates, so it stays on its day, and
+			// a time it is given stays before the next repeat at 17:00.
+			name:      "an all-day repeat with the next one on its day",
+			master:    []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYHOUR=9,17"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART;VALUE=DATE:20250310"}},
+			start:     ptr(date(2025, 3, 10, 0, 0)),
+			from:      ptr(date(2025, 3, 10, 0, 0)),
+			until:     ptr(date(2025, 3, 11, 0, 0)),
+			moves: []move{
+				{at: date(2025, 3, 11, 0, 0), allDay: true, msg: "a repeat on fixed days must stay before its next repeat"},
+				timed(date(2025, 3, 10, 18, 0), "a repeat on fixed days must stay before its next repeat"),
+				timed(date(2025, 3, 10, 12, 0), ""),
+			},
+			wantStart: ptr(date(2025, 3, 10, 12, 0)),
+			wantNext:  &domain.TodoDates{Start: ptr(date(2025, 3, 10, 17, 0))},
+			stored:    []string{"DTSTART:20250310T120000Z"},
+			lacks:     []string{"RECURRENCE-ID"},
+		},
+	} {
+		t.Run("the window keeps to the rule days when "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			master := tc.master
+			if master == nil {
+				master = []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"}
+			}
+			id := seedSeries(t, e, master, tc.overrides...)
+			f := listedTodo(t, e, id)
+			if !sameTime(f.Start, tc.start) {
+				t.Fatalf("listed series = %+v; want its current repeat at %v", f, tc.start)
+			}
+			checkMoveWindow(t, f.MoveWindow, tc.from, tc.until)
+			for _, m := range tc.moves {
+				in := editInput(&f)
+				in.Start, in.StartAllDay = ptr(m.at), m.allDay
+				e.mock.ResetCounts()
+				got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+				if m.msg != "" {
+					mustWindowErr(t, err, m.msg)
+					if n := e.mock.Count(http.MethodPut); n != 0 {
+						t.Errorf("PUT count = %d; want 0", n)
+					}
+					continue
+				}
+				mustNoErr(t, err)
+				if !sameTime(got.Start, tc.wantStart) || !sameNext(got.Next, tc.wantNext) {
+					t.Errorf("moved series = %+v; want %v, then %+v", got, tc.wantStart, tc.wantNext)
+				}
+			}
+			checkStored(t, "series", storedObject(t, e, id), tc.stored, tc.lacks)
+			if tc.wantOccs != nil {
+				occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 10, 0, 0), date(2025, 3, 20, 0, 0))
+				mustNoErr(t, err)
+				checkTodoOccurrences(t, occs, tc.wantOccs, tc.wantStates)
+			}
+		})
+	}
 
 	// Only a series on fixed days, and a repeat off the rule with a next one,
 	// has a window; a completed series and a rule Lucid cannot evaluate

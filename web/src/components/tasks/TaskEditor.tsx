@@ -142,7 +142,7 @@ export function TaskEditor({
   const limit = last ? t('tasks.moveLimit', { date: formatPickerDate(last, prefs, now) }) : ''
   // Named for the submit guard below, which can hit either edge (FR-17): an added start date, for
   // instance, isn't blocked by the picker while the due date is still the window's anchor.
-  const fromLimit = w ? t('tasks.moveFrom', { date: formatPickerDate(w.from, prefs, now) }) : ''
+  const fromLimit = w?.from ? t('tasks.moveFrom', { date: formatPickerDate(w.from, prefs, now) }) : ''
   // The presets repeat on the weekday or date of the start, else of the due date; say which.
   const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
   const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
