@@ -205,6 +205,7 @@ describe('CalendarDnd', () => {
           recurring: true,
           fixedDays: true,
           next: { due: '2026-10-08T00:00:00Z' },
+          moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
         }),
       )!
       renderWithProviders(

@@ -254,10 +254,19 @@ describe('TaskEditor', () => {
       recurring: true,
       fixedDays: true,
       next: { start: null, due: '2026-10-08T00:00:00Z' },
+      moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
     })
     const single = todo({ title: 'Slides', due: '2026-10-05T00:00:00Z', dueAllDay: true })
     // The same series with a time: due at 9:00 on Monday, the next repeat at 9:00 on Thursday.
-    const timed = { ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { start: null, due: '2026-10-08T07:00:00Z' } }
+    const timed = {
+      ...series,
+      due: '2026-10-05T07:00:00Z',
+      dueAllDay: false,
+      next: { start: null, due: '2026-10-08T07:00:00Z' },
+      moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
+    }
+    // The last repeat: its window only has a start.
+    const last = { ...series, next: null, moveWindow: { from: '2026-10-05T00:00:00Z', until: null } }
     const puts = (fetch: Awaited<ReturnType<typeof openTask>>['fetch']) =>
       fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
 
@@ -305,7 +314,7 @@ describe('TaskEditor', () => {
 
     it('keeps the rule of a series while the repeat is untouched', async () => {
       const user = userEvent.setup()
-      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
+      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false, moveWindow: null }
       const { fetch, dialog } = await openTask(t)
       expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Monday')
 
@@ -453,7 +462,7 @@ describe('TaskEditor', () => {
 
     it('can only remove a repeat Lucid cannot read, and leaves its dates and completion alone', async () => {
       const user = userEvent.setup()
-      const unreadable = { ...series, rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, next: null }
+      const unreadable = { ...series, rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, next: null, moveWindow: null }
       const { fetch, dialog } = await openTask(unreadable)
 
       expect(
@@ -475,7 +484,15 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       // A rule Lucid can't read may leave a series with no date at all; only a repeat
       // that actually changes needs one, so a title edit that leaves it alone must save.
-      const dateless = { ...series, due: null, dueAllDay: false, rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, next: null }
+      const dateless = {
+        ...series,
+        due: null,
+        dueAllDay: false,
+        rrule: 'FREQ=SOMETIMES',
+        ruleUnsupported: true,
+        next: null,
+        moveWindow: null,
+      }
       const { fetch, dialog } = await openTask(dateless)
 
       await user.type(within(dialog).getByPlaceholderText('Add a title'), ' (extra)')
@@ -488,7 +505,6 @@ describe('TaskEditor', () => {
 
     it('limits only earlier days for the last repeat, and shows no limit text', async () => {
       const user = userEvent.setup()
-      const last = { ...series, next: null }
       const { dialog } = await openTask(last)
 
       await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
@@ -501,7 +517,6 @@ describe('TaskEditor', () => {
     it('does not save a start date before the window of the last repeat, and names from', async () => {
       const user = userEvent.setup()
       // Its picker isn't gated while due is still the anchor (FR-17); the submit guard is the backstop.
-      const last = { ...series, next: null }
       const { fetch, dialog } = await openTask(last)
 
       await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
@@ -526,7 +541,6 @@ describe('TaskEditor', () => {
 
     it('asks for a date when the due date of the last repeat is cleared, and sends no PUT', async () => {
       const user = userEvent.setup()
-      const last = { ...series, next: null }
       const { fetch, dialog } = await openTask(last)
 
       await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
@@ -541,7 +555,7 @@ describe('TaskEditor', () => {
     it('asks for a date when the due date of an ordinary interval series is cleared, and sends no PUT', async () => {
       const user = userEvent.setup()
       // No window at all (an interval rule, not fixed days), unlike the bounded series above.
-      const interval = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
+      const interval = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false, moveWindow: null }
       const { fetch, dialog } = await openTask(interval)
 
       await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
@@ -557,7 +571,12 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       // Due Thu, Oct 9, but the series' own next repeat is already Wed, Oct 8: another
       // app moved this occurrence past it. A notes-only save must still go through.
-      const moved = { ...series, due: '2026-10-09T00:00:00Z', next: { start: null, due: '2026-10-08T00:00:00Z' } }
+      const moved = {
+        ...series,
+        due: '2026-10-09T00:00:00Z',
+        next: { start: null, due: '2026-10-08T00:00:00Z' },
+        moveWindow: { from: '2026-10-09T00:00:00Z', until: '2026-10-08T00:00:00Z' },
+      }
       const { fetch, dialog } = await openTask(moved)
 
       await user.type(within(dialog).getByRole('textbox', { name: 'Notes' }), 'watered extra')

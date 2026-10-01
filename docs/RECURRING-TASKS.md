@@ -803,8 +803,9 @@ described in [API.md](API.md#todos).
   *is* the current occurrence, so only it can be completed or moved. With a
   rule on fixed days, a move past the next occurrence would drop the
   occurrences in between, and a move before the current one would bring it
-  back (see [Moving one occurrence](#moving-one-occurrence)). The UI keeps
-  such a move in between.
+  back (see [Moving one occurrence](#moving-one-occurrence)). The server
+  refuses such a move, whatever the client, counting days in the series'
+  zone; the UI shows the window it reports.
 
 ### Reading
 
@@ -948,8 +949,9 @@ occurrence, as for a completion, and then moves like any `UNTIL`. In a
 `TZID` Lucid cannot resolve, the `COUNT` stays, lowered as with an interval
 rule (see Limits). An `UNTIL` that would end before the new date moves onto
 it: clients built on ical.js, such as Thunderbird, hide a task whose
-`DTSTART` lies after its `UNTIL`. The backend does not enforce the move
-window: other clients write any date, and undo has to move a series back.
+`DTSTART` lies after its `UNTIL`. On fixed days the backend refuses a move
+that leaves the move window (see Limits), in the series' zone; an undo
+restores the resource as read and is no move.
 
 **Undoing a completion** says so (`undoCompletion` in the API) and puts the
 series back as it was before the completion. The roll moved none of the
@@ -994,12 +996,16 @@ properties and components Lucid does not know.
   in order. Later ones are a preview, and none can be skipped.
 - Only an occurrence off the rule can be moved on its own. Moving any other
   occurrence moves the series from the current occurrence on. With an
-  interval rule the later occurrences move along. With fixed days the
-  calendar, the editor and the date picker in the task list keep the move
-  between the current occurrence's day and the day before the next
-  occurrence; the time of day is free within those days. The last repeat
-  has no next occurrence to stay before, so it can move to a later day, but
-  not to an earlier one.
+  interval rule the later occurrences move along. With fixed days a move
+  stays from the start of the current occurrence's day to before the start
+  of the next occurrence's day, both in the series' zone, or before the
+  next occurrence itself when it falls on the same day (several repeats a
+  day); the time of day is free within those days. The server refuses any
+  other move, and the calendar, the editor and the date picker in the task
+  list keep to the window it reports. The last repeat has no next
+  occurrence to stay before, so it can move to a later day, but not to an
+  earlier one. A current occurrence off the rule moves alone, so it stays
+  before the next occurrence the same way, also with an interval rule.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
 - Undoing the completion of an occurrence another client had moved restores
@@ -1055,10 +1061,12 @@ that repeats are completed in order.
   reachable by keyboard, with "Until *date*, then the next repeat is due."
   For the last repeat, only the days before it are blocked, and the picker
   shows no limit.
-- **Dragging**: days outside the move window are hatched. A drop there
-  changes nothing, and screen readers hear "Only possible until *date*." For
-  the last repeat, only the days before it are hatched, and a blocked drop
-  there says "Only possible from *date* on."
+- **Dragging**: days outside the move window are hatched. A day of the
+  browser's that the window covers only in part, for a series in another
+  zone, is not; a drop there is checked at its time. A drop outside the
+  window changes nothing, and screen readers hear "Only possible until
+  *date*." For the last repeat, only the days before it are hatched, and a
+  blocked drop there says "Only possible from *date* on."
 - **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
   *date*.", each with Undo for 8 seconds, then "Undone."

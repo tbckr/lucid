@@ -423,6 +423,11 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
+		// Every move through the API stays in the window; an undo restores
+		// the resource as read and is no move (FR-17, A-13).
+		if err := series.checkMove(cur, in); err != nil {
+			return domain.Todo{}, nil, err
+		}
 		if err := series.move(cal, cur.Status, in); err != nil {
 			return domain.Todo{}, nil, err
 		}

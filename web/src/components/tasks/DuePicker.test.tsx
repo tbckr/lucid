@@ -92,6 +92,7 @@ describe('DuePicker', () => {
       recurring: true,
       fixedDays: true,
       next: { start: null, due: '2026-10-08T00:00:00.000Z' },
+      moveWindow: { from: '2026-10-05T00:00:00.000Z', until: '2026-10-08T00:00:00.000Z' },
     })
 
     beforeEach(() => {
@@ -159,6 +160,7 @@ describe('DuePicker', () => {
       recurring: true,
       fixedDays: true,
       next: null,
+      moveWindow: { from: '2026-10-05T00:00:00.000Z', until: null },
     })
 
     beforeEach(() => {

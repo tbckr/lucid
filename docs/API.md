@@ -142,7 +142,8 @@ applied to the **whole series** (shifted by `start - instanceStart`).
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
   "status": "NEEDS-ACTION", "completed": null,
   "rrule": "FREQ=WEEKLY", "recurring": true, "fixedDays": false, "ruleUnsupported": false,
-  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true } } ] }
+  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true },
+  "moveWindow": null } ] }
 ```
 
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
@@ -162,8 +163,8 @@ completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 
-`rrule`, `recurring`, `fixedDays`, `ruleUnsupported` and `next` describe a
-recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
+`rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and `moveWindow`
+describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
 
 - `rrule` is the stored `RRULE` (RFC 5545), empty for a non-recurring todo.
 - `recurring` is `true` for any such series, evaluable or not.
@@ -180,6 +181,20 @@ recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   series is not recurring, or `ruleUnsupported`). Its value types are its own:
   an override can change `start`/`due` between a date and a time independently
   of the current occurrence's or the master's.
+- `moveWindow` (`{ "from", "until" }`) is where a move of the current
+  occurrence must keep its anchor (`start`, else `due`): from `from` on and
+  before `until`, see `PUT` below. A series on fixed days has one: `from` is
+  the start of the current occurrence's day and `until` the start of
+  `next`'s day, both in the series' zone, or `next`'s own instant when it
+  falls on the current occurrence's day (several repeats a day, such as
+  `BYHOUR=9,17`); `until` is `null` for the last repeat. A current
+  occurrence off the rule (see `PUT`) moves on its own, so with a `next` it
+  has the same window in any series. `moveWindow` is `null` where a move is
+  free, and for a series that is completed, cancelled or `ruleUnsupported`.
+  When the current occurrence is all-day, `from` and `until` are dates,
+  written as midnight UTC like `start` and `due`; otherwise they are
+  instants. The series' zone need not be the client's, so a day of the
+  client's can lie partly inside the window.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
@@ -263,8 +278,18 @@ For a recurring todo, these three edits are handled specially:
   instances before the moved occurrence, and an `UNTIL` that would end
   before the new dates moves onto them. A current occurrence off the rule
   moves on its own: its override takes the new dates, and the series stays.
-  The backend does not enforce the move window the UI shows; that is a
-  client-side hint only.
+  A move whose anchor (`start`, else `due`) leaves `moveWindow` is
+  `400 invalid_input`, and nothing is written: before `from`, message *"a
+  repeat on fixed days cannot move before its own day"*; from `until` on,
+  *"a repeat on fixed days must stay before its next repeat"*. An anchor of the
+  other value type than the current occurrence counts on its day: a date as
+  that day in the series' zone, a time on its date in the zone it is
+  written in (the series' own, or `timezone` for an all-day series that
+  gains a time). The last repeat completed with new dates moves the master
+  and is checked the same way; an earlier one leaves them on its completed
+  copy, which is no move. A move together with a new `rrule` starts the
+  series over and is not checked, nor is the undo below, which restores the
+  resource.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay, the `EXDATE`s and an `UNTIL` take the new value type

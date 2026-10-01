@@ -33,6 +33,10 @@ var (
 	errRuleUnsupported error = &domain.ValidationError{Msg: "the repeat rule cannot be evaluated"}
 	// errRuleNeedsDate rejects a series without a date to recur from (FR-17).
 	errRuleNeedsDate error = &domain.ValidationError{Msg: "a repeating task needs a start or due date"}
+	// errBeforeWindow and errPastWindow reject a move that leaves the move
+	// window of the current occurrence, see moveWindow (FR-17, A-13).
+	errBeforeWindow error = &domain.ValidationError{Msg: "a repeat on fixed days cannot move before its own day"}
+	errPastWindow   error = &domain.ValidationError{Msg: "a repeat on fixed days must stay before its next repeat"}
 )
 
 // todoSeries is a recurring VTODO and what other clients recorded in it, as
@@ -509,6 +513,103 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 			Due: utcPtr(next.due), DueAllDay: next.dueAllDay,
 		}
 	}
+	t.MoveWindow = s.moveWindow(cur, next)
+}
+
+// moveWindow returns the window a move of the current occurrence cur, with
+// the next one next (nil for the last), must keep its anchor in, or nil where
+// a move is free (FR-17, A-13, A-14, A-15):
+//   - on fixed days the later repeats stay on their days, so cur stays from
+//     the start of its own day to the start of next's day, or to next itself
+//     when next falls on cur's day (several repeats a day). The last repeat
+//     only stays from its own day on: before it, its day would come back as
+//     a repeat still to do;
+//   - a repeat off the rule moves alone (A-10), so with a next one it stays
+//     before it the same way in any series, or it would come after it.
+//
+// Days count in the series' zone (A-11). With an all-day cur the window
+// counts dates, at midnight UTC as all-day dates are written, see windowDay.
+func (s *todoSeries) moveWindow(cur todoOcc, next *todoOcc) *domain.MoveWindow {
+	if !s.fixedDays && (!cur.offGrid || next == nil) {
+		return nil
+	}
+	inDates := occAnchorAllDay(cur)
+	w := &domain.MoveWindow{From: s.windowDay(occAnchor(cur), inDates, inDates)}
+	if next != nil {
+		at := occAnchor(*next)
+		until := s.windowDay(at, occAnchorAllDay(*next), inDates)
+		if until.Equal(w.From) {
+			until = at.UTC()
+		}
+		w.Until = &until
+	}
+	return w
+}
+
+// windowDay returns the start of the day of t, a date when allDay, else a
+// time on its date in the series' zone (A-11): midnight UTC of that date when
+// the window counts dates (inDates), else its midnight in the series' zone,
+// in UTC (FR-17).
+func (s *todoSeries) windowDay(t time.Time, allDay, inDates bool) time.Time {
+	day := civilDate(t.UTC())
+	if !allDay {
+		day = s.dayOf(t)
+	}
+	if inDates {
+		return day
+	}
+	y, m, d := day.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc()).UTC()
+}
+
+// occAnchorAllDay reports whether the anchor of o (see occAnchor) is a date.
+func occAnchorAllDay(o todoOcc) bool {
+	if o.start != nil {
+		return o.startAllDay
+	}
+	return o.dueAllDay
+}
+
+// checkMove returns errBeforeWindow or errPastWindow when moving the todo t,
+// read from s, to the dates of in leaves the move window t reports, see
+// moveWindow, and nil when its anchor (start, else due) stays inside, or t
+// has no window (FR-17, A-13). The window counts the days of t's current
+// occurrence. An anchor of the other value type counts on its day: a date
+// as that day in the series' zone, a time on its date in the zone the move
+// writes it in (see writeSeriesDates): the series' own, or in's zone for a
+// series that gains a time.
+func (s *todoSeries) checkMove(t domain.Todo, in domain.TodoInput) error {
+	at, allDay := in.Start, in.StartAllDay
+	if at == nil {
+		at, allDay = in.Due, in.DueAllDay
+	}
+	w := t.MoveWindow
+	if w == nil || at == nil {
+		return nil
+	}
+	inDates := t.DueAllDay
+	if t.Start != nil {
+		inDates = t.StartAllDay
+	}
+	anchor := *at
+	switch {
+	case inDates && !allDay:
+		loc := s.anchor.loc()
+		if l := loadLocation(in.Timezone); s.anchor.allDay && l != nil {
+			loc = l
+		}
+		anchor = civilDate(anchor.In(loc))
+	case !inDates && allDay:
+		y, m, d := anchor.UTC().Date()
+		anchor = time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc())
+	}
+	switch {
+	case anchor.Before(w.From):
+		return errBeforeWindow
+	case w.Until != nil && !anchor.Before(*w.Until):
+		return errPastWindow
+	}
+	return nil
 }
 
 func utcPtr(t *time.Time) *time.Time {

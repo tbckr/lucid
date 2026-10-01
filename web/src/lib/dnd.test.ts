@@ -99,6 +99,7 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
       recurring: true,
       fixedDays: true,
       next: { due: '2026-10-08T00:00:00Z' },
+      moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
     }),
   )!
   const drag = { type: 'event' as const, event: fixedTask, originDay: new Date(2026, 9, 5) }
@@ -126,6 +127,7 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
       recurring: true,
       fixedDays: true,
       next: { due: '2026-10-08T07:00:00Z' },
+      moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
     }),
   )!
   const timedDrag = { type: 'timed' as const, event: fixedTimed, originDay: new Date(2026, 9, 5) }
@@ -143,6 +145,32 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
     })
   })
 
+  it('refuses a drop the server would refuse, for a series in another zone (A-14)', () => {
+    // A series in UTC−5, due at 15:00 in Berlin: its days start at 07:00 in Berlin.
+    const zoned = toCalTask(
+      todo({
+        id: 't6',
+        due: '2026-10-05T13:00:00Z',
+        recurring: true,
+        fixedDays: true,
+        next: { due: '2026-10-08T13:00:00Z' },
+        moveWindow: { from: '2026-10-05T05:00:00Z', until: '2026-10-08T05:00:00Z' },
+      }),
+    )!
+    const zonedDrag = { type: 'timed' as const, event: zoned, originDay: new Date(2026, 9, 5) }
+    // 06:00 local on its own day lies before the series' day begins; 07:00 is where it begins.
+    expect(dropResult(zonedDrag, column(5), -9 * 60 * PX_PER_MINUTE)).toBeNull()
+    expect(dropBlocked(zonedDrag, column(5), -9 * 60 * PX_PER_MINUTE)).toEqual({
+      edge: 'from',
+      date: new Date('2026-10-05T05:00:00Z'),
+    })
+    expect(dropResult(zonedDrag, column(5), -8 * 60 * PX_PER_MINUTE)).not.toBeNull()
+    // On the next repeat's local day, the series' day only begins at 07:00.
+    expect(dropResult(zonedDrag, column(8), -8.5 * 60 * PX_PER_MINUTE)).not.toBeNull()
+    expect(dropResult(zonedDrag, column(8), -8 * 60 * PX_PER_MINUTE)).toBeNull()
+    expect(dropBlocked(zonedDrag, column(8), -8 * 60 * PX_PER_MINUTE)).toEqual({ edge: 'until', date: new Date(2026, 9, 8) })
+  })
+
   it('lets a non-fixed-day series move past where a fixed one would be blocked', () => {
     const intervalTask = toCalTask(
       todo({
@@ -152,6 +180,7 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
         recurring: true,
         fixedDays: false,
         next: { due: '2026-10-08T00:00:00Z' },
+        moveWindow: null,
       }),
     )!
     const free = { type: 'event' as const, event: intervalTask, originDay: new Date(2026, 9, 5) }
@@ -160,7 +189,15 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
 
   describe('the last repeat of a fixed-day series', () => {
     const lastTask = toCalTask(
-      todo({ id: 't5', due: '2026-10-05T00:00:00Z', dueAllDay: true, recurring: true, fixedDays: true, next: null }),
+      todo({
+        id: 't5',
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        recurring: true,
+        fixedDays: true,
+        next: null,
+        moveWindow: { from: '2026-10-05T00:00:00Z', until: null },
+      }),
     )!
     const lastDrag = { type: 'event' as const, event: lastTask, originDay: new Date(2026, 9, 5) }
 

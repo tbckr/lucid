@@ -167,6 +167,7 @@ describe('taskForm', () => {
       recurring: true,
       fixedDays: true,
       next: { start: null, due: allDay('2026-10-08') },
+      moveWindow: { from: allDay('2026-10-05'), until: allDay('2026-10-08') },
     })
 
     it('round-trips a rule the presets cannot express as custom', () => {
@@ -193,7 +194,7 @@ describe('taskForm', () => {
 
     it('keeps the stored rule while the repeat is untouched', () => {
       // The preset would write FREQ=WEEKLY: another rule to the server, which re-anchors the series.
-      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
+      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false, moveWindow: null }
       const v = taskToForm(t, TZ)
       expect(v.recurrence).toBe('weekly')
       expect(formToTodoInput({ ...v, title: 'Other' }, TZ, t)).not.toHaveProperty('rrule')
@@ -210,9 +211,9 @@ describe('taskForm', () => {
     })
 
     it('shows a rule Lucid cannot read, or a series without a rule, as custom', () => {
-      const unreadable = todo({ ...series, rrule: 'FREQ=WEEKLY', ruleUnsupported: true, next: null })
+      const unreadable = todo({ ...series, rrule: 'FREQ=WEEKLY', ruleUnsupported: true, next: null, moveWindow: null })
       expect(taskToForm(unreadable, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=WEEKLY' })
-      const dates = todo({ ...series, rrule: '', ruleUnsupported: true, next: null })
+      const dates = todo({ ...series, rrule: '', ruleUnsupported: true, next: null, moveWindow: null })
       expect(taskToForm(dates, TZ)).toMatchObject({ recurrence: 'custom', customRule: '' })
       expect(formToTodoInput(taskToForm(dates, TZ), TZ, dates)).not.toHaveProperty('rrule')
       expect(formToTodoInput({ ...taskToForm(dates, TZ), recurrence: 'none' }, TZ, dates).rrule).toBe('')
@@ -289,6 +290,7 @@ describe('taskForm', () => {
       recurring: true,
       fixedDays: true,
       next: { start: null, due: '2026-10-08T00:00:00Z' },
+      moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
     })
     const v = taskToForm(series, TZ)
 
@@ -304,7 +306,14 @@ describe('taskForm', () => {
     })
 
     it('judges a timed series by the day, whatever time the date gets', () => {
-      const timed = todo({ ...series, due: '2026-10-05T07:00:00Z', dueAllDay: false, next: { due: '2026-10-08T07:00:00Z' } })
+      // Mon 09:00 local, next Thu 09:00 local: the window runs from Monday's midnight to Thursday's.
+      const timed = todo({
+        ...series,
+        due: '2026-10-05T07:00:00Z',
+        dueAllDay: false,
+        next: { due: '2026-10-08T07:00:00Z' },
+        moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
+      })
       const tv = taskToForm(timed, TZ)
       // A start takes the due date's time, 09:00, and places the task from then on.
       expect(dayAllowed(timed, tv, 'start', '2026-10-07', TZ)).toBe(true)

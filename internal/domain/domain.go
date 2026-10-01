@@ -172,15 +172,19 @@ type Todo struct {
 
 	// RRule, Recurring, FixedDays and RuleUnsupported describe a recurring
 	// series (FR-17). Next is the earliest open occurrence after the current
-	// one, or nil if this is the last. CompletedCopy is the just-completed
-	// occurrence, returned only by the PUT that completes it, so the client
-	// can show it alongside the advanced series without a refetch.
-	RRule           string     `json:"rrule"`
-	Recurring       bool       `json:"recurring"`
-	FixedDays       bool       `json:"fixedDays"`
-	RuleUnsupported bool       `json:"ruleUnsupported"`
-	Next            *TodoDates `json:"next"`
-	CompletedCopy   *Todo      `json:"completedCopy,omitempty"`
+	// one, or nil if this is the last. MoveWindow bounds a move of the
+	// current occurrence; nil when a move is free, and for a series that is
+	// completed, cancelled or ruleUnsupported. CompletedCopy is the
+	// just-completed occurrence, returned only by the PUT that completes it,
+	// so the client can show it alongside the advanced series without a
+	// refetch.
+	RRule           string      `json:"rrule"`
+	Recurring       bool        `json:"recurring"`
+	FixedDays       bool        `json:"fixedDays"`
+	RuleUnsupported bool        `json:"ruleUnsupported"`
+	Next            *TodoDates  `json:"next"`
+	MoveWindow      *MoveWindow `json:"moveWindow"`
+	CompletedCopy   *Todo       `json:"completedCopy,omitempty"`
 	// UndoToken undoes the change whose response carries it. CopyKept, in
 	// the response of an undo, reports that the completed copy the change
 	// left stays, because another client changed it (FR-17).
@@ -197,6 +201,18 @@ type TodoDates struct {
 	StartAllDay bool       `json:"startAllDay"`
 	Due         *time.Time `json:"due"`
 	DueAllDay   bool       `json:"dueAllDay"`
+}
+
+// MoveWindow is where a move of a series' current occurrence must keep its
+// anchor (start, else due), [From, Until), counted in the series' zone
+// (FR-17): a series on fixed days keeps its later repeats on their days, so
+// its current one stays from its own day to before the next one, and so does
+// a current one off the rule, which moves alone, in any series. When the
+// current occurrence is all-day, From and Until are dates at midnight UTC, as
+// all-day dates are written.
+type MoveWindow struct {
+	From  time.Time  `json:"from"`  // start of the current occurrence's day, series zone
+	Until *time.Time `json:"until"` // start of next's day; next's instant if on the same day; nil for the last repeat
 }
 
 // Occurrence states (FR-17).

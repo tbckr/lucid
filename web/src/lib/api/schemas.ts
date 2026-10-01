@@ -103,6 +103,9 @@ export const todoSchema = z.object({
       dueAllDay: z.boolean().optional(),
     })
     .nullish(),
+  // FR-17: where a move of the current occurrence must keep its anchor, [from, until), in the series' zone; until null
+  // for the last repeat. Null where a move is free.
+  moveWindow: z.object({ from: isoDateTime, until: isoDateTime.nullable() }).nullish(),
 })
 export type Todo = z.infer<typeof todoSchema>
 

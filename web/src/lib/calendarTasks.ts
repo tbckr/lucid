@@ -143,40 +143,39 @@ export function canDrag(task: CalTask): boolean {
   return canComplete(task)
 }
 
-/** The window a recurring series may move within (FR-17): whole local days. */
+/** The window a recurring series may move within (FR-17), as local `Date`s. */
 export interface MoveWindow {
-  /** Local midnight of the series' current occurrence. */
+  /** The start of the current occurrence's day, in the series' zone. */
   from: Date
-  /** Exclusive: local midnight of the day of the next occurrence; null without an upper bound. */
+  /**
+   * Exclusive: the start of the next occurrence's day, or the next occurrence itself when it falls on the same day;
+   * null without an upper bound.
+   */
   until: Date | null
 }
 
 /**
  * The move window of a recurring series, or null when it isn't bounded
- * (FR-17): only a fixed-day series — an `RRULE` with any part other than
- * FREQ/INTERVAL/COUNT/UNTIL/WKST, or an `RDATE` — keeps its later occurrences
- * on their days, so a move must end on a day before the next one's; the time
- * of day stays free within those days, as the hatch, the pickers and the
- * hints all speak of days. The last repeat has no next occurrence to stay
- * before, so its window only keeps a move from landing on an earlier day
- * than its own (`until: null`); moving it later is free, since the original
- * day would otherwise resurface as a planned repeat once the series' `UNTIL`
- * moves with it. Other series move freely, like `ruleUnsupported` ones can't
- * move at all (`canDrag`).
+ * (FR-17): the server's (`Todo.moveWindow`), which also refuses a move that
+ * leaves it. A fixed-day series keeps its later occurrences on their days,
+ * so a move must stay from the start of the current occurrence's day to
+ * before the next one's, and so must a repeat off the rule, which moves
+ * alone. Days count in the series' own zone, which need not be the
+ * browser's: a local day can be covered only in part. The hatch keeps such a
+ * day open (`outsideWindow`), while a drop or a picked date is checked at its
+ * exact time (`withinWindow`), as the server checks it. The last repeat has
+ * no next occurrence to stay before (`until: null`), so it only must not land
+ * on a day before its own. Other series move freely, like `ruleUnsupported`
+ * ones can't move at all (`canDrag`). An all-day current occurrence counts
+ * dates, which the wire writes as midnight UTC, and they become local
+ * midnights like its own dates (`anchorOf`).
  */
 export function moveWindow(todo: Todo): MoveWindow | null {
-  if (!todo.recurring || !todo.fixedDays) return null
-  const from = anchorOf(todo)
-  if (!from) return null
-  if (!todo.next) return { from: startOfDay(from), until: null }
-  const until = anchorOf({
-    start: todo.next.start,
-    startAllDay: todo.next.startAllDay ?? todo.startAllDay,
-    due: todo.next.due,
-    dueAllDay: todo.next.dueAllDay ?? todo.dueAllDay,
-  })
-  if (!until) return null
-  return { from: startOfDay(from), until: startOfDay(until) }
+  const w = todo.moveWindow
+  if (!w) return null
+  const allDay = todo.start ? todo.startAllDay : todo.dueAllDay
+  const at = (iso: string) => (allDay ? utcDateToLocal(iso) : new Date(iso))
+  return { from: at(w.from), until: w.until ? at(w.until) : null }
 }
 
 /** Whether `input`'s anchor still falls inside `todo`'s move window; true when it has none (FR-17). */
