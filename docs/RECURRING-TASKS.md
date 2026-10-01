@@ -1034,11 +1034,14 @@ keeps the properties and components Lucid does not know.
   occurrence the same way, also with an interval rule, and has no rule day
   of its own to stay from: it can move to an earlier day.
 - The move window is counted in the series' zone; the UI converts it to the
-  browser's. Removing a series' time where the two zones differ can land
-  right on an edge: the UI can refuse an edit on the current occurrence's
-  own day that the server would in fact accept, or let it through the
-  editor and answer with a `400` on the next repeat's day. Either way
-  nothing wrong is stored.
+  browser's. Removing a series' time where the two zones differ can land right
+  on an edge: the UI can refuse an edit on the current occurrence's own day
+  that the server would in fact accept, or let it through the editor and
+  answer with a `400` on the next repeat's day. Either way nothing wrong is
+  stored. The same holds near midnight for a repeat another client gave a time
+  in an all-day series: the server reports its window as the rule's dates at
+  midnight UTC, but checks the date the new time has in the zone it is written
+  in.
 - A view reports at most the first 1,000 occurrences of a series within the
   requested window; a sub-hourly series can have more, and the rest does
   not show.
@@ -1133,6 +1136,8 @@ that repeats are completed in order.
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
   *date*.", each with Undo for 8 seconds, then "Undone." A completion saved
   together with a rule change gets the same toast and Undo, which restores
-  the series exactly as it was, rule and all.
+  the series exactly as it was, rule and all. A change that turned other
+  apps' completions into tasks of their own (see Writing), or whose new
+  ETag the server did not tell, gets its toast without Undo.
 - **Deleting** asks "This task repeats. Delete all repeats? Completed ones
   stay."

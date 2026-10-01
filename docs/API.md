@@ -200,7 +200,13 @@ describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   and `due`; a `next` on the current occurrence's own rule day then ends the
   window with that day, and the server still holds a time of day before `next`
   (see `PUT`). Otherwise they are instants. The series' zone need not be the
-  client's, so a day of the client's can lie partly inside the window.
+  client's, so a day of the client's can lie partly inside the window. A timed
+  current occurrence of an all-day series, one another client gave a time,
+  gets the rule's dates at midnight UTC as instants, while the server checks a
+  time by its date in the zone it is written in (see `PUT`): near midnight in
+  a zone other than UTC, a client that checks the instants can refuse a move
+  the server accepts, or send one the server refuses with `400`. Nothing wrong
+  is stored either way.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
@@ -291,18 +297,17 @@ For a recurring todo, these edits are handled specially:
   moves on its own: its override takes the new dates, and the series stays.
   A move whose anchor (`start`, else `due`) leaves `moveWindow` is
   `400 invalid_input`, and nothing is written: before `from`, message *"a
-  repeat on fixed days cannot move before its own day"*; from `until` on,
-  *"a repeat on fixed days must stay before its next repeat"*. The check
-  counts the rule's days in the series' own value type, so a time given to
-  an all-day current occurrence of a timed series must still stay before a
-  `next` on the same day. An anchor of the other value type than the series
-  counts on its day: a date as that day in the series' zone, a time on its
-  date in the zone it is written in (the series' own, or `timezone` for an
-  all-day series that gains a time). The last repeat completed with new dates moves the master
-  and is checked the same way; an earlier one leaves them on its completed
-  copy, which is no move. A move together with a new `rrule` starts the
-  series over and is not checked, nor is the undo below, which restores the
-  resource.
+  repeat on fixed days cannot move before its own day"*; from `until` on, *"a
+  repeat on fixed days must stay before its next repeat"*. The check counts
+  the rule's days in the series' own value type, so a time given to an all-day
+  current occurrence of a timed series must still stay before a `next` on the
+  same day. An anchor of the other value type than the series counts on its
+  day: a date as that day in the series' zone, a time on its date in the zone
+  it is written in (the series' own, or `timezone` for an all-day series that
+  gains a time). The last repeat completed with new dates moves the master and
+  is checked the same way; an earlier one leaves them on its completed copy,
+  which is no move. A move together with a new `rrule` starts the series over
+  and is not checked, nor is the undo below, which restores the resource.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay and an `UNTIL` take the new value type when the dates
