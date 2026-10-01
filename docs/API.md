@@ -246,16 +246,22 @@ For a recurring todo, these three edits are handled specially:
   amount, whole periods of the rule included, in the wall clock of the
   series (counted in calendar months, then days, for a `MONTHLY` or
   `YEARLY` rule); with fixed days by the change in time of day only,
-  because the rule's days stay; after a change between all-day and timed
-  dates they stay. The override of the current occurrence goes. A `COUNT`
-  no longer counts the rule's instances before the moved occurrence, and an
-  `UNTIL` that would end before the new dates moves onto them. The backend
-  does not enforce the move window the UI shows; that is a client-side hint
-  only.
+  because the rule's days stay. A change between all-day and timed dates
+  converts every override (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and
+  the `UNTIL` to the new value type: a date gets the new time of day in the
+  series' zone (an `UNTIL` in UTC), a date-time becomes its date in the
+  series' zone. With an interval rule, the later ones also move by the
+  change in date; with fixed days they stay on their days. The override of
+  the current occurrence goes. A `COUNT` no longer counts the rule's
+  instances before the moved occurrence, and an `UNTIL` that would end
+  before the new dates moves onto them. The backend does not enforce the
+  move window the UI shows; that is a client-side hint only.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
-  earlier occurrences and completed copies are untouched. It needs a `start`
-  or `due` to recur from, otherwise `400 invalid_input`, message *"a
-  repeating task needs a start or due date"*.
+  earlier occurrences and completed copies are untouched, except that the
+  overrides that stay, the `EXDATE`s and an `UNTIL` take the new value type
+  when the dates change between all-day and timed, as for a move. It needs
+  a `start` or `due` to recur from, otherwise `400 invalid_input`, message
+  *"a repeating task needs a start or due date"*.
 
 A series with `ruleUnsupported: true` cannot be completed, moved, or given a
 new `rrule`: any of those is `400 invalid_input`, message *"the repeat rule

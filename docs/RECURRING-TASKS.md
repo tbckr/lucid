@@ -905,6 +905,15 @@ KDE's pending occurrence. What refers to later occurrences stays with them:
   10 April moves an override of 10 June to 10 July.
 - With fixed days they move by the change in time of day only, because the
   rule's days stay.
+- A move between all-day and timed dates converts every override
+  (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
+  value type, earlier ones too: RFC 5545 requires `UNTIL` and
+  `RECURRENCE-ID` in `DTSTART`'s value type, and a done override or an
+  `EXDATE` in the old one would match no occurrence. A date gets the new
+  time of day in the series' zone (an `UNTIL` in UTC), and a date-time
+  becomes its date in the series' zone. With an interval rule, the later
+  ones first move by the change in date; with fixed days they stay on their
+  days.
 
 With an interval rule, `DTSTART` stays on the rule, and a `COUNT` no longer
 counts the occurrences before the moved one. With fixed days, the new
