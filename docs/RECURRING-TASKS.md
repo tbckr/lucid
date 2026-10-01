@@ -1123,6 +1123,8 @@ that repeats are completed in order.
   blocked drop there says "Only possible from *date* on."
 - **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
-  *date*.", each with Undo for 8 seconds, then "Undone."
+  *date*.", each with Undo for 8 seconds, then "Undone." A completion saved
+  together with a rule change gets the same toast and Undo, which restores
+  the series exactly as it was, rule and all.
 - **Deleting** asks "This task repeats. Delete all repeats? Completed ones
   stay."
