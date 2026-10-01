@@ -524,9 +524,9 @@ function seriesMessage(
     updated.next &&
     anchorOf({
       start: updated.next.start,
-      startAllDay: updated.startAllDay,
+      startAllDay: updated.next.startAllDay ?? updated.startAllDay,
       due: updated.next.due,
-      dueAllDay: updated.dueAllDay,
+      dueAllDay: updated.next.dueAllDay ?? updated.dueAllDay,
     })
   return next
     ? t('tasks.movedTo', { date: day(moved), next: day(next) })

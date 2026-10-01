@@ -142,7 +142,7 @@ applied to the **whole series** (shifted by `start - instanceStart`).
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
   "status": "NEEDS-ACTION", "completed": null,
   "rrule": "FREQ=WEEKLY", "recurring": true, "fixedDays": false, "ruleUnsupported": false,
-  "next": { "start": null, "due": "2025-01-14T00:00:00Z" } } ] }
+  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true } } ] }
 ```
 
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
@@ -176,8 +176,10 @@ recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   once, with its stored dates, and does **not** appear in
   `GET .../todos/occurrences`.
 - `next` is the earliest open occurrence after the current one (`{ "start",
-  "due" }`), or `null` if this is the last (or the series is not recurring,
-  or `ruleUnsupported`).
+  "startAllDay", "due", "dueAllDay" }`), or `null` if this is the last (or the
+  series is not recurring, or `ruleUnsupported`). Its value types are its own:
+  an override can change `start`/`due` between a date and a time independently
+  of the current occurrence's or the master's.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one

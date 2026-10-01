@@ -284,9 +284,12 @@ func (s *todoSeries) reportedRid(status string) time.Time {
 }
 
 // setSeries fills the series fields of t, a todo read from s.master, and
-// moves an open series to its current occurrence (FR-16, FR-17). A completed
-// or cancelled master, a rule Lucid cannot evaluate and a series without any
-// occurrence left keep the master's dates.
+// moves an open series to its current occurrence, with that occurrence's own
+// value types (FR-16, FR-17): an override can carry a value type that
+// differs from the master's, and the current and next occurrence each keep
+// their own rather than the master's. A completed or cancelled master, a
+// rule Lucid cannot evaluate and a series without any occurrence left keep
+// the master's dates.
 func (s *todoSeries) setSeries(t *domain.Todo) {
 	t.RRule, t.Recurring, t.FixedDays = s.rrule, true, s.fixedDays
 	if t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
@@ -301,8 +304,12 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 		return
 	}
 	t.Start, t.Due = utcPtr(cur.start), utcPtr(cur.due)
+	t.StartAllDay, t.DueAllDay = cur.startAllDay, cur.dueAllDay
 	if next != nil {
-		t.Next = &domain.TodoDates{Start: utcPtr(next.start), Due: utcPtr(next.due)}
+		t.Next = &domain.TodoDates{
+			Start: utcPtr(next.start), StartAllDay: next.startAllDay,
+			Due: utcPtr(next.due), DueAllDay: next.dueAllDay,
+		}
 	}
 }
 

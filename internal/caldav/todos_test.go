@@ -460,12 +460,14 @@ func TestUpdateTodoKeepsStart(t *testing.T) {
 	}
 }
 
-// sameNext reports whether a and b are both nil or carry the same dates.
+// sameNext reports whether a and b are both nil or carry the same dates and
+// value types.
 func sameNext(a, b *domain.TodoDates) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return sameTime(a.Start, b.Start) && sameTime(a.Due, b.Due)
+	return sameTime(a.Start, b.Start) && a.StartAllDay == b.StartAllDay &&
+		sameTime(a.Due, b.Due) && a.DueAllDay == b.DueAllDay
 }
 
 // A recurring todo is reported at its current occurrence, with the next one
@@ -498,14 +500,31 @@ func TestListTodosRecurring(t *testing.T) {
 			name:  "due only",
 			lines: []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"},
 			due:   ptr(date(2025, 3, 10, 0, 0)), dueAllDay: true,
-			next:  &domain.TodoDates{Due: ptr(date(2025, 3, 11, 0, 0))},
+			next:  &domain.TodoDates{Due: ptr(date(2025, 3, 11, 0, 0)), DueAllDay: true},
 			rrule: "FREQ=DAILY",
 		},
 		{
 			name:  "fixed days",
 			lines: []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
 			start: ptr(date(2025, 3, 10, 0, 0)), startAllDay: true, due: ptr(date(2025, 3, 10, 0, 0)), dueAllDay: true,
-			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 13, 0, 0)), Due: ptr(date(2025, 3, 13, 0, 0))},
+			next: &domain.TodoDates{
+				Start: ptr(date(2025, 3, 13, 0, 0)), StartAllDay: true,
+				Due: ptr(date(2025, 3, 13, 0, 0)), DueAllDay: true,
+			},
+			rrule: "FREQ=WEEKLY;BYDAY=MO,TH", fixedDays: true,
+		},
+		{
+			// An override can change the value type an occurrence carries: a
+			// date moved to a time stays timed, but the next occurrence,
+			// still generated from the master, stays all-day (A-04).
+			name:      "override changes the value type",
+			lines:     []string{"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART:20250310T140000Z", "DUE:20250310T150000Z"}},
+			start:     ptr(date(2025, 3, 10, 14, 0)), due: ptr(date(2025, 3, 10, 15, 0)),
+			next: &domain.TodoDates{
+				Start: ptr(date(2025, 3, 13, 0, 0)), StartAllDay: true,
+				Due: ptr(date(2025, 3, 13, 0, 0)), DueAllDay: true,
+			},
 			rrule: "FREQ=WEEKLY;BYDAY=MO,TH", fixedDays: true,
 		},
 		{
@@ -1042,7 +1061,10 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		id := seedSeries(t, e, []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"})
 		got := completeListed(t, e, id)
 		if !sameTime(got.Due, ptr(date(2025, 3, 11, 0, 0))) || !got.DueAllDay ||
-			!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 12, 0, 0)), Due: ptr(date(2025, 3, 12, 0, 0))}) {
+			!sameNext(got.Next, &domain.TodoDates{
+				Start: ptr(date(2025, 3, 12, 0, 0)), StartAllDay: true,
+				Due: ptr(date(2025, 3, 12, 0, 0)), DueAllDay: true,
+			}) {
 			t.Errorf("rolled series = %+v", got)
 		}
 		if c := got.CompletedCopy; c == nil || !sameTime(c.Due, ptr(date(2025, 3, 10, 0, 0))) || !c.DueAllDay {

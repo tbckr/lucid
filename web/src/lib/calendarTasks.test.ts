@@ -370,6 +370,21 @@ describe('moveWindow', () => {
     })
     expect(moveWindow(t)).toBeNull()
   })
+
+  it('reads the next occurrence as a day when only it turned all-day (A-04)', () => {
+    // An override gave the current occurrence a time; the next one, still
+    // generated from the all-day master, must not inherit the todo's own
+    // (now timed) value type, or a late UTC hour would spill into the wrong
+    // local day.
+    const t = todo({
+      recurring: true,
+      fixedDays: true,
+      due: '2026-10-05T07:00:00Z',
+      dueAllDay: false,
+      next: { start: null, due: '2026-10-08T23:30:00Z', dueAllDay: true },
+    })
+    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) })
+  })
 })
 
 describe('withinWindow', () => {

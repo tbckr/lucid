@@ -552,6 +552,48 @@ describe('useUpdateTodo with a recurring task', () => {
     })
   })
 
+  it('tells the next repeat on its own day, not the moved occurrence value type (A-04)', async () => {
+    // The series itself is timed; an override elsewhere turned the *next*
+    // repeat all-day. The toast must read that from `next`, not from the
+    // moved occurrence's own (still timed) flag, or a late UTC hour spills
+    // into the wrong local day.
+    const success = vi.spyOn(toast, 'success')
+    const timed = todo({
+      id: 't2',
+      calendarId: 'c1',
+      etag: '"1"',
+      title: 'Call the vet',
+      due: '2026-10-05T07:00:00Z',
+      rrule: 'FREQ=WEEKLY',
+      recurring: true,
+      fixedDays: true,
+      next: { due: '2026-10-08T07:00:00Z' },
+    })
+    const { result } = setup(
+      [
+        {
+          ...timed,
+          etag: '"2"',
+          due: '2026-10-07T00:00:00.000Z',
+          next: { due: '2026-10-08T23:30:00Z', dueAllDay: true },
+          undoToken: 'tok',
+        },
+      ],
+      { from: timed },
+    )
+
+    act(() => {
+      result.current.mutate({ todo: timed, input: todoToInput(timed, { due: '2026-10-07T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8')).toMatchObject({
+      duration: 8000,
+      action: 'Undo',
+    })
+  })
+
   it('tells where a series moved on its last repeat', async () => {
     const success = vi.spyOn(toast, 'success')
     const last = { ...series, next: null }

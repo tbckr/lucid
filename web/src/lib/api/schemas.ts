@@ -95,7 +95,14 @@ export const todoSchema = z.object({
   recurring: z.boolean().optional().default(false),
   fixedDays: z.boolean().optional().default(false),
   ruleUnsupported: z.boolean().optional().default(false),
-  next: z.object({ start: isoDateTime.nullish(), due: isoDateTime.nullish() }).nullish(),
+  next: z
+    .object({
+      start: isoDateTime.nullish(),
+      startAllDay: z.boolean().optional(),
+      due: isoDateTime.nullish(),
+      dueAllDay: z.boolean().optional(),
+    })
+    .nullish(),
 })
 export type Todo = z.infer<typeof todoSchema>
 

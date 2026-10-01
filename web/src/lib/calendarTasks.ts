@@ -171,9 +171,9 @@ export function moveWindow(todo: Todo): MoveWindow | null {
   if (!todo.next) return { from: startOfDay(from), until: null }
   const until = anchorOf({
     start: todo.next.start,
-    startAllDay: todo.startAllDay,
+    startAllDay: todo.next.startAllDay ?? todo.startAllDay,
     due: todo.next.due,
-    dueAllDay: todo.dueAllDay,
+    dueAllDay: todo.next.dueAllDay ?? todo.dueAllDay,
   })
   if (!until) return null
   return { from: startOfDay(from), until: startOfDay(until) }

@@ -188,10 +188,15 @@ type Todo struct {
 	CopyKept  bool   `json:"copyKept,omitempty"`
 }
 
-// TodoDates are the start and due of one occurrence (FR-16).
+// TodoDates are the start and due of one occurrence, with their own value
+// types (FR-16, FR-17): an override can carry a type that differs from its
+// series' (e.g. a date moved to a time), so the current and the next
+// occurrence each report their own.
 type TodoDates struct {
-	Start *time.Time `json:"start"`
-	Due   *time.Time `json:"due"`
+	Start       *time.Time `json:"start"`
+	StartAllDay bool       `json:"startAllDay"`
+	Due         *time.Time `json:"due"`
+	DueAllDay   bool       `json:"dueAllDay"`
 }
 
 // Occurrence states (FR-17).
