@@ -2202,6 +2202,59 @@ func TestUpdateTodoSeries(t *testing.T) {
 			},
 		},
 		{
+			// Berlin turns to CEST on 30 March: 09:00 is 08:00Z before it
+			// and 07:00Z after it, on each reference's own day.
+			name: "adding a time across a dst change keeps the wall clock",
+			master: []string{
+				"DTSTART;VALUE=DATE:20250324", "RRULE:FREQ=WEEKLY;UNTIL=20250414", "EXDATE;VALUE=DATE:20250407",
+			},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250331", "STATUS:COMPLETED"}},
+			at:        date(2025, 3, 24, 8, 0), // 09:00 CET
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250324T090000", "RRULE:FREQ=WEEKLY;UNTIL=20250414T070000Z\r\n",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250331T090000", "EXDATE;TZID=Europe/Berlin:20250407T090000",
+			},
+			lacks:  []string{"VALUE=DATE"},
+			dates:  []time.Time{date(2025, 3, 24, 8, 0), date(2025, 3, 31, 7, 0), date(2025, 4, 14, 7, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming},
+		},
+		{
+			// An interval rule's later references and its end move along
+			// by the change in date, then take the new value type.
+			name: "adding a time on another day moves later references along",
+			master: []string{
+				"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;UNTIL=20250331", "EXDATE;VALUE=DATE:20250324",
+			},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250317", "STATUS:COMPLETED"}},
+			at:        date(2025, 3, 12, 8, 0), // Wednesday 09:00 in Berlin
+			want: []string{
+				"DTSTART;TZID=Europe/Berlin:20250312T090000", "RRULE:FREQ=WEEKLY;UNTIL=20250402T070000Z\r\n",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250319T090000", "EXDATE;TZID=Europe/Berlin:20250326T090000",
+			},
+			lacks: []string{"VALUE=DATE"},
+			dates: []time.Time{date(2025, 3, 12, 8, 0), date(2025, 3, 19, 8, 0), date(2025, 4, 2, 7, 0)},
+			states: []string{
+				domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming,
+			},
+		},
+		{
+			// A UTC series at 23:00 is on the next day in Berlin: set
+			// all-day on that day, it moves a day in its own zone, and so
+			// do its references.
+			name: "removing the time near midnight moves later references along",
+			master: []string{
+				"DTSTART:20250310T230000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250324T230000Z", "EXDATE:20250317T230000Z",
+			},
+			allDay: true,
+			at:     date(2025, 3, 11, 0, 0),
+			want: []string{
+				"DTSTART;VALUE=DATE:20250311", "RRULE:FREQ=WEEKLY;UNTIL=20250325\r\n", "EXDATE;VALUE=DATE:20250318",
+			},
+			lacks:  []string{"T230000Z"},
+			dates:  []time.Time{date(2025, 3, 11, 0, 0), date(2025, 3, 25, 0, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming},
+		},
+		{
 			name:   "a fixed-day COUNT ends in the new value type, a time added",
 			master: []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;COUNT=2"},
 			at:     date(2025, 3, 11, 8, 0), // Tuesday 09:00 in Berlin
@@ -2236,7 +2289,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 			mustNoErr(t, err)
 			checkStored(t, "series", storedObject(t, e, id), tc.want, tc.lacks)
-			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 10, 0, 0))
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 20, 0, 0))
 			mustNoErr(t, err)
 			checkTodoOccurrences(t, occs, tc.dates, tc.states)
 		})

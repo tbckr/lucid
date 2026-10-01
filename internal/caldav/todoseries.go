@@ -440,8 +440,9 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //   - an UNTIL from the moved occurrence on and the references to later
 //     occurrences (their overrides with their dates, EXDATEs) move along,
 //     see refShift and movedRule;
-//   - a move that adds or removes the time rewrites UNTIL and the
-//     references in the new value type instead, see retypeRefs;
+//   - a move that adds or removes the time moves them by its change in
+//     date only (see refShift), then rewrites UNTIL and the references in
+//     the new value type, see retypeRefs;
 //   - an UNTIL before the new DTSTART moves onto it.
 //
 // A rule Lucid cannot evaluate (of a completed series) only gets its dates
@@ -453,24 +454,20 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 // is decided on the series as read, s: once shifted, the rewritten rule no
 // longer says where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
-	start, allDay := in.Start, in.StartAllDay
-	if start == nil {
-		start, allDay = in.Due, in.DueAllDay
-	}
+	start := cmp.Or(in.Start, in.Due)
 	if start == nil {
 		return errRuleNeedsDate
 	}
 	c := s.master
 	rid := s.reportedRid(status)
-	var shift func(dateValue) time.Time
 	p := c.Props.Get(ical.PropRecurrenceRule)
 	evaluable := p != nil && s.err == nil && s.rrule != ""
+	rule, before := s.rrule, 0
 	if evaluable {
-		before, err := s.instancesBefore(rid)
-		if err != nil {
+		var err error
+		if before, err = s.instancesBefore(rid); err != nil {
 			return errRuleUnsupported
 		}
-		rule := s.rrule
 		if s.fixedDays && hasRulePart(rule, "COUNT") && s.zoneKnown() {
 			last, err := s.ruleEnd()
 			if err != nil {
@@ -478,16 +475,19 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 			}
 			rule = countToUntil(rule, last, s.startForm)
 		}
-		shift = s.refShift(rid, *start, allDay)
-		p.Value = movedRule(rule, before, rid, shift)
 	}
 	writeSeriesDates(cal, c, in, true)
+	to, _ := parseDateProp(c.Props.Get(ical.PropDateTimeStart)) // as just written
+	var shift func(dateValue) time.Time
+	if evaluable {
+		shift = s.refShift(rid, to)
+		p.Value = movedRule(rule, before, rid, shift)
+	}
 	dropOverrides(cal, c, rid.Equal)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
 		shiftLaterRefs(cal, c, rid, shift)
 	}
-	to, _ := parseDateProp(c.Props.Get(ical.PropDateTimeStart)) // as just written
 	s.retypeRefs(cal, to)
 	// UNTIL never ends before the moved series starts, compared in the
 	// value type and zone the series now has.
@@ -514,9 +514,9 @@ func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
 	return 0, errRRuleCap
 }
 
-// refShift returns how moving the occurrence rid to the anchor to (of the
-// value type allDay) moves the references to later occurrences, or nil when
-// they stay (FR-17):
+// refShift returns how moving the occurrence rid to to, the new anchor as
+// written, moves the references to later occurrences, or nil when they stay
+// (FR-17):
 //   - for an interval rule by the move, in the wall clock of the series, as
 //     the rule's instances move, by whole periods too: a monthly or yearly
 //     rule by its calendar months and then days, whose instances keep their
@@ -524,15 +524,20 @@ func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
 //   - for fixed days by its change in time of day only, as the instances
 //     stay on the rule's days.
 //
-// It returns nil when the value type changes: convertRefs rewrites the
-// references in the new type then, each on its own day (see retypeRefs).
-func (s *todoSeries) refShift(rid, to time.Time, allDay bool) func(dateValue) time.Time {
-	if allDay != s.anchor.allDay {
+// A move that changes the value type (a time added or removed) moves them
+// by its change in date only, from rid's date in the series' zone to to's in
+// its own, and with fixed days not at all. They keep their value type, which
+// retypeRefs changes afterwards, setting the time of day.
+func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) time.Time {
+	retyped := to.allDay != s.anchor.allDay
+	if retyped && s.fixedDays {
 		return nil
 	}
+	// Without a change of the value type, to's zone is the series' own:
+	// writeSeriesDates keeps the form.
 	loc := s.anchor.loc()
-	from, dest := rid.In(loc), to.In(loc)
-	var months, days int
+	from, dest := rid.In(loc), to.t.In(to.loc())
+	var months, days, secs int
 	switch freq := strings.ToUpper(rulePart(s.rrule, "FREQ")); {
 	case s.fixedDays:
 	case freq == "MONTHLY" || freq == "YEARLY":
@@ -541,7 +546,9 @@ func (s *todoSeries) refShift(rid, to time.Time, allDay bool) func(dateValue) ti
 	default:
 		days = int(civilDate(dest).Sub(civilDate(from)) / (24 * time.Hour))
 	}
-	secs := secondOfDay(dest) - secondOfDay(from)
+	if !retyped {
+		secs = secondOfDay(dest) - secondOfDay(from)
+	}
 	if months == 0 && days == 0 && secs == 0 {
 		return nil
 	}
