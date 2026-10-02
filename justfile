@@ -69,6 +69,11 @@ cover:
 cover-html: cover
     {{ GO }} tool cover -html={{ COVERAGE_OUT }}
 
+# Mutation testing of the Go business logic (>= 85 % test efficacy); with a Git ref, only the lines changed since it, without a floor
+[group('quality')]
+mutation ref="":
+    scripts/mutation.sh {{ quote(ref) }}
+
 # Run all linters and the TypeScript type check
 [group('quality')]
 lint: lint-go lint-web

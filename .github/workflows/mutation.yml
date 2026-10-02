@@ -1,0 +1,70 @@
+# Mutation testing of the Go business logic (gremlins, scripts/mutation.sh).
+#
+# Like the coverage gate in ci.yml, on every Go change: fails if test
+# efficacy drops below the floor in scripts/mutation.sh; the log lists the
+# surviving mutants. A run takes about half an hour. The frontend is not
+# mutation-tested yet; scripts/mutation.sh explains why.
+#
+# gremlins is not a dependency of ours, so dependency review, govulncheck and
+# the malware check never see it: it runs, with the code it builds, only
+# inside a gVisor sandbox (geomys/sandboxed-step) without access to the job's
+# token or caches. /tmp there is in memory, so the script's throwaway build
+# cache (~5 GB) goes to /var/tmp, on disk; not into the workspace, which
+# gremlins copies into it.
+#
+# Only runs when Go code changes; mind the paths caveat in ci.yml before
+# making its check required.
+#
+# Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
+# Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Mutation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - .gremlins.yaml
+      - scripts/mutation.sh
+      - .github/workflows/mutation.yml
+  pull_request:
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - .gremlins.yaml
+      - scripts/mutation.sh
+      - .github/workflows/mutation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# As in ci.yml: a new push cancels a pull request's run; on main, the running
+# run finishes and only the newest waiting one follows it.
+concurrency:
+  group: mutation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gremlins:
+    name: Go (mutation testing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No cache: the sandbox does not see it.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Mutation testing (test efficacy floor)
+        uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          run: TMPDIR=/var/tmp scripts/mutation.sh

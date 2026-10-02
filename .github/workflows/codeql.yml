@@ -18,6 +18,8 @@ on:
       - LICENSE
       - justfile
       - scripts/release.sh
+      - scripts/mutation.sh
+      - .gremlins.yaml
       - compose.yaml
       - flake.nix
       - flake.lock
@@ -30,6 +32,8 @@ on:
       - LICENSE
       - justfile
       - scripts/release.sh
+      - scripts/mutation.sh
+      - .gremlins.yaml
       - compose.yaml
       - flake.nix
       - flake.lock

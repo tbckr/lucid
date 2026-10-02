@@ -1,0 +1,20 @@
+# gremlins settings for mutation testing, see scripts/mutation.sh, which also
+# holds the floor. The script loads this file alone (--config): left to
+# search, gremlins prefers a configuration in /etc/gremlins or the user's home
+# to this one.
+unleash:
+  # The scope of the coverage gate (scripts/coverage-gate.sh): internal/...
+  # without the CalDAV test server. web/ also keeps gremlins from mutating Go
+  # files in web/node_modules. gremlins matches these against paths relative
+  # to the path it mutates, so the script always mutates the module root.
+  exclude-files:
+    - ^web/
+    - ^cmd/
+    - ^internal/caldav/caldavtest/
+  # The timeout is this factor times the coverage run of the module, compile
+  # time included. 3 gave false timeouts with four workers sharing the CPU;
+  # with 10, an endless loop takes ~7 minutes to time out.
+  timeout-coefficient: 10
+  # Print only the surviving (LIVED) mutants, which count against test
+  # efficacy; diff runs add NOT COVERED (scripts/mutation.sh).
+  output-statuses: l

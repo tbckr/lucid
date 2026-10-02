@@ -47,6 +47,7 @@ Other useful recipes (`just` lists all):
 | `just build-go` | Go binary only (embeds whatever is in `web/dist`) |
 | `just test` | Go tests (race detector) and Vitest unit tests |
 | `just cover` | Go coverage with the 80 % business-logic gate |
+| `just mutation [ref]` | Mutation testing of the Go business logic with the 85 % test-efficacy floor, about half an hour; with `ref`, only the lines changed since it, without a floor (see [Tests](#tests)) |
 | `just lint` | golangci-lint, ESLint and TypeScript type check |
 | `just vuln` | `govulncheck`, `pnpm audit` of the shipped packages, malware check of all packages |
 | `just outdated` | Direct dependencies with newer versions, platform versions to review |
@@ -60,8 +61,9 @@ Other useful recipes (`just` lists all):
 frontend build; the binary then serves a placeholder page.
 
 Please run `just lint test cover` before opening a pull request; CI runs the
-same checks plus `govulncheck`, CodeQL and the E2E suite. Dependency scans run
-separately, see [Updating dependencies](#updating-dependencies).
+same checks plus `govulncheck`, CodeQL, the E2E suite and mutation testing
+(`just mutation`). Dependency scans run separately, see
+[Updating dependencies](#updating-dependencies).
 
 ## Commit messages
 
@@ -119,6 +121,15 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
   **at least 80 % statement coverage** (`just cover`); CI enforces this with
   [`scripts/coverage-gate.sh`](scripts/coverage-gate.sh). New code should come
   with tests; bug fixes with a regression test.
+- Tests must also catch changes to the code they run. On every Go change, CI
+  mutation-tests the same packages ([gremlins](https://gremlins.dev),
+  [`scripts/mutation.sh`](scripts/mutation.sh), [`.gremlins.yaml`](.gremlins.yaml))
+  and fails if **test efficacy**, the share of the mutants that tests run
+  which they also kill, drops below 85 %. To see what your change leaves
+  uncaught, `just mutation origin/main` mutates only the lines changed since
+  the merge base and lists the mutants there that no test kills or runs,
+  without a floor. The frontend is not mutation-tested yet, as Stryker does
+  not work with Vitest 5; the script's header has the details.
 - **Frontend:** Vitest for logic and components, Playwright for critical user
   flows (`web/e2e`), run against `cmd/lucid-mockdav`.
 
@@ -166,6 +177,7 @@ security fixes. `just outdated` lists what to review on every upgrade:
 - Node.js in CI and `web/package.json`,
 - the distroless base image in the `Dockerfile`,
 - golangci-lint in `ci.yml` (pinned by hand),
+- gremlins in `scripts/mutation.sh` (pinned by hand),
 - GoReleaser in `release.yml` and `ci.yml` (pinned by hand to an exact
   version, because it runs in the job that publishes and signs).
 
