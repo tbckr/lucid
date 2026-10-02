@@ -35,7 +35,9 @@ export async function deleteTestEvents(page: Page): Promise<void> {
     const eventsRes = await api.get(`/api/v1/calendars/${calendar.id}/events`, { params })
     await expect(eventsRes).toBeOK()
     const { events } = (await eventsRes.json()) as { events: { id: string; etag: string; title: string }[] }
-    for (const event of events.filter((e) => e.title.startsWith('E2E '))) {
+    // The events of a series share one id: deleting it once deletes them all.
+    const series = new Map(events.filter((e) => e.title.startsWith('E2E ')).map((e) => [e.id, e]))
+    for (const event of series.values()) {
       const res = await api.delete(`/api/v1/events/${event.id}`, {
         headers: { 'X-CSRF-Token': session.csrfToken, 'If-Match': event.etag },
       })
@@ -116,6 +118,36 @@ export async function createTestTask(
   await expect(res).toBeOK()
   const { id, etag } = (await res.json()) as { id: string; etag: string }
   return { id, etag }
+}
+
+/**
+ * Create an event through the API in the "Work" calendar, the way the editor
+ * saves one: `start` and `end` are wire dates, and a repeat recurs in the
+ * browser's time zone. The title must start with "E2E ", so that
+ * `deleteTestEvents` removes it again.
+ */
+export async function createTestEvent(
+  page: Page,
+  body: { title: string; start: string; end: string; rrule?: string },
+): Promise<void> {
+  if (!body.title.startsWith('E2E ')) throw new Error(`test event "${body.title}" must start with "E2E "`)
+  const api = page.request
+  const sessionRes = await api.get('/api/v1/session')
+  await expect(sessionRes).toBeOK()
+  const session = (await sessionRes.json()) as { csrfToken: string }
+
+  const calendarsRes = await api.get('/api/v1/calendars')
+  await expect(calendarsRes).toBeOK()
+  const { calendars } = (await calendarsRes.json()) as { calendars: { id: string; name: string }[] }
+  const work = calendars.find((c) => c.name === 'Work')
+  if (!work) throw new Error('calendar Work not found')
+
+  const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const res = await api.post(`/api/v1/calendars/${work.id}/events`, {
+    headers: { 'X-CSRF-Token': session.csrfToken },
+    data: { ...body, description: '', location: '', allDay: false, timezone },
+  })
+  await expect(res).toBeOK()
 }
 
 /** The month grid of the main view. */

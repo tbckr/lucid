@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { deleteTestEvents, login, monthGrid } from './helpers'
+import { createTestEvent, deleteTestEvents, login, monthGrid } from './helpers'
 
 // A failed test never reaches its own clean-up. Its event would stay on the server and
 // cover the slot that the retry clicks.
@@ -272,4 +272,106 @@ test('a click on another event while details are open shows its details', async 
   await expect(gym).toBeVisible()
   await expect(gym.getByRole('button', { name: 'Edit event' })).toBeFocused()
   await expect(page.getByRole('dialog')).toHaveCount(1)
+})
+
+const SERIES = 'E2E Series'
+
+/**
+ * Sign in and create "E2E Series" through the API: today 9:00–9:30, repeating every week on
+ * today's weekday (FR-17). Returns its block in the week view, today's event of the series.
+ */
+async function createSeries(page: Page): Promise<Locator> {
+  await login(page)
+  // Today in the browser's time zone, the one of the config.
+  const today = await page.evaluate(() => {
+    const at = (h: number, m: number) => {
+      const d = new Date()
+      d.setHours(h, m, 0, 0)
+      return d.toISOString()
+    }
+    return { start: at(9, 0), end: at(9, 30), weekday: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][new Date().getDay()] }
+  })
+  await createTestEvent(page, { title: SERIES, start: today.start, end: today.end, rrule: `FREQ=WEEKLY;BYDAY=${today.weekday}` })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+  await page.keyboard.press('w')
+  // One event of a weekly series a week. Half an hour is too short a block to show its end;
+  // its name has it.
+  const block = page.getByRole('main').locator('[data-event-key]', { hasText: SERIES })
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+  return block
+}
+
+/** Drag `block` down one hour (48 px) and return the question which events of its series move. */
+async function dragAnHourLater(page: Page, block: Locator): Promise<Locator> {
+  // 9 AM sits near the top of the grid, where dnd-kit auto-scrolls: drag it from the middle.
+  await block.evaluate((el) => {
+    el.scrollIntoView({ block: 'center' })
+  })
+  const box = (await block.boundingBox())!
+  const x = box.x + box.width / 2
+  await page.mouse.move(x, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(x, box.y + 20, { steps: 4 })
+  await page.mouse.move(x, box.y + 58, { steps: 4 })
+  await page.mouse.up()
+  const question = page.getByRole('alertdialog', { name: 'This event repeats. Which events should move?' })
+  await expect(question).toBeVisible()
+  return question
+}
+
+test('moves only one event of a series', async ({ page }) => {
+  const block = await createSeries(page)
+
+  const question = await dragAnHourLater(page, block)
+  await question.getByRole('button', { name: 'Only this event' }).click()
+  await expect(question).toBeHidden()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+  // Marked as changed once the server reports the override.
+  await expect(block.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
+
+  // Next week's event stays where it was, unmarked.
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+  await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
+})
+
+test('deletes only one event of a series', async ({ page }) => {
+  const block = await createSeries(page)
+
+  await block.click()
+  const details = page.getByRole('dialog', { name: SERIES })
+  await details.getByRole('button', { name: 'Delete event' }).click()
+  await details
+    .getByRole('alertdialog', { name: 'This event repeats. Which events should be deleted?' })
+    .getByRole('button', { name: 'Only this event' })
+    .click()
+  await expect(details).toBeHidden()
+  // The toast comes with the server's answer, so the event is gone there too, not only optimistically.
+  await expect(page.getByText('Event deleted')).toBeVisible()
+  await expect(block).toHaveCount(0)
+
+  // Next week's event stays.
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+})
+
+test('moves all events of a series within the day', async ({ page }) => {
+  const block = await createSeries(page)
+
+  const question = await dragAnHourLater(page, block)
+  await question.getByRole('button', { name: 'All events' }).click()
+  await expect(question).toBeHidden()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+
+  // Next week's event moved along, and none of them was changed on its own.
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+  await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
 })
