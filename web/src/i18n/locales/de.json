@@ -145,6 +145,16 @@
     "seriesNotice": "Dieser Termin wiederholt sich. Änderungen gelten für alle Termine der Serie.",
     "confirmDelete": "Diesen Termin löschen?",
     "confirmDeleteSeries": "Dieser Termin wiederholt sich. Alle Termine der Serie löschen?",
+    "scope": {
+      "this": "Nur diesen Termin",
+      "all": "Alle Termine",
+      "move": "Dieser Termin wiederholt sich. Welche Termine verschieben?",
+      "change": "Dieser Termin wiederholt sich. Welche Termine ändern?",
+      "delete": "Dieser Termin wiederholt sich. Welche Termine löschen?",
+      "pastIncluded": "„Alle Termine“ schließt vergangene ein.",
+      "fixedDays": "Die Serie bleibt auf ihren Tagen. Auf einen anderen Tag lässt sich nur dieser Termin verschieben.",
+      "newRule": "Eine neue Regel gilt für alle Termine der Serie."
+    },
     "corrupted": "Beschädigter Termin",
     "resize": "Endzeit ändern",
     "noWritableCalendar": "Keiner deiner Kalender nimmt neue Termine an.",
@@ -187,7 +197,8 @@
     "taskDropped": "Aufgabe verschoben.",
     "cancelled": "Verschieben abgebrochen.",
     "limit": "Nur bis {{date}} möglich.",
-    "limitFrom": "Erst ab {{date}} möglich."
+    "limitFrom": "Erst ab {{date}} möglich.",
+    "chooseScope": "Wähle, welche Termine sich verschieben."
   },
   "tasks": {
     "title": "Aufgaben",

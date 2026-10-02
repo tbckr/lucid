@@ -145,6 +145,16 @@
     "seriesNotice": "This event repeats. Changes apply to every event in the series.",
     "confirmDelete": "Delete this event?",
     "confirmDeleteSeries": "This event repeats. Delete every event in the series?",
+    "scope": {
+      "this": "Only this event",
+      "all": "All events",
+      "move": "This event repeats. Which events should move?",
+      "change": "This event repeats. Which events should change?",
+      "delete": "This event repeats. Which events should be deleted?",
+      "pastIncluded": "“All events” includes past ones.",
+      "fixedDays": "The series stays on its days. Only this event can move to another day.",
+      "newRule": "A new repeat rule applies to every event in the series."
+    },
     "corrupted": "Corrupted event",
     "resize": "Change end time",
     "noWritableCalendar": "None of your calendars accept new events.",
@@ -187,7 +197,8 @@
     "taskDropped": "Task moved.",
     "cancelled": "Move cancelled.",
     "limit": "Only possible until {{date}}.",
-    "limitFrom": "Only possible from {{date}} on."
+    "limitFrom": "Only possible from {{date}} on.",
+    "chooseScope": "Choose which events should move."
   },
   "tasks": {
     "title": "Tasks",
