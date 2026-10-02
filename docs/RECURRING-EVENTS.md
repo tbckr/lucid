@@ -383,10 +383,6 @@ macOS versions, and Apple's archived open-source CalendarServer
   Since at least macOS 14.5, every part carries the same
   `RELATED-TO;RELTYPE=X-CALENDARSERVER-RECURRENCE-SET`, and the past half
   probably keeps the UID now instead. **issue**
-- CalendarServer rejects with 403 `valid-calendar-data` an override whose
-  `RECURRENCE-ID` is not an instance of the master (cancelled overrides
-  exempt); for iCloud itself this is unknown. **code**
-  ([instance.py#L380-L423](https://github.com/apple/ccs-calendarserver/blob/13c706b985fb728b9aab42dc0fef85aae21921c3/twistedcaldav/instance.py#L380-L423))
 - Historic data loss in Calendar 8.0 (Yosemite, 2014): a Mac edit *"reverts
   all occurrences of the repeating event back to the original title erasing
   all 'event only' occurrences"*, synced through iCloud. **issue**
@@ -609,6 +605,10 @@ CalendarServer as a proxy for likely behavior.
   UIDs, two masters and duplicate `RECURRENCE-ID`s, compares them as UTC
   instants, and expands `RANGE=THISANDFUTURE`. **code**
   ([ical.py#L1926-L2025](https://github.com/apple/ccs-calendarserver/blob/13c706b985fb728b9aab42dc0fef85aae21921c3/twistedcaldav/ical.py#L1926-L2025))
+- CalendarServer also rejects with 403 `valid-calendar-data` an override
+  whose `RECURRENCE-ID` is not an instance of the master (cancelled
+  overrides exempt); for iCloud itself this is unknown. **code**
+  ([instance.py#L380-L423](https://github.com/apple/ccs-calendarserver/blob/13c706b985fb728b9aab42dc0fef85aae21921c3/twistedcaldav/instance.py#L380-L423))
 
 ### Nextcloud server / SabreDAV / Baïkal
 
