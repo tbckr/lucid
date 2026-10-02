@@ -85,6 +85,11 @@ type Event struct {
 	RRule        string     `json:"rrule,omitempty"`    // e.g. "FREQ=WEEKLY;BYDAY=MO"
 	Recurring    bool       `json:"recurring"`
 	RecurrenceID *time.Time `json:"recurrenceId,omitempty"` // original start of this occurrence
+	// Modified is true for an occurrence of a series that an override
+	// visibly changes: start, duration, all-day, title, location or
+	// description. Invisible differences, such as PARTSTAT or an added
+	// VALARM, do not set it (FR-17).
+	Modified bool `json:"modified,omitempty"`
 }
 
 // EventInput is the payload for creating or updating an event.

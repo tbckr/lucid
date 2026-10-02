@@ -217,6 +217,125 @@ func TestListEventsExpansion(t *testing.T) {
 	}
 }
 
+// TestListEventsOverrideFields checks that a present-but-empty override
+// property is shown empty, while an absent one still falls back to the
+// master (spec section 2 "Leere Felder", FR-17).
+func TestListEventsOverrideFields(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series",
+		"DESCRIPTION:Agenda", "LOCATION:Room 1",
+		"DTSTART:20250303T100000Z", "DTEND:20250303T110000Z", "RRULE:FREQ=WEEKLY;COUNT=3",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series",
+		"RECURRENCE-ID:20250310T100000Z", "DESCRIPTION:",
+		"DTSTART:20250310T100000Z", "DTEND:20250310T110000Z",
+		"END:VEVENT",
+	}
+	o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(lines...))}
+	got, err := expandObject(o, "cal", date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+
+	var found *domain.Event
+	for i := range got {
+		if got[i].RecurrenceID != nil && got[i].RecurrenceID.Equal(date(2025, 3, 10, 10, 0)) {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("override occurrence not found in %+v", got)
+	}
+	if found.Description != "" {
+		t.Errorf("Description = %q; want empty", found.Description)
+	}
+	if found.Location != "Room 1" {
+		t.Errorf("Location = %q; want %q", found.Location, "Room 1")
+	}
+}
+
+// TestListEventsModified checks that expandObject sets Modified for
+// occurrences an override visibly changes (start, duration, all-day, title,
+// location or description), and not for occurrences it only differs from
+// invisibly (PARTSTAT, VALARM), or orphan overrides whose own DTSTART
+// matches their RECURRENCE-ID (FR-17).
+func TestListEventsModified(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250602T090000", "DTEND;TZID=Europe/Berlin:20250602T091500",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO",
+		"END:VEVENT",
+		// moved DTSTART
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250602T070000Z", "DTSTART:20250602T100000Z", "DTEND:20250602T101500Z",
+		"END:VEVENT",
+		// other SUMMARY
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup Special",
+		"RECURRENCE-ID:20250609T070000Z", "DTSTART:20250609T070000Z", "DTEND:20250609T071500Z",
+		"END:VEVENT",
+		// other DTEND only (duration)
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250616T070000Z", "DTSTART:20250616T070000Z", "DTEND:20250616T080000Z",
+		"END:VEVENT",
+		// identical copy, differs only in PARTSTAT and an added VALARM
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250623T070000Z", "DTSTART:20250623T070000Z", "DTEND:20250623T071500Z",
+		"ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.com",
+		"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Reminder", "TRIGGER:-PT15M", "END:VALARM",
+		"END:VEVENT",
+		// orphan override (RECURRENCE-ID is not a series instance), not moved
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250603T070000Z", "DTSTART:20250603T070000Z", "DTEND:20250603T071500Z",
+		"END:VEVENT",
+		// orphan override, moved
+		"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250604T070000Z", "DTSTART:20250604T090000Z", "DTEND:20250604T091500Z",
+		"END:VEVENT",
+	}
+	o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(lines...))}
+	got, err := expandObject(o, "cal", date(2025, 6, 1, 0, 0), date(2025, 7, 5, 0, 0))
+	mustNoErr(t, err)
+
+	tests := []struct {
+		name string
+		rid  time.Time
+		want bool
+	}{
+		{"moved DTSTART", date(2025, 6, 2, 7, 0), true},
+		{"other SUMMARY", date(2025, 6, 9, 7, 0), true},
+		{"other DTEND only (duration)", date(2025, 6, 16, 7, 0), true},
+		{"identical copy with PARTSTAT and VALARM only", date(2025, 6, 23, 7, 0), false},
+		{"no override", date(2025, 6, 30, 7, 0), false},
+		{"orphan override, not moved", date(2025, 6, 3, 7, 0), false},
+		{"orphan override, moved", date(2025, 6, 4, 7, 0), true},
+	}
+	if len(got) != len(tests) {
+		for _, ev := range got {
+			t.Logf("got %s rid=%v modified=%v", ev.Title, ev.RecurrenceID, ev.Modified)
+		}
+		t.Fatalf("got %d events; want %d", len(got), len(tests))
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var found *domain.Event
+			for i := range got {
+				if got[i].RecurrenceID != nil && got[i].RecurrenceID.Equal(tt.rid) {
+					found = &got[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("no event with RecurrenceID %v", tt.rid)
+			}
+			if found.Modified != tt.want {
+				t.Errorf("Modified = %v; want %v", found.Modified, tt.want)
+			}
+		})
+	}
+}
+
 func sortEvents(evs []domain.Event) {
 	for i := range evs {
 		for j := i + 1; j < len(evs); j++ {

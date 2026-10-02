@@ -236,15 +236,38 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 			otm = timing{start: dateValue{t: rid.In(tm.start.loc()), allDay: tm.start.allDay, tzid: tm.start.tzid}, dur: tm.dur}
 		}
 		ev := base
-		ev.Title = cmp.Or(text(c.Props, ical.PropSummary), base.Title)
-		ev.Description = cmp.Or(text(c.Props, ical.PropDescription), base.Description)
-		ev.Location = cmp.Or(text(c.Props, ical.PropLocation), base.Location)
+		ev.Title = textOr(c.Props, ical.PropSummary, base.Title)
+		ev.Description = textOr(c.Props, ical.PropDescription, base.Description)
+		ev.Location = textOr(c.Props, ical.PropLocation, base.Location)
+		ev.Modified = overrideModified(c, otm, rid, master, tm)
 		ev = asOccurrence(at(ev, otm, otm.start.t), rid)
 		if overlaps(ev, from, to) {
 			out = append(out, ev)
 		}
 	}
 	return out, err
+}
+
+// overrideModified reports whether an override visibly changes its
+// occurrence from what the series would otherwise give: a start that differs
+// from rid, a different duration or all-day flag, or an effective title,
+// location or description that differs from the master's. Invisible
+// differences, such as PARTSTAT or an added VALARM, do not count (FR-17).
+func overrideModified(c *ical.Component, otm timing, rid time.Time, master *ical.Component, tm timing) bool {
+	switch {
+	case !otm.start.t.Equal(rid):
+		return true
+	case otm.dur != tm.dur:
+		return true
+	case otm.start.allDay != tm.start.allDay:
+		return true
+	}
+	masterTitle := text(master.Props, ical.PropSummary)
+	masterLocation := text(master.Props, ical.PropLocation)
+	masterDescription := text(master.Props, ical.PropDescription)
+	return textOr(c.Props, ical.PropSummary, masterTitle) != masterTitle ||
+		textOr(c.Props, ical.PropLocation, masterLocation) != masterLocation ||
+		textOr(c.Props, ical.PropDescription, masterDescription) != masterDescription
 }
 
 // expandSeries returns the start times of the series in [from, to): DTSTART

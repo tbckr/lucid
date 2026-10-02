@@ -250,6 +250,17 @@ func text(props ical.Props, name string) string {
 	return s
 }
 
+// textOr returns the unescaped text value of a property, or fallback if the
+// property is absent. A present but empty property returns "": an override
+// can deliberately clear a field without falling back to the master's value
+// (spec section 2 "Leere Felder", FR-17).
+func textOr(props ical.Props, name, fallback string) string {
+	if props.Get(name) == nil {
+		return fallback
+	}
+	return text(props, name)
+}
+
 // setText sets a text property, removing it when value is empty.
 func setText(props ical.Props, name, value string) {
 	value = strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n")
