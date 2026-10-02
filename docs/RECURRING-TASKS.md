@@ -1099,8 +1099,9 @@ keeps the properties and components Lucid does not know.
 - An absolute alarm trigger (`VALARM` with `TRIGGER;VALUE=DATE-TIME`) stays
   at its instant when the master rolls or moves; only a relative trigger
   follows, as with Tasks.org and Evolution.
-- Moving an occurrence of a recurring **event** still moves the whole series,
-  without adjusting `BYDAY`/`BYMONTHDAY`.
+- Recurring **events** have their own single-occurrence writes and
+  series-move rules, including `BYDAY`/`BYMONTHDAY` handling; see
+  [RECURRING-EVENTS.md](RECURRING-EVENTS.md).
 - "Repeat from completion date" is not supported; Tasks.org keeps it local,
   and no standard defines it.
 

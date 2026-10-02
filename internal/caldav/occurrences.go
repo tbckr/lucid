@@ -2,7 +2,9 @@ package caldav
 
 // This file implements "only this event" writes for a recurring series: an
 // RFC 5545 override, a second VEVENT sharing the series' UID and carrying a
-// RECURRENCE-ID, in the same resource as the series (FR-17).
+// RECURRENCE-ID, in the same resource as the series (FR-17). See
+// docs/RECURRING-EVENTS.md for the client survey and the decisions behind
+// the write format.
 
 import (
 	"context"

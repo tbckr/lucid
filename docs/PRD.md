@@ -92,7 +92,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 ### **4.5 Extended iCal Features**
 
 * **FR-17:** Recurring Events (RRULE).
-  * *Implementation:* Backend expands RRULEs for the requested view range. Recurring tasks (VTODO) are expanded like events; see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md).
+  * *Implementation:* Backend expands RRULEs for the requested view range. Recurring tasks (VTODO) are expanded like events; see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md). Single-occurrence overrides and series moves for events are documented in [docs/RECURRING-EVENTS.md](RECURRING-EVENTS.md).
   * **Only this event:** a single occurrence can be changed or deleted independently of the series, via an RFC 5545 override (an EXDATE on delete).
   * **All events:** a change to the series shifts by the distance from the edited occurrence's shown start and carries along only the fields that changed.
   * Events changed individually by an override are marked (`modified`).

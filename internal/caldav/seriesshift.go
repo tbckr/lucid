@@ -1,5 +1,9 @@
 package caldav
 
+// This file decides which moves of a recurring series' RRULE "All events"
+// may perform (FR-17). See docs/RECURRING-EVENTS.md for the client survey
+// and the decisions behind the three cases below.
+
 import (
 	"strconv"
 	"strings"
