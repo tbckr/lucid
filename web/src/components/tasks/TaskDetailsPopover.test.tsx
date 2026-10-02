@@ -194,6 +194,36 @@ describe('TaskDetailsPopover', () => {
       expect(within(dialog).getByText('Can be completed once Mon, Oct 5 is done.')).toBeInTheDocument()
     })
 
+    it('marks the current occurrence of an overdue series overdue', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 7, 12))
+      const t = occurrenceOf({
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        state: 'current',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        key: 't1@2026-10-05T00:00:00Z',
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).getByText('Overdue')).toBeInTheDocument()
+    })
+
+    // Only the current occurrence can be completed, so only it can be late: not the repeats after it, passed or not.
+    it.each(['2026-10-06', '2026-10-08'])('does not mark the upcoming occurrence of %s overdue', async (date) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 7, 12))
+      const t = occurrenceOf({
+        due: allDay(date),
+        dueAllDay: true,
+        state: 'upcoming',
+        recurrenceId: allDay(date),
+        key: `t1@${allDay(date)}`,
+      })
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).getByText('Can be completed once Mon, Oct 5 is done.')).toBeInTheDocument()
+      expect(within(dialog).queryByText('Overdue')).toBeNull()
+    })
+
     it('shows a done occurrence as completed elsewhere', async () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))

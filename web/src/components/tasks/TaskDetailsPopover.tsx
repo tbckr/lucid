@@ -58,10 +58,11 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   // A point shows its time alone; one date says which one it is (FR-14).
   const when = formatEventWhen(placed.point ? { ...placed, endsAt: placed.startsAt } : placed, prefs, now)
   const whenText = placed.dates === 'span' ? when : t(placed.dates === 'due' ? 'tasks.dueWhen' : 'tasks.startsWhen', { when })
-  const overdue = !done && isOverdue(todo, now)
+  const upcoming = task.occurrence?.state === 'upcoming'
+  // The series carries its current occurrence's dates, the only one that can be completed and so be late (FR-14, FR-17).
+  const overdue = !done && !upcoming && isOverdue(todo, now)
   const hasPriority = priorityLevel(todo.priority) !== 'none'
   const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring
-  const upcoming = task.occurrence?.state === 'upcoming'
   // The rule row's hint (FR-17): which occurrence to complete first, that another app already did, or that
   // Lucid can't read the rule at all; the current occurrence, or a plain series, needs none of these.
   const hint = upcoming
