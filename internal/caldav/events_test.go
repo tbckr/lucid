@@ -937,6 +937,197 @@ func TestUpdateSeriesRDateOnly(t *testing.T) {
 	})
 }
 
+// listed returns the events of slug's calendar listed for [from, to).
+func listed(t *testing.T, e *env, slug string, from, to time.Time) []domain.Event {
+	t.Helper()
+	evs, err := e.svc.ListEvents(t.Context(), e.cals[slug], from, to)
+	mustNoErr(t, err)
+	return evs
+}
+
+// wantStored asserts that the object name in slug's calendar contains every
+// line of want.
+func wantStored(t *testing.T, e *env, slug, name string, want ...string) {
+	t.Helper()
+	data := stored(t, e, slug, name)
+	for _, line := range want {
+		if !strings.Contains(data, line) {
+			t.Errorf("series lacks %q:\n%s", line, data)
+		}
+	}
+}
+
+// TestUpdateSeriesKeepsRefsOnWallClock is the review's first reproduction
+// as a regression test: "all events" one day later, from a January event of
+// a Saturday series in Europe/Berlin, moves its EXDATE and its exception's
+// RECURRENCE-ID by one calendar day on the series' wall clock. Moved by 24
+// hours instead, both landed an hour off across a daylight-saving change,
+// so the deleted event came back and the exception was orphaned next to the
+// plain event it replaces (spec section 3 item 2, FR-17).
+func TestUpdateSeriesKeepsRefsOnWallClock(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Run",
+		"DTSTART;TZID=Europe/Berlin:20260103T090000", "DTEND;TZID=Europe/Berlin:20260103T100000",
+		"RRULE:FREQ=WEEKLY;BYDAY=SA", "EXDATE;TZID=Europe/Berlin:20260328T090000",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261024T090000",
+		"DTSTART;TZID=Europe/Berlin:20261024T150000", "DTEND;TZID=Europe/Berlin:20261024T160000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 1, 10, 0, 0), date(2026, 1, 11, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-01-10; want 1", len(evs))
+	}
+
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Run", "", date(2026, 1, 11, 8, 0), date(2026, 1, 11, 9, 0)))
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Run", start: date(2026, 1, 11, 8, 0), end: date(2026, 1, 11, 9, 0), rid: ptr(date(2026, 1, 11, 8, 0))},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=WEEKLY;BYDAY=SU", "DTSTART;TZID=Europe/Berlin:20260104T090000",
+		"EXDATE;TZID=Europe/Berlin:20260329T090000", "RECURRENCE-ID;TZID=Europe/Berlin:20261025T090000")
+	// 03-29, the day of the change to summer time, stays deleted.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 22, 0, 0), date(2026, 4, 6, 0, 0)), []occ{
+		{title: "Run", start: date(2026, 3, 22, 8, 0), end: date(2026, 3, 22, 9, 0), rid: ptr(date(2026, 3, 22, 8, 0))},
+		{title: "Run", start: date(2026, 4, 5, 7, 0), end: date(2026, 4, 5, 8, 0), rid: ptr(date(2026, 4, 5, 7, 0))},
+	})
+	// 10-25, the day of the change back, is the exception, at its own time.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 10, 18, 0, 0), date(2026, 11, 2, 0, 0)), []occ{
+		{title: "Run", start: date(2026, 10, 18, 7, 0), end: date(2026, 10, 18, 8, 0), rid: ptr(date(2026, 10, 18, 7, 0))},
+		{title: "Special", start: date(2026, 10, 24, 13, 0), end: date(2026, 10, 24, 14, 0), rid: ptr(date(2026, 10, 25, 8, 0))},
+		{title: "Run", start: date(2026, 11, 1, 8, 0), end: date(2026, 11, 1, 9, 0), rid: ptr(date(2026, 11, 1, 8, 0))},
+	})
+}
+
+// TestUpdateSeriesAcrossDSTChange is the review's second reproduction as a
+// regression test: "all events" from Friday 09:00 CET to Monday 09:00 CEST,
+// as a drag to another day sends it, keeps the series at 09:00 Berlin time.
+// Moved by the 71 hours in between instead, it went to 08:00 (spec section 3
+// item 2, FR-17).
+func TestUpdateSeriesAcrossDSTChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260102T090000", "DTEND;TZID=Europe/Berlin:20260102T093000",
+		"RRULE:FREQ=WEEKLY;BYDAY=FR",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 27, 0, 0), date(2026, 3, 28, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
+	}
+
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30)))
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Review", start: date(2026, 3, 30, 7, 0), end: date(2026, 3, 30, 7, 30), rid: ptr(date(2026, 3, 30, 7, 0))},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO", "DTSTART;TZID=Europe/Berlin:20260105T090000", "DTEND;TZID=Europe/Berlin:20260105T093000")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 20, 0, 0), date(2026, 4, 7, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 3, 23, 8, 0), end: date(2026, 3, 23, 8, 30), rid: ptr(date(2026, 3, 23, 8, 0))},
+		{title: "Review", start: date(2026, 3, 30, 7, 0), end: date(2026, 3, 30, 7, 30), rid: ptr(date(2026, 3, 30, 7, 0))},
+		{title: "Review", start: date(2026, 4, 6, 7, 0), end: date(2026, 4, 6, 7, 30), rid: ptr(date(2026, 4, 6, 7, 0))},
+	})
+}
+
+// TestUpdateSeriesNewRuleAcrossDSTChange checks that "all events" with a
+// changed rule moves the series on its wall clock too, like the unchanged
+// rule in TestUpdateSeriesAcrossDSTChange (spec section 3 items 2 and 4,
+// FR-17).
+func TestUpdateSeriesNewRuleAcrossDSTChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260102T090000", "DTEND;TZID=Europe/Berlin:20260102T093000",
+		"RRULE:FREQ=WEEKLY;BYDAY=FR", "EXDATE;TZID=Europe/Berlin:20260320T090000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 27, 0, 0), date(2026, 3, 28, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30))
+	in.RRule = "FREQ=WEEKLY;BYDAY=MO;COUNT=20"
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=20", "DTSTART;TZID=Europe/Berlin:20260105T090000",
+		"DTEND;TZID=Europe/Berlin:20260105T093000", "EXDATE;TZID=Europe/Berlin:20260323T090000")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 16, 0, 0), date(2026, 4, 7, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 3, 16, 8, 0), end: date(2026, 3, 16, 8, 30), rid: ptr(date(2026, 3, 16, 8, 0))},
+		{title: "Review", start: date(2026, 3, 30, 7, 0), end: date(2026, 3, 30, 7, 30), rid: ptr(date(2026, 3, 30, 7, 0))},
+		{title: "Review", start: date(2026, 4, 6, 7, 0), end: date(2026, 4, 6, 7, 30), rid: ptr(date(2026, 4, 6, 7, 0))},
+	})
+}
+
+// TestUpdateSeriesAllDay checks that "all events" moves an all-day series,
+// with its DATE values EXDATE and UNTIL, by whole days (spec section 3 items
+// 2 and 8, FR-17).
+func TestUpdateSeriesAllDay(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Gym",
+		"DTSTART;VALUE=DATE:20260102", "DTEND;VALUE=DATE:20260103",
+		"RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20260410", "EXDATE;VALUE=DATE:20260320",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 27, 0, 0), date(2026, 3, 28, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Gym", "", date(2026, 3, 30, 0, 0), date(2026, 3, 31, 0, 0))
+	in.AllDay = true
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Gym", start: date(2026, 3, 30, 0, 0), end: date(2026, 3, 31, 0, 0), rid: ptr(date(2026, 3, 30, 0, 0)), allDay: true},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260413", "DTSTART;VALUE=DATE:20260105", "DTEND;VALUE=DATE:20260106",
+		"EXDATE;VALUE=DATE:20260323")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 14, 0, 0), date(2026, 4, 30, 0, 0)), []occ{
+		{title: "Gym", start: date(2026, 3, 16, 0, 0), end: date(2026, 3, 17, 0, 0), rid: ptr(date(2026, 3, 16, 0, 0)), allDay: true},
+		{title: "Gym", start: date(2026, 3, 30, 0, 0), end: date(2026, 3, 31, 0, 0), rid: ptr(date(2026, 3, 30, 0, 0)), allDay: true},
+		{title: "Gym", start: date(2026, 4, 6, 0, 0), end: date(2026, 4, 7, 0, 0), rid: ptr(date(2026, 4, 6, 0, 0)), allDay: true},
+		{title: "Gym", start: date(2026, 4, 13, 0, 0), end: date(2026, 4, 14, 0, 0), rid: ptr(date(2026, 4, 13, 0, 0)), allDay: true},
+	})
+}
+
+// TestUpdateSeriesDateUntil checks that "all events" moves the DATE UNTIL of
+// a timed series, as some clients write it, by the days of the move only,
+// also across a daylight-saving change (spec section 3 item 8, FR-17).
+func TestUpdateSeriesDateUntil(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260102T090000", "DTEND;TZID=Europe/Berlin:20260102T093000",
+		"RRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20260410",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 27, 0, 0), date(2026, 3, 28, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
+	}
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30)))
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260413")
+}
+
 func TestUpdateAndDeleteErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

@@ -484,14 +484,16 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		instance, moved = &in.Start, &rid
 	case series && rr != "":
 		// A changed rule or all-day flag applies to the whole series as
-		// entered: shift it by the distance the edited event moved from
-		// where it was shown, and take the new duration (spec section 3 item
-		// 4, FR-17).
+		// entered: move it as the edited event moved from where it was
+		// shown (see wallShift), and take the new duration (spec section 3
+		// item 4, FR-17). DTSTART moves as an instant, also when the all-day
+		// flag changes: an all-day series, whose zone is UTC, that gets a
+		// time takes the time of in.Start.
 		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
-		delta := in.Start.Sub(shown.start.t)
-		start = oldTm.start.t.Add(delta)
+		shift := wallShift(oldTm.start, shown.start.t, in.Start)
+		start = shift(dateValue{t: oldTm.start.t})
 		end = start.Add(in.End.Sub(in.Start))
-		shiftRecurrenceRefs(cal, master, delta)
+		shiftRecurrenceRefs(cal, master, shift)
 		instance = &in.Start
 		applyEventFields(cal, master, in, rr, start, end, tz)
 	default:
@@ -542,11 +544,13 @@ func instanceTiming(tm timing, rid time.Time) timing {
 // stay as they are (spec section 3, FR-17), and returns that occurrence's
 // recurrence ID after the move.
 //
-//   - The series moves by delta, the distance the event moved from where it
-//     was shown (the override's DTSTART for an exception). Its rule follows
-//     as seriesShift says, and UNTIL, EXDATE, RDATE and the RECURRENCE-IDs
-//     move by delta too. A rule seriesShift refuses, one on fixed days or
-//     times, is an invalid input error, and cal is left as it was.
+//   - The series moves as the event moved from where it was shown (the
+//     override's DTSTART for an exception): by the same calendar days and
+//     change of clock time in the series' zone, see wallShift. Its rule
+//     follows as seriesShift says, and UNTIL, EXDATE, RDATE and the
+//     RECURRENCE-IDs move the same way. A rule seriesShift refuses, one on
+//     fixed days or times, is an invalid input error, and cal is left as it
+//     was.
 //   - Of title, description, location and duration, only what changed from
 //     the event as shown is written into the series, so an exception's own
 //     title does not replace the series'.
@@ -556,18 +560,18 @@ func instanceTiming(tm timing, rid time.Time) timing {
 func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain.EventInput, now time.Time) (time.Time, error) {
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
-	delta := in.Start.Sub(shown.start.t)
+	shift := wallShift(tm.start, shown.start.t, in.Start)
 	dur := in.End.Sub(in.Start)
 	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
 
-	newStart := tm.start.t.Add(delta) // in the series' zone, as seriesShift wants
+	newStart := shift(tm.start) // in the series' zone, as seriesShift wants
 	rule, ok := seriesShift(rruleString(master), tm.start.t, newStart)
 	if !ok {
 		return time.Time{}, &domain.ValidationError{Msg: "the series' rule fixes its days or times, so only this event can move there"}
 	}
 	rule = mapRulePart(rule, "UNTIL", func(v string) string {
 		p := ical.Prop{Value: v}
-		shiftDateProp(&p, delta)
+		shiftDatePropBy(&p, shift)
 		return p.Value
 	})
 	if rule != "" {
@@ -582,9 +586,9 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		master.Props.Del(ical.PropDuration)
 		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.Add(dur), f))
 	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
-		shiftDateProp(p, delta)
+		shiftDatePropBy(p, shift)
 	}
-	shiftRecurrenceRefs(cal, master, delta)
+	shiftRecurrenceRefs(cal, master, shift)
 
 	for _, field := range []struct{ name, value string }{
 		{ical.PropSummary, in.Title},
@@ -610,7 +614,35 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		ov.Props.Del(ical.PropDuration)
 		bumpChangeProps(ov, now)
 	}
-	return rid.Add(delta), nil
+	return shift(dateValue{t: rid, allDay: tm.start.allDay}), nil
+}
+
+// wallShift returns how "all events" moves the values of the series whose
+// DTSTART is st when its event shown at from moves to to (spec section 3
+// item 2, FR-17): by the same number of calendar days and the same change of
+// clock time, both measured in the series' zone. The series repeats on that
+// wall clock, so a move by the absolute time in between would put EXDATEs,
+// RECURRENCE-IDs and DTSTART itself an hour off across a daylight-saving
+// change. A DATE moves by the days only. A UTC or TZID value names an
+// instant, which moves with the series' wall clock and is then written in
+// its own form again; a floating value, or one with a TZID Lucid cannot
+// resolve, moves on its own wall clock.
+func wallShift(st dateValue, from, to time.Time) func(dateValue) time.Time {
+	loc := st.loc()
+	f, t := from.In(loc), to.In(loc)
+	days := dateDays(t) - dateDays(f)
+	secs := secondOfDay(t) - secondOfDay(f)
+	return func(d dateValue) time.Time {
+		if d.allDay {
+			return d.t.AddDate(0, 0, days)
+		}
+		zone := loc
+		if d.floating || d.tzid == "" && d.param != "" {
+			zone = d.t.Location() // its wall clock, read as UTC
+		}
+		w := d.t.In(zone)
+		return time.Date(w.Year(), w.Month(), w.Day()+days, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), zone)
+	}
 }
 
 // shownAt returns the event of o with the recurrence ID rid as ListEvents
@@ -699,13 +731,14 @@ func removeRecurrence(cal *ical.Calendar, master *ical.Component) {
 	})
 }
 
-// shiftRecurrenceRefs moves EXDATE, RDATE and RECURRENCE-ID values by delta
-// so that exceptions and overrides stay attached to the shifted series.
-func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, delta time.Duration) {
+// shiftRecurrenceRefs moves EXDATE, RDATE and RECURRENCE-ID values by shift
+// (see wallShift) so that exceptions and overrides stay attached to the
+// shifted series (FR-17).
+func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, shift func(dateValue) time.Time) {
 	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
 		vals := master.Props[name]
 		for i := range vals {
-			shiftDateProp(&vals[i], delta)
+			shiftDatePropBy(&vals[i], shift)
 		}
 	}
 	for _, c := range cal.Children {
@@ -714,13 +747,9 @@ func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, delta time.
 		}
 		vals := c.Props[ical.PropRecurrenceID]
 		for i := range vals {
-			shiftDateProp(&vals[i], delta)
+			shiftDatePropBy(&vals[i], shift)
 		}
 	}
-}
-
-func shiftDateProp(p *ical.Prop, delta time.Duration) {
-	shiftDatePropBy(p, func(d dateValue) time.Time { return d.t.Add(delta) })
 }
 
 // shiftDatePropBy replaces each DATE or DATE-TIME value of p by shift's

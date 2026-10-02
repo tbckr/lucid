@@ -237,8 +237,15 @@ func TestLoadLocation(t *testing.T) {
 	}
 }
 
+// TestShiftDateProp checks that shiftDatePropBy keeps each value's form:
+// lists, PERIOD values and garbage, here for a UTC series moved one hour or
+// two days later (FR-17).
 func TestShiftDateProp(t *testing.T) {
 	t.Parallel()
+	st := dateValue{t: date(2025, 3, 3, 10, 0)}
+	by := func(d time.Duration) func(dateValue) time.Time {
+		return wallShift(st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
+	}
 	tests := []struct {
 		value, tzid, want string
 		allDay            bool
@@ -255,16 +262,56 @@ func TestShiftDateProp(t *testing.T) {
 		if tt.tzid != "" {
 			p.Params.Set(ical.ParamTimezoneID, tt.tzid)
 		}
-		shiftDateProp(p, time.Hour)
+		shiftDatePropBy(p, by(time.Hour))
 		if p.Value != tt.want {
 			t.Errorf("shift(%q) = %q; want %q", tt.value, p.Value, tt.want)
 		}
 	}
 	p := ical.NewProp(ical.PropExceptionDates)
 	p.Value = "20250310"
-	shiftDateProp(p, 48*time.Hour)
+	shiftDatePropBy(p, by(48*time.Hour))
 	if p.Value != "20250312" {
 		t.Errorf("date shift = %q", p.Value)
+	}
+}
+
+// TestWallShift checks how wallShift moves each form of a value of a
+// series in Europe/Berlin by one calendar day, across the change to
+// summer time on 2026-03-29 (spec section 3 item 2, FR-17).
+func TestWallShift(t *testing.T) {
+	t.Parallel()
+	berlin := loadLocation("Europe/Berlin")
+	st := dateValue{t: time.Date(2026, 1, 2, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
+	// Shown on Friday 03-27, moved to Saturday 03-28, both 09:00 CET: one day
+	// later, which takes values on 03-28 into summer time.
+	shift := wallShift(st, date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
+
+	tests := []struct {
+		name  string
+		value string
+		param string
+		want  string
+	}{
+		{"DTSTART", "20260102T090000", "Europe/Berlin", "20260103T090000"},
+		{"TZID across the change", "20260328T090000", "Europe/Berlin", "20260329T090000"},
+		{"UTC on the series' wall clock", "20260328T080000Z", "", "20260329T070000Z"},
+		{"TZID of another zone on the series' wall clock", "20260328T040000", "America/New_York", "20260329T030000"},
+		{"floating on its own wall clock", "20260328T090000", "", "20260329T090000"},
+		{"unknown TZID on its own wall clock", "20260328T090000", "Mars/Olympus", "20260329T090000"},
+		{"DATE by the days only", "20260328", "", "20260329"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := ical.Prop{Value: tt.value, Params: ical.Params{}}
+			if tt.param != "" {
+				p.Params.Set(ical.ParamTimezoneID, tt.param)
+			}
+			shiftDatePropBy(&p, shift)
+			if p.Value != tt.want {
+				t.Errorf("shifted %s = %s; want %s", tt.value, p.Value, tt.want)
+			}
+		})
 	}
 }
 

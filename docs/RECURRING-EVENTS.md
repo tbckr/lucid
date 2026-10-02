@@ -762,12 +762,25 @@ surveyed client and server round-trips (see [Summary](#summary)).
   (`shiftRecurrenceRefs`) — the majority behavior (Apple, SOGo, InfCloud,
   Thunderbird). No surveyed client propagates a new title to an existing
   override.
-- `EXDATE` and `RDATE` shift by the same delta as `RECURRENCE-ID`
+- **How far everything moves**: the series moves by the same number of
+  calendar days and the same change of clock time as the edited event,
+  both measured in the series' own time zone (`wallShift`), because its
+  rule repeats on that wall clock. `DTSTART`, `UNTIL`, every `EXDATE`,
+  `RDATE` and `RECURRENCE-ID`, and the recurrence ID the response is looked
+  up by all move this way: a date-only value by the days only, a UTC or
+  `TZID` value as an instant on the series' wall clock (written back in its
+  own form), a floating value on its own wall clock. An absolute duration
+  would put them an hour off whenever a daylight-saving change lies
+  between them and the edited event — a deleted occurrence would come back
+  and an override would be orphaned next to the occurrence it replaces —
+  and a drag from winter into summer time would move the whole series an
+  hour. The path for a changed rule or `allDay` flag moves the same way.
+- `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and
   Fossify do (which lets deleted occurrences return after a move).
-- `UNTIL` now shifts by the same delta too — a fix: previously it stayed in
-  place, so a series moved later could lose its last occurrence.
+- `UNTIL` now shifts along too — a fix: previously it stayed in place, so a
+  series moved later could lose its last occurrence.
 - A changed `RRULE` or `allDay` flag applies to the whole series as entered,
   with the request's own `timezone` (see "Only this event" above for the
   unchanged-rule case).
@@ -806,11 +819,11 @@ surveyed client and server round-trips (see [Summary](#summary)).
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.
-- The DST-day absolute-delta quirk is pre-existing and unrelated to this
-  feature: a move computed as an absolute UTC delta, on the one occurrence
-  that spans a daylight-saving transition, can land `shownAt` on a time the
-  server does not expand, falling back to the master's own position in the
-  response.
+- Turning a timed series all-day (or back) from an occurrence on the other
+  side of a daylight-saving change than `DTSTART` can still put the new
+  `DTSTART` on the neighboring day: the move is measured on the old wall
+  clock, and its date is then read in UTC. Its `EXDATE`s and overrides
+  keep their old value type, as before.
 - Lucid cannot prevent what other clients do to the overrides and `EXDATE`s
   it writes. From the reports: a Nextcloud Calendar series move from the
   first occurrence leaves `EXDATE`/`UNTIL` unshifted and a weekday move
