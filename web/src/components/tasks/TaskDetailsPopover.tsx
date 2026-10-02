@@ -45,7 +45,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const del = useDeleteTodo()
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
-  // The task as it is now: the check below or a reload may have replaced the one that was clicked.
+  // The task as it is now: a reload may have replaced the one that was clicked.
   const todo = useCachedTodo(task.todo)
   // An occurrence keeps the dates it was clicked at; a plain task picks up the cache's, as before (FR-17).
   const placed = task.occurrence ? task : (toCalTask(todo) ?? task)
@@ -90,7 +90,12 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
             aria-checked={done}
             aria-label={t('tasks.complete', { title })}
             disabled={readOnly || !canComplete(placed)}
-            onClick={toggle}
+            onClick={() => {
+              // Like Edit and Delete, the check is done with the details: a series has moved on to its
+              // next repeat by then, and these would still show the one just completed (FR-17).
+              toggle()
+              openDetail(null)
+            }}
             className="mt-[3px] flex size-6 items-center justify-center justify-self-center rounded-full border-2 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-current/50 disabled:opacity-50"
             style={{ borderColor: colors.solid, backgroundColor: done ? colors.solid : 'transparent' }}
           >

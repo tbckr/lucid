@@ -107,10 +107,11 @@ describe('TaskDetailsPopover', () => {
     )
   })
 
-  it('completes the task from its check', async () => {
+  it('completes the task from its check and closes', async () => {
     const user = userEvent.setup()
     const { dialog, fetch } = await openDetails({ id: 't7' })
     await user.click(within(dialog).getByRole('checkbox', { name: 'Completed: Pay rent' }))
+    expect(useUi.getState().detail).toBeNull()
     await waitFor(() => {
       const put = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')
       expect(put && urlOf(put[0])).toBe('/api/v1/todos/t7')
@@ -147,7 +148,7 @@ describe('TaskDetailsPopover', () => {
   it('opens the editor with the task as it is now, not as it was clicked', async () => {
     const user = userEvent.setup()
     const { dialog, queryClient, task } = await openDetails({})
-    // A reload or the check replaced the task since: new title and ETag.
+    // A reload replaced the task since: new title and ETag.
     const now = { ...task.todo, title: 'Pay rent and bills', etag: '"2"' }
     act(() => {
       queryClient.setQueryData(queryKeys.todos('c1'), { todos: [now], corrupted: [] })
@@ -251,6 +252,26 @@ describe('TaskDetailsPopover', () => {
       const { dialog } = await open(t, 'Water the flowers')
       expect(within(dialog).getByRole('checkbox', { name: 'Completed: Water the flowers' })).toBeEnabled()
       expect(within(dialog).getByText('Every day')).toBeInTheDocument()
+    })
+
+    // The series moves on to its next repeat: details left open would still show the one just completed.
+    it('completes the current occurrence from its check and closes', async () => {
+      const user = userEvent.setup()
+      const t = occurrenceOf({
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        state: 'current',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        key: 't1@2026-10-05T00:00:00Z',
+      })
+      const { dialog, fetch } = await open(t, 'Water the flowers')
+      await user.click(within(dialog).getByRole('checkbox', { name: 'Completed: Water the flowers' }))
+      expect(useUi.getState().detail).toBeNull()
+      await waitFor(() => {
+        const put = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')
+        expect(put && urlOf(put[0])).toBe('/api/v1/todos/t1')
+        expect(put && bodyOf(put[1])).toMatchObject({ status: 'COMPLETED' })
+      })
     })
 
     it('asks to delete all repeats for a series', async () => {
