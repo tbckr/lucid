@@ -24,6 +24,14 @@ describe('seriesShift', () => {
   it.each(cases)('$name', ({ rule, from, to, want }) => {
     expect(seriesShift(rule, from, to)).toBe(want)
   })
+
+  // Not in the shared table: Go's rulePart normalizes part names but not
+  // values, so a non-upper-case FREQ falls through weeklySimpleByDay to
+  // case 3 (internal/caldav/seriesshift.go:110) — matched here exactly,
+  // rather than fixed, so the browser and server agree.
+  it('matches Go case-sensitively for a non-upper-case FREQ', () => {
+    expect(seriesShift('freq=weekly;byday=mo', '2026-03-09T09:00', '2026-03-10T09:00')).toBe(null)
+  })
 })
 
 describe('canMoveAll', () => {

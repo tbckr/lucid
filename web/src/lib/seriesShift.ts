@@ -99,12 +99,12 @@ function hasClockParts(rule: string): boolean {
  * Whether `rule` is FREQ=WEEKLY with BYDAY as its only part beyond FREQ,
  * INTERVAL, COUNT, UNTIL and WKST, and every BYDAY value a plain weekday
  * without an ordinal — case 2 of `seriesShift`. The FREQ value is compared
- * upper-cased, unlike the Go reference's `rulePart`, which only normalizes
- * part names; rules Lucid writes are already normalized, but this avoids
- * replicating that asymmetry here.
+ * case-sensitively, matching the Go reference's `rulePart` exactly: it
+ * normalizes part names (`rulePartKey`) but not values, so a non-upper-case
+ * FREQ value (`freq=weekly`) falls through to case 3 on both sides.
  */
 function weeklySimpleByDay(rule: string): boolean {
-  if (rulePart(rule, 'FREQ').toUpperCase() !== 'WEEKLY') return false
+  if (rulePart(rule, 'FREQ') !== 'WEEKLY') return false
   let byday = ''
   for (const part of rule.split(';')) {
     switch (rulePartKey(part)) {
