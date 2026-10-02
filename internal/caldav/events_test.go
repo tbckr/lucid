@@ -624,6 +624,319 @@ func TestUpdateRecurringInstance(t *testing.T) {
 	}
 }
 
+// standupSeries is the fixture of TestUpdateRecurringInstance: a weekly
+// standup on Mondays at 09:00 Europe/Berlin (08:00Z until 2025-03-30, 07:00Z
+// after) from 2025-03-03, without 03-10, whose 03-17 event is an exception
+// shown 12:00–13:00Z as "Special" (FR-17).
+var standupSeries = []string{
+	"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+	"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+	"RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;TZID=Europe/Berlin:20250310T090000",
+	"END:VEVENT",
+	"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Special",
+	"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T120000Z", "DTEND:20250317T130000Z",
+	"END:VEVENT",
+}
+
+// shownEvent returns the event of slug's calendar listed for March and April
+// 2025 with the recurrence ID rid.
+func shownEvent(t *testing.T, e *env, slug string, rid time.Time) domain.Event {
+	t.Helper()
+	evs, err := e.svc.ListEvents(t.Context(), e.cals[slug], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+	mustNoErr(t, err)
+	for i := range evs {
+		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
+			return evs[i]
+		}
+	}
+	t.Fatalf("no event with recurrence ID %v in %+v", rid, evs)
+	return domain.Event{}
+}
+
+// stored returns the iCalendar data of the object name in slug's calendar.
+func stored(t *testing.T, e *env, slug, name string) string {
+	t.Helper()
+	data, ok := e.mock.Object(e.paths[slug] + name)
+	if !ok {
+		t.Fatalf("object %s not stored", name)
+	}
+	return data
+}
+
+// seriesUpdate is the "all events" input that sets the event ev, as shown,
+// to start–end with the given title and location.
+func seriesUpdate(ev domain.Event, title, location string, start, end time.Time) domain.EventInput {
+	return domain.EventInput{
+		Title: title, Location: location, Start: start, End: end,
+		RRule: ev.RRule, InstanceStart: ev.RecurrenceID,
+	}
+}
+
+// TestUpdateSeriesFromException checks that "all events" from an exception
+// moves the series by the distance from where the exception was shown, not
+// from its RECURRENCE-ID, and that the exception moves along (spec section 3
+// items 1, 2 and 5, FR-17).
+func TestUpdateSeriesFromException(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", standupSeries...)
+	special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+
+	// Drag "Special" from 12:00Z to 13:00Z: the series moves by +1 h.
+	up, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
+		seriesUpdate(special, "Special", "", date(2025, 3, 17, 13, 0), date(2025, 3, 17, 14, 0)))
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Special", start: date(2025, 3, 17, 13, 0), end: date(2025, 3, 17, 14, 0), rid: ptr(date(2025, 3, 17, 9, 0))},
+	})
+
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Standup", start: date(2025, 3, 3, 9, 0), end: date(2025, 3, 3, 9, 15), rid: ptr(date(2025, 3, 3, 9, 0))},
+		{title: "Special", start: date(2025, 3, 17, 13, 0), end: date(2025, 3, 17, 14, 0), rid: ptr(date(2025, 3, 17, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 24, 9, 0), end: date(2025, 3, 24, 9, 15), rid: ptr(date(2025, 3, 24, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 31, 8, 0), end: date(2025, 3, 31, 8, 15), rid: ptr(date(2025, 3, 31, 8, 0))},
+	})
+}
+
+// TestUpdateSeriesChangedFieldsOnly checks that "all events" writes only the
+// fields changed from the event as shown into the series, so an exception's
+// own title does not replace the series' title, and that the edited
+// exception takes the change too (spec section 3 items 3 and 5, FR-17).
+func TestUpdateSeriesChangedFieldsOnly(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", standupSeries...)
+	special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
+		seriesUpdate(special, special.Title, "Room 2", special.Start, special.End))
+	mustNoErr(t, err)
+
+	ves := vevents(mustParse(t, stored(t, e, "work", "series.ics")))
+	if len(ves) != 2 || ves[0].Props.Get(ical.PropRecurrenceID) != nil || ves[1].Props.Get(ical.PropRecurrenceID) == nil {
+		t.Fatalf("want the series, then its exception; got %d VEVENTs", len(ves))
+	}
+	master, override := ves[0], ves[1]
+	for _, tt := range []struct {
+		name      string
+		c         *ical.Component
+		prop      string
+		wantValue string
+	}{
+		{"series title", master, ical.PropSummary, "Standup"},
+		{"series location", master, ical.PropLocation, "Room 2"},
+		{"exception title", override, ical.PropSummary, "Special"},
+		{"exception location", override, ical.PropLocation, "Room 2"},
+		{"exception sequence", override, ical.PropSequence, "1"},
+	} {
+		if got := text(tt.c.Props, tt.prop); got != tt.wantValue {
+			t.Errorf("%s = %q; want %q", tt.name, got, tt.wantValue)
+		}
+	}
+	// The event was shown where it was saved: nothing moves.
+	wantDateProp(t, master, ical.PropDateTimeStart, "20250303T090000", "Europe/Berlin", false)
+	wantDateProp(t, master, ical.PropDateTimeEnd, "20250303T091500", "Europe/Berlin", false)
+}
+
+// TestUpdateSeriesKeepsOtherExceptions checks that "all events" from a plain
+// event moves the RECURRENCE-IDs of the other exceptions along, but leaves
+// their own times and fields, and writes the series as the first VEVENT
+// (spec section 2 step 7, section 3 item 6, FR-17).
+func TestUpdateSeriesKeepsOtherExceptions(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:B",
+		"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T080000Z", "DTEND:20250317T081500Z",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+		"RECURRENCE-ID:20250310T080000Z", "DTSTART:20250310T120000Z", "DTEND:20250310T121500Z",
+		"END:VEVENT")
+	plain := shownEvent(t, e, "work", date(2025, 3, 24, 8, 0))
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, plain.ETag,
+		seriesUpdate(plain, "Standup", "", date(2025, 3, 24, 9, 0), date(2025, 3, 24, 9, 15)))
+	mustNoErr(t, err)
+
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Standup", start: date(2025, 3, 3, 9, 0), end: date(2025, 3, 3, 9, 15), rid: ptr(date(2025, 3, 3, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 10, 12, 0), end: date(2025, 3, 10, 12, 15), rid: ptr(date(2025, 3, 10, 9, 0))},
+		{title: "B", start: date(2025, 3, 17, 8, 0), end: date(2025, 3, 17, 8, 15), rid: ptr(date(2025, 3, 17, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 24, 9, 0), end: date(2025, 3, 24, 9, 15), rid: ptr(date(2025, 3, 24, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 31, 8, 0), end: date(2025, 3, 31, 8, 15), rid: ptr(date(2025, 3, 31, 8, 0))},
+	})
+	if ves := vevents(mustParse(t, stored(t, e, "work", "series.ics"))); ves[0].Props.Get(ical.PropRecurrenceID) != nil {
+		t.Errorf("first VEVENT is an exception, not the series")
+	}
+}
+
+// TestUpdateSeriesShiftsUntil checks that "all events" moves UNTIL with the
+// series, so a series moved later keeps its last event (spec section 3 item
+// 8, FR-17).
+func TestUpdateSeriesShiftsUntil(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+		"RRULE:FREQ=WEEKLY;UNTIL=20250317T080000Z",
+		"END:VEVENT")
+	ev := shownEvent(t, e, "work", date(2025, 3, 10, 8, 0))
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
+		seriesUpdate(ev, "Standup", "", date(2025, 3, 10, 9, 0), date(2025, 3, 10, 9, 15)))
+	mustNoErr(t, err)
+
+	if data := stored(t, e, "work", "series.ics"); !strings.Contains(data, "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z") {
+		t.Errorf("UNTIL not moved:\n%s", data)
+	}
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Standup", start: date(2025, 3, 3, 9, 0), end: date(2025, 3, 3, 9, 15), rid: ptr(date(2025, 3, 3, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 10, 9, 0), end: date(2025, 3, 10, 9, 15), rid: ptr(date(2025, 3, 10, 9, 0))},
+		{title: "Standup", start: date(2025, 3, 17, 9, 0), end: date(2025, 3, 17, 9, 15), rid: ptr(date(2025, 3, 17, 9, 0))},
+	})
+}
+
+// TestUpdateSeriesWeekday is the probe of 2026-10-02 as a regression test:
+// moving an event of a weekly series on Mondays to a Tuesday moves the
+// series' weekday along, not only its DTSTART (spec section 3 "Wochentage
+// und feste Tage" case 2, FR-17).
+func TestUpdateSeriesWeekday(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO",
+		"END:VEVENT")
+	monday := shownEvent(t, e, "work", date(2025, 3, 31, 7, 0)) // 09:00 CEST
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, monday.ETag,
+		seriesUpdate(monday, "Standup", "", date(2025, 4, 1, 7, 0), date(2025, 4, 1, 7, 15)))
+	mustNoErr(t, err)
+
+	data := stored(t, e, "work", "series.ics")
+	for _, want := range []string{"RRULE:FREQ=WEEKLY;BYDAY=TU", "DTSTART;TZID=Europe/Berlin:20250304T090000"} {
+		if !strings.Contains(data, want) {
+			t.Errorf("series lacks %q:\n%s", want, data)
+		}
+	}
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 3, 20, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Standup", start: date(2025, 3, 4, 8, 0), end: date(2025, 3, 4, 8, 15), rid: ptr(date(2025, 3, 4, 8, 0))},
+		{title: "Standup", start: date(2025, 3, 11, 8, 0), end: date(2025, 3, 11, 8, 15), rid: ptr(date(2025, 3, 11, 8, 0))},
+		{title: "Standup", start: date(2025, 3, 18, 8, 0), end: date(2025, 3, 18, 8, 15), rid: ptr(date(2025, 3, 18, 8, 0))},
+	})
+}
+
+// TestUpdateSeriesFixedDays checks that "all events" refuses to move a
+// series on fixed days to another day, leaving the resource as it was, and
+// still moves it within the same day (spec section 3 "Wochentage und feste
+// Tage" case 3, FR-17).
+func TestUpdateSeriesFixedDays(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=3",
+		"END:VEVENT")
+	april := shownEvent(t, e, "work", date(2025, 4, 3, 7, 0)) // 09:00 CEST
+	before := stored(t, e, "work", "series.ics")
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, april.ETag,
+		seriesUpdate(april, "Review", "", date(2025, 4, 4, 7, 0), date(2025, 4, 4, 7, 15)))
+	mustErr(t, err, domain.ErrInvalidInput)
+	if after := stored(t, e, "work", "series.ics"); after != before {
+		t.Fatalf("refused move changed the resource:\n%s", after)
+	}
+
+	_, err = e.svc.UpdateEvent(t.Context(), id, april.ETag,
+		seriesUpdate(april, "Review", "", date(2025, 4, 3, 9, 0), date(2025, 4, 3, 9, 15)))
+	mustNoErr(t, err)
+	data := stored(t, e, "work", "series.ics")
+	for _, want := range []string{"RRULE:FREQ=MONTHLY;BYMONTHDAY=3", "DTSTART;TZID=Europe/Berlin:20250303T110000"} {
+		if !strings.Contains(data, want) {
+			t.Errorf("series lacks %q:\n%s", want, data)
+		}
+	}
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Review", start: date(2025, 3, 3, 10, 0), end: date(2025, 3, 3, 10, 15), rid: ptr(date(2025, 3, 3, 10, 0))},
+		{title: "Review", start: date(2025, 4, 3, 9, 0), end: date(2025, 4, 3, 9, 15), rid: ptr(date(2025, 4, 3, 9, 0))},
+	})
+}
+
+// TestUpdateSeriesNewRule checks that "all events" with a changed rule
+// writes the rule and every field as entered, and still moves the series by
+// the distance from where the edited exception was shown (spec section 3
+// items 2 and 4, FR-17).
+func TestUpdateSeriesNewRule(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", standupSeries...)
+	special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+
+	in := seriesUpdate(special, "Planning", "", date(2025, 3, 17, 13, 0), date(2025, 3, 17, 14, 0))
+	in.RRule = "FREQ=WEEKLY;BYDAY=MO;COUNT=3"
+	_, err := e.svc.UpdateEvent(t.Context(), id, special.ETag, in)
+	mustNoErr(t, err)
+
+	data := stored(t, e, "work", "series.ics")
+	for _, want := range []string{
+		"RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=3", "SUMMARY:Planning",
+		"DTSTART;TZID=Europe/Berlin:20250303T100000", "DTEND;TZID=Europe/Berlin:20250303T110000",
+		"EXDATE;TZID=Europe/Berlin:20250310T100000", "RECURRENCE-ID:20250317T090000Z",
+	} {
+		if !strings.Contains(data, want) {
+			t.Errorf("series lacks %q:\n%s", want, data)
+		}
+	}
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Planning", start: date(2025, 3, 3, 9, 0), end: date(2025, 3, 3, 10, 0), rid: ptr(date(2025, 3, 3, 9, 0))},
+		{title: "Special", start: date(2025, 3, 17, 12, 0), end: date(2025, 3, 17, 13, 0), rid: ptr(date(2025, 3, 17, 9, 0))},
+	})
+}
+
+// TestUpdateSeriesRDateOnly checks that "all events" from a series made of
+// RDATEs alone, whose empty rule comes back unchanged, moves the series
+// rather than turning it into a single event (spec section 3, FR-17).
+func TestUpdateSeriesRDateOnly(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Lecture",
+		"DTSTART:20250303T100000Z", "DTEND:20250303T110000Z", "RDATE:20250305T100000Z,20250310T100000Z",
+		"END:VEVENT")
+	ev := shownEvent(t, e, "work", date(2025, 3, 5, 10, 0))
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
+		seriesUpdate(ev, "Lecture", "", date(2025, 3, 5, 11, 0), date(2025, 3, 5, 12, 0)))
+	mustNoErr(t, err)
+
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Lecture", start: date(2025, 3, 3, 11, 0), end: date(2025, 3, 3, 12, 0), rid: ptr(date(2025, 3, 3, 11, 0))},
+		{title: "Lecture", start: date(2025, 3, 5, 11, 0), end: date(2025, 3, 5, 12, 0), rid: ptr(date(2025, 3, 5, 11, 0))},
+		{title: "Lecture", start: date(2025, 3, 10, 11, 0), end: date(2025, 3, 10, 12, 0), rid: ptr(date(2025, 3, 10, 11, 0))},
+	})
+}
+
 func TestUpdateAndDeleteErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

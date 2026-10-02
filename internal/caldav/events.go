@@ -233,7 +233,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 		rid := time.Unix(ridUnix, 0)
 		otm, oerr := parseTiming(c)
 		if oerr != nil {
-			otm = timing{start: dateValue{t: rid.In(tm.start.loc()), allDay: tm.start.allDay, tzid: tm.start.tzid}, dur: tm.dur}
+			otm = instanceTiming(tm, rid)
 		}
 		ev := base
 		ev.Title = textOr(c.Props, ical.PropSummary, base.Title)
@@ -465,28 +465,43 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	}
 
 	start, end := in.Start, in.End
-	var instance *time.Time
+	var instance, moved *time.Time
 	oldTm, tmErr := parseTiming(master)
 	tz := in.Timezone
 	if tmErr == nil {
 		tz = cmp.Or(tz, oldTm.start.tzid)
 	}
-	if in.InstanceStart != nil && isRecurring(master) && tmErr == nil && rr != "" {
-		// Apply the change to the whole series: shift it by the distance the
-		// edited occurrence moved and take the new duration.
-		delta := in.Start.Sub(*in.InstanceStart)
+	now := s.p.now().UTC()
+	series := in.InstanceStart != nil && isRecurring(master) && tmErr == nil
+	switch {
+	case series && rr == rruleString(master) && in.AllDay == oldTm.start.allDay:
+		// "All events" with the rule and all-day flag as they are (spec
+		// section 3, FR-17).
+		rid, err := moveSeries(cal, master, oldTm, in, now)
+		if err != nil {
+			return domain.Event{}, err
+		}
+		instance, moved = &in.Start, &rid
+	case series && rr != "":
+		// A changed rule or all-day flag applies to the whole series as
+		// entered: shift it by the distance the edited event moved from
+		// where it was shown, and take the new duration (spec section 3 item
+		// 4, FR-17).
+		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
+		delta := in.Start.Sub(shown.start.t)
 		start = oldTm.start.t.Add(delta)
 		end = start.Add(in.End.Sub(in.Start))
-		if delta != 0 {
-			shiftRecurrenceRefs(cal, master, delta)
-		}
+		shiftRecurrenceRefs(cal, master, delta)
 		instance = &in.Start
+		applyEventFields(cal, master, in, rr, start, end, tz)
+	default:
+		if rr == "" {
+			removeRecurrence(cal, master)
+		}
+		applyEventFields(cal, master, in, rr, start, end, tz)
 	}
-	if rr == "" {
-		removeRecurrence(cal, master)
-	}
-	applyEventFields(cal, master, in, rr, start, end, tz)
-	bumpChangeProps(master, s.p.now().UTC())
+	bumpChangeProps(master, now)
+	masterFirst(cal, master)
 
 	o := calObject{path: objPath, cal: cal}
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
@@ -494,7 +509,120 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if err != nil {
 		return domain.Event{}, err
 	}
-	return eventAt(o, encodeID(calPath), master, instance)
+	calendarID := encodeID(calPath)
+	if moved != nil {
+		if ev, ok := shownAt(o, calendarID, *moved, in.Start, in.End); ok {
+			return ev, nil
+		}
+	}
+	return eventAt(o, calendarID, master, instance)
+}
+
+// shownOccurrence returns the override of the series master at the
+// occurrence rid, nil if there is none, and the timing ListEvents shows that
+// event with: the override's own, else the series' at rid, as expandObject
+// does (spec section 3 item 1, FR-17).
+func shownOccurrence(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time) (*ical.Component, timing) {
+	ov := findOverride(cal, master, rid)
+	if ov != nil {
+		if otm, err := parseTiming(ov); err == nil {
+			return ov, otm
+		}
+	}
+	return ov, instanceTiming(tm, rid)
+}
+
+// instanceTiming returns the timing of the series tm at its occurrence rid.
+func instanceTiming(tm timing, rid time.Time) timing {
+	return timing{start: dateValue{t: rid.In(tm.start.loc()), allDay: tm.start.allDay, tzid: tm.start.tzid}, dur: tm.dur}
+}
+
+// moveSeries applies an "all events" edit of the occurrence
+// in.InstanceStart to the series master in cal whose rule and all-day flag
+// stay as they are (spec section 3, FR-17), and returns that occurrence's
+// recurrence ID after the move.
+//
+//   - The series moves by delta, the distance the event moved from where it
+//     was shown (the override's DTSTART for an exception). Its rule follows
+//     as seriesShift says, and UNTIL, EXDATE, RDATE and the RECURRENCE-IDs
+//     move by delta too. A rule seriesShift refuses, one on fixed days or
+//     times, is an invalid input error, and cal is left as it was.
+//   - Of title, description, location and duration, only what changed from
+//     the event as shown is written into the series, so an exception's own
+//     title does not replace the series'.
+//   - An exception edited this way takes the change too: in.Start, in.End
+//     and the changed fields. Other exceptions keep their own times and
+//     fields, as with Apple, SOGo, InfCloud and Thunderbird.
+func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain.EventInput, now time.Time) (time.Time, error) {
+	rid := in.InstanceStart.UTC()
+	ov, shown := shownOccurrence(cal, master, tm, rid)
+	delta := in.Start.Sub(shown.start.t)
+	dur := in.End.Sub(in.Start)
+	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
+
+	newStart := tm.start.t.Add(delta) // in the series' zone, as seriesShift wants
+	rule, ok := seriesShift(rruleString(master), tm.start.t, newStart)
+	if !ok {
+		return time.Time{}, &domain.ValidationError{Msg: "the series' rule fixes its days or times, so only this event can move there"}
+	}
+	rule = mapRulePart(rule, "UNTIL", func(v string) string {
+		p := ical.Prop{Value: v}
+		shiftDateProp(&p, delta)
+		return p.Value
+	})
+	if rule != "" {
+		p := ical.NewProp(ical.PropRecurrenceRule)
+		p.Value = rule
+		master.Props.Set(p)
+	}
+
+	f := tm.start.form()
+	master.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, newStart, f))
+	if durChanged {
+		master.Props.Del(ical.PropDuration)
+		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.Add(dur), f))
+	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
+		shiftDateProp(p, delta)
+	}
+	shiftRecurrenceRefs(cal, master, delta)
+
+	for _, field := range []struct{ name, value string }{
+		{ical.PropSummary, in.Title},
+		{ical.PropDescription, in.Description},
+		{ical.PropLocation, in.Location},
+	} {
+		shownValue := text(master.Props, field.name)
+		if ov != nil {
+			shownValue = textOr(ov.Props, field.name, shownValue)
+		}
+		if field.value == shownValue {
+			continue
+		}
+		setText(master.Props, field.name, field.value)
+		if ov != nil {
+			setTextKept(ov.Props, field.name, field.value)
+		}
+	}
+
+	if ov != nil {
+		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, f))
+		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, f))
+		ov.Props.Del(ical.PropDuration)
+		bumpChangeProps(ov, now)
+	}
+	return rid.Add(delta), nil
+}
+
+// shownAt returns the event of o with the recurrence ID rid as ListEvents
+// shows it in [start, end], if it is there (FR-17).
+func shownAt(o calObject, calendarID string, rid, start, end time.Time) (domain.Event, bool) {
+	evs, _ := expandObject(o, calendarID, start, end.Add(time.Second))
+	for i := range evs {
+		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
+			return evs[i], true
+		}
+	}
+	return domain.Event{}, false
 }
 
 // DeleteEvent implements domain.CalendarService. For recurring events the

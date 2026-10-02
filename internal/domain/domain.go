@@ -104,8 +104,9 @@ type EventInput struct {
 	RRule       string    `json:"rrule,omitempty"`
 	// InstanceStart is only used when updating an occurrence of a recurring
 	// series: it is the RecurrenceID of the occurrence that was edited. The
-	// update is applied to the whole series, shifting the series by
-	// (Start - InstanceStart) and setting the duration to End - Start.
+	// update is applied to the whole series ("all events"): it moves by the
+	// distance the occurrence moved from where it was shown, and takes only
+	// the fields that changed from it (FR-17).
 	InstanceStart *time.Time `json:"instanceStart,omitempty"`
 }
 
