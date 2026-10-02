@@ -16,6 +16,7 @@ export function apiEvent(p: Partial<ApiEvent> = {}): ApiEvent {
     timezone: 'Europe/Berlin',
     rrule: '',
     recurring: false,
+    modified: false,
     ...p,
   }
 }

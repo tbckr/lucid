@@ -4,16 +4,19 @@ import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
-import { endpoints, type TodoList } from '@/lib/api/endpoints'
+import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
 import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
+import { toCalEvent } from '@/lib/events'
 import { todoToInput } from '@/lib/tasks'
-import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
+import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
 import {
   queryKeys,
   useCalendarTasks,
+  useDeleteOccurrence,
   useDeleteTodo,
   useDeleteTodos,
+  useMoveOccurrence,
   usePendingSeries,
   useTodos,
   useUpdateTodo,
@@ -222,6 +225,146 @@ describe('useCalendarTasks', () => {
         expect(result.current.tasks.map((x) => x.key)).toEqual(['task:t1'])
       })
     })
+  })
+})
+
+describe('useMoveOccurrence', () => {
+  const calendarId = 'c1'
+  // Two occurrences of the same series: moving one must not touch the other, only its ETag once the server answers.
+  const first = apiEvent({
+    id: 'e1',
+    key: 'e1@2025-03-03T08:00:00Z',
+    etag: '"1"',
+    recurring: true,
+    recurrenceId: '2025-03-03T08:00:00Z',
+  })
+  const second = apiEvent({
+    id: 'e1',
+    key: 'e1@2025-03-10T08:00:00Z',
+    etag: '"1"',
+    recurring: true,
+    recurrenceId: '2025-03-10T08:00:00Z',
+  })
+
+  /** A client holding `first` and `second`, and PUTs that answer only when told to. */
+  function setup() {
+    api.setCsrfToken('tok')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
+      events: [first, second],
+      corrupted: [],
+    })
+    const answers: ((r: Response) => void)[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const cached = () => queryClient.getQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'))?.events
+    return { fetch, answers, wrap, cached }
+  }
+
+  it('moves one event of a series at once and gives its siblings the new ETag', async () => {
+    const { fetch, answers, wrap, cached } = setup()
+    const event = toCalEvent(second)
+    const { result } = renderHook(() => useMoveOccurrence(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event, start: '2025-03-10T09:00:00Z', end: '2025-03-10T10:00:00Z' })
+    })
+    await waitFor(() => {
+      expect(cached()?.find((e) => e.key === second.key)?.start).toBe('2025-03-10T09:00:00Z')
+    })
+    expect(answers).toHaveLength(1)
+    const [url, init] = fetch.mock.calls[0]!
+    expect(urlOf(url)).toBe('/api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z')
+    expect(init?.method).toBe('PUT')
+    expect((init?.headers as Record<string, string>)['If-Match']).toBe('"1"')
+
+    answers[0]?.(
+      jsonResponse(
+        200,
+        apiEvent({
+          ...second,
+          start: '2025-03-10T09:00:00Z',
+          end: '2025-03-10T10:00:00Z',
+          etag: '"2"',
+          modified: true,
+        }),
+      ),
+    )
+
+    await waitFor(() => {
+      expect(cached()?.map((e) => e.etag)).toEqual(['"2"', '"2"'])
+    })
+    expect(cached()?.find((e) => e.key === second.key)?.modified).toBe(true)
+  })
+
+  it('puts a failed move of one event back', async () => {
+    const { answers, wrap, cached } = setup()
+    const event = toCalEvent(second)
+    const { result } = renderHook(() => useMoveOccurrence(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event, start: '2025-03-10T09:00:00Z', end: '2025-03-10T10:00:00Z' })
+    })
+    await waitFor(() => {
+      expect(cached()?.find((e) => e.key === second.key)?.start).toBe('2025-03-10T09:00:00Z')
+    })
+
+    answers[0]?.(jsonResponse(409, { error: { code: 'conflict', message: 'x' } }))
+
+    await waitFor(() => {
+      expect(cached()?.find((e) => e.key === second.key)?.start).toBe(second.start)
+    })
+    expect(cached()?.find((e) => e.key === first.key)?.etag).toBe('"1"')
+  })
+})
+
+describe('useDeleteOccurrence', () => {
+  it('deletes one event of a series at once and keeps its siblings', async () => {
+    api.setCsrfToken('tok')
+    const calendarId = 'c1'
+    const first = apiEvent({
+      id: 'e1',
+      key: 'e1@2025-03-03T08:00:00Z',
+      etag: '"1"',
+      recurring: true,
+      recurrenceId: '2025-03-03T08:00:00Z',
+    })
+    const second = apiEvent({
+      id: 'e1',
+      key: 'e1@2025-03-10T08:00:00Z',
+      etag: '"1"',
+      recurring: true,
+      recurrenceId: '2025-03-10T08:00:00Z',
+    })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
+      events: [first, second],
+      corrupted: [],
+    })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useDeleteOccurrence(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(second))
+    })
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'))?.events).toEqual([first])
+    })
+    const [url, init] = fetch.mock.calls[0]!
+    expect(urlOf(url)).toBe('/api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z')
+    expect(init?.method).toBe('DELETE')
+    expect((init?.headers as Record<string, string>)['If-Match']).toBe('"1"')
   })
 })
 

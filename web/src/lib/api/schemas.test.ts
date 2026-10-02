@@ -14,10 +14,15 @@ import {
 
 describe('schemas', () => {
   it('accepts a documented event and fills optional fields', () => {
-    const { description: _d, location: _l, timezone: _t, rrule: _r, ...minimal } = apiEvent()
+    const { description: _d, location: _l, timezone: _t, rrule: _r, modified: _m, ...minimal } = apiEvent()
     const e = eventSchema.parse(minimal)
     expect(e.description).toBe('')
     expect(e.rrule).toBe('')
+    expect(e.modified).toBe(false)
+  })
+
+  it('parses modified', () => {
+    expect(eventSchema.parse(apiEvent({ modified: true })).modified).toBe(true)
   })
 
   it('rejects events whose end is before start or with bad dates', () => {

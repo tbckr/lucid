@@ -211,7 +211,7 @@ export function previewOf(
     const values = eventForm('', ANY_CALENDAR, when as EventWhen)
     if (!eventFormSchema.safeParse(values).success) return null
     const input = formToInput(values, timeZone)
-    return toCalEvent({ ...input, ...draft, title, key: DRAFT_ID, recurring: false, recurrenceId: null })
+    return toCalEvent({ ...input, ...draft, title, key: DRAFT_ID, recurring: false, recurrenceId: null, modified: false })
   }
   // The task as the calendar places it (FR-16): a point, a span or a day.
   const values = taskForm(ANY_TITLE, when as TaskWhen)

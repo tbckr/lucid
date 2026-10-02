@@ -13,6 +13,7 @@ import {
   type Calendar,
   type CorruptedItem,
   type EventInput,
+  type OccurrenceInput,
   type RestoredTodo,
   type Session,
   type Todo,
@@ -88,6 +89,18 @@ export function createEndpoints(client: ApiClient) {
 
     deleteEvent: (eventId: string, etag: string): Promise<undefined> =>
       client.request(`/events/${enc(eventId)}`, { method: 'DELETE', etag }),
+
+    // FR-17: "Only this event" of a recurring series, an override living in the same resource as the series.
+    updateOccurrence: (eventId: string, recurrenceId: string, etag: string, input: OccurrenceInput): Promise<ApiEvent> =>
+      client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, {
+        method: 'PUT',
+        body: input,
+        etag,
+        schema: eventSchema,
+      }),
+
+    deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<undefined> =>
+      client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, { method: 'DELETE', etag }),
 
     async listTodos(calendarId: string, signal?: AbortSignal): Promise<TodoList> {
       const res = await client.request(`/calendars/${enc(calendarId)}/todos`, {

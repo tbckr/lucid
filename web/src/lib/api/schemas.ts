@@ -59,6 +59,8 @@ export const eventSchema = z
     rrule: z.string().optional().default(''),
     recurring: z.boolean(),
     recurrenceId: isoDateTime.nullish(),
+    // FR-17: true for an occurrence of a series an override visibly changed.
+    modified: z.boolean().optional().default(false),
   })
   .refine((e) => Date.parse(e.end) >= Date.parse(e.start), {
     message: 'end must not be before start',
@@ -158,6 +160,21 @@ export interface EventInput {
   rrule: string
   /** RecurrenceID of the edited occurrence; only for recurring series. */
   instanceStart?: string
+}
+
+/**
+ * Payload for PUT of a single occurrence of a series (domain.OccurrenceInput,
+ * FR-17): like `EventInput`, but without `rrule` (the rule belongs to the
+ * series) and without `instanceStart` (the occurrence is given in the path).
+ */
+export interface OccurrenceInput {
+  title: string
+  description: string
+  location: string
+  start: string
+  end: string
+  allDay: boolean
+  timezone: string
 }
 
 /** Payload for POST/PUT of todos (domain.TodoInput). */

@@ -15,9 +15,11 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList, type TodoOccurrenceList } from '@/lib/api/endpoints'
 import {
+  type ApiEvent,
   type Calendar,
   type CorruptedItem,
   type EventInput,
+  type OccurrenceInput,
   type RestoredTodo,
   type Todo,
   type TodoInput,
@@ -413,6 +415,121 @@ export function useMoveEvent() {
       reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
     },
     onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/** Build the PUT payload for one moved/resized occurrence of a series ("Only this event", FR-17). */
+export function moveOccurrenceInput(event: CalEvent, start: string, end: string): OccurrenceInput {
+  return {
+    title: event.title,
+    description: event.description,
+    location: event.location,
+    start,
+    end,
+    allDay: event.allDay,
+    timezone: event.timezone,
+  }
+}
+
+/**
+ * Puts the server's answer for a changed occurrence into the cache (FR-17):
+ * the edited occurrence's own `key` entry becomes the answer; every other
+ * cached event sharing its `id` only gets the new ETag, since all occurrences
+ * of a series share one CalDAV resource and so one ETag.
+ */
+function putOccurrence(qc: QueryClient, event: CalEvent, updated: ApiEvent): void {
+  qc.setQueriesData<EventList>({ queryKey: queryKeys.eventsOf(event.calendarId) }, (old) =>
+    old
+      ? {
+          ...old,
+          events: old.events.map((e) =>
+            e.key === event.key ? updated : e.id === event.id ? { ...e, etag: updated.etag } : e,
+          ),
+        }
+      : old,
+  )
+}
+
+export const MOVE_OCCURRENCE_KEY = ['moveOccurrence'] as const
+
+/**
+ * Drag & drop move/resize of a single occurrence of a series ("Only this
+ * event", FR-10, FR-17, NFR-26). Updated optimistically, like a single
+ * event's move, and rolled back on error; the server's new ETag is then
+ * synced to every cached occurrence of the same series.
+ */
+export function useMoveOccurrence() {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  return useMutation({
+    mutationKey: MOVE_OCCURRENCE_KEY,
+    mutationFn: ({ event, start, end }: MoveVars) =>
+      endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', event.etag, moveOccurrenceInput(event, start, end)),
+    onMutate: async ({ event, start, end }) => {
+      const key = queryKeys.eventsOf(event.calendarId)
+      await qc.cancelQueries({ queryKey: key })
+      const snapshot = qc.getQueriesData<EventList>({ queryKey: key })
+      qc.setQueriesData<EventList>({ queryKey: key }, (old) =>
+        old ? { ...old, events: old.events.map((e) => (e.key === event.key ? { ...e, start, end } : e)) } : old,
+      )
+      return { snapshot }
+    },
+    onSuccess: (updated, { event }) => {
+      putOccurrence(qc, event, updated)
+    },
+    onError: (err, { event }, ctx) => {
+      ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/** Edits a single occurrence of a series ("Only this event", FR-17), with the series' ETag synced like a move. */
+export function useUpdateOccurrence() {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  return useMutation({
+    mutationFn: ({ event, input }: { event: CalEvent; input: OccurrenceInput }) =>
+      endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', event.etag, input),
+    onSuccess: (updated, { event }) => {
+      toast.success(t('event.saved'))
+      putOccurrence(qc, event, updated)
+    },
+    onError: (err, { event }) => {
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/**
+ * Excludes a single occurrence of a series ("Only this event", FR-17):
+ * removed optimistically by its own `key` (NFR-26), unlike deleting a whole
+ * series, which the other occurrences of the series survive.
+ */
+export function useDeleteOccurrence() {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  return useMutation({
+    mutationFn: (event: CalEvent) => endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', event.etag),
+    onMutate: async (event) => {
+      const key = queryKeys.eventsOf(event.calendarId)
+      await qc.cancelQueries({ queryKey: key })
+      const snapshot = qc.getQueriesData<EventList>({ queryKey: key })
+      qc.setQueriesData<EventList>({ queryKey: key }, (old) =>
+        old ? { ...old, events: old.events.filter((e) => e.key !== event.key) } : old,
+      )
+      return { snapshot }
+    },
+    onSuccess: () => {
+      toast.success(t('event.deleted'))
+    },
+    onError: (err, event, ctx) => {
+      ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, event) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
   })
 }
 
