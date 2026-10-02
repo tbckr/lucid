@@ -1,11 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { format, isSameDay } from 'date-fns'
-import { CalendarPlusIcon, MapPinIcon, RepeatIcon } from 'lucide-react'
+import { CalendarPlusIcon, MapPinIcon } from 'lucide-react'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
+import { RepeatGlyph } from '@/components/events/EventItems'
 import { TaskAgendaRow } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
@@ -137,12 +138,11 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate font-medium">{eventTitle(event, t('event.untitled'))}</span>
                       {event.recurring && (
-                        <RepeatIcon
+                        <RepeatGlyph
+                          modified={event.modified}
                           className="size-3.5 shrink-0 text-muted-foreground"
                           aria-label={t(event.modified ? 'event.modified' : 'event.recurring')}
-                        >
-                          {event.modified && <circle cx="20" cy="4" r="3" fill="currentColor" stroke="none" />}
-                        </RepeatIcon>
+                        />
                       )}
                       {event.location && (
                         <span className="flex min-w-0 items-center gap-1 text-muted-foreground max-md:hidden">

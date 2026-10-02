@@ -1,4 +1,4 @@
-import { AlignLeftIcon, GlobeIcon, LockIcon, MapPinIcon, RepeatIcon } from 'lucide-react'
+import { AlignLeftIcon, GlobeIcon, LockIcon, MapPinIcon } from 'lucide-react'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover } from '@/components/ui/popover'
@@ -11,6 +11,7 @@ import { browserTimeZone } from '@/lib/locale'
 import { describeRRule } from '@/lib/rrule'
 import { useUi } from '@/stores/ui'
 import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from './DetailParts'
+import { RepeatGlyph } from './EventItems'
 
 /** Popover with the details of the selected event (read, edit, delete; FR-09). */
 export function EventDetailsPopover() {
@@ -111,11 +112,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
         {hasDetails && (
           <div className="grid gap-3 text-sm">
             {event.recurring && (
-              <DetailRow
-                icon={
-                  <RepeatIcon>{event.modified && <circle cx="20" cy="4" r="3" fill="currentColor" stroke="none" />}</RepeatIcon>
-                }
-              >
+              <DetailRow icon={<RepeatGlyph modified={event.modified} />}>
                 <p>{repeats}</p>
                 {event.modified && <p className="mt-0.5 text-muted-foreground">{t('event.modifiedNotice')}</p>}
               </DetailRow>

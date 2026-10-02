@@ -1,5 +1,5 @@
 import { useDraggable } from '@dnd-kit/core'
-import { RepeatIcon } from 'lucide-react'
+import { createLucideIcon, RepeatIcon, type LucideProps } from 'lucide-react'
 import { useCallback, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
@@ -80,9 +80,29 @@ function ringStyle(ringed: boolean, colors: EventColors): CSSProperties | undefi
 }
 
 /**
+ * Lucide's `repeat` with a filled dot top right in place of its top arrowhead (FR-17): a dot
+ * drawn over the arrowhead merges with it at the 12-16 px the glyph is shown at.
+ */
+const RepeatChangedIcon = createLucideIcon('repeat-changed', [
+  ['path', { d: 'M3 11v-1a4 4 0 0 1 4-4h7', key: 'top' }],
+  ['circle', { cx: '19', cy: '6', r: '3', fill: 'currentColor', stroke: 'none', key: 'dot' }],
+  ['path', { d: 'm7 22-4-4 4-4', key: 'arrow' }],
+  ['path', { d: 'M21 13v1a4 4 0 0 1-4 4H3', key: 'bottom' }],
+])
+
+/**
+ * The repeat glyph of an event of a series; `modified` (FR-17): the event was changed
+ * individually, which a filled dot top right marks. One SVG in `currentColor`, the same size.
+ */
+export function RepeatGlyph({ modified = false, ...props }: LucideProps & { modified?: boolean }) {
+  const Icon = modified ? RepeatChangedIcon : RepeatIcon
+  return <Icon {...props} />
+}
+
+/**
  * Marks a recurring event or task (FR-16, FR-17); nothing for a single one.
  * `modified`: the event is an occurrence of a series an override visibly
- * changed (FR-17); adds a filled dot to the glyph, the color stays `currentColor`.
+ * changed (FR-17); the glyph gets a filled dot, the color stays `currentColor`.
  */
 export function RecurringMark({
   recurring,
@@ -97,9 +117,7 @@ export function RecurringMark({
 }) {
   if (!recurring) return null
   return (
-    <RepeatIcon className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label}>
-      {modified && <circle cx="20" cy="4" r="3" fill="currentColor" stroke="none" />}
-    </RepeatIcon>
+    <RepeatGlyph modified={modified} className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label} />
   )
 }
 

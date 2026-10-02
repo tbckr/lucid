@@ -1,5 +1,5 @@
 import { DndContext } from '@dnd-kit/core'
-import { screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
 import { eventColors } from '@/lib/color'
@@ -7,7 +7,7 @@ import { toCalEvent, type CalEvent } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { apiEvent } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
-import { EventChip, TimedBlock } from './EventItems'
+import { EventChip, RepeatGlyph, TimedBlock } from './EventItems'
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const colors = eventColors('#3b82f6', false)
@@ -41,6 +41,21 @@ describe('EventItems', () => {
       </DndContext>,
     )
     expect(screen.getByRole('img', { name: 'Repeating event, changed individually' })).toBeInTheDocument()
+  })
+
+  // A dot over lucide's top arrowhead merged with it at 12-16 px: the dot takes the arrowhead's place.
+  it('draws the glyph of an event changed individually with a dot in place of the top arrowhead', () => {
+    const { container } = render(
+      <>
+        <RepeatGlyph />
+        <RepeatGlyph modified />
+      </>,
+    )
+    const [plain, changed] = Array.from(container.querySelectorAll('svg'))
+    expect(plain?.querySelector('circle')).toBeNull()
+    expect(plain?.querySelector('path[d="m17 2 4 4-4 4"]')).not.toBeNull()
+    expect(changed?.querySelector('circle')).not.toBeNull()
+    expect(changed?.querySelector('path[d="m17 2 4 4-4 4"]')).toBeNull()
   })
 
   it('shows no mark on an EventChip of a plain recurring event', () => {
