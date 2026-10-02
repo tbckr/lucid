@@ -57,10 +57,28 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   }
 }
 
-/** Marks a recurring event or task (FR-16, FR-17); nothing for a single one. */
-export function RecurringMark({ recurring, label, className }: { recurring: boolean; label: string; className?: string }) {
+/**
+ * Marks a recurring event or task (FR-16, FR-17); nothing for a single one.
+ * `modified`: the event is an occurrence of a series an override visibly
+ * changed (FR-17); adds a filled dot to the glyph, the color stays `currentColor`.
+ */
+export function RecurringMark({
+  recurring,
+  modified,
+  label,
+  className,
+}: {
+  recurring: boolean
+  modified?: boolean
+  label: string
+  className?: string
+}) {
   if (!recurring) return null
-  return <RepeatIcon className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label} />
+  return (
+    <RepeatIcon className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label}>
+      {modified && <circle cx="20" cy="4" r="3" fill="currentColor" stroke="none" />}
+    </RepeatIcon>
+  )
 }
 
 /** Single-day timed event in the month grid: dot, time, title. */
@@ -99,6 +117,11 @@ export function EventChip({
       )}
       <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(event.startsAt, prefs)}</span>
       <span className="truncate font-medium">{title}</span>
+      <RecurringMark
+        recurring={event.recurring}
+        modified={event.modified}
+        label={t(event.modified ? 'event.modified' : 'event.recurring')}
+      />
     </button>
   )
 }
@@ -148,7 +171,11 @@ export function EventBar({
         <span className="tabular shrink-0 opacity-85">{formatShortTime(event.startsAt, prefs)}</span>
       )}
       <span className="truncate">{title}</span>
-      <RecurringMark recurring={event.recurring} label={t('event.recurring')} />
+      <RecurringMark
+        recurring={event.recurring}
+        modified={event.modified}
+        label={t(event.modified ? 'event.modified' : 'event.recurring')}
+      />
     </button>
   )
 }
@@ -197,7 +224,11 @@ export function TimedBlock({
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           {pending && <Spinner className="size-3" />}
           <span className="truncate">{title}</span>
-          <RecurringMark recurring={event.recurring} label={t('event.recurring')} />
+          <RecurringMark
+            recurring={event.recurring}
+            modified={event.modified}
+            label={t(event.modified ? 'event.modified' : 'event.recurring')}
+          />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>
           {compact ? formatShortTime(event.startsAt, prefs) : time}

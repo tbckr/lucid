@@ -142,6 +142,8 @@
     "description": "Description",
     "addDescription": "Add a description",
     "recurring": "Recurring event",
+    "modified": "Repeating event, changed individually",
+    "modifiedNotice": "This event was changed individually.",
     "seriesNotice": "This event repeats. Changes apply to every event in the series.",
     "confirmDelete": "Delete this event?",
     "confirmDeleteSeries": "This event repeats. Delete every event in the series?",

@@ -94,7 +94,16 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
       <div className="grid gap-4 p-4 empty:hidden">
         {hasDetails && (
           <div className="grid gap-3 text-sm">
-            {event.recurring && <DetailRow icon={<RepeatIcon />}>{repeats}</DetailRow>}
+            {event.recurring && (
+              <DetailRow
+                icon={
+                  <RepeatIcon>{event.modified && <circle cx="20" cy="4" r="3" fill="currentColor" stroke="none" />}</RepeatIcon>
+                }
+              >
+                <p>{repeats}</p>
+                {event.modified && <p className="mt-0.5 text-muted-foreground">{t('event.modifiedNotice')}</p>}
+              </DetailRow>
+            )}
             {inZone && (
               <DetailRow icon={<GlobeIcon />}>
                 <span className="text-muted-foreground">{inZone}</span>

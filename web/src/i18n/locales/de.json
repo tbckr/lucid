@@ -142,6 +142,8 @@
     "description": "Beschreibung",
     "addDescription": "Beschreibung hinzufügen",
     "recurring": "Wiederkehrender Termin",
+    "modified": "Wiederkehrender Termin, einzeln geändert",
+    "modifiedNotice": "Dieser Termin wurde einzeln geändert.",
     "seriesNotice": "Dieser Termin wiederholt sich. Änderungen gelten für alle Termine der Serie.",
     "confirmDelete": "Diesen Termin löschen?",
     "confirmDeleteSeries": "Dieser Termin wiederholt sich. Alle Termine der Serie löschen?",

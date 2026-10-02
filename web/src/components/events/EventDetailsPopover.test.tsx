@@ -70,6 +70,15 @@ describe('EventDetailsPopover', () => {
   })
 
   it.each([
+    [true, true],
+    [false, false],
+  ])('says that an event was changed individually, only when it was (modified: %s)', async (modified, shown) => {
+    const { dialog } = await openDetails({ recurring: true, rrule: 'FREQ=DAILY', modified })
+    const notice = within(dialog).queryByText('This event was changed individually.')
+    expect(notice !== null).toBe(shown)
+  })
+
+  it.each([
     ['America/New_York', true],
     ['W. Europe Standard Time', false],
     ['Europe/Berlin', false],
