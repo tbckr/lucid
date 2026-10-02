@@ -1,6 +1,7 @@
-import { createContext, use } from 'react'
+import { createContext, use, useMemo } from 'react'
 import { type MoveWindow } from '@/lib/calendarTasks'
-import { type CalEvent } from '@/lib/events'
+import { withScopePreview, type ScopePreview } from '@/lib/dnd'
+import { type CalEvent, type CalItem } from '@/lib/events'
 
 export interface DndState {
   /** Occurrence keys with a pending (recurring) move: show a loading state. */
@@ -12,6 +13,20 @@ export interface DndState {
   /** Move window of the active drag's task, when it is a bounded series (FR-17): the views hatch days outside it. */
   moveWindow: MoveWindow | null
   activeId: string | null
+  /**
+   * A dropped event of a series while the question which events move is open
+   * (FR-10, FR-17): it shows at its new place, its tiles get a ring, and
+   * nothing can be dragged meanwhile.
+   */
+  scope: ScopePreview | null
+  /**
+   * An event moved with "Only this event", until the move has settled: it
+   * stays where it was dropped instead of jumping back until the optimistic
+   * update is in (NFR-26).
+   */
+  held: ScopePreview | null
+  /** Extra ref for the tile of `scope.key`, which the question points at. */
+  scopeAnchor: (el: HTMLElement | null) => void
 }
 
 export const DndStateContext = createContext<DndState>({
@@ -20,8 +35,17 @@ export const DndStateContext = createContext<DndState>({
   resize: null,
   moveWindow: null,
   activeId: null,
+  scope: null,
+  held: null,
+  scopeAnchor: () => undefined,
 })
 
 export function useDndState(): DndState {
   return use(DndStateContext)
+}
+
+/** `items` as the views show them while an event of a series waits for, or saves, its answer (FR-17). */
+export function useScopePreview(items: CalItem[]): CalItem[] {
+  const { scope, held } = useDndState()
+  return useMemo(() => withScopePreview(withScopePreview(items, held), scope), [items, held, scope])
 }

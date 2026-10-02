@@ -79,10 +79,12 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
 
 /**
  * Drags the task item by its title: Space starts a keyboard drag, Enter still
- * opens the details. Without `drag`, or disabled, the item stays in place.
+ * opens the details. Without `drag`, disabled, or while the question which
+ * events of a series move is open (FR-10, FR-17), the item stays in place.
  */
 function useTaskDrag(task: CalTask, drag: DragBinding | undefined) {
-  const draggable = drag !== undefined && !drag.disabled
+  const { scope } = useDndState()
+  const draggable = drag !== undefined && !drag.disabled && scope === null
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
     id: drag?.id ?? task.key,
     data: drag?.data,

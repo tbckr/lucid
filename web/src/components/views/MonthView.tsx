@@ -2,7 +2,7 @@ import { useDroppable } from '@dnd-kit/core'
 import { addDays, addMonths, format, isSameDay, isSameMonth, startOfDay } from 'date-fns'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useDndState } from '@/components/dnd/dndState'
+import { useDndState, useScopePreview } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, EventChip } from '@/components/events/EventItems'
@@ -59,9 +59,11 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
   }, [])
   const capacity = cellCapacity(rowHeight, HEADER_PX, ROW_PX)
 
+  // A dropped event of a series shows at its new place while it waits for its answer (FR-17).
+  const shown = useScopePreview(events)
   const layouts = useMemo(
-    () => weeks.map((days) => layoutWeekRow(days, events, capacity)),
-    [weeks, events, capacity],
+    () => weeks.map((days) => layoutWeekRow(days, shown, capacity)),
+    [weeks, shown, capacity],
   )
 
   const corruptedByDay = useMemo(() => {

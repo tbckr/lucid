@@ -4,7 +4,7 @@ import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DraftBlock } from '@/components/create/DraftBlock'
-import { useDndState } from '@/components/dnd/dndState'
+import { useDndState, useScopePreview } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
@@ -52,8 +52,10 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const allDayEvents = useMemo(() => events.filter(inAllDayRow), [events])
-  const timedEvents = useMemo(() => events.filter((e) => !inAllDayRow(e)), [events])
+  // A dropped event of a series shows at its new place while it waits for its answer (FR-17).
+  const shown = useScopePreview(events)
+  const allDayEvents = useMemo(() => shown.filter(inAllDayRow), [shown])
+  const timedEvents = useMemo(() => shown.filter((e) => !inAllDayRow(e)), [shown])
   const allDay = useMemo(
     () => layoutWeekRow(days, allDayEvents, expanded ? Number.POSITIVE_INFINITY : ALL_DAY_ROWS),
     [days, allDayEvents, expanded],

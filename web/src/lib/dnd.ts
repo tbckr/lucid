@@ -140,3 +140,26 @@ export function withDrop(drag: DragData, result: DropResult): DragData {
   if (task.occurrence?.state === 'upcoming') return { ...drag, event: shiftedTask(task, delta.days, delta.minutes) }
   return { ...drag, event: toCalTask({ ...task.todo, ...result.input }) ?? task }
 }
+
+/**
+ * An event of a series dropped at new times while the user picks which
+ * events move (FR-10, FR-17): `key` is the dropped occurrence, `id` its
+ * series, and `all` is true while "All events" has the focus or the pointer.
+ */
+export interface ScopePreview {
+  key: string
+  id: string
+  start: string
+  end: string
+  all: boolean
+}
+
+/**
+ * `items` with the event of `scope.key` at the times it was dropped at, so it
+ * shows only at its new place until the answer, like a resize preview.
+ */
+export function withScopePreview(items: CalItem[], scope: ScopePreview | null): CalItem[] {
+  if (!scope) return items
+  const times = { start: scope.start, end: scope.end }
+  return items.map((e) => (e.kind === 'event' && e.key === scope.key ? withTimes(e, times) : e))
+}

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { apiEvent, occurrence, todo } from '@/test/fixtures'
 import { occurrenceTask, toCalTask } from './calendarTasks'
-import { acceptsDrop, createRange, dropBlocked, dropResult, PX_PER_MINUTE, withDrop, type DragData } from './dnd'
+import {
+  acceptsDrop,
+  createRange,
+  dropBlocked,
+  dropResult,
+  PX_PER_MINUTE,
+  withDrop,
+  withScopePreview,
+  type DragData,
+} from './dnd'
 import { toCalEvent } from './events'
 
 const timed = toCalEvent(apiEvent()) // 10:00-11:00 local on 2026-09-25
@@ -282,6 +291,40 @@ describe('dropResult and withDrop for an upcoming occurrence (FR-17)', () => {
     const moved = withDrop(drag, result).event
     expect(moved.startsAt).toEqual(new Date(2026, 8, 28, 10))
     expect(moved.endsAt).toEqual(new Date(2026, 8, 28, 12))
+  })
+})
+
+describe('withScopePreview (FR-17)', () => {
+  // Two events of a daily series at 10:00-11:00 local, and an all-day series.
+  const series = { recurring: true, rrule: 'FREQ=DAILY' }
+  const first = toCalEvent(apiEvent({ ...series, key: 'e1@25', recurrenceId: '2026-09-25T08:00:00Z' }))
+  const second = toCalEvent(
+    apiEvent({ ...series, key: 'e1@26', recurrenceId: '2026-09-26T08:00:00Z', start: '2026-09-26T08:00:00Z', end: '2026-09-26T09:00:00Z' }),
+  )
+  const holiday = toCalEvent(
+    apiEvent({ ...series, id: 'e2', key: 'e2@25', allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }),
+  )
+
+  it('shows only the dropped event at the times of the drop', () => {
+    const scope = { key: 'e1@25', id: 'e1', start: '2026-09-27T09:00:00.000Z', end: '2026-09-27T10:00:00.000Z', all: true }
+    const [moved, other, own] = withScopePreview([first, second, task], scope)
+    expect(moved?.startsAt).toEqual(new Date(2026, 8, 27, 11))
+    expect(moved?.endsAt).toEqual(new Date(2026, 8, 27, 12))
+    expect(moved?.key).toBe('e1@25')
+    expect(other).toBe(second)
+    expect(own).toBe(task)
+  })
+
+  it('places an all-day event on local days, as loading it would', () => {
+    const scope = { key: 'e2@25', id: 'e2', start: '2026-09-27T00:00:00.000Z', end: '2026-09-28T00:00:00.000Z', all: false }
+    const [moved] = withScopePreview([holiday], scope)
+    expect(moved?.startsAt).toEqual(day(27))
+    expect(moved?.endsAt).toEqual(day(28))
+  })
+
+  it('leaves the items as they are without a question', () => {
+    const items = [first, second]
+    expect(withScopePreview(items, null)).toBe(items)
   })
 })
 

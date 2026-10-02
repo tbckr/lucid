@@ -1,6 +1,6 @@
 import { useDraggable } from '@dnd-kit/core'
 import { RepeatIcon } from 'lucide-react'
-import { type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
 import { useDndState } from '@/components/dnd/dndState'
@@ -14,16 +14,32 @@ import { useUi } from '@/stores/ui'
 /**
  * Draggable + clickable wrapper shared by all event renderings. Enter opens
  * the details popover; Space starts a keyboard drag (dnd-kit).
+ *
+ * While a dropped event of a series waits for the answer which events move
+ * (FR-10, FR-17), nothing can be dragged, its tile anchors the question, and
+ * `ringed` marks the tiles the answer in focus would move.
  */
 function useEventInteraction(event: CalEvent, drag: DragBinding) {
   const openDetail = useUi((s) => s.openDetail)
-  const { pendingKeys } = useDndState()
+  const { pendingKeys, scope, scopeAnchor } = useDndState()
   const pending = pendingKeys.has(event.key)
+  const asked = scope?.key === event.key
+  const ringed = asked || (scope?.all === true && scope.id === event.id)
+  // The drag overlay shows the dropped event for a moment after the drop, then is gone: as the
+  // one tile of it that can't be dragged, it doesn't anchor the question.
+  const anchors = asked && !drag.disabled
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: drag.id,
     data: drag.data,
-    disabled: drag.disabled || pending,
+    disabled: drag.disabled || pending || scope !== null,
   })
+  const anchorRef = useCallback(
+    (el: HTMLElement | null) => {
+      setNodeRef(el)
+      scopeAnchor(el)
+    },
+    [setNodeRef, scopeAnchor],
+  )
   const onClick = (e: MouseEvent<HTMLElement>) => {
     e.stopPropagation()
     openDetail({ item: event, anchor: e.currentTarget })
@@ -39,7 +55,7 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
     listeners?.onKeyDown?.(e)
   }
   return {
-    ref: setNodeRef,
+    ref: anchors ? anchorRef : setNodeRef,
     props: {
       ...attributes,
       ...listeners,
@@ -54,7 +70,13 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
     },
     isDragging,
     pending,
+    ringed,
   }
+}
+
+/** The 2 px ring of a tile the scope question is about (FR-17), in its calendar's color. */
+function ringStyle(ringed: boolean, colors: EventColors): CSSProperties | undefined {
+  return ringed ? ({ '--tw-ring-color': colors.solid } as CSSProperties) : undefined
 }
 
 /**
@@ -96,7 +118,7 @@ export function EventChip({
   className?: string
 }) {
   const { t } = useTranslation()
-  const { ref, props, isDragging, pending } = useEventInteraction(event, drag)
+  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag)
   const title = eventTitle(event, t('event.untitled'))
   return (
     <button
@@ -107,8 +129,10 @@ export function EventChip({
       className={cn(
         'group flex h-5 w-full min-w-0 items-center gap-1.5 rounded-sm px-1.5 text-left text-xs leading-none outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
         isDragging && 'opacity-40',
+        ringed && 'ring-2',
         className,
       )}
+      style={ringStyle(ringed, colors)}
     >
       {pending ? (
         <Spinner className="size-3" />
@@ -144,7 +168,7 @@ export function EventBar({
   prefs: FormatPrefs
 }) {
   const { t } = useTranslation()
-  const { ref, props, isDragging, pending } = useEventInteraction(event, drag)
+  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag)
   const title = eventTitle(event, t('event.untitled'))
   return (
     <button
@@ -159,9 +183,11 @@ export function EventBar({
         continuesBefore ? 'rounded-l-none' : 'rounded-l-sm',
         continuesAfter ? 'rounded-r-none' : 'rounded-r-sm',
         isDragging && 'opacity-40',
+        // The bar is filled with the ring's color: the offset sets the ring apart from it.
+        ringed && 'ring-2 ring-offset-1 ring-offset-surface',
         className,
       )}
-      style={{ backgroundColor: colors.solid, color: colors.onSolid, ...style }}
+      style={{ backgroundColor: colors.solid, color: colors.onSolid, ...ringStyle(ringed, colors), ...style }}
     >
       {pending && <Spinner className="size-3" />}
       {!event.allDay && !continuesBefore && (
@@ -198,7 +224,7 @@ export function TimedBlock({
 }) {
   const compact = size === 'xs'
   const { t } = useTranslation()
-  const { ref, props, isDragging, pending } = useEventInteraction(event, drag)
+  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag)
   const title = eventTitle(event, t('event.untitled'))
   const time = `${formatShortTime(event.startsAt, prefs)} – ${formatShortTime(event.endsAt, prefs)}`
   return (
@@ -215,8 +241,9 @@ export function TimedBlock({
           'relative flex size-full min-h-0 flex-col overflow-hidden rounded-md border-l-[3px] px-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
           compact ? 'flex-row items-center gap-1 py-0' : 'py-1',
           pending && 'animate-pulse',
+          ringed && 'ring-2',
         )}
-        style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid }}
+        style={{ backgroundColor: colors.tint, color: colors.onTint, borderLeftColor: colors.solid, ...ringStyle(ringed, colors) }}
       >
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           {pending && <Spinner className="size-3" />}
@@ -237,15 +264,20 @@ export function TimedBlock({
   )
 }
 
-/** Handle at the bottom of a timed block to change its end (15-min steps); `draft`: of the create popover's entry. */
+/**
+ * Handle at the bottom of a timed block to change its end (15-min steps); `draft`: of the create
+ * popover's entry. Gone while the question which events of a series move is open (FR-17).
+ */
 export function ResizeHandle({ event, disabled, draft }: { event: CalEvent; disabled: boolean; draft?: true }) {
   const { t } = useTranslation()
+  const { scope } = useDndState()
+  const off = disabled || scope !== null
   const { attributes, listeners, setNodeRef } = useDraggable({
     id: `resize:${event.key}`,
     data: { type: 'resize', event, ...(draft && { draft }) } satisfies DragData,
-    disabled,
+    disabled: off,
   })
-  if (disabled) return null
+  if (off) return null
   return (
     <button
       ref={setNodeRef}

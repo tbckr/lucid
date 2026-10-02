@@ -239,7 +239,18 @@ describe('MonthView', () => {
     })
     const view = (moveWindow: MoveWindow | null) => (
       <DndContext>
-        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow, activeId: null }}>
+        <DndStateContext
+          value={{
+            pendingKeys: new Set(),
+            pendingTodos: new Set(),
+            resize: null,
+            moveWindow,
+            activeId: null,
+            scope: null,
+            held: null,
+            scopeAnchor: () => undefined,
+          }}
+        >
           <MonthView
             date={new Date(2026, 8, 25)}
             now={new Date(2026, 8, 25, 12)}
@@ -273,7 +284,18 @@ describe('MonthView', () => {
     const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
     renderWithProviders(
       <DndContext>
-        <DndStateContext value={{ pendingKeys: new Set(), pendingTodos: new Set(), resize: null, moveWindow: w, activeId: null }}>
+        <DndStateContext
+          value={{
+            pendingKeys: new Set(),
+            pendingTodos: new Set(),
+            resize: null,
+            moveWindow: w,
+            activeId: null,
+            scope: null,
+            held: null,
+            scopeAnchor: () => undefined,
+          }}
+        >
           <MonthView
             date={new Date(2026, 8, 25)}
             now={new Date(2026, 8, 25, 12)}
