@@ -109,6 +109,28 @@ type EventInput struct {
 	InstanceStart *time.Time `json:"instanceStart,omitempty"`
 }
 
+// OccurrenceInput is the payload for changing only one occurrence of a
+// recurring series ("only this event"), writing or editing an RFC 5545
+// override. There is no RRule: the rule belongs to the series (FR-17).
+type OccurrenceInput struct {
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Location    string    `json:"location,omitempty"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	AllDay      bool      `json:"allDay"`
+	Timezone    string    `json:"timezone,omitempty"`
+}
+
+// Validate checks the input for structural problems, the EventInput rules
+// without RRule (FR-17). It wraps ErrInvalidInput.
+func (in OccurrenceInput) Validate() error {
+	return EventInput{
+		Title: in.Title, Description: in.Description, Location: in.Location,
+		Start: in.Start, End: in.End, AllDay: in.AllDay, Timezone: in.Timezone,
+	}.Validate()
+}
+
 // Maximum field sizes accepted from clients.
 const (
 	MaxTitleLen       = 1024
@@ -385,6 +407,11 @@ type CalendarService interface {
 	CreateEvent(ctx context.Context, calendarID string, in EventInput) (Event, error)
 	// UpdateEvent replaces the event. etag must match (If-Match), otherwise ErrConflict.
 	UpdateEvent(ctx context.Context, eventID, etag string, in EventInput) (Event, error)
+	// UpdateOccurrence changes only the occurrence at recurrenceID of a
+	// recurring event ("only this event"), writing or editing an RFC 5545
+	// override in the series' resource. etag must match (If-Match),
+	// otherwise ErrConflict (FR-17).
+	UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in OccurrenceInput) (Event, error)
 	DeleteEvent(ctx context.Context, eventID, etag string) error
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)

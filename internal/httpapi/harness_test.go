@@ -71,6 +71,8 @@ type fakeService struct {
 	gotEvent domain.EventInput
 	gotTodo  domain.TodoInput
 	gotSnap  domain.TodoSnapshot
+	gotRID   time.Time
+	gotOcc   domain.OccurrenceInput
 }
 
 func (f *fakeService) record(name string) error {
@@ -118,6 +120,16 @@ func (f *fakeService) UpdateEvent(_ context.Context, id, etag string, in domain.
 		return domain.Event{}, err
 	}
 	return domain.Event{ID: id, Title: in.Title, ETag: `"2"`}, nil
+}
+
+func (f *fakeService) UpdateOccurrence(_ context.Context, id, etag string, rid time.Time, in domain.OccurrenceInput) (domain.Event, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID, f.gotOcc = id, etag, rid, in
+	f.mu.Unlock()
+	if err := f.record("UpdateOccurrence"); err != nil {
+		return domain.Event{}, err
+	}
+	return domain.Event{ID: id, Title: in.Title, ETag: `"3"`}, nil
 }
 
 func (f *fakeService) DeleteEvent(_ context.Context, id, etag string) error {
