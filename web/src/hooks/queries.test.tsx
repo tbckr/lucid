@@ -640,6 +640,30 @@ describe('useUpdateTodo with a recurring task', () => {
     })
   })
 
+  it('says the whole series moved, and what is next up, when a later repeat was dragged', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const weekly = { ...series, rrule: 'FREQ=WEEKLY', fixedDays: false, next: { due: '2026-10-12T00:00:00Z' } }
+    const { result } = setup(
+      [{ ...weekly, etag: '"2"', due: '2026-10-07T00:00:00Z', next: { due: '2026-10-14T00:00:00Z' }, undoToken: 'tok' }],
+      { from: weekly },
+    )
+
+    act(() => {
+      result.current.mutate({
+        todo: weekly,
+        input: todoToInput(weekly, { due: '2026-10-07T00:00:00.000Z' }),
+        byUpcoming: true,
+      })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Series moved. Next up: Wed, Oct 7')).toMatchObject({
+      duration: 8000,
+      action: 'Undo',
+    })
+  })
+
   it('tells where a series moved on its last repeat', async () => {
     const success = vi.spyOn(toast, 'success')
     const last = { ...series, next: null }

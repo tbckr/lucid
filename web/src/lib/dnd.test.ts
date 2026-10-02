@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { apiEvent, todo } from '@/test/fixtures'
-import { toCalTask } from './calendarTasks'
+import { apiEvent, occurrence, todo } from '@/test/fixtures'
+import { occurrenceTask, toCalTask } from './calendarTasks'
 import { acceptsDrop, createRange, dropBlocked, dropResult, PX_PER_MINUTE, withDrop, type DragData } from './dnd'
 import { toCalEvent } from './events'
 
@@ -50,6 +50,7 @@ describe('dropResult', () => {
         priority: 0,
         status: 'NEEDS-ACTION',
       },
+      delta: { days: 2, minutes: 0 },
     })
     const drag = { type: 'timed' as const, event: task, originDay: day(25) }
     expect(dropResult(drag, { type: 'column', day: day(26) }, 30 * PX_PER_MINUTE)).toMatchObject({
@@ -228,6 +229,59 @@ describe('withDrop', () => {
     expect(moved.event.kind).toBe('task')
     expect(moved.event.startsAt).toEqual(new Date(2026, 8, 23, 9))
     expect(moved.event.endsAt).toEqual(new Date(2026, 8, 23, 11))
+  })
+})
+
+describe('dropResult and withDrop for an upcoming occurrence (FR-17)', () => {
+  // A daily series whose current occurrence is due 09-25 (09:00-11:00 local when timed);
+  // the occurrence dragged is the one two days later.
+  const daily = todo({ recurring: true, rrule: 'FREQ=DAILY', due: '2026-09-25T00:00:00Z', dueAllDay: true })
+  const upcoming = occurrenceTask(
+    occurrence({ key: 't1@27', recurrenceId: '2026-09-27T00:00:00Z', due: '2026-09-27T00:00:00Z', state: 'upcoming' }),
+    daily,
+  )!
+
+  it('moves the series by the distance the occurrence was dragged', () => {
+    const drag: DragData = { type: 'event', event: upcoming, originDay: day(27) }
+    expect(dropResult(drag, { type: 'day', day: day(29) }, 0)).toMatchObject({
+      kind: 'task',
+      task: upcoming,
+      input: { due: '2026-09-27T00:00:00.000Z', dueAllDay: true },
+    })
+  })
+
+  it('shows the dragged occurrence, still pencilled in, where the drop puts it', () => {
+    const drag: DragData = { type: 'event', event: upcoming, originDay: day(27) }
+    const moved = withDrop(drag, dropResult(drag, { type: 'day', day: day(29) }, 0)!).event
+    expect(moved.startsAt).toEqual(day(29))
+    expect(moved.endsAt).toEqual(day(30))
+    expect(moved.kind === 'task' && moved.occurrence).toEqual({ state: 'upcoming', recurrenceId: '2026-09-27T00:00:00Z' })
+    expect(moved.key).toBe('t1@27')
+  })
+
+  it('moves a timed occurrence by days and minutes', () => {
+    const timedDaily = todo({
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+      start: '2026-09-25T07:00:00Z',
+      due: '2026-09-25T09:00:00Z',
+    })
+    const timedUpcoming = occurrenceTask(
+      occurrence({
+        recurrenceId: '2026-09-27T07:00:00Z',
+        start: '2026-09-27T07:00:00Z',
+        due: '2026-09-27T09:00:00Z',
+        dueAllDay: false,
+        state: 'upcoming',
+      }),
+      timedDaily,
+    )!
+    const drag: DragData = { type: 'timed', event: timedUpcoming, originDay: day(27) }
+    const result = dropResult(drag, { type: 'column', day: day(28) }, 60 * PX_PER_MINUTE)!
+    expect(result).toMatchObject({ input: { start: '2026-09-26T08:00:00.000Z', due: '2026-09-26T10:00:00.000Z' } })
+    const moved = withDrop(drag, result).event
+    expect(moved.startsAt).toEqual(new Date(2026, 8, 28, 10))
+    expect(moved.endsAt).toEqual(new Date(2026, 8, 28, 12))
   })
 })
 

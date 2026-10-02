@@ -8,13 +8,13 @@ import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { api } from '@/lib/api/client'
-import { toCalTask, type MoveWindow } from '@/lib/calendarTasks'
+import { occurrenceTask, toCalTask, type MoveWindow } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { previewOf } from '@/lib/quickCreate'
 import { useUi } from '@/stores/ui'
-import { apiEvent, calendar, todo } from '@/test/fixtures'
+import { apiEvent, calendar, occurrence, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { MonthView } from './MonthView'
 
@@ -163,6 +163,44 @@ describe('MonthView', () => {
       type: 'event',
       event: call,
       originDay: new Date(2026, 8, 25),
+    })
+  })
+
+  describe('upcoming repeats (FR-17)', () => {
+    // A repeat two days after the current one, on 09-27.
+    const upcoming = (p: Parameters<typeof todo>[0]) =>
+      occurrenceTask(
+        occurrence({
+          key: 't1@27',
+          title: 'Water',
+          recurrenceId: '2026-09-27T00:00:00Z',
+          due: '2026-09-27T00:00:00Z',
+          state: 'upcoming',
+        }),
+        todo({ title: 'Water', recurring: true, due: '2026-09-25T00:00:00Z', dueAllDay: true, ...p }),
+      )!
+    const name = 'Water, planned repeat on Sun, Sep 27'
+
+    it('picks up an upcoming repeat of an interval series from its own day, to move the series', () => {
+      const t = upcoming({ rrule: 'FREQ=DAILY' })
+      const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+      renderMonth([t], { onDragStart })
+      fireEvent.keyDown(screen.getByRole('button', { name }), { code: 'Space', key: ' ' })
+      expect(onDragStart).toHaveBeenCalledTimes(1)
+      expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+        type: 'event',
+        event: t,
+        originDay: new Date(2026, 8, 27),
+      })
+    })
+
+    it('keeps an upcoming repeat of a series on fixed days in place', () => {
+      const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+      renderMonth([upcoming({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH,FR,SU', fixedDays: true })], { onDragStart })
+      const title = screen.getByRole('button', { name })
+      expect(title).not.toHaveAttribute('aria-roledescription')
+      fireEvent.keyDown(title, { code: 'Space', key: ' ' })
+      expect(onDragStart).not.toHaveBeenCalled()
     })
   })
 

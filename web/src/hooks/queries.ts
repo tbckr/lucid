@@ -497,15 +497,19 @@ const ACTION_TOAST_MS = 8000
 interface UpdateTodoVars {
   todo: Todo
   input: TodoInput
+  /** Set by a drag of an upcoming occurrence, which moves the series as a whole (FR-17). */
+  byUpcoming?: boolean
 }
 
 /**
  * What the toast after an update of a series says, or null for an update that
  * neither completes nor moves one (FR-17): the day the series goes on with,
- * and after a move also the one after it.
+ * and after a move also the one after it. A move by an upcoming occurrence
+ * says that the series moved, since the day it goes on with isn't the one
+ * dragged.
  */
 function seriesMessage(
-  { todo, input }: UpdateTodoVars,
+  { todo, input, byUpcoming }: UpdateTodoVars,
   updated: UpdatedTodo,
   t: TFn,
   prefs: FormatPrefs,
@@ -520,6 +524,7 @@ function seriesMessage(
   if (!todo.recurring || !datesChanged(todo, input) || ruleChanged(todo, input)) return null
   const moved = anchorOf(input)
   if (!moved) return null
+  if (byUpcoming) return t('tasks.seriesMoved', { date: day(moved) })
   const next =
     updated.next &&
     anchorOf({

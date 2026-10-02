@@ -151,6 +151,43 @@ test('dragging a repeat on fixed days stays before the next one', async ({ page 
   await expect(current(4)).toHaveCount(0)
 })
 
+test('dragging a later repeat of an interval series moves the whole series', async ({ page }) => {
+  const title = 'E2E daily'
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule: 'FREQ=DAILY' }, 'm')
+  const cells = monthGrid(page).getByRole('gridcell')
+  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
+  const entry = (n: number) => cells.nth(at + n).locator('[data-task-key]', { hasText: title })
+  // The current repeat on day `n`: the planned ones have no checkbox.
+  const current = (n: number) => entry(n).filter({ has: page.getByRole('checkbox') })
+
+  // Tomorrow's planned repeat two days later: the series follows, from today's repeat on.
+  await dragOver(page, entry(1).getByRole('button', { name: `${title}, planned repeat on ${short(day(1))}` }), cells.nth(at + 3))
+  await page.mouse.up()
+  await expect(page.getByText(`Series moved. Next up: ${short(day(2))}`)).toBeVisible()
+  await expect(current(2)).toBeVisible()
+  await expect(entry(0)).toHaveCount(0)
+  await expect(entry(1)).toHaveCount(0)
+
+  await page.reload()
+  await expect(current(2)).toBeVisible()
+  await expect(entry(1)).toHaveCount(0)
+})
+
+test('a later repeat on fixed days stays in place', async ({ page }) => {
+  const title = 'E2E weekly'
+  const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
+  const cells = monthGrid(page).getByRole('gridcell')
+  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
+  const planned = cells.nth(at + 3).getByRole('button', { name: `${title}, planned repeat on ${short(day(3))}` })
+
+  await dragOver(page, planned, cells.nth(at + 1))
+  await page.mouse.up()
+  await expect(planned).toBeVisible()
+  await expect(cells.nth(at + 1).locator('[data-task-key]', { hasText: title })).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
 test('set and remove the repeat of a task in the editor', async ({ page }) => {
   const title = 'E2E single'
   await openWith(page, { title, due: today.toISOString(), dueAllDay: true }, 'w')

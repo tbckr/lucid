@@ -777,8 +777,9 @@ problem: the dates move, but `BYDAY`/`BYMONTHDAY` do not.
 ## Lucid's behavior
 
 Lucid shows every occurrence of a recurring task in the calendar views and
-lets the user complete and move the current one (FR-16, FR-17). The API is
-described in [API.md](API.md#todos).
+lets the user complete and move the current one, and move a series with an
+interval rule by any later one too (FR-16, FR-17). The API is described in
+[API.md](API.md#todos).
 
 **Decision (2026-09-29): write by rolling, read tolerantly.**
 
@@ -1018,7 +1019,11 @@ keeps the properties and components Lucid does not know.
   in order. Later ones are a preview, and none can be skipped.
 - Only an occurrence off the rule can be moved on its own. Moving any other
   occurrence moves the series from the current occurrence on. With an
-  interval rule the later occurrences move along. With fixed days a move
+  interval rule the later occurrences move along, so in the calendar any of
+  them can be dragged as well, like an occurrence of a recurring event: the
+  series moves by the distance it was dragged, from the current occurrence
+  on. Where the later occurrences stay (fixed days, or a current occurrence
+  off the rule), only the current one can be dragged. With fixed days a move
   stays from the start of the current occurrence's rule day to before the
   start of the next occurrence's rule day, both in the series' zone, or
   before the next occurrence itself when it falls on the same day (several
@@ -1114,7 +1119,8 @@ that repeats are completed in order.
 - **Task list**: one row per series, due at its current occurrence, with ⟳
   and the rule as screen reader text. Completed copies are completed tasks.
 - **Details**: the rule in words; for an upcoming occurrence "Can be completed
-  once *date* is done."; for one completed by another app "Completed in
+  once *date* is done.", or "Can be completed and moved once *date* is done."
+  where it can't be dragged; for one completed by another app "Completed in
   another app."; for a rule Lucid cannot evaluate "Lucid can't read this
   repeat. Complete and move it in the app that created it."
 - **Editor**: a repeat field with "Does not repeat" and every day, week,
@@ -1126,15 +1132,18 @@ that repeats are completed in order.
   reachable by keyboard, with "Until *date*, then the next repeat is due."
   For the last repeat, only the days before it are blocked, and the picker
   shows no limit.
-- **Dragging**: days outside the move window are hatched. A day of the
-  browser's that the window covers only in part, for a series in another
-  zone, is not; a drop there is checked at its time. A drop outside the
-  window changes nothing, and screen readers hear "Only possible until
+- **Dragging**: the current occurrence, and with an interval rule any
+  upcoming one, which moves the series by the distance it was dragged and
+  shows where it lands itself. Days outside the move window are hatched. A
+  day of the browser's that the window covers only in part, for a series in
+  another zone, is not; a drop there is checked at its time. A drop outside
+  the window changes nothing, and screen readers hear "Only possible until
   *date*." For the last repeat, only the days before it are hatched, and a
   blocked drop there says "Only possible from *date* on."
 - **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
-  *date*.", each with Undo for 8 seconds, then "Undone." A completion saved
+  *date*.", or after dragging an upcoming occurrence "Series moved. Next up:
+  *date*", each with Undo for 8 seconds, then "Undone." A completion saved
   together with a rule change gets the same toast and Undo, which restores
   the series exactly as it was, rule and all. A change that turned other
   apps' completions into tasks of their own (see Writing), or whose new

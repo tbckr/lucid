@@ -127,16 +127,21 @@ describe('task items', () => {
       vi.useRealTimers()
     })
 
-    it('pencils in an upcoming occurrence: no checkbox, a planned-repeat name, not draggable', () => {
+    it('pencils in an upcoming occurrence: no checkbox, a planned-repeat name, on fixed days not draggable', () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 8, 25, 12))
-      const t = occurrenceOf({
-        due: '2026-10-08T00:00:00Z',
-        dueAllDay: true,
-        state: 'upcoming',
-        recurrenceId: '2026-10-08T00:00:00Z',
-        key: 't1@2026-10-08T00:00:00Z',
-      })
+      const t = occurrenceTask(
+        occurrence({
+          todoId: 't1',
+          title: 'Water the flowers',
+          due: '2026-10-08T00:00:00Z',
+          dueAllDay: true,
+          state: 'upcoming',
+          recurrenceId: '2026-10-08T00:00:00Z',
+          key: 't1@2026-10-08T00:00:00Z',
+        }),
+        series({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true }),
+      )!
       renderWithProviders(
         <TaskChip
           task={t}

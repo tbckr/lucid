@@ -90,10 +90,14 @@ function place(d: TaskDates): Placement | null {
   if (single.allDay) {
     return { allDay: true, point: false, dates, startsAt: single.at, endsAt: addDays(single.at, 1) }
   }
-  // Clamp to midnight so a late point stays on its day instead of becoming a bar.
-  const end = addMinutes(single.at, TASK_POINT_MINUTES)
-  const midnight = addDays(startOfDay(single.at), 1)
-  return { allDay: false, point: true, dates, startsAt: single.at, endsAt: end < midnight ? end : midnight }
+  return { allDay: false, point: true, dates, startsAt: single.at, endsAt: pointEnd(single.at) }
+}
+
+/** Where a point starting at `at` ends: clamped to midnight, so a late point stays on its day instead of becoming a bar. */
+function pointEnd(at: Date): Date {
+  const end = addMinutes(at, TASK_POINT_MINUTES)
+  const midnight = addDays(startOfDay(at), 1)
+  return end < midnight ? end : midnight
 }
 
 /** The calendar entry of a task, or null without dates (FR-16). */
@@ -133,13 +137,18 @@ export function canComplete(task: CalTask): boolean {
 }
 
 /**
- * Whether a task can be dragged to move it (FR-10, FR-16, FR-17): the same
- * as `canComplete`. A plain task's eligibility doesn't depend on being done,
- * so it keeps moving after completion, like before occurrences existed; an
- * occurrence, or a todo whose rule Lucid can't read, may only move while it
- * could also be completed.
+ * Whether a task can be dragged to move it (FR-10, FR-16, FR-17): what
+ * `canComplete` allows, and an upcoming occurrence of a series that moves as
+ * a whole. A plain task's eligibility doesn't depend on being done, so it
+ * keeps moving after completion, like before occurrences existed. A move
+ * always moves the current occurrence; an interval series without a move
+ * window takes its later ones along, so an upcoming one moves the series by
+ * the distance it was dragged, as an event's occurrence does. On fixed days
+ * the later ones stay, as they do while the current one is off the rule
+ * (`moveWindow`), so the upcoming ones of such a series stay too.
  */
 export function canDrag(task: CalTask): boolean {
+  if (task.occurrence?.state === 'upcoming') return !task.todo.fixedDays && !task.todo.moveWindow
   return canComplete(task)
 }
 
@@ -226,6 +235,17 @@ function movedDate(iso: string | null | undefined, allDay: boolean, days: number
   if (!iso) return null
   if (allDay) return localDateToUtc(addDays(utcDateToLocal(iso), days)).toISOString()
   return addMinutes(addDays(new Date(iso), days), minutes).toISOString()
+}
+
+/**
+ * `task` shown `days` and `minutes` later, the way `movedTodo` moves dates
+ * (FR-10, FR-17): where a drag previews an upcoming occurrence, which the
+ * series' own dates don't place.
+ */
+export function shiftedTask(task: CalTask, days: number, minutes: number): CalTask {
+  const startsAt = addMinutes(addDays(task.startsAt, days), minutes)
+  const endsAt = task.point ? pointEnd(startsAt) : addMinutes(addDays(task.endsAt, days), minutes)
+  return { ...task, startsAt, endsAt }
 }
 
 /**

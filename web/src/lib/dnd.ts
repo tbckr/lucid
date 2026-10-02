@@ -1,7 +1,16 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import { anchorOf, movedTodo, moveWindow, toCalTask, windowEdge, withinWindow, type CalTask } from './calendarTasks'
+import {
+  anchorOf,
+  movedTodo,
+  moveWindow,
+  shiftedTask,
+  toCalTask,
+  windowEdge,
+  withinWindow,
+  type CalTask,
+} from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 
@@ -28,10 +37,13 @@ export interface DragBinding {
   disabled: boolean
 }
 
-/** What a drop saves: new times for an event, new dates for a task. */
+/**
+ * What a drop saves: new times for an event, new dates for a task, with the
+ * distance the task moved, which places an upcoming occurrence (FR-17).
+ */
 export type DropResult =
   | { kind: 'event'; event: CalEvent; times: { start: string; end: string } }
-  | { kind: 'task'; task: CalTask; input: TodoInput }
+  | { kind: 'task'; task: CalTask; input: TodoInput; delta: { days: number; minutes: number } }
 
 /** Data attached to droppables; a time-grid column also refers to its element, for the create popover to point at. */
 export type DropData = { type: 'day'; day: Date } | { type: 'column'; day: Date; ref?: RefObject<HTMLElement | null> }
@@ -90,7 +102,7 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
   if (e.kind === 'task') {
     const input = movedTodo(e.todo, delta.days, delta.minutes)
     if (!withinWindow(e.todo, input)) return null
-    return { kind: 'task', task: e, input }
+    return { kind: 'task', task: e, input, delta }
   }
   return { kind: 'event', event: e, times: movedTimes(e, delta.days, delta.minutes) }
 }
@@ -123,5 +135,8 @@ export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: numbe
 export function withDrop(drag: DragData, result: DropResult): DragData {
   if (result.kind === 'event') return { ...drag, event: withTimes(result.event, result.times) }
   if (drag.type === 'resize') return drag
-  return { ...drag, event: toCalTask({ ...result.task.todo, ...result.input }) ?? result.task }
+  // An upcoming occurrence moves the series (FR-17), but shows where it lands itself.
+  const { task, delta } = result
+  if (task.occurrence?.state === 'upcoming') return { ...drag, event: shiftedTask(task, delta.days, delta.minutes) }
+  return { ...drag, event: toCalTask({ ...task.todo, ...result.input }) ?? task }
 }

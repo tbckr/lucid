@@ -8,7 +8,7 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { anchorOf, canComplete, recurringLabel, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { anchorOf, canComplete, canDrag, recurringLabel, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
 import { formatEventWhen, formatPickerDate } from '@/lib/format'
 import { isOverdue, priorityLevel } from '@/lib/tasks'
@@ -63,10 +63,13 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const overdue = !done && !upcoming && isOverdue(todo, now)
   const hasPriority = priorityLevel(todo.priority) !== 'none'
   const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring
-  // The rule row's hint (FR-17): which occurrence to complete first, that another app already did, or that
-  // Lucid can't read the rule at all; the current occurrence, or a plain series, needs none of these.
+  // The rule row's hint (FR-17): which occurrence to complete first, and to move first unless this one
+  // moves the series already, that another app already did, or that Lucid can't read the rule at all;
+  // the current occurrence, or a plain series, needs none of these.
   const hint = upcoming
-    ? t('tasks.upcomingHint', { date: formatPickerDate(anchorOf(todo) ?? placed.startsAt, prefs, now) })
+    ? t(canDrag({ ...task, todo }) ? 'tasks.upcomingHint' : 'tasks.upcomingFixedHint', {
+        date: formatPickerDate(anchorOf(todo) ?? placed.startsAt, prefs, now),
+      })
     : task.occurrence?.state === 'done'
       ? t('tasks.doneElsewhere')
       : !task.occurrence && todo.ruleUnsupported

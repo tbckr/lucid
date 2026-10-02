@@ -272,7 +272,8 @@ export function CalendarDnd({
     }
     if (result?.kind === 'event') move.mutate({ event: result.event, ...result.times })
     if (result?.kind === 'task') {
-      updateTodo.mutate({ todo: result.task.todo, input: result.input })
+      const byUpcoming = result.task.occurrence?.state === 'upcoming'
+      updateTodo.mutate({ todo: result.task.todo, input: result.input, byUpcoming })
       // A pending mutation takes over its hook's next options, which lose the scope once
       // `active` is cleared; detached, it stays in line. Errors still reach the hook's handler.
       updateTodo.reset()

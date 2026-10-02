@@ -12,6 +12,7 @@ import {
   occurrenceTask,
   outsideWindow,
   recurringLabel,
+  shiftedTask,
   toCalTask,
   windowEdge,
   withinWindow,
@@ -271,11 +272,26 @@ describe('canComplete', () => {
 })
 
 describe('canDrag', () => {
-  it('matches canComplete for an occurrence', () => {
-    const current = occurrenceTask(occurrence({ state: 'current' }), todo())!
-    const done = occurrenceTask(occurrence({ state: 'done' }), todo())!
-    expect(canDrag(current)).toBe(true)
-    expect(canDrag(done)).toBe(false)
+  const interval = todo({ recurring: true, rrule: 'FREQ=DAILY', due: allDay('2026-09-25'), dueAllDay: true })
+
+  it.each([
+    ['current', true],
+    ['upcoming', true],
+    ['done', false],
+  ] as const)('an occurrence of an interval series in state %s -> %s', (state, expected) => {
+    expect(canDrag(occurrenceTask(occurrence({ state }), interval)!)).toBe(expected)
+  })
+
+  it('keeps the upcoming occurrences of a series on fixed days in place', () => {
+    const fixed = { ...interval, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true }
+    expect(canDrag(occurrenceTask(occurrence({ state: 'upcoming' }), fixed)!)).toBe(false)
+    expect(canDrag(occurrenceTask(occurrence({ state: 'current' }), fixed)!)).toBe(true)
+  })
+
+  it('keeps the upcoming occurrences in place while the current one is off the rule and moves alone', () => {
+    const offRule = { ...interval, moveWindow: { from: null, until: allDay('2026-09-27') } }
+    expect(canDrag(occurrenceTask(occurrence({ state: 'upcoming' }), offRule)!)).toBe(false)
+    expect(canDrag(occurrenceTask(occurrence({ state: 'current' }), offRule)!)).toBe(true)
   })
 
   it('stays true for a plain, done task (unlike an occurrence)', () => {
@@ -286,6 +302,33 @@ describe('canDrag', () => {
   it('is false for a todo whose rule is unsupported', () => {
     const t = todo({ due: allDay('2026-09-25'), dueAllDay: true, ruleUnsupported: true })
     expect(canDrag(toCalTask(t)!)).toBe(false)
+  })
+})
+
+describe('shiftedTask', () => {
+  it('moves a span by days and minutes', () => {
+    const task = toCalTask(todo({ start: '2026-09-25T07:00:00Z', due: '2026-09-25T09:00:00Z' }))!
+    expect(shiftedTask(task, 2, 30)).toMatchObject({
+      startsAt: new Date(2026, 8, 27, 9, 30),
+      endsAt: new Date(2026, 8, 27, 11, 30),
+    })
+  })
+
+  it('gives a point its full length again once it leaves midnight behind', () => {
+    // 23:45 local: a point cut short to 15 minutes at midnight.
+    const task = toCalTask(todo({ due: '2026-09-25T21:45:00Z' }))!
+    expect(shiftedTask(task, 0, -60)).toMatchObject({
+      startsAt: new Date(2026, 8, 25, 22, 45),
+      endsAt: new Date(2026, 8, 25, 23, 15),
+    })
+  })
+
+  it('cuts a point short at midnight once it reaches it', () => {
+    const task = toCalTask(todo({ due: '2026-09-25T20:00:00Z' }))! // 22:00 local
+    expect(shiftedTask(task, 1, 105)).toMatchObject({
+      startsAt: new Date(2026, 8, 26, 23, 45),
+      endsAt: new Date(2026, 8, 27),
+    })
   })
 })
 
