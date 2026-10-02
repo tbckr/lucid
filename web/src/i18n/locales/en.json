@@ -144,7 +144,6 @@
     "recurring": "Recurring event",
     "modified": "Repeating event, changed individually",
     "modifiedNotice": "This event was changed individually.",
-    "seriesNotice": "This event repeats. Changes apply to every event in the series.",
     "confirmDelete": "Delete this event?",
     "scope": {
       "this": "Only this event",

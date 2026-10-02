@@ -96,10 +96,9 @@ describe('EventEditor', () => {
     expect(within(dialog).getByTitle(rrule)).toHaveTextContent(text)
   })
 
-  it('shows the series notice up front and the calendar as fixed when editing a series', async () => {
+  it('shows the calendar as fixed when editing a series', async () => {
     const event = toCalEvent(apiEvent({ title: 'Gym', recurring: true, rrule: 'FREQ=WEEKLY' }))
     const { dialog } = await openEditor({ mode: 'edit', event })
-    expect(within(dialog).getByText('This event repeats. Changes apply to every event in the series.')).toBeInTheDocument()
     expect(within(dialog).queryByRole('combobox', { name: 'Calendar' })).toBeNull()
     expect(within(dialog).getByText('Personal')).toBeInTheDocument()
   })
@@ -110,5 +109,152 @@ describe('EventEditor', () => {
   ])('mentions the time zone only when the event has another one (%s)', async (timezone, shown) => {
     const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone })) })
     expect(within(dialog).queryByText(/Saving moves the event from America\/New_York/) !== null).toBe(shown)
+  })
+
+  // FR-17: for a series, the notice only matters once the rule or the
+  // all-day flag actually changes - until then both scope choices keep the
+  // series' own time zone.
+  it('hides the time zone notice for an unchanged series, and shows it once the rule changes', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z', timezone: 'America/New_York' }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).queryByText(/Saving moves the event from America\/New_York/)).toBeNull()
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    expect(within(dialog).getByText(/Saving moves the event from America\/New_York/)).toBeInTheDocument()
+  })
+
+  it('asks on save which events of a series change, and saves only this one', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+
+    await user.click(within(question).getByRole('button', { name: 'Only this event' }))
+    await waitFor(() => {
+      expect(
+        fetch.mock.calls.some(
+          ([input, init]) =>
+            init?.method === 'PUT' && urlOf(input).endsWith('/events/e1/occurrences/2026-09-25T08%3A00%3A00Z'),
+        ),
+      ).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(
+      ([input, i]) => i?.method === 'PUT' && urlOf(input).includes('/occurrences/'),
+    )!
+    expect(bodyOf(init)).not.toHaveProperty('rrule')
+    expect(bodyOf(init)).not.toHaveProperty('instanceStart')
+  })
+
+  it('saves all events of a series', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog')
+    await user.click(within(question).getByRole('button', { name: 'All events' }))
+
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
+    expect(bodyOf(init)).toHaveProperty('instanceStart', '2026-09-25T08:00:00Z')
+  })
+
+  it('saves a changed rule for the whole series without asking, and says so', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    expect(within(dialog).getByText('A new repeat rule applies to every event in the series.')).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+  })
+
+  it('saves a change between all-day and timed for the whole series without asking', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('switch', { name: 'All day' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+  })
+
+  it('offers only this event when a series on fixed days moves to another day', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Sep 25/ }))
+    await user.click(screen.getByRole('button', { name: 'Saturday, September 26th, 2026' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    const question = within(dialog).getByRole('alertdialog')
+    expect(within(question).queryByRole('button', { name: 'All events' })).toBeNull()
+    expect(
+      within(question).getByText('The series stays on its days. Only this event can move to another day.'),
+    ).toBeInTheDocument()
+  })
+
+  // FR-17: Apple writes an explicit "INTERVAL=1" the presets would otherwise
+  // rewrite without it; the unchanged rule must still round-trip verbatim.
+  it('asks and keeps an unrecognized rule verbatim when saving all events unchanged', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY;INTERVAL=1', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    await user.click(within(question).getByRole('button', { name: 'All events' }))
+
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
+    expect(bodyOf(init)).toHaveProperty('rrule', 'FREQ=WEEKLY;INTERVAL=1')
+  })
+
+  it('cancels only the scope question on Escape, leaving the editor open (NFR-27)', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    within(dialog).getByRole('alertdialog')
+
+    await user.keyboard('{Escape}')
+
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveFocus()
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { KindSwitch } from '@/components/create/KindSwitch'
@@ -12,16 +12,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateEvent, useUpdateEvent, useVisibleCalendars } from '@/hooks/queries'
+import { useCreateEvent, useUpdateEvent, useUpdateOccurrence, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
-import { type Calendar } from '@/lib/api/schemas'
+import { type Calendar, type EventInput } from '@/lib/api/schemas'
 import { parseDayKey } from '@/lib/dates'
 import {
   editFormValues,
   eventFormSchema,
   formDuration,
   formToInput,
+  occurrenceInput,
+  ruleChanged,
   shiftEnd,
   type EventFormValues,
 } from '@/lib/eventForm'
@@ -29,10 +31,12 @@ import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
+import { canMoveAll } from '@/lib/seriesShift'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
+import { ScopeChoice } from './ScopeChoice'
 import { TimeSelect } from './TimeSelect'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
@@ -40,11 +44,19 @@ export function EventEditor({
   editor,
   canSwitch,
   onDone,
+  onScopeOpenChange,
 }: {
   editor: NonNullable<EditorState>
   /** A new entry can be switched to a task. */
   canSwitch: boolean
   onDone: () => void
+  /**
+   * Reports how to cancel the save scope question while it is open, or
+   * `null` once it isn't, so the surrounding dialog can route Escape to it
+   * instead of closing (NFR-27): Radix's dismissable layer handles Escape on
+   * the document before this component's own handler would run.
+   */
+  onScopeOpenChange?: (cancel: (() => void) | null) => void
 }) {
   const { all, visible } = useVisibleCalendars()
   const calendars = useMemo(() => writableFor('event', all), [all])
@@ -57,6 +69,7 @@ export function EventEditor({
       defaultCalendarId={preferred?.id ?? ''}
       canSwitch={canSwitch}
       onDone={onDone}
+      onScopeOpenChange={onScopeOpenChange}
     />
   )
 }
@@ -67,12 +80,14 @@ function EditorForm({
   defaultCalendarId,
   canSwitch,
   onDone,
+  onScopeOpenChange,
 }: {
   editor: NonNullable<EditorState>
   calendars: Calendar[]
   defaultCalendarId: string
   canSwitch: boolean
   onDone: () => void
+  onScopeOpenChange?: (cancel: (() => void) | null) => void
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -81,10 +96,16 @@ function EditorForm({
   const now = useMemo(() => new Date(), [])
   const create = useCreateEvent()
   const update = useUpdateEvent()
+  const updateOccurrence = useUpdateOccurrence()
   const id = useId()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const kindRef = useRef<HTMLButtonElement>(null)
+  const saveRef = useRef<HTMLButtonElement>(null)
+  const askedBefore = useRef(false)
   const event = editor.mode === 'edit' ? editor.event : undefined
+  // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
+  const initial = event ? editFormValues(event, tz) : null
+  const [asking, setAsking] = useState<EventInput | null>(null)
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(eventFormSchema),
@@ -100,11 +121,14 @@ function EditorForm({
     control,
     name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
   })
-  const pending = create.isPending || update.isPending
+  const pending = create.isPending || update.isPending || updateOccurrence.isPending
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
   const start = parseDayKey(startDate)
+  // Whether the repeat rule differs from the editor's initial values (FR-17); while it stays the
+  // same, saving can ask which events of the series to change instead of rewriting all of it.
+  const ruleHasChanged = !!(initial && ruleChanged(getValues(), initial))
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
   useEffect(() => {
@@ -112,6 +136,17 @@ function EditorForm({
     if (editor.switched) kindRef.current?.focus()
     else setFocus('title')
   }, [editor, setFocus])
+
+  // The footer's scope question keeps the focus on "Only this event"; once it closes again, the
+  // focus goes back to Save (NFR-27).
+  useEffect(() => {
+    if (asking) {
+      askedBefore.current = true
+    } else if (askedBefore.current) {
+      saveRef.current?.focus()
+      askedBefore.current = false
+    }
+  }, [asking])
 
   const toTask = () => {
     if (editor.mode !== 'create') return
@@ -131,14 +166,38 @@ function EditorForm({
     setValue('endTime', next.endTime, { shouldDirty: true, shouldValidate: formState.isSubmitted })
   }
 
+  // Leaves the scope question and tells the surrounding dialog it no longer needs to catch
+  // Escape for it (NFR-27).
+  function cancelAsk() {
+    setAsking(null)
+    onScopeOpenChange?.(null)
+  }
+
   const onSubmit = handleSubmit((values) => {
     const input = formToInput(values, tz, event)
+    // A series asks which events to change only while the rule and the all-day flag are
+    // unchanged (FR-17); otherwise it saves the whole series right away (spec §4).
+    if (event?.recurring && event.recurrenceId && initial && !ruleChanged(values, initial) && values.allDay === initial.allDay) {
+      setAsking(input)
+      onScopeOpenChange?.(cancelAsk)
+      return
+    }
     if (event) {
       update.mutate({ event, input }, { onSuccess: onDone })
     } else {
       create.mutate({ calendarId: values.calendarId, input }, { onSuccess: onDone })
     }
   })
+
+  const onChooseScope = (scope: 'this' | 'all') => {
+    if (!event || !asking) return
+    if (scope === 'this') {
+      updateOccurrence.mutate({ event, input: occurrenceInput(asking) }, { onSuccess: onDone })
+    } else {
+      update.mutate({ event, input: asking }, { onSuccess: onDone })
+    }
+    cancelAsk()
+  }
 
   const err = (key: keyof EventFormValues) => {
     const m = formState.errors[key]?.message
@@ -166,7 +225,11 @@ function EditorForm({
 
   const titleError = err('title')
   const endError = err('endDate')
-  const otherZone = !allDay && event?.timezone && event.timezone !== tz ? event.timezone : null
+  // For a series, saving only moves the time zone while the rule or the all-day flag changes
+  // too (spec §4); until then, both "Only this event" and "All events" keep the series' own
+  // zone, so the notice would be misleading.
+  const seriesZoneFixed = !!(event?.recurring && initial && !ruleHasChanged && allDay === initial.allDay)
+  const otherZone = !allDay && event?.timezone && event.timezone !== tz && !seriesZoneFixed ? event.timezone : null
 
   return (
     <form onSubmit={(e) => void onSubmit(e)} noValidate>
@@ -232,7 +295,6 @@ function EditorForm({
           </div>
         )}
         {err('calendarId') && <p className="text-sm font-medium text-destructive">{err('calendarId')}</p>}
-        {event?.recurring && <p className="text-sm">{t('event.seriesNotice')}</p>}
         <DialogClose className="absolute top-3 right-3 rounded-md p-1.5 transition-colors outline-none hover:bg-current/10 focus-visible:ring-[3px] focus-visible:ring-current/50 [&_svg]:size-4">
           <XIcon aria-hidden />
           <span className="sr-only">{t('common.close')}</span>
@@ -360,6 +422,8 @@ function EditorForm({
               {repeatText(customRule) ?? customRule}
             </p>
           )}
+          {/* A changed rule applies to the whole series without asking (FR-17); say so up front. */}
+          {event?.recurring && ruleHasChanged && <p className="pt-1 text-xs text-muted-foreground">{t('event.scope.newRule')}</p>}
         </EditorRow>
 
         <EditorRow icon={<MapPinIcon />}>
@@ -389,13 +453,29 @@ function EditorForm({
       </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:px-6 sm:pb-5">
-        <Button type="button" variant="ghost" onClick={onDone}>
-          {t('common.cancel')}
-        </Button>
-        <Button type="submit" disabled={pending}>
-          {pending && <Spinner />}
-          {event ? t('common.save') : t('event.createAction')}
-        </Button>
+        {asking && event ? (
+          // Replaces Cancel/Save in place while a save asks which events of the series to
+          // change (FR-17, spec §4); Escape cancels just this, not the editor dialog (NFR-27).
+          <div className="w-full">
+            <ScopeChoice
+              question={t('event.scope.change')}
+              note={t('event.scope.pastIncluded')}
+              allowAll={canMoveAll(event, new Date(asking.start), tz)}
+              onChoose={onChooseScope}
+              onCancel={cancelAsk}
+            />
+          </div>
+        ) : (
+          <>
+            <Button type="button" variant="ghost" onClick={onDone}>
+              {t('common.cancel')}
+            </Button>
+            <Button ref={saveRef} type="submit" disabled={pending}>
+              {pending && <Spinner />}
+              {event ? t('common.save') : t('event.createAction')}
+            </Button>
+          </>
+        )}
       </DialogFooter>
     </form>
   )

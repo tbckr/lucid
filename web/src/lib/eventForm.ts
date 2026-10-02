@@ -1,6 +1,6 @@
 import { addDays, differenceInCalendarDays, format } from 'date-fns'
 import { z } from 'zod'
-import { type EventInput } from './api/schemas'
+import { type EventInput, type OccurrenceInput } from './api/schemas'
 import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
@@ -89,6 +89,20 @@ export function editFormValues(event: CalEvent, timeZone: string): EventFormValu
   return { ...base, allDay: false, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time }
 }
 
+/**
+ * Whether the form's repeat rule differs from the editor's initial values
+ * (FR-17): by preset, or by the custom rule's text while on "custom". This
+ * compares the editor's own fields, never RRULE text, so a stored rule the
+ * presets would rewrite (Apple's explicit "INTERVAL=1", lower case, ...)
+ * still counts as unchanged.
+ */
+export function ruleChanged(values: EventFormValues, initial: EventFormValues): boolean {
+  return (
+    values.recurrence !== initial.recurrence ||
+    (values.recurrence === 'custom' && values.customRule.trim() !== initial.customRule.trim())
+  )
+}
+
 /** Convert form values to the API payload. `event` is set when editing. */
 export function formToInput(v: EventFormValues, timeZone: string, event?: CalEvent): EventInput {
   let start: Date
@@ -101,6 +115,15 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     start = zonedToUtc(v.startDate, v.startTime, timeZone)
     end = zonedToUtc(v.endDate, v.endTime, timeZone)
   }
+  // While a series' rule and all-day flag are unchanged from the editor's
+  // initial values, the stored RRULE goes back verbatim (FR-17): rebuilding
+  // it from the preset can rewrite text the server would then see as a
+  // changed rule, losing the fast path that keeps the series' own time zone.
+  const initial = event ? editFormValues(event, timeZone) : undefined
+  const rrule =
+    event?.recurring && initial && !ruleChanged(v, initial) && v.allDay === initial.allDay
+      ? event.rrule
+      : buildRRule(v.recurrence, v.customRule)
   return {
     title: v.title.trim(),
     description: v.description,
@@ -109,9 +132,19 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     end: end.toISOString(),
     allDay: v.allDay,
     timezone: v.allDay ? '' : timeZone,
-    rrule: buildRRule(v.recurrence, v.customRule),
+    rrule,
     ...(event?.recurring && event.recurrenceId ? { instanceStart: event.recurrenceId } : {}),
   }
+}
+
+/**
+ * Drops the fields `OccurrenceInput` doesn't have (FR-17): the rule belongs
+ * to the series, and the occurrence being edited is already named in the
+ * path, not the body.
+ */
+export function occurrenceInput(input: EventInput): OccurrenceInput {
+  const { rrule: _rrule, instanceStart: _instanceStart, ...rest } = input
+  return rest
 }
 
 /**

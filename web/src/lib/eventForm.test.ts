@@ -7,6 +7,8 @@ import {
   eventFormSchema,
   formDuration,
   formToInput,
+  occurrenceInput,
+  ruleChanged,
   shiftEnd,
   timeOptions,
   type EventFormValues,
@@ -79,6 +81,48 @@ describe('formToInput', () => {
     )
     expect(formToInput(base, TZ, occurrence).instanceStart).toBe('2026-09-25T08:00:00Z')
     expect(formToInput(base, TZ, toCalEvent(apiEvent()))).not.toHaveProperty('instanceStart')
+  })
+
+  // FR-17: a stored rule the presets would rewrite (Apple's explicit
+  // "INTERVAL=1") must round-trip unchanged while the user leaves it alone,
+  // or the server would see a changed rule and take the slower, full-rewrite
+  // path instead of the one that keeps the series' own time zone.
+  it('keeps an unrecognized but unchanged rule verbatim instead of rebuilding it', () => {
+    const occurrence = toCalEvent(
+      apiEvent({ recurring: true, rrule: 'FREQ=WEEKLY;INTERVAL=1', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const unchanged = editFormValues(occurrence, TZ)
+    expect(formToInput(unchanged, TZ, occurrence).rrule).toBe('FREQ=WEEKLY;INTERVAL=1')
+    expect(formToInput({ ...unchanged, recurrence: 'daily' }, TZ, occurrence).rrule).toBe('FREQ=DAILY')
+  })
+})
+
+describe('occurrenceInput', () => {
+  it('drops exactly rrule and instanceStart', () => {
+    const input = formToInput(base, TZ)
+    const withSeries = { ...input, rrule: 'FREQ=WEEKLY', instanceStart: '2026-09-25T08:00:00Z' }
+    expect(occurrenceInput(withSeries)).toEqual({
+      title: withSeries.title,
+      description: withSeries.description,
+      location: withSeries.location,
+      start: withSeries.start,
+      end: withSeries.end,
+      allDay: withSeries.allDay,
+      timezone: withSeries.timezone,
+    })
+  })
+})
+
+describe('ruleChanged', () => {
+  it('is false for the unchanged rule, and true after switching the preset', () => {
+    const initial: EventFormValues = { ...base, recurrence: 'custom', customRule: 'FREQ=WEEKLY;BYDAY=MO' }
+    expect(ruleChanged(initial, initial)).toBe(false)
+    expect(ruleChanged({ ...initial, recurrence: 'daily' }, initial)).toBe(true)
+  })
+
+  it('is true when only the custom rule text differs', () => {
+    const initial: EventFormValues = { ...base, recurrence: 'custom', customRule: 'FREQ=WEEKLY;BYDAY=MO' }
+    expect(ruleChanged({ ...initial, customRule: 'FREQ=WEEKLY;BYDAY=TU' }, initial)).toBe(true)
   })
 })
 
