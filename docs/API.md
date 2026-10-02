@@ -100,11 +100,13 @@ expanded server-side. The range may span at most 366 days.
   "etag": "\"abc\"", "title": "Standup", "description": "", "location": "",
   "start": "2025-01-06T09:00:00Z", "end": "2025-01-06T09:15:00Z", "allDay": false,
   "timezone": "Europe/Berlin", "rrule": "FREQ=WEEKLY;BYDAY=MO", "recurring": true,
-  "recurrenceId": "2025-01-06T09:00:00Z" } ] }
+  "recurrenceId": "2025-01-06T09:00:00Z", "modified": false } ] }
 ```
 
 Use `key` as the React key / occurrence identity; `id` identifies the
-resource for updates/deletes.
+resource for updates/deletes. `modified` is `true` for an occurrence of a
+series whose override visibly changed it (start, duration, all-day, title,
+location or description); it is omitted (`false`) otherwise.
 
 ### `POST /api/v1/calendars/{calendarId}/events`
 
@@ -124,12 +126,63 @@ first occurrence).
 
 Body: `EventInput`. For an occurrence of a recurring series additionally send
 `"instanceStart": <recurrenceId of the edited occurrence>`: the change is
-applied to the **whole series** (shifted by `start - instanceStart`).
-`200` with the updated `Event` (new `etag`).
+applied to the **whole series** ("All events"). `200` with the updated
+`Event` (new `etag`).
+
+- **Distance:** measured from the occurrence's *shown* start (an exception's
+  own start, if the edited occurrence is one), not from `instanceStart`
+  itself; the series, and the edited exception if there is one, shift by
+  `start` minus that shown start.
+- **Fields:** only fields changed against the shown occurrence are written
+  into the series and into the edited exception; other exceptions keep their
+  own times and fields, only their `RECURRENCE-ID` shifts along with the
+  series.
+- `UNTIL` shifts along with the series.
+- The weekdays of a weekly rule with plain `BYDAY` weekdays (no ordinal, no
+  other `BY` part) rotate with the shift.
+- `400 invalid_input` if a rule with fixed days would have to move to
+  another day. The frontend does not offer this; the check is the
+  server-side safeguard, and there is no new error code for it.
+- **Time zone:** "Only this event" above, and this endpoint when the rule
+  and the `allDay` flag are unchanged, keep the series' own time zone; the
+  request's `timezone` applies to single (non-recurring) events and to a
+  series save that changes the rule or `allDay`.
 
 ### `DELETE /api/v1/events/{eventId}` (header `If-Match`)
 
 `204`. Deletes the resource (for recurring events: the whole series).
+
+### `PUT /api/v1/events/{eventId}/occurrences/{recurrenceId}` (header `If-Match`)
+
+Changes only one occurrence of a recurring series ("Only this event"),
+writing or editing an override that lives in the same resource. `recurrenceId`
+is the occurrence's `recurrenceId`: RFC 3339, UTC, whole seconds, URL-encoded.
+
+Body (`OccurrenceInput`): like `EventInput`, but without `rrule` (the rule
+belongs to the series, not the occurrence) and without `instanceStart`:
+
+```json
+{ "title": "Lunch", "description": "", "location": "", "start": "...", "end": "...",
+  "allDay": false, "timezone": "Europe/Berlin" }
+```
+
+`200` with the changed `Event` (new `etag`, `modified: true`). The override
+is written as a full copy of the series, not a diff, so other CalDAV clients
+still show a title and the other properties.
+
+Errors:
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds, the fields are invalid, or `allDay` does not match the series.
+- `404 not_found`: the event does not exist, is not a recurring series, or
+  `recurrenceId` is not an occurrence of it.
+- `409 conflict`/`428 precondition_required`: as for `PUT /events/{id}` above.
+
+### `DELETE /api/v1/events/{eventId}/occurrences/{recurrenceId}` (header `If-Match`)
+
+Excludes only this occurrence ("Only this event"): writes an `EXDATE` and, in
+the same write, removes an existing override at the same instant. `204`. If
+no occurrence of the series is left afterwards, the resource itself is
+deleted. Errors: as for the `PUT` above.
 
 ## Todos
 

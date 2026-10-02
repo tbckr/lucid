@@ -66,6 +66,18 @@ func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) 
 	return id, true
 }
 
+// pathTime returns the path parameter name parsed as RFC 3339. The API only
+// ever emits whole seconds, so a value with fractional seconds is rejected
+// too, even though time.Parse would otherwise accept it.
+func pathTime(w http.ResponseWriter, r *http.Request, name string) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339, r.PathValue(name))
+	if err != nil || t.Nanosecond() != 0 {
+		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "invalid "+name)
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // ifMatch returns the required If-Match header.
 func ifMatch(w http.ResponseWriter, r *http.Request) (string, bool) {
 	etag := r.Header.Get("If-Match")
@@ -201,6 +213,63 @@ func (s *Server) handleDeleteEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := svc.DeleteEvent(r.Context(), id, etag); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleUpdateOccurrence changes only one occurrence of a recurring series
+// ("only this event"), writing or editing an override (FR-17).
+func (s *Server) handleUpdateOccurrence(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "eventId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathTime(w, r, "recurrenceId")
+	if !ok {
+		return
+	}
+	var in domain.OccurrenceInput
+	if !s.decodeValid(w, r, &in) {
+		return
+	}
+	ev, err := svc.UpdateOccurrence(r.Context(), id, etag, rid, in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	middleware.WriteJSON(w, http.StatusOK, ev)
+}
+
+// handleDeleteOccurrence excludes only one occurrence of a recurring series
+// ("only this event"), via EXDATE (FR-17).
+func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "eventId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathTime(w, r, "recurrenceId")
+	if !ok {
+		return
+	}
+	if err := svc.DeleteOccurrence(r.Context(), id, etag, rid); err != nil {
 		s.fail(w, r, err)
 		return
 	}

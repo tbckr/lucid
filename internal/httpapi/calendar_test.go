@@ -251,6 +251,55 @@ func TestEventWrites(t *testing.T) {
 	}
 }
 
+func TestOccurrenceWrites(t *testing.T) {
+	t.Parallel()
+	ifMatch := map[string]string{"If-Match": `"etag-1"`}
+	const occBody = `{"title":"Lunch","start":"2025-03-10T08:00:00Z","end":"2025-03-10T09:00:00Z","allDay":false,"timezone":"Europe/Berlin"}`
+	wantRID := time.Date(2025, 3, 10, 8, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		rq     req
+		svcErr error
+		status int
+		code   string
+		call   string
+	}{
+		{"put", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", body: occBody, headers: ifMatch}, nil, http.StatusOK, "", "UpdateOccurrence"},
+		{"put encoded", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z", body: occBody, headers: ifMatch}, nil, http.StatusOK, "", "UpdateOccurrence"},
+		{"put bad id", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/x", body: occBody, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put fractional seconds", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00.5Z", body: occBody, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put no if-match", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", body: occBody}, nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+		{"put end before start", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", body: `{"title":"Lunch","start":"2025-03-10T09:00:00Z","end":"2025-03-10T08:00:00Z","allDay":false}`, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put with rrule", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", body: strings.TrimSuffix(occBody, "}") + `,"rrule":"FREQ=DAILY"}`, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put not found", req{method: http.MethodPut, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", body: occBody, headers: ifMatch}, domain.ErrNotFound, http.StatusNotFound, codeNotFound, "UpdateOccurrence"},
+		{"delete", req{method: http.MethodDelete, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", headers: ifMatch}, nil, http.StatusNoContent, "", "DeleteOccurrence"},
+		{"delete conflict", req{method: http.MethodDelete, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z", headers: ifMatch}, domain.ErrConflict, http.StatusConflict, codeConflict, "DeleteOccurrence"},
+		{"delete bad id", req{method: http.MethodDelete, path: "/api/v1/events/e1/occurrences/x", headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.err = tt.svcErr
+			w := h.do(t, c, tt.rq)
+			if tt.code != "" {
+				expectError(t, w, tt.status, tt.code)
+			} else {
+				decode(t, w, tt.status, nil)
+			}
+			if got := strings.Join(h.svc.calls, ","); got != tt.call {
+				t.Fatalf("calls = %q, want %q", got, tt.call)
+			}
+			if tt.call == "UpdateOccurrence" || tt.call == "DeleteOccurrence" {
+				if h.svc.gotID != "e1" || h.svc.gotETag != `"etag-1"` || !h.svc.gotRID.Equal(wantRID) {
+					t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
+				}
+			}
+		})
+	}
+}
+
 func TestTodos(t *testing.T) {
 	t.Parallel()
 	ifMatch := map[string]string{"If-Match": `"t-etag"`}

@@ -93,6 +93,9 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 
 * **FR-17:** Recurring Events (RRULE).
   * *Implementation:* Backend expands RRULEs for the requested view range. Recurring tasks (VTODO) are expanded like events; see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md).
+  * **Only this event:** a single occurrence can be changed or deleted independently of the series, via an RFC 5545 override (an EXDATE on delete).
+  * **All events:** a change to the series shifts by the distance from the edited occurrence's shown start and carries along only the fields that changed.
+  * Events changed individually by an override are marked (`modified`).
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**
@@ -157,7 +160,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 ### **5.6 UX & Accessibility (React Specific)**
 
 * **NFR-26:** **Optimistic UI Updates:** Drag & Drop actions must update DOM immediately via onMutate.
-  * *Limitation:* Applies to **Single Events** only. Recurring events show Loading State.
+  * *Limitation:* Applies to single events and to one event of a series. A change to all events of a series shows the loading state.
 * **NFR-27:** **Keyboard Accessibility (WCAG 2.1 AA):** Full keyboard navigation support.
 
 ### **5.7 CI/CD & Release Management**
