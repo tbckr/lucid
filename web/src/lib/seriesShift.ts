@@ -1,4 +1,4 @@
-import { format } from 'date-fns'
+import { formatInTimeZone } from 'date-fns-tz'
 import { utcToZoned } from './dates'
 import { type CalEvent } from './events'
 
@@ -210,26 +210,41 @@ export function seriesShift(rule: string, from: string, to: string): string | nu
   return rule
 }
 
-/** `date` as a "yyyy-MM-ddTHH:mm" wall-clock string in `timeZone`, or local midnight for an all-day date. */
-function wallClock(date: Date, allDay: boolean, timeZone: string): string {
-  if (allDay) return `${format(date, 'yyyy-MM-dd')}T00:00`
+/** `date` as a "yyyy-MM-ddTHH:mm" wall-clock string in `timeZone`. */
+function wallClock(date: Date, timeZone: string): string {
   const { date: d, time } = utcToZoned(date, timeZone)
   return `${d}T${time}`
 }
 
 /**
+ * `date`'s calendar date in UTC, as a "yyyy-MM-ddT00:00" wall-clock string.
+ * All-day events are date-only on the wire (UTC midnight): reading their day
+ * through the environment's local getters (as plain `format` does) shifts
+ * it west of UTC, where midnight reads back as the previous day even though
+ * nothing moved.
+ */
+function allDayWallClock(date: Date): string {
+  return `${formatInTimeZone(date, 'UTC', 'yyyy-MM-dd')}T00:00`
+}
+
+/**
  * Whether a series can follow its event all the way to `newStart` (FR-17):
  * `seriesShift` of the event's rule from its current wall-clock start to
- * `newStart`'s, in `event.timezone` (the series' own zone) or, lacking one,
- * `browserZone`.
+ * `newStart`'s. All-day events have no real zone, so their day comes from
+ * the UTC-midnight wire format (`start`), read in UTC, never from
+ * `startsAt` or `browserZone`; timed events use `event.timezone` (the
+ * series' own zone) or, lacking one, `browserZone`, as before.
  */
 export function canMoveAll(
-  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt'>,
+  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
   newStart: Date,
   browserZone: string,
 ): boolean {
+  if (event.allDay) {
+    return seriesShift(event.rrule, allDayWallClock(new Date(event.start)), allDayWallClock(newStart)) !== null
+  }
   const zone = event.timezone || browserZone
-  const from = wallClock(event.startsAt, event.allDay, zone)
-  const to = wallClock(newStart, event.allDay, zone)
+  const from = wallClock(event.startsAt, zone)
+  const to = wallClock(newStart, zone)
   return seriesShift(event.rrule, from, to) !== null
 }

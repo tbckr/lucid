@@ -72,11 +72,14 @@ export function ScopeChoice({
         </p>
       )}
       <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <Button ref={cancelRef} size="sm" variant="ghost" onClick={onCancel}>
+        {/* type="button": without it, a plain <button> defaults to "submit" and, inside the
+            editor's <form>, would also submit it (re-asking or saving a second time). */}
+        <Button ref={cancelRef} type="button" size="sm" variant="ghost" onClick={onCancel}>
           {t('common.cancel')}
         </Button>
         {allowAll && (
           <Button
+            type="button"
             size="sm"
             variant="outline"
             className={cn(tone === 'destructive' && 'border-destructive text-destructive')}
@@ -88,6 +91,7 @@ export function ScopeChoice({
         )}
         <Button
           ref={thisRef}
+          type="button"
           size="sm"
           variant={tone === 'destructive' ? 'destructive' : 'default'}
           onClick={() => onChoose('this')}

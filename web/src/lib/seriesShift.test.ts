@@ -40,6 +40,7 @@ describe('canMoveAll', () => {
       rrule: 'FREQ=WEEKLY;BYDAY=MO',
       allDay: false,
       timezone: '',
+      start: '2026-03-09T08:00:00Z',
       startsAt: new Date('2026-03-09T09:00:00+01:00'), // Monday, CET
     }
     const newStart = new Date('2026-03-10T09:00:00+01:00') // Tuesday, CET
@@ -51,6 +52,7 @@ describe('canMoveAll', () => {
       rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
       allDay: false,
       timezone: '',
+      start: '2026-03-15T08:00:00Z',
       startsAt: new Date('2026-03-15T09:00:00+01:00'),
     }
     const nextDay = new Date('2026-03-16T09:00:00+01:00')
@@ -65,6 +67,7 @@ describe('canMoveAll', () => {
       rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
       allDay: false,
       timezone: 'America/New_York',
+      start: '2026-03-09T21:00:00Z',
       startsAt: new Date('2026-03-09T21:00:00Z'), // 17:00 EDT, Monday
     }
     // 23:30Z is 00:30 Tuesday in Berlin, but 19:30 Monday in New York.
@@ -72,14 +75,37 @@ describe('canMoveAll', () => {
     expect(canMoveAll(event, newStart, 'Europe/Berlin')).toBe(true)
   })
 
-  it('derives all-day wall clocks from the local calendar date', () => {
+  it('derives all-day wall clocks from the UTC calendar date', () => {
     const event = {
       rrule: 'FREQ=WEEKLY;BYDAY=MO',
       allDay: true,
       timezone: '',
-      startsAt: new Date(2026, 2, 9), // Monday, local midnight
+      start: '2026-03-09T00:00:00Z', // Monday
+      startsAt: new Date(2026, 2, 9),
     }
-    const newStart = new Date(2026, 2, 10) // Tuesday, local midnight
+    const newStart = new Date('2026-03-10T00:00:00Z') // Tuesday
     expect(canMoveAll(event, newStart, 'Europe/Berlin')).toBe(true)
+  })
+
+  // FR-17: all-day events are date-only on the wire (UTC midnight). Reading
+  // their day through the environment's local getters, as the old
+  // implementation did, shifts it west of UTC: an unchanged series looked
+  // moved by a day in America/New_York even though nothing changed.
+  it('judges an unchanged all-day series the same regardless of the local time zone', () => {
+    const originalTz = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const event = {
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=25',
+        allDay: true,
+        timezone: '',
+        start: '2026-09-25T00:00:00Z',
+        startsAt: new Date(2026, 8, 25),
+      }
+      expect(canMoveAll(event, new Date('2026-09-25T00:00:00Z'), 'Europe/Berlin')).toBe(true)
+      expect(canMoveAll(event, new Date('2026-09-26T00:00:00Z'), 'Europe/Berlin')).toBe(false)
+    } finally {
+      process.env.TZ = originalTz
+    }
   })
 })

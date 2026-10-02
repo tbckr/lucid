@@ -26,6 +26,10 @@ export function EditorDialog() {
   const cancelScope = useRef<(() => void) | null>(null)
 
   const close = () => {
+    // Drops a stale cancel from an editor that is about to unmount (its own cleanup effects
+    // never run, since this ref outlives it): otherwise the next editor's first Escape would
+    // find a leftover `cancelScope.current` and get swallowed (NFR-27).
+    cancelScope.current = null
     openEditor(null)
   }
 

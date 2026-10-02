@@ -187,6 +187,29 @@ describe('EditorDialog', () => {
     expect(within(dialog).queryByRole('radio', { name: 'Task' })).toBeNull()
   })
 
+  // NFR-27: the Escape handler that cancels the editor's save scope question is wired through a
+  // ref that outlives any one EventEditor instance; closing the editor while the question is
+  // open must drop it, or the next editor's first Escape finds a stale cancel and is swallowed.
+  it("does not swallow the next editor's Escape after closing one with its scope question open", async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { fetch } = await open({ mode: 'edit', event })
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alertdialog')
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    act(() => {
+      useUi.getState().openEditor({ mode: 'create', draft })
+    })
+    await screen.findByRole('dialog', { name: 'New event' })
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+  })
+
   it('offers no switch when editing', async () => {
     const { dialog } = await open({ mode: 'edit', event: toCalEvent(apiEvent()) })
     expect(dialog).toHaveAccessibleName('Edit event')

@@ -257,4 +257,28 @@ describe('EventEditor', () => {
     expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveFocus()
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
+
+  // The scope question's buttons sit inside the editor's <form>; without type="button" they
+  // default to "submit" and would also submit it, re-asking after Cancel or sending a second
+  // PUT after a choice.
+  it("does not resubmit the editor's form when the scope question is cancelled or answered", async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveFocus()
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog')
+    await user.click(within(question).getByRole('button', { name: 'Only this event' }))
+
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1)
+    })
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+  })
 })
