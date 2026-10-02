@@ -146,7 +146,6 @@
     "modifiedNotice": "Dieser Termin wurde einzeln geändert.",
     "seriesNotice": "Dieser Termin wiederholt sich. Änderungen gelten für alle Termine der Serie.",
     "confirmDelete": "Diesen Termin löschen?",
-    "confirmDeleteSeries": "Dieser Termin wiederholt sich. Alle Termine der Serie löschen?",
     "scope": {
       "this": "Nur diesen Termin",
       "all": "Alle Termine",

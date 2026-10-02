@@ -2,7 +2,7 @@ import { AlignLeftIcon, GlobeIcon, LockIcon, MapPinIcon, RepeatIcon } from 'luci
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover } from '@/components/ui/popover'
-import { useDeleteEvent, useVisibleCalendars } from '@/hooks/queries'
+import { useDeleteEvent, useDeleteOccurrence, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { eventTitle, type CalEvent } from '@/lib/events'
@@ -47,8 +47,11 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const openDetail = useUi((s) => s.openDetail)
   const openEditor = useUi((s) => s.openEditor)
   const del = useDeleteEvent()
+  const deleteOccurrence = useDeleteOccurrence()
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
+  // Holds how to cancel the delete scope question while it is open, for the Escape handler below.
+  const cancelScope = useRef<(() => void) | null>(null)
   const calendar = byId.get(event.calendarId)
   const readOnly = calendar?.readOnly ?? true
   const colors = colorsOf(event.calendarId)
@@ -62,7 +65,20 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
 
   return (
-    <DetailContent anchor={anchor} label={title} initialFocus={() => editRef.current ?? closeRef.current}>
+    <DetailContent
+      anchor={anchor}
+      label={title}
+      initialFocus={() => editRef.current ?? closeRef.current}
+      onEscapeKeyDown={(e) => {
+        // While the delete scope question is open, Escape cancels it instead of closing the
+        // popover (NFR-27): Radix would otherwise dismiss this popover before the question's own
+        // handler ever ran.
+        if (cancelScope.current) {
+          e.preventDefault()
+          cancelScope.current()
+        }
+      }}
+    >
       {/* The event's block from the calendar, whole: its calendar's tint and bar, the title, then the time. */}
       <div
         className="relative grid gap-1 border-l-4 pt-4 pr-12 pb-3.5 pl-11"
@@ -131,13 +147,25 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
             editRef={editRef}
             editLabel={t('event.edit')}
             deleteLabel={t('event.delete')}
-            confirm={event.recurring ? t('event.confirmDeleteSeries') : t('event.confirmDelete')}
+            confirm={t('event.confirmDelete')}
             onEdit={() => {
               openEditor({ mode: 'edit', event })
             }}
             onDelete={() => {
               del.mutate(event)
               openDetail(null)
+            }}
+            onDeleteScope={
+              event.recurring
+                ? (scope) => {
+                    if (scope === 'this') deleteOccurrence.mutate(event)
+                    else del.mutate(event)
+                    openDetail(null)
+                  }
+                : undefined
+            }
+            onScopeOpenChange={(cancel) => {
+              cancelScope.current = cancel
             }}
           />
         )}

@@ -146,7 +146,6 @@
     "modifiedNotice": "This event was changed individually.",
     "seriesNotice": "This event repeats. Changes apply to every event in the series.",
     "confirmDelete": "Delete this event?",
-    "confirmDeleteSeries": "This event repeats. Delete every event in the series?",
     "scope": {
       "this": "Only this event",
       "all": "All events",

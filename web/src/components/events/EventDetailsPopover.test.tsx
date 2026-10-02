@@ -118,6 +118,70 @@ describe('EventDetailsPopover', () => {
     expect(useUi.getState().detail).toBeNull()
   })
 
+  it('asks which events of a series to delete, and deletes only this one', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openDetails({
+      id: 'e1',
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+      recurrenceId: '2026-03-13T08:00:00Z',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    const question = within(dialog).getByRole('alertdialog', {
+      name: 'This event repeats. Which events should be deleted?',
+    })
+    expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+    await user.click(within(question).getByRole('button', { name: 'Only this event' }))
+    await waitFor(() => {
+      expect(
+        fetch.mock.calls.some(
+          ([input, init]) =>
+            init?.method === 'DELETE' && urlOf(input).endsWith('/events/e1/occurrences/2026-03-13T08%3A00%3A00Z'),
+        ),
+      ).toBe(true)
+    })
+    expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('deletes the whole series with All events', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openDetails({
+      id: 'e1',
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+      recurrenceId: '2026-03-13T08:00:00Z',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    const question = within(dialog).getByRole('alertdialog')
+    await user.click(within(question).getByRole('button', { name: 'All events' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'DELETE' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('cancels only the delete scope question on Escape, leaving the details popover open (NFR-27)', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openDetails({
+      id: 'e1',
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+      recurrenceId: '2026-03-13T08:00:00Z',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    within(dialog).getByRole('alertdialog')
+
+    await user.keyboard('{Escape}')
+
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Quarterly review' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Delete event' })).toHaveFocus()
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
   it('opens the editor for the event', async () => {
     const user = userEvent.setup()
     const { dialog } = await openDetails({})

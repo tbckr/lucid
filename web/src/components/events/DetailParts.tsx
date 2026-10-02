@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { splitLinks } from '@/lib/links'
 import { detailPlacement, lastKnownBox, type Box } from '@/lib/placement'
+import { ScopeChoice, type Scope } from './ScopeChoice'
 
 /*
  * Parts of the details popovers of events (FR-09) and tasks (FR-16): the
@@ -27,6 +28,7 @@ export function DetailContent({
   label,
   initialFocus,
   onInteractOutside,
+  onEscapeKeyDown,
   children,
 }: {
   anchor: HTMLElement
@@ -35,6 +37,7 @@ export function DetailContent({
   label: string
   initialFocus: () => HTMLElement | null
   onInteractOutside?: ComponentProps<typeof PopoverContent>['onInteractOutside']
+  onEscapeKeyDown?: ComponentProps<typeof PopoverContent>['onEscapeKeyDown']
   children: ReactNode
 }) {
   // Radix measures the anchor again on scroll and resize; the side stays the one it opened on.
@@ -56,6 +59,7 @@ export function DetailContent({
         align="start"
         aria-label={label}
         onInteractOutside={onInteractOutside}
+        onEscapeKeyDown={onEscapeKeyDown}
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           initialFocus()?.focus()
@@ -122,7 +126,7 @@ export function Linked({ text }: { text: string }) {
   )
 }
 
-/** Delete and edit; deleting asks in place first. */
+/** Delete and edit; deleting asks in place first, a series asking which events (FR-17). */
 export function DetailActions({
   editRef,
   editLabel,
@@ -130,14 +134,24 @@ export function DetailActions({
   confirm,
   onEdit,
   onDelete,
+  onDeleteScope,
+  onScopeOpenChange,
 }: {
   editRef: Ref<HTMLButtonElement>
   editLabel: string
   deleteLabel: string
-  /** The question before deleting. */
+  /** The question before deleting a single event or task. */
   confirm: string
   onEdit: () => void
   onDelete: () => void
+  /** Deletes one event of a series or the whole series (FR-17); omitted for single events and tasks. */
+  onDeleteScope?: (scope: Scope) => void
+  /**
+   * Reports how to cancel the scope question while it is open, or `null` once it isn't, so the
+   * surrounding popover can route Escape to it instead of closing (NFR-27): Radix's dismissable
+   * layer handles Escape on the document before this component's own handler would run.
+   */
+  onScopeOpenChange?: (cancel: (() => void) | null) => void
 }) {
   const { t } = useTranslation()
   const [confirming, setConfirming] = useState(false)
@@ -151,6 +165,24 @@ export function DetailActions({
     else if (asked.current) deleteRef.current?.focus()
     asked.current = confirming
   }, [confirming])
+
+  function cancel() {
+    setConfirming(false)
+    onScopeOpenChange?.(null)
+  }
+
+  if (confirming && onDeleteScope) {
+    return (
+      <ScopeChoice
+        tone="destructive"
+        allowAll
+        question={t('event.scope.delete')}
+        note={t('event.scope.pastIncluded')}
+        onChoose={onDeleteScope}
+        onCancel={cancel}
+      />
+    )
+  }
 
   if (confirming) {
     return (
@@ -184,6 +216,7 @@ export function DetailActions({
         className="-ml-2.5 text-destructive"
         onClick={() => {
           setConfirming(true)
+          if (onDeleteScope) onScopeOpenChange?.(cancel)
         }}
       >
         <Trash2Icon aria-hidden />
