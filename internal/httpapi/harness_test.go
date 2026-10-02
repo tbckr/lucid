@@ -139,6 +139,13 @@ func (f *fakeService) DeleteEvent(_ context.Context, id, etag string) error {
 	return f.record("DeleteEvent")
 }
 
+func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid time.Time) error {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID = id, etag, rid
+	f.mu.Unlock()
+	return f.record("DeleteOccurrence")
+}
+
 func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, error) {
 	f.mu.Lock()
 	f.gotCal = cal

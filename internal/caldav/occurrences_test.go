@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -358,6 +359,256 @@ func TestUpdateOccurrenceErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := e.svc.UpdateOccurrence(ctx, tt.id, tt.etag, tt.rid, tt.in)
+			mustErr(t, err, tt.want)
+		})
+	}
+}
+
+// exdateInstants returns the parsed instants of all EXDATE values of c.
+func exdateInstants(t *testing.T, c *ical.Component) []time.Time {
+	t.Helper()
+	var out []time.Time
+	for _, p := range c.Props.Values(ical.PropExceptionDates) {
+		dvs, err := parseDateList(&p)
+		mustNoErr(t, err)
+		for _, d := range dvs {
+			out = append(out, d.t)
+		}
+	}
+	return out
+}
+
+// countEqual returns how many of ts equal t.
+func countEqual(ts []time.Time, t time.Time) int {
+	n := 0
+	for _, x := range ts {
+		if x.Equal(t) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestDeleteOccurrence checks that DeleteOccurrence excludes only the
+// occurrence at recurrenceID: an EXDATE in the series' form, an existing
+// override at the same instant removed in the same write, and the resource
+// itself deleted once no occurrence is left. No case ever writes
+// STATUS:CANCELLED (spec section 2 "DeleteOccurrence", FR-17).
+func TestDeleteOccurrence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		lines []string
+		rid   time.Time
+		check func(t *testing.T, e *env, cal *ical.Calendar, stored bool)
+	}{
+		{
+			name: "plain",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 10, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				master := vevents(cal)[0]
+				wantDateProp(t, master, ical.PropExceptionDates, "20250310T090000", "Europe/Berlin", false)
+
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 3, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Standup", start: date(2025, 3, 3, 8, 0), end: date(2025, 3, 3, 8, 15), rid: ptr(date(2025, 3, 3, 8, 0))},
+					{title: "Standup", start: date(2025, 3, 17, 8, 0), end: date(2025, 3, 17, 8, 15), rid: ptr(date(2025, 3, 17, 8, 0))},
+				})
+			},
+		},
+		{
+			name: "all-day",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;VALUE=DATE:20250303", "DTEND;VALUE=DATE:20250304",
+				"RRULE:FREQ=WEEKLY",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 10, 0, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				master := vevents(cal)[0]
+				wantDateProp(t, master, ical.PropExceptionDates, "20250310", "", true)
+
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 3, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Standup", start: date(2025, 3, 3, 0, 0), end: date(2025, 3, 4, 0, 0), rid: ptr(date(2025, 3, 3, 0, 0)), allDay: true},
+					{title: "Standup", start: date(2025, 3, 17, 0, 0), end: date(2025, 3, 18, 0, 0), rid: ptr(date(2025, 3, 17, 0, 0)), allDay: true},
+				})
+			},
+		},
+		{
+			name: "with override",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+				"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T120000Z", "DTEND:20250317T130000Z",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 17, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				ves := vevents(cal)
+				if len(ves) != 1 {
+					t.Fatalf("got %d VEVENTs; want 1 (override removed)", len(ves))
+				}
+				wantDateProp(t, ves[0], ical.PropExceptionDates, "20250317T090000", "Europe/Berlin", false)
+			},
+		},
+		{
+			name: "override and EXDATE already there",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE:20250317T080000Z",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+				"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T120000Z", "DTEND:20250317T130000Z",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 17, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				ves := vevents(cal)
+				if len(ves) != 1 {
+					t.Fatalf("got %d VEVENTs; want 1 (override removed)", len(ves))
+				}
+				if n := countEqual(exdateInstants(t, ves[0]), date(2025, 3, 17, 8, 0)); n != 1 {
+					t.Errorf("EXDATE values at 2025-03-17 = %d; want exactly 1", n)
+				}
+			},
+		},
+		{
+			name: "first event",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 3, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 3, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Standup", start: date(2025, 3, 10, 8, 0), end: date(2025, 3, 10, 8, 15), rid: ptr(date(2025, 3, 10, 8, 0))},
+					{title: "Standup", start: date(2025, 3, 17, 8, 0), end: date(2025, 3, 17, 8, 15), rid: ptr(date(2025, 3, 17, 8, 0))},
+				})
+			},
+		},
+		{
+			name: "last one left",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;COUNT=2", "EXDATE;TZID=Europe/Berlin:20250310T090000",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 3, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if stored {
+					t.Fatal("object still stored; want the resource deleted")
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", tt.lines...)
+			ctx := t.Context()
+			evs, err := e.svc.ListEvents(ctx, e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+			mustNoErr(t, err)
+			if len(evs) == 0 {
+				t.Fatal("no occurrences seeded")
+			}
+			etag := evs[0].ETag
+
+			err = e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
+			mustNoErr(t, err)
+
+			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			mustNoErr(t, err)
+			data, stored := e.mock.Object(objPath)
+			var cal *ical.Calendar
+			if stored {
+				cal = mustParse(t, data)
+				for _, c := range vevents(cal) {
+					if strings.EqualFold(text(c.Props, ical.PropStatus), "CANCELLED") {
+						t.Error("resource has STATUS:CANCELLED")
+					}
+				}
+			}
+			tt.check(t, e, cal, stored)
+		})
+	}
+}
+
+// TestDeleteOccurrenceErrors checks the error cases of DeleteOccurrence
+// (spec section 2 steps 1-2, FR-17).
+func TestDeleteOccurrenceErrors(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	ctx := t.Context()
+	e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;TZID=Europe/Berlin:20250310T090000",
+		"END:VEVENT")
+	single, err := e.svc.CreateEvent(ctx, e.cals["personal"], domain.EventInput{
+		Title: "Once", Start: date(2025, 3, 5, 10, 0), End: date(2025, 3, 5, 11, 0),
+	})
+	mustNoErr(t, err)
+
+	evs, err := e.svc.ListEvents(ctx, e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	id, etag := evs[0].ID, evs[0].ETag
+
+	tests := []struct {
+		name string
+		id   string
+		etag string
+		rid  time.Time
+		want error
+	}{
+		{"recurrenceID not an instance", id, etag, date(2025, 3, 11, 8, 0), domain.ErrNotFound},
+		{"single event, no RRULE", single.ID, single.ETag, single.Start, domain.ErrNotFound},
+		{"wrong etag", id, `"stale"`, date(2025, 3, 3, 8, 0), domain.ErrConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := e.svc.DeleteOccurrence(ctx, tt.id, tt.etag, tt.rid)
 			mustErr(t, err, tt.want)
 		})
 	}
