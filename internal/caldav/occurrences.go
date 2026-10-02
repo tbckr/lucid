@@ -263,7 +263,17 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 			exdates[d.t.Unix()] = true
 		}
 	}
-	if next, err := ruleInstances(rr, tm.start.t); err == nil {
+	next, err := ruleInstances(rr, tm.start.t)
+	switch {
+	case err != nil:
+		// A rule ruleInstances cannot parse: expandSeries (events.go) still
+		// treats DTSTART as an instance in that case, so hasEventsLeft must
+		// not drop it either, or DeleteOccurrence would delete a resource
+		// whose DTSTART event ListEvents still shows.
+		if !exdates[tm.start.t.Unix()] {
+			return true
+		}
+	default:
 		for range maxRRuleIterations {
 			t, ok := next()
 			if !ok {
@@ -327,6 +337,7 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 	}
 
 	bumpChangeProps(master, s.p.now().UTC())
+	masterFirst(cal, master)
 	_, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
 	return err

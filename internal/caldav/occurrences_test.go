@@ -540,6 +540,74 @@ func TestDeleteOccurrence(t *testing.T) {
 				}
 			},
 		},
+		{
+			// A rule ruleInstances cannot parse: expandSeries still treats
+			// DTSTART as an instance in that case (events.go), and
+			// ListEvents still shows it (03-03), alongside the orphaned
+			// override at 03-10. Deleting 03-10 must not delete the
+			// resource and lose the still-visible 03-03 event.
+			name: "unparseable rule",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART:20250303T080000Z", "DTEND:20250303T081500Z",
+				"RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=XX",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+				"RECURRENCE-ID:20250310T080000Z", "DTSTART:20250310T120000Z", "DTEND:20250310T130000Z",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 10, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored; want the resource kept (DTSTART is still a visible event)")
+				}
+				ves := vevents(cal)
+				if len(ves) != 1 {
+					t.Fatalf("got %d VEVENTs; want 1 (override removed)", len(ves))
+				}
+				wantDateProp(t, ves[0], ical.PropExceptionDates, "20250310T080000Z", "", false)
+
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Standup", start: date(2025, 3, 3, 8, 0), end: date(2025, 3, 3, 8, 15), rid: ptr(date(2025, 3, 3, 8, 0))},
+				})
+			},
+		},
+		{
+			// The override is stored before the series in the resource; a
+			// write must still leave the series first (SOGo reads the first
+			// VEVENT as the series), even though this delete does not touch
+			// the override itself.
+			name: "override before master",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+				"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T120000Z", "DTEND:20250317T130000Z",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 10, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored")
+				}
+				ves := vevents(cal)
+				if len(ves) != 2 {
+					t.Fatalf("got %d VEVENTs; want 2 (series and the untouched override)", len(ves))
+				}
+				if ves[0].Props.Get(ical.PropRecurrenceID) != nil {
+					t.Error("first VEVENT has a RECURRENCE-ID; want the series first")
+				}
+				if got := text(ves[0].Props, ical.PropSummary); got != "Standup" {
+					t.Errorf("first VEVENT SUMMARY = %q; want Standup", got)
+				}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
