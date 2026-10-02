@@ -117,11 +117,8 @@ export function EventChip({
       )}
       <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(event.startsAt, prefs)}</span>
       <span className="truncate font-medium">{title}</span>
-      <RecurringMark
-        recurring={event.recurring}
-        modified={event.modified}
-        label={t(event.modified ? 'event.modified' : 'event.recurring')}
-      />
+      {/* The month grid's chips are the tightest tiles: only an exception earns the mark here (FR-17). */}
+      <RecurringMark recurring={event.recurring && event.modified} modified={event.modified} label={t('event.modified')} />
     </button>
   )
 }

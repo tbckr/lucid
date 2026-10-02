@@ -32,16 +32,24 @@ describe('EventItems', () => {
     expect(screen.getByRole('img', { name })).toBeInTheDocument()
   })
 
-  it.each([
-    [true, 'Repeating event, changed individually'],
-    [false, 'Recurring event'],
-  ])('marks an EventChip changed individually (modified: %s)', (modified, name) => {
-    const event = recurringEvent(modified)
+  // The month grid's chips are the tightest tiles: only an exception earns a mark there (FR-17).
+  it('marks an EventChip changed individually, but not a plain recurring one', () => {
+    const changed = recurringEvent(true)
     renderWithProviders(
       <DndContext>
-        <EventChip event={event} colors={colors} prefs={prefs} drag={drag(event)} />
+        <EventChip event={changed} colors={colors} prefs={prefs} drag={drag(changed)} />
       </DndContext>,
     )
-    expect(screen.getByRole('img', { name })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Repeating event, changed individually' })).toBeInTheDocument()
+  })
+
+  it('shows no mark on an EventChip of a plain recurring event', () => {
+    const plain = recurringEvent(false)
+    renderWithProviders(
+      <DndContext>
+        <EventChip event={plain} colors={colors} prefs={prefs} drag={drag(plain)} />
+      </DndContext>,
+    )
+    expect(screen.queryByRole('img', { name: 'Recurring event' })).toBeNull()
   })
 })
