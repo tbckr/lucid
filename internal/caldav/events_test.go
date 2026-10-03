@@ -1128,6 +1128,106 @@ func TestUpdateSeriesDateUntil(t *testing.T) {
 	wantStored(t, e, "work", "series.ics", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260413")
 }
 
+// TestUpdateSeriesMonthlyKeepsDayOfMonth checks that "all events" moves a
+// monthly series without BY parts, and its references, by calendar months
+// and days, so that each keeps its day of the month: from the 03-30 event to
+// 04-02, the 30th becomes the 2nd in every month. Counted in days, the
+// override's RECURRENCE-ID 06-30 went to 07-03 and was orphaned next to the
+// plain 07-02 event it replaces (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyKeepsDayOfMonth(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260130T090000", "DTEND;TZID=Europe/Berlin:20260130T100000",
+		"RRULE:FREQ=MONTHLY", "EXDATE;TZID=Europe/Berlin:20260530T090000",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20260630T090000",
+		"DTSTART;TZID=Europe/Berlin:20260630T150000", "DTEND;TZID=Europe/Berlin:20260630T160000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 30, 0, 0), date(2026, 3, 31, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-30; want 1", len(evs))
+	}
+
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Rent", "", date(2026, 4, 2, 7, 0), date(2026, 4, 2, 8, 0)))
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Rent", start: date(2026, 4, 2, 7, 0), end: date(2026, 4, 2, 8, 0), rid: ptr(date(2026, 4, 2, 7, 0))},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=MONTHLY", "DTSTART;TZID=Europe/Berlin:20260202T090000", "DTEND;TZID=Europe/Berlin:20260202T100000",
+		"EXDATE;TZID=Europe/Berlin:20260602T090000", "RECURRENCE-ID;TZID=Europe/Berlin:20260702T090000")
+	// 06-02 stays deleted, and the exception replaces the 07-02 event, at its
+	// own time.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 4, 1, 0, 0), date(2026, 8, 1, 0, 0)), []occ{
+		{title: "Rent", start: date(2026, 4, 2, 7, 0), end: date(2026, 4, 2, 8, 0), rid: ptr(date(2026, 4, 2, 7, 0))},
+		{title: "Rent", start: date(2026, 5, 2, 7, 0), end: date(2026, 5, 2, 8, 0), rid: ptr(date(2026, 5, 2, 7, 0))},
+		{title: "Special", start: date(2026, 6, 30, 13, 0), end: date(2026, 6, 30, 14, 0), rid: ptr(date(2026, 7, 2, 7, 0))},
+	})
+}
+
+// TestUpdateSeriesYearlyKeepsDayOfMonth checks that "all events" moves a
+// yearly series by calendar months and days too: from 02-28 to 03-01, its
+// UNTIL in the leap year 2028 goes to 03-01 as well, not to 02-29, so the
+// series keeps its last event (spec section 3 items 2 and 8, FR-17).
+func TestUpdateSeriesYearlyKeepsDayOfMonth(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260228T090000", "DTEND;TZID=Europe/Berlin:20260228T100000",
+		"RRULE:FREQ=YEARLY;UNTIL=20280228T080000Z",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2027, 2, 28, 0, 0), date(2027, 3, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2027-02-28; want 1", len(evs))
+	}
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Review", "", date(2027, 3, 1, 8, 0), date(2027, 3, 1, 9, 0)))
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics",
+		"RRULE:FREQ=YEARLY;UNTIL=20280301T080000Z", "DTSTART;TZID=Europe/Berlin:20260301T090000")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 1, 1, 0, 0), date(2029, 1, 1, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 3, 1, 8, 0), end: date(2026, 3, 1, 9, 0), rid: ptr(date(2026, 3, 1, 8, 0))},
+		{title: "Review", start: date(2027, 3, 1, 8, 0), end: date(2027, 3, 1, 9, 0), rid: ptr(date(2027, 3, 1, 8, 0))},
+		{title: "Review", start: date(2028, 3, 1, 8, 0), end: date(2028, 3, 1, 9, 0), rid: ptr(date(2028, 3, 1, 8, 0))},
+	})
+}
+
+// TestUpdateSeriesMonthlyKeepsDuration checks that a monthly series moved
+// by calendar months and days keeps its duration where DTSTART and DTEND lie
+// in months of different lengths: DTEND moves as DTSTART does, not by the
+// months and days on its own (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyKeepsDuration(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Trip",
+		"DTSTART;VALUE=DATE:20260131", "DTEND;VALUE=DATE:20260202", "RRULE:FREQ=MONTHLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 31, 0, 0), date(2026, 4, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-31; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Trip", "", date(2026, 4, 2, 0, 0), date(2026, 4, 4, 0, 0))
+	in.AllDay = true
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;VALUE=DATE:20260202", "DTEND;VALUE=DATE:20260204")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 4, 1, 0, 0), date(2026, 5, 10, 0, 0)), []occ{
+		{title: "Trip", start: date(2026, 4, 2, 0, 0), end: date(2026, 4, 4, 0, 0), rid: ptr(date(2026, 4, 2, 0, 0)), allDay: true},
+		{title: "Trip", start: date(2026, 5, 2, 0, 0), end: date(2026, 5, 4, 0, 0), rid: ptr(date(2026, 5, 2, 0, 0)), allDay: true},
+	})
+}
+
 func TestUpdateAndDeleteErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

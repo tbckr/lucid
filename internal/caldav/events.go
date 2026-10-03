@@ -494,7 +494,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// in the request's zone can differ from in.Start's by the zone's
 		// daylight-saving difference.
 		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
-		shift := wallShift(oldTm.start, shown.start.t, in.Start)
+		shift := wallShift(rruleString(master), oldTm.start, shown.start.t, in.Start)
 		start = shift(dateValue{t: oldTm.start.t})
 		end = start.Add(in.End.Sub(in.Start))
 		shiftRecurrenceRefs(cal, master, shift)
@@ -549,12 +549,13 @@ func instanceTiming(tm timing, rid time.Time) timing {
 // recurrence ID after the move.
 //
 //   - The series moves as the event moved from where it was shown (the
-//     override's DTSTART for an exception): by the same calendar days and
-//     change of clock time in the series' zone, see wallShift. Its rule
-//     follows as seriesShift says, and UNTIL, EXDATE, RDATE and the
-//     RECURRENCE-IDs move the same way. A rule seriesShift refuses, one on
-//     fixed days or times, is an invalid input error, and cal is left as it
-//     was.
+//     override's DTSTART for an exception): by the same change of date (in
+//     calendar months and days for a monthly or yearly rule without BY
+//     parts, else in calendar days) and of clock time in the series' zone,
+//     see wallShift. Its rule follows as seriesShift says, and UNTIL,
+//     EXDATE, RDATE and the RECURRENCE-IDs move the same way; DTEND moves
+//     as DTSTART did. A rule seriesShift refuses, one on fixed days or
+//     times, is an invalid input error, and cal is left as it was.
 //   - Of title, description, location and duration, only what changed from
 //     the event as shown is written into the series, so an exception's own
 //     title does not replace the series'.
@@ -564,7 +565,7 @@ func instanceTiming(tm timing, rid time.Time) timing {
 func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain.EventInput, now time.Time) (time.Time, error) {
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
-	shift := wallShift(tm.start, shown.start.t, in.Start)
+	shift := wallShift(rruleString(master), tm.start, shown.start.t, in.Start)
 	dur := in.End.Sub(in.Start)
 	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
 
@@ -590,7 +591,9 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		master.Props.Del(ical.PropDuration)
 		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.Add(dur), f))
 	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
-		shiftDatePropBy(p, shift)
+		// DTEND moves as DTSTART did, so the series keeps its duration, also
+		// where a move by months puts the two in months of other lengths.
+		shiftDatePropBy(p, wallShift("", tm.start, tm.start.t, newStart))
 	}
 	shiftRecurrenceRefs(cal, master, shift)
 
@@ -622,31 +625,47 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 }
 
 // wallShift returns how "all events" moves the values of the series whose
-// DTSTART is st when its event shown at from moves to to (spec section 3
-// item 2, FR-17): by the same number of calendar days and the same change of
-// clock time, both measured in the series' zone. The series repeats on that
-// wall clock, so a move by the absolute time in between would put EXDATEs,
-// RECURRENCE-IDs and DTSTART itself an hour off across a daylight-saving
-// change. A DATE moves by the days only. A UTC or TZID value names an
-// instant, which moves with the series' wall clock and is then written in
-// its own form again; a floating value, or one with a TZID Lucid cannot
-// resolve, moves on its own wall clock.
-func wallShift(st dateValue, from, to time.Time) func(dateValue) time.Time {
+// rule is rule and whose DTSTART is st when its event shown at from moves to
+// to (spec section 3 item 2, FR-17): by the same change of date (see
+// dateShift) and the same change of clock time, both measured in the
+// series' zone. The series repeats on that wall clock, so a move by the
+// absolute time in between would put EXDATEs, RECURRENCE-IDs and DTSTART
+// itself an hour off across a daylight-saving change. A DATE moves by the
+// change of date only. A UTC or TZID value names an instant, which moves
+// with the series' wall clock and is then written in its own form again; a
+// floating value, or one with a TZID Lucid cannot resolve, moves on its own
+// wall clock.
+func wallShift(rule string, st dateValue, from, to time.Time) func(dateValue) time.Time {
 	loc := st.loc()
 	f, t := from.In(loc), to.In(loc)
-	days := dateDays(t) - dateDays(f)
+	months, days := dateShift(rule, f, t)
 	secs := secondOfDay(t) - secondOfDay(f)
 	return func(d dateValue) time.Time {
 		if d.allDay {
-			return d.t.AddDate(0, 0, days)
+			return d.t.AddDate(0, months, days)
 		}
 		zone := loc
 		if d.floating || d.tzid == "" && d.param != "" {
 			zone = d.t.Location() // its wall clock, read as UTC
 		}
 		w := d.t.In(zone)
-		return time.Date(w.Year(), w.Month(), w.Day()+days, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), zone)
+		return time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
+			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), zone)
 	}
+}
+
+// dateShift returns the change of date from from to to, each read in its
+// own location, as a series with the rule rule moves (spec section 3 item
+// 2, FR-17): for a MONTHLY or YEARLY rule without BY parts, whose events
+// keep the day of the month of DTSTART, in calendar months and then days of
+// the month, as todoSeries.refShift counts them, so that a move across a
+// month end keeps each later event on the moved one's day of the month; for
+// any other rule in calendar days.
+func dateShift(rule string, from, to time.Time) (months, days int) {
+	if freq := strings.ToUpper(rulePart(rule, "FREQ")); (freq == "MONTHLY" || freq == "YEARLY") && !ruleHasFixedDays(rule, false) {
+		return (to.Year()-from.Year())*12 + int(to.Month()) - int(from.Month()), to.Day() - from.Day()
+	}
+	return 0, dateDays(to) - dateDays(from)
 }
 
 // shownAt returns the event of o with the recurrence ID rid as ListEvents

@@ -765,20 +765,27 @@ surveyed client and server round-trips (see [Summary](#summary)).
   (`shiftRecurrenceRefs`) — the majority behavior (Apple, SOGo, InfCloud,
   Thunderbird). No surveyed client propagates a new title to an existing
   override.
-- **How far everything moves**: the series moves by the same number of
-  calendar days and the same change of clock time as the edited event,
-  both measured in the series' own time zone (`wallShift`), because its
-  rule repeats on that wall clock. `DTSTART`, `UNTIL`, every `EXDATE`,
-  `RDATE` and `RECURRENCE-ID`, and the recurrence ID the response is looked
-  up by all move this way: a date-only value by the days only, a UTC or
-  `TZID` value as an instant on the series' wall clock (written back in its
-  own form), a floating value, or one with a `TZID` Lucid cannot resolve,
-  on its own wall clock. An absolute duration
+- **How far everything moves**: the series moves by the same change of
+  date and the same change of clock time as the edited event, both
+  measured in the series' own time zone (`wallShift`), because its rule
+  repeats on that wall clock. The change of date is counted in calendar
+  days, except for a `MONTHLY` or `YEARLY` rule without `BY` parts, whose
+  events keep `DTSTART`'s day of the month: there it is counted in calendar
+  months and then days of the month (`dateShift`, as for tasks), so a move
+  from the 30th to the 2nd puts every event, exception and deleted event on
+  the 2nd, whatever the length of the months in between. `DTSTART`, `UNTIL`,
+  every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and the recurrence ID the
+  response is looked up by all move this way: a date-only value by the
+  change of date only, a UTC or `TZID` value as an instant on the series'
+  wall clock (written back in its own form), a floating value, or one with
+  a `TZID` Lucid cannot resolve, on its own wall clock. `DTEND` moves as
+  `DTSTART` did, so the series keeps its duration. An absolute duration
   would put them an hour off whenever a daylight-saving change lies
   between them and the edited event — a deleted occurrence would come back
   and an override would be orphaned next to the occurrence it replaces —
   and a drag from winter into summer time would move the whole series an
-  hour. The path for a changed rule or `allDay` flag moves the same way.
+  hour. The path for a changed rule or `allDay` flag moves the same way,
+  counted by the rule the series had.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and

@@ -131,16 +131,19 @@ applied to the **whole series** ("All events"). `200` with the updated
 
 - **Distance:** measured from the occurrence's *shown* start (an exception's
   own start, if the edited occurrence is one), not from `instanceStart`
-  itself, to `start`: the series moves by the same number of calendar days
-  and the same change of clock time, both in the series' own time zone, so
-  it keeps its clock time across a daylight-saving change. The edited
-  exception, if there is one, takes `start` and `end`.
+  itself, to `start`: the series moves by the same change of date and the
+  same change of clock time, both in the series' own time zone, so it keeps
+  its clock time across a daylight-saving change. The change of date is
+  counted in calendar days, or for a `MONTHLY` or `YEARLY` rule without
+  `BY` parts in calendar months and then days of the month, so its events
+  keep their day of the month. The edited exception, if there is one, takes
+  `start` and `end`.
 - **Fields:** only fields changed against the shown occurrence are written
   into the series and into the edited exception; other exceptions keep their
   own times and fields, only their `RECURRENCE-ID` shifts along with the
   series.
 - `UNTIL`, `EXDATE` and `RDATE` shift along with the series in the same
-  way (a date-only value by the days only).
+  way (a date-only value by the change of date only).
 - The weekdays of a weekly rule with plain `BYDAY` weekdays (no ordinal, no
   other `BY` part) rotate with the shift.
 - `400 invalid_input` if a rule with fixed days would have to move to

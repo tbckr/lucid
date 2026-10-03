@@ -244,7 +244,7 @@ func TestShiftDateProp(t *testing.T) {
 	t.Parallel()
 	st := dateValue{t: date(2025, 3, 3, 10, 0)}
 	by := func(d time.Duration) func(dateValue) time.Time {
-		return wallShift(st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
+		return wallShift("FREQ=WEEKLY", st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
 	}
 	tests := []struct {
 		value, tzid, want string
@@ -284,7 +284,7 @@ func TestWallShift(t *testing.T) {
 	st := dateValue{t: time.Date(2026, 1, 2, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
 	// Shown on Friday 03-27, moved to Saturday 03-28, both 09:00 CET: one day
 	// later, which takes values on 03-28 into summer time.
-	shift := wallShift(st, date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
+	shift := wallShift("FREQ=WEEKLY;BYDAY=FR", st, date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
 
 	tests := []struct {
 		name  string
@@ -310,6 +310,37 @@ func TestWallShift(t *testing.T) {
 			shiftDatePropBy(&p, shift)
 			if p.Value != tt.want {
 				t.Errorf("shifted %s = %s; want %s", tt.value, p.Value, tt.want)
+			}
+		})
+	}
+}
+
+// TestDateShift checks how dateShift counts the change of date of a moved
+// event: in calendar months and days for a monthly or yearly rule without
+// BY parts, in calendar days for any other (spec section 3 item 2, FR-17).
+func TestDateShift(t *testing.T) {
+	t.Parallel()
+	mar30, apr2 := date(2026, 3, 30, 7, 0), date(2026, 4, 2, 7, 0)
+	tests := []struct {
+		name         string
+		rule         string
+		from, to     time.Time
+		months, days int
+	}{
+		{"monthly", "FREQ=MONTHLY", mar30, apr2, 1, -28},
+		{"monthly back", "FREQ=MONTHLY", apr2, mar30, -1, 28},
+		{"monthly with interval and count", "FREQ=MONTHLY;INTERVAL=2;COUNT=5", mar30, apr2, 1, -28},
+		{"yearly into the next year", "FREQ=YEARLY", date(2026, 12, 30, 8, 0), date(2027, 1, 2, 8, 0), 1, -28},
+		{"monthly on fixed days", "FREQ=MONTHLY;BYMONTHDAY=30", mar30, apr2, 0, 3},
+		{"weekly", "FREQ=WEEKLY", mar30, apr2, 0, 3},
+		{"no rule", "", mar30, apr2, 0, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			months, days := dateShift(tt.rule, tt.from, tt.to)
+			if months != tt.months || days != tt.days {
+				t.Errorf("dateShift(%q) = %d months, %d days; want %d, %d", tt.rule, months, days, tt.months, tt.days)
 			}
 		})
 	}
