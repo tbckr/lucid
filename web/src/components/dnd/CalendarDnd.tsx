@@ -249,8 +249,6 @@ export function CalendarDnd({
   const prefs = usePrefs()
   const now = useMemo(() => new Date(), [])
   const tz = useMemo(() => browserTimeZone(), [])
-  const move = useMoveEvent()
-  const moveOccurrence = useMoveOccurrence()
   const setCreateWhen = useUi((s) => s.setCreateWhen)
   const [active, setActive] = useState<{ id: string; data: DragData } | null>(null)
   // In line with the other updates of the dragged task, so none conflicts with another
@@ -281,6 +279,12 @@ export function CalendarDnd({
   // place meanwhile. `all`: "All events" has the focus or the pointer, which rings the series.
   const [asking, setAsking] = useState<Asking | null>(null)
   const [all, setAll] = useState(false)
+  // The moves of a series run one after another, each with the ETag the one before got
+  // (FR-17): the series of the event the question asks about, or else of the dragged one.
+  const moving = asking?.event ?? (active?.data.event.kind === 'event' ? active.data.event : undefined)
+  const series = moving?.recurring ? moving.id : undefined
+  const move = useMoveEvent(series)
+  const moveOccurrence = useMoveOccurrence(series)
   // "Only this event" until its move settles: keeps the event at its new place until the
   // optimistic update is in, instead of jumping back for a moment (NFR-26).
   const [held, setHeld] = useState<ScopePreview | null>(null)
@@ -410,6 +414,8 @@ export function CalendarDnd({
         })
       } else {
         move.mutate({ event: result.event, ...result.times })
+        // Detached like a task's update below, so a series' scope can't change under it.
+        move.reset()
       }
     }
     if (result?.kind === 'task') {
@@ -429,23 +435,23 @@ export function CalendarDnd({
   }
 
   // "Only this event" moves the event optimistically (NFR-26); "All events" moves the series and
-  // shows its saving state until it is reloaded.
+  // shows its saving state until it is reloaded. Either is detached from its hook right away, like
+  // a task's drop: the series' scope goes with the question.
   const chooseScope = (scope: Scope) => {
     if (!asking) return
     const { event, start, end } = asking
     if (scope === 'this') {
       const key = event.key
       setHeld({ key, id: event.id, start, end, all: false })
-      moveOccurrence.mutate(
-        { event, start, end },
-        {
-          onSettled: () => {
-            setHeld((h) => (h?.key === key ? null : h))
-          },
-        },
-      )
+      // A detached mutation tells only its own promise that it has settled.
+      const release = () => {
+        setHeld((h) => (h?.key === key ? null : h))
+      }
+      moveOccurrence.mutateAsync({ event, start, end }).then(release, release)
+      moveOccurrence.reset()
     } else {
       move.mutate({ event, start, end })
+      move.reset()
     }
     cancelScope()
   }

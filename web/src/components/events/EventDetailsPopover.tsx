@@ -47,8 +47,10 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const colorsOf = useCalendarColors()
   const openDetail = useUi((s) => s.openDetail)
   const openEditor = useUi((s) => s.openEditor)
-  const del = useDeleteEvent()
-  const deleteOccurrence = useDeleteOccurrence()
+  // A delete of a series waits for its other writes, and takes the ETag they got (FR-17).
+  const series = event.recurring ? event.id : undefined
+  const del = useDeleteEvent(series)
+  const deleteOccurrence = useDeleteOccurrence(series)
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
   // Holds how to cancel the delete scope question while it is open, for the Escape handler below.

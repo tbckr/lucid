@@ -367,6 +367,107 @@ describe('CalendarDnd', () => {
       })
     })
 
+    // All events of a series share one ETag; "Only this event" locks none of the others (FR-17).
+    describe('after an earlier move of the same series', () => {
+      /** Answers to the requests, in order, given only when the test says so. */
+      function holdRequests() {
+        const answers: ((r: Response) => void)[] = []
+        const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+          () =>
+            new Promise<Response>((resolve) => {
+              answers.push(resolve)
+            }),
+        )
+        const ifMatch = (i: number) => (fetch.mock.calls[i]?.[1]?.headers as Record<string, string>)['If-Match']
+        return { fetch, answers, ifMatch }
+      }
+      /**
+       * Like `renderWeek`, but a tile measures in its own day cell, so one of any day can be
+       * moved; the overlay dnd-kit wraps around the dragged tile measures like the tile with the
+       * focus, which a keyboard drag keeps.
+       */
+      function renderInCells(events: CalEvent[]) {
+        const result = renderWeek(events)
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+          if (this.dataset.left) return rect(Number(this.dataset.left), 0, 100, 100)
+          const cell = this.closest<HTMLElement>('[data-left]') ?? document.activeElement?.closest<HTMLElement>('[data-left]')
+          return rect(cell ? Number(cell.dataset.left) + 10 : 10, 40, 80, 20)
+        })
+        return result
+      }
+      const movedTo27 = () =>
+        jsonResponse(
+          200,
+          apiEvent({ ...standup(26), start: '2026-09-27T08:00:00Z', end: '2026-09-27T09:00:00Z', etag: '"2"', modified: true }),
+        )
+
+      /** Moves the 26th's event to the 27th with "Only this event", and leaves its PUT on its way. */
+      async function moveOnly26(user: ReturnType<typeof userEvent.setup>) {
+        await moveRight(chipIn(26, standupAt10))
+        const question = await screen.findByRole('alertdialog', { name: moveQuestion })
+        await waitFor(() => {
+          expect(within(question).getByRole('button', { name: 'Only this event' })).toHaveFocus()
+        })
+        await user.keyboard('{Enter}')
+      }
+
+      it('moves another event of it after that one, with the ETag that one got', async () => {
+        const user = userEvent.setup()
+        const { fetch, answers, ifMatch } = holdRequests()
+        const { queryClient } = renderInCells([standup(25), standup(26)])
+
+        await moveOnly26(user)
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(1)
+        })
+        await moveRight(chipIn(25, standupAt10))
+        const question = await screen.findByRole('alertdialog', { name: moveQuestion })
+        await waitFor(() => {
+          expect(within(question).getByRole('button', { name: 'Only this event' })).toHaveFocus()
+        })
+        await user.keyboard('{Enter}')
+
+        answers[0]?.(movedTo27())
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(2)
+        })
+        expect(urlOf(fetch.mock.calls[1]![0])).toBe(`/api/v1/events/e1/occurrences/${encodeURIComponent('2026-09-25T08:00:00Z')}`)
+        expect(ifMatch(1)).toBe('"2"')
+        answers[1]?.(jsonResponse(200, apiEvent({ ...standup(25), start: '2026-09-26T08:00:00Z', etag: '"3"' })))
+        await waitFor(() => {
+          expect(queryClient.isMutating()).toBe(0)
+        })
+      })
+
+      it.each([
+        ['Only this event', `/api/v1/events/e1/occurrences/${encodeURIComponent('2026-09-25T08:00:00Z')}`],
+        ['All events', '/api/v1/events/e1'],
+      ])('answers the question opened before that one was saved with the ETag it got (%s)', async (choice, url) => {
+        const user = userEvent.setup()
+        const { fetch, answers, ifMatch } = holdRequests()
+        const { queryClient } = renderInCells([standup(25), standup(26)])
+
+        await moveOnly26(user)
+        await moveRight(chipIn(25, standupAt10))
+        await screen.findByRole('alertdialog', { name: moveQuestion })
+        answers[0]?.(movedTo27())
+        await waitFor(() => {
+          expect(queryClient.isMutating()).toBe(0)
+        })
+
+        await user.click(screen.getByRole('button', { name: choice }))
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(2)
+        })
+        expect(urlOf(fetch.mock.calls[1]![0])).toBe(url)
+        expect(ifMatch(1)).toBe('"2"')
+        answers[1]?.(jsonResponse(200, apiEvent({ ...standup(25), start: '2026-09-26T08:00:00Z', etag: '"3"' })))
+        await waitFor(() => {
+          expect(queryClient.isMutating()).toBe(0)
+        })
+      })
+    })
+
     it('saves nothing when the question is cancelled with Escape', async () => {
       const user = userEvent.setup()
       const fetch = vi.spyOn(globalThis, 'fetch')

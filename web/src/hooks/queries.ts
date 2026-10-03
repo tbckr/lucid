@@ -293,8 +293,67 @@ export function reportMutationError(err: unknown, t: TFn, qc: QueryClient, inval
 }
 
 /* ------------------------------------------------------------------------ */
+/* Own ETags                                                                */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * ETags a client's own updates replaced, per resource (a task, or an event
+ * with all the events of its series): an update computed while an earlier one
+ * of the same resource was in flight still carries the old ETag, and must not
+ * conflict with its own predecessor. Servers may derive ETags from the
+ * content, so an ETag can come back; the current one never maps anywhere.
+ */
+const ownEtags = new WeakMap<QueryClient, Map<string, string>>()
+
+function ownEtagsOf(qc: QueryClient): Map<string, string> {
+  let map = ownEtags.get(qc)
+  if (!map) {
+    map = new Map()
+    ownEtags.set(qc, map)
+  }
+  return map
+}
+
+/** The ETag `item` has now, after the client's own updates since it was read. */
+function currentEtag(qc: QueryClient, item: { id: string; etag: string }): string {
+  const map = ownEtagsOf(qc)
+  let etag = item.etag
+  for (let next = map.get(`${item.id} ${etag}`); next !== undefined; next = map.get(`${item.id} ${etag}`)) etag = next
+  return etag
+}
+
+/** Notes that the client's own update of resource `id` replaced ETag `from` with `to`. */
+function replaceEtag(qc: QueryClient, id: string, from: string, to: string): void {
+  const map = ownEtagsOf(qc)
+  map.set(`${id} ${from}`, to)
+  map.delete(`${id} ${to}`)
+}
+
+/* ------------------------------------------------------------------------ */
 /* Event mutations                                                          */
 /* ------------------------------------------------------------------------ */
+
+/**
+ * The mutation scope of the series `id` (FR-17, NFR-26): its events share
+ * one resource and so one ETag, and "Only this event" is optimistic without
+ * holding the others back, so its writes run one after another, each with
+ * the ETag the one before got (`currentEtag`). A single event passes none.
+ */
+function seriesScope(id: string | undefined) {
+  return id ? { scope: { id: `event:${id}` } } : {}
+}
+
+/** Writes `event`'s resource with the ETag it has now, and notes the one the write gave it. */
+async function writeEvent(
+  qc: QueryClient,
+  event: CalEvent,
+  write: (etag: string) => Promise<ApiEvent>,
+): Promise<ApiEvent> {
+  const etag = currentEtag(qc, event)
+  const updated = await write(etag)
+  replaceEtag(qc, event.id, etag, updated.etag)
+  return updated
+}
 
 export function useCreateEvent() {
   const qc = useQueryClient()
@@ -312,12 +371,14 @@ export function useCreateEvent() {
   })
 }
 
-export function useUpdateEvent() {
+/** Saves an event; with the `id` of its series, after the series' other writes (`seriesScope`). */
+export function useUpdateEvent(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
+    ...seriesScope(series),
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) =>
-      endpoints.updateEvent(event.id, event.etag, input),
+      writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, input)),
     onSuccess: (_e, { event }) => {
       toast.success(t('event.saved'))
       return qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) })
@@ -328,11 +389,13 @@ export function useUpdateEvent() {
   })
 }
 
-export function useDeleteEvent() {
+/** Deletes an event, a series as a whole; with the `id` of its series, after the series' other writes. */
+export function useDeleteEvent(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
-    mutationFn: (event: CalEvent) => endpoints.deleteEvent(event.id, event.etag),
+    ...seriesScope(series),
+    mutationFn: (event: CalEvent) => endpoints.deleteEvent(event.id, currentEtag(qc, event)),
     onMutate: async (event) => {
       if (event.recurring) return { snapshot: [] as [readonly unknown[], EventList | undefined][] }
       const key = queryKeys.eventsOf(event.calendarId)
@@ -381,15 +444,16 @@ export function moveInput(event: CalEvent, start: string, end: string): EventInp
  * Drag & drop move/resize (FR-10, NFR-26). Single events are updated
  * optimistically in every cached range and rolled back on error; recurring
  * occurrences only show a pending state and are refetched afterwards because
- * the whole series shifts.
+ * the whole series shifts. With the `id` of a series, after its other writes.
  */
-export function useMoveEvent() {
+export function useMoveEvent(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
     mutationKey: MOVE_EVENT_KEY,
+    ...seriesScope(series),
     mutationFn: ({ event, start, end }: MoveVars) =>
-      endpoints.updateEvent(event.id, event.etag, moveInput(event, start, end)),
+      writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, moveInput(event, start, end))),
     onMutate: async ({ event, start, end }) => {
       if (event.recurring) return { snapshot: [] as [readonly unknown[], EventList | undefined][] }
       const key = queryKeys.eventsOf(event.calendarId)
@@ -456,15 +520,19 @@ export const MOVE_OCCURRENCE_KEY = ['moveOccurrence'] as const
  * Drag & drop move/resize of a single occurrence of a series ("Only this
  * event", FR-10, FR-17, NFR-26). Updated optimistically, like a single
  * event's move, and rolled back on error; the server's new ETag is then
- * synced to every cached occurrence of the same series.
+ * synced to every cached occurrence of the same series. With the `id` of
+ * the series, after its other writes.
  */
-export function useMoveOccurrence() {
+export function useMoveOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
     mutationKey: MOVE_OCCURRENCE_KEY,
+    ...seriesScope(series),
     mutationFn: ({ event, start, end }: MoveVars) =>
-      endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', event.etag, moveOccurrenceInput(event, start, end)),
+      writeEvent(qc, event, (etag) =>
+        endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', etag, moveOccurrenceInput(event, start, end)),
+      ),
     onMutate: async ({ event, start, end }) => {
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
@@ -485,13 +553,18 @@ export function useMoveOccurrence() {
   })
 }
 
-/** Edits a single occurrence of a series ("Only this event", FR-17), with the series' ETag synced like a move. */
-export function useUpdateOccurrence() {
+/**
+ * Edits a single occurrence of a series ("Only this event", FR-17), with the
+ * series' ETag synced like a move; with the `id` of the series, after its
+ * other writes.
+ */
+export function useUpdateOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
+    ...seriesScope(series),
     mutationFn: ({ event, input }: { event: CalEvent; input: OccurrenceInput }) =>
-      endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', event.etag, input),
+      writeEvent(qc, event, (etag) => endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', etag, input)),
     onSuccess: (updated, { event }) => {
       toast.success(t('event.saved'))
       putOccurrence(qc, event, updated)
@@ -506,13 +579,16 @@ export function useUpdateOccurrence() {
 /**
  * Excludes a single occurrence of a series ("Only this event", FR-17):
  * removed optimistically by its own `key` (NFR-26), unlike deleting a whole
- * series, which the other occurrences of the series survive.
+ * series, which the other occurrences of the series survive. With the `id`
+ * of the series, after its other writes.
  */
-export function useDeleteOccurrence() {
+export function useDeleteOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
-    mutationFn: (event: CalEvent) => endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', event.etag),
+    ...seriesScope(series),
+    mutationFn: (event: CalEvent) =>
+      endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', currentEtag(qc, event)),
     onMutate: async (event) => {
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
@@ -553,38 +629,6 @@ export function useCreateTodo() {
       reportMutationError(err, t, qc, queryKeys.todos(calendarId))
     },
   })
-}
-
-/**
- * ETags a client's own updates replaced, per task: an update computed while an
- * earlier one of the same task was in flight still carries the old ETag, and
- * must not conflict with its own predecessor. Servers may derive ETags from the
- * content, so an ETag can come back; the current one never maps anywhere.
- */
-const ownEtags = new WeakMap<QueryClient, Map<string, string>>()
-
-function ownEtagsOf(qc: QueryClient): Map<string, string> {
-  let map = ownEtags.get(qc)
-  if (!map) {
-    map = new Map()
-    ownEtags.set(qc, map)
-  }
-  return map
-}
-
-/** The ETag `todo` has now, after the client's own updates since it was read. */
-function currentEtag(qc: QueryClient, todo: Todo): string {
-  const map = ownEtagsOf(qc)
-  let etag = todo.etag
-  for (let next = map.get(`${todo.id} ${etag}`); next !== undefined; next = map.get(`${todo.id} ${etag}`)) etag = next
-  return etag
-}
-
-/** Notes that the client's own update of task `id` replaced ETag `from` with `to`. */
-function replaceEtag(qc: QueryClient, id: string, from: string, to: string): void {
-  const map = ownEtagsOf(qc)
-  map.set(`${id} ${from}`, to)
-  map.delete(`${id} ${to}`)
 }
 
 /**

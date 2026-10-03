@@ -13,12 +13,15 @@ import { defaultSettings, useSettings } from '@/stores/settings'
 import {
   queryKeys,
   useCalendarTasks,
+  useDeleteEvent,
   useDeleteOccurrence,
   useDeleteTodo,
   useDeleteTodos,
   useMoveOccurrence,
   usePendingSeries,
   useTodos,
+  useUpdateEvent,
+  useUpdateOccurrence,
   useUpdateTodo,
 } from './queries'
 
@@ -365,6 +368,97 @@ describe('useDeleteOccurrence', () => {
     expect(urlOf(url)).toBe('/api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z')
     expect(init?.method).toBe('DELETE')
     expect((init?.headers as Record<string, string>)['If-Match']).toBe('"1"')
+  })
+})
+
+/** The delete hooks of a series, for a test to pick one. */
+interface Hooks {
+  deleteOccurrence: ReturnType<typeof useDeleteOccurrence>
+  deleteEvent: ReturnType<typeof useDeleteEvent>
+}
+
+// FR-17: all events of a series share one resource and so one ETag; "Only this event" is
+// optimistic and locks none of the others, so writes of one series follow each other quickly.
+describe('writes of one series', () => {
+  const first = apiEvent({
+    id: 'e1',
+    key: 'e1@2025-03-03T08:00:00Z',
+    etag: '"1"',
+    recurring: true,
+    rrule: 'FREQ=WEEKLY',
+    recurrenceId: '2025-03-03T08:00:00Z',
+  })
+  const second = apiEvent({ ...first, key: 'e1@2025-03-10T08:00:00Z', recurrenceId: '2025-03-10T08:00:00Z' })
+  const input = { title: 'Event', description: '', location: '', allDay: false, timezone: 'Europe/Berlin' }
+
+  it.each([
+    ['only this event', (h: Hooks) => h.deleteOccurrence],
+    ['the whole series', (h: Hooks) => h.deleteEvent],
+  ])('run one after another, each with the ETag the one before got, up to deleting %s', async (_, del) => {
+    api.setCsrfToken('tok')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const answers: ((r: Response) => void)[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(
+      () => ({
+        updateOccurrence: useUpdateOccurrence('e1'),
+        updateEvent: useUpdateEvent('e1'),
+        deleteOccurrence: useDeleteOccurrence('e1'),
+        deleteEvent: useDeleteEvent('e1'),
+      }),
+      { wrapper: wrap },
+    )
+    const ifMatch = (i: number) => (fetch.mock.calls[i]?.[1]?.headers as Record<string, string>)['If-Match']
+
+    // All three from the events as shown, with the ETag they were loaded with.
+    act(() => {
+      result.current.updateOccurrence.mutate({
+        event: toCalEvent(first),
+        input: { ...input, start: '2025-03-03T09:00:00Z', end: '2025-03-03T10:00:00Z' },
+      })
+      result.current.updateEvent.mutate({
+        event: toCalEvent(second),
+        input: {
+          ...input,
+          start: '2025-03-10T09:00:00Z',
+          end: '2025-03-10T10:00:00Z',
+          rrule: 'FREQ=WEEKLY',
+          instanceStart: second.recurrenceId!,
+        },
+      })
+      del(result.current).mutate(toCalEvent(second))
+    })
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+    expect(ifMatch(0)).toBe('"1"')
+
+    answers[0]?.(jsonResponse(200, apiEvent({ ...first, start: '2025-03-03T09:00:00Z', etag: '"2"', modified: true })))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(2)
+    })
+    expect(urlOf(fetch.mock.calls[1]![0])).toBe('/api/v1/events/e1')
+    expect(ifMatch(1)).toBe('"2"')
+
+    answers[1]?.(jsonResponse(200, apiEvent({ ...second, start: '2025-03-10T09:00:00Z', etag: '"3"' })))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(3)
+    })
+    expect(fetch.mock.calls[2]![1]?.method).toBe('DELETE')
+    expect(ifMatch(2)).toBe('"3"')
+
+    answers[2]?.(new Response(null, { status: 204 }))
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
   })
 })
 

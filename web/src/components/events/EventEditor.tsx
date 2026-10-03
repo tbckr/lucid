@@ -94,15 +94,17 @@ function EditorForm({
   const colorsOf = useCalendarColors()
   const tz = useMemo(() => browserTimeZone(), [])
   const now = useMemo(() => new Date(), [])
+  const event = editor.mode === 'edit' ? editor.event : undefined
+  // A save of a series waits for its other writes, and takes the ETag they got (FR-17).
+  const series = event?.recurring ? event.id : undefined
   const create = useCreateEvent()
-  const update = useUpdateEvent()
-  const updateOccurrence = useUpdateOccurrence()
+  const update = useUpdateEvent(series)
+  const updateOccurrence = useUpdateOccurrence(series)
   const id = useId()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const kindRef = useRef<HTMLButtonElement>(null)
   const saveRef = useRef<HTMLButtonElement>(null)
   const askedBefore = useRef(false)
-  const event = editor.mode === 'edit' ? editor.event : undefined
   // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
   const initial = event ? editFormValues(event, tz) : null
   const [asking, setAsking] = useState<EventInput | null>(null)
