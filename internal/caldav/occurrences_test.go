@@ -541,6 +541,61 @@ func TestDeleteOccurrence(t *testing.T) {
 			},
 		},
 		{
+			// The rule runs out with this delete, but an RDATE is still an
+			// event of the series: the resource stays.
+			name: "last rule event, an RDATE left",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;COUNT=2", "EXDATE;TZID=Europe/Berlin:20250310T090000",
+				"RDATE;TZID=Europe/Berlin:20250312T090000",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 3, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored; want the resource kept for its RDATE")
+				}
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Standup", start: date(2025, 3, 12, 8, 0), end: date(2025, 3, 12, 8, 15), rid: ptr(date(2025, 3, 12, 8, 0))},
+				})
+			},
+		},
+		{
+			// The rule runs out with this delete, but an override is still
+			// shown: one moved earlier from 03-10, which another client's
+			// shorter COUNT has since left off the rule.
+			name: "last rule event, a moved override left",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T091500",
+				"RRULE:FREQ=WEEKLY;COUNT=1",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Moved",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000",
+				"DTSTART;TZID=Europe/Berlin:20250311T130000", "DTEND;TZID=Europe/Berlin:20250311T131500",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 3, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored; want the resource kept for its override")
+				}
+				if n := len(vevents(cal)); n != 2 {
+					t.Fatalf("got %d VEVENTs; want 2 (series and override)", n)
+				}
+				evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 3, 18, 0, 0))
+				mustNoErr(t, err)
+				checkOccurrences(t, evs, []occ{
+					{title: "Moved", start: date(2025, 3, 11, 12, 0), end: date(2025, 3, 11, 12, 15), rid: ptr(date(2025, 3, 10, 8, 0))},
+				})
+			},
+		},
+		{
 			// A rule ruleInstances cannot parse: expandSeries still treats
 			// DTSTART as an instance in that case (events.go), and
 			// ListEvents still shows it (03-03), alongside the orphaned
