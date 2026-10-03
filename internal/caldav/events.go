@@ -572,7 +572,7 @@ func instanceTiming(tm timing, rid time.Time) timing {
 //     and UpdateEvent writes nothing: one seriesShift refuses (a rule on
 //     fixed days or times), a change of date dateShift refuses, or one that
 //     puts DTSTART, an event of the rule or a reference on a day its month
-//     lacks (see seriesMove).
+//     lacks (see seriesMove.at).
 //   - Of title, description, location and duration, only what changed from
 //     the event as shown is written into the series, so an exception's own
 //     title does not replace the series'.
@@ -676,7 +676,7 @@ func wallShift(rule string, st dateValue, rid, from, to time.Time) (*seriesMove,
 	if err != nil {
 		return nil, err
 	}
-	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f)}, nil
+	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.t.In(loc).Day()}, nil
 }
 
 // seriesMove is how "all events" moves the values of a series, see
@@ -685,16 +685,18 @@ type seriesMove struct {
 	loc  *time.Location // the series' zone
 	date dateMove       // the change of date
 	secs int            // the change of clock time, in seconds
+	day  int            // DTSTART's day of the month in the series' zone
 	// lost tells that shift moved a value onto a day its month lacks (see
-	// dateMove.date): the series cannot follow the move.
+	// at): the series cannot follow the move.
 	lost bool
 }
 
-// shift returns the value d moved, and sets lost if its date leaves the
-// month the move counts it into (FR-17). A DATE moves by the change of date
-// only. A UTC or TZID value names an instant, which moves with the series'
-// wall clock and is then written in its own form again; a floating value,
-// or one with a TZID Lucid cannot resolve, moves on its own wall clock.
+// shift returns the value d moved, and sets lost where its date leaves the
+// month the move counts it into (see at, FR-17). A DATE moves by the change
+// of date only. A UTC or TZID value names an instant, which moves with the
+// series' wall clock and is then written in its own form again; a floating
+// value, or one with a TZID Lucid cannot resolve, moves on its own wall
+// clock.
 func (mv *seriesMove) shift(d dateValue) time.Time {
 	if d.allDay {
 		return mv.at(d.t, 0)
@@ -707,18 +709,26 @@ func (mv *seriesMove) shift(d dateValue) time.Time {
 }
 
 // at returns w moved by the change of date and then by secs seconds on its
-// own wall clock, and sets lost if the date leaves its month (FR-17).
+// own wall clock, and sets lost where the date leaves its month (see
+// dateMove.date, FR-17): on DTSTART's day of the month, the rule's day,
+// whose events would not follow, or with a change of month, which would
+// put the value elsewhere than the events. A value on another day, such as
+// an UNTIL at the end of a month or an RDATE on the 31st, that a move of
+// days alone carries into the next month moves exactly as by calendar
+// days, which keeps it with the events.
 func (mv *seriesMove) at(w time.Time, secs int) time.Time {
 	y, m, d, ok := mv.date.date(w)
-	if !ok {
+	if !ok && (mv.date.months != 0 || w.Day() == mv.day) {
 		mv.lost = true
 	}
 	return time.Date(y, m, d, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), w.Location())
 }
 
-// eventsChecked is how many events of a series shiftEvents moves: the
-// months a monthly or yearly rule meets, and whether in a leap year, repeat
-// within 48 of its steps (FR-17).
+// eventsChecked is how many events of a series shiftEvents moves (FR-17).
+// While every fourth year is a leap year, the months a monthly rule meets,
+// and whether they fall in a leap year, repeat every 48 of its steps, and a
+// yearly rule's every 4. A century year without February 29, such as 2100,
+// breaks that cycle and counts only among the first 48 events.
 const eventsChecked = 48
 
 // shiftEvents moves the events of the series with the rule rule from DTSTART

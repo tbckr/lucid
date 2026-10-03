@@ -847,12 +847,23 @@ surveyed client and server round-trips (see [Summary](#summary)).
   - A move whose months and days would put `DTSTART`, a reference
     (`EXDATE`, `RDATE`, `RECURRENCE-ID`, `UNTIL`) or one of the rule's
     events on a day its month lacks, the 29th to 31st or February 29 in a
-    common year, is refused (`dateMove.date`, `seriesMove`): such a value
-    would overflow into the next month. The rule's events count on "All
-    events" with the rule and `allDay` unchanged (its first 48, after
-    which their months repeat); a save that changes the rule or `allDay`
-    writes the series as entered and checks `DTSTART` and the references
-    only.
+    common year, is refused (`dateMove.date`, `seriesMove.at`): such a
+    value would overflow into the next month, where the rule's events
+    don't follow. That holds for values on `DTSTART`'s day of the month,
+    and for any value when the move changes the month. A value on another
+    day, such as an `UNTIL` at the end of a month or year, or an `RDATE`
+    on the 31st, that a move within the month carries past its month's
+    end moves on exactly as by calendar days, which keeps it with the
+    events: a monthly series on the 15th with `UNTIL=20261231T225959Z`
+    moved to the 16th gets `UNTIL=20270101T225959Z`, while one on the 1st
+    with `UNTIL` on 12-31, moved from its 03-01 event to 02-28 (a month
+    back and 27 days on), is refused, since `UNTIL` would land on
+    December 28 and add an event. The rule's events count on "All events"
+    with the rule and `allDay` unchanged (its first 48: while every fourth
+    year is a leap year, their months repeat within them, so only a
+    century year such as 2100 beyond them goes unchecked); a save that
+    changes the rule or `allDay` writes the series as entered and checks
+    `DTSTART` and the references only.
 - **What is marked as changed**: `modified` is computed per occurrence in
   `expandObject` (`overrideModified`). It is `true` when an override
   visibly changes the occurrence's start, duration, all-day flag, title,
@@ -894,7 +905,9 @@ surveyed client and server round-trips (see [Summary](#summary)).
     yearly series from 2026-03-01 can't move from its 2028 event to 02-29
     (`DTSTART` would stay on March 1, and the references in leap years
     would match no event). A move that keeps every value in its month,
-    such as one from the 31st to the 30th, goes through.
+    such as one from the 31st to the 30th, goes through, and so does one
+    within the month that carries an `UNTIL` or an `RDATE` off the
+    series' day past its month's end, by calendar days.
 - Turning a series all-day, or an all-day series timed, leaves its
   `EXDATE`s and overrides in their old value type (a date-time in a series
   made all-day, a date in one made timed), moved by the series' shift as on

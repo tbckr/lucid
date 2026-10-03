@@ -1337,6 +1337,96 @@ func TestUpdateSeriesMonthlyFrom31stTo30th(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesMovesValuesOffItsDayPastMonthEnd checks that "all events"
+// moving a monthly or yearly series by days within the month carries a
+// value on another day than DTSTART's past the end of its month, as a move
+// in calendar days does, rather than refusing it: an UNTIL at the end of a
+// month or year, or an RDATE on the 31st, moves with the events (spec
+// section 3 items 2 and 8, FR-17).
+func TestUpdateSeriesMovesValuesOffItsDayPastMonthEnd(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		series     []string // DTSTART, DTEND, RRULE and RDATE lines
+		shown      time.Time
+		allDay     bool
+		days       int // how far the shown event moves
+		wantStored []string
+	}{
+		{
+			"monthly on the 15th, UNTIL at the end of the year",
+			[]string{"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000", "RRULE:FREQ=MONTHLY;UNTIL=20261231T225959Z"},
+			date(2026, 3, 15, 8, 0), false, 1,
+			[]string{"RRULE:FREQ=MONTHLY;UNTIL=20270101T225959Z", "DTSTART;TZID=Europe/Berlin:20260116T090000"},
+		},
+		{
+			"all-day monthly on the 15th, a DATE UNTIL at the end of the year",
+			[]string{"DTSTART;VALUE=DATE:20260115", "DTEND;VALUE=DATE:20260116", "RRULE:FREQ=MONTHLY;UNTIL=20261231"},
+			date(2026, 3, 15, 0, 0), true, 1,
+			[]string{"RRULE:FREQ=MONTHLY;UNTIL=20270101", "DTSTART;VALUE=DATE:20260116"},
+		},
+		{
+			"monthly on the 1st, UNTIL at the end of June",
+			[]string{"DTSTART;TZID=Europe/Berlin:20260101T090000", "DTEND;TZID=Europe/Berlin:20260101T100000", "RRULE:FREQ=MONTHLY;UNTIL=20260630T215959Z"},
+			date(2026, 3, 1, 8, 0), false, 1,
+			[]string{"RRULE:FREQ=MONTHLY;UNTIL=20260701T215959Z", "DTSTART;TZID=Europe/Berlin:20260102T090000"},
+		},
+		{
+			"yearly on 03-15, UNTIL at the end of a year",
+			[]string{"DTSTART;TZID=Europe/Berlin:20260315T090000", "DTEND;TZID=Europe/Berlin:20260315T100000", "RRULE:FREQ=YEARLY;UNTIL=20301231T225959Z"},
+			date(2027, 3, 15, 8, 0), false, 1,
+			[]string{"RRULE:FREQ=YEARLY;UNTIL=20310101T225959Z", "DTSTART;TZID=Europe/Berlin:20260316T090000"},
+		},
+		{
+			"monthly on the 15th, an RDATE on the 31st",
+			[]string{"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000", "RRULE:FREQ=MONTHLY", "RDATE;TZID=Europe/Berlin:20260131T090000"},
+			date(2026, 3, 15, 8, 0), false, 1,
+			[]string{"RDATE;TZID=Europe/Berlin:20260201T090000", "DTSTART;TZID=Europe/Berlin:20260116T090000"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			lines := append([]string{"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent"}, tt.series...)
+			id := e.put(t, "work", "series.ics", append(lines, "END:VEVENT")...)
+			evs := listed(t, e, "work", tt.shown, tt.shown.Add(time.Hour))
+			if len(evs) != 1 {
+				t.Fatalf("got %d events at %s; want 1", len(evs), tt.shown)
+			}
+
+			start := evs[0].Start.AddDate(0, 0, tt.days)
+			in := seriesUpdate(evs[0], "Rent", "", start, start.Add(evs[0].End.Sub(evs[0].Start)))
+			in.AllDay = tt.allDay
+			_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+			mustNoErr(t, err)
+			wantStored(t, e, "work", "series.ics", tt.wantStored...)
+		})
+	}
+}
+
+// TestUpdateSeriesMonthlyUntilMovedOffItsMonth checks that "all events"
+// still refuses a move by months and days that carries UNTIL past the end
+// of its month, and leaves the resource as it was: from the 03-01 event of
+// a series on the 1st to 02-28, a month back and 27 days on, UNTIL of 12-31
+// went to November 58, which is December 28, and the series gained an
+// event (spec section 3 items 2 and 8, FR-17).
+func TestUpdateSeriesMonthlyUntilMovedOffItsMonth(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260101T090000", "DTEND;TZID=Europe/Berlin:20260101T100000",
+		"RRULE:FREQ=MONTHLY;UNTIL=20261231T225959Z",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 1, 0, 0), date(2026, 3, 2, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-01; want 1", len(evs))
+	}
+
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Rent", "", date(2026, 2, 28, 8, 0), date(2026, 2, 28, 9, 0)))
+}
+
 // TestUpdateSeriesYearlyOntoFebruary29 checks that "all events" refuses to
 // move a yearly series onto February 29, which DTSTART's year 2026 lacks,
 // and leaves the resource as it was: DTSTART stayed on March 1 while the

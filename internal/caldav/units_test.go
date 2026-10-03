@@ -409,6 +409,37 @@ func TestDateMoveDate(t *testing.T) {
 	}
 }
 
+// TestSeriesMoveLost checks when seriesMove.shift tells that a value left
+// its month: on DTSTART's day of the month, or with a change of month, but
+// not for a value on another day that days alone carry into the next month
+// (spec section 3 item 2, FR-17).
+func TestSeriesMoveLost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		mv    dateMove
+		value time.Time
+		want  time.Time
+		lost  bool
+	}{
+		{"days alone, on DTSTART's day", dateMove{days: 16, byMonth: true}, date(2026, 2, 15, 9, 0), date(2026, 3, 3, 9, 0), true},
+		{"days alone, on another day", dateMove{days: 1, byMonth: true}, date(2026, 12, 31, 9, 0), date(2027, 1, 1, 9, 0), false},
+		{"days alone, staying in the month", dateMove{days: 1, byMonth: true}, date(2026, 2, 15, 9, 0), date(2026, 2, 16, 9, 0), false},
+		{"a month back, on another day", dateMove{months: -1, days: 27, byMonth: true}, date(2026, 12, 31, 9, 0), date(2026, 12, 28, 9, 0), true},
+		{"a month on, on DTSTART's day", dateMove{months: 1, days: -1, byMonth: true}, date(2026, 1, 15, 9, 0), date(2026, 2, 14, 9, 0), false},
+		{"calendar days, on DTSTART's day", dateMove{days: 16}, date(2026, 2, 15, 9, 0), date(2026, 3, 3, 9, 0), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mv := &seriesMove{loc: time.UTC, date: tt.mv, day: 15}
+			if got := mv.shift(dateValue{t: tt.value}); !got.Equal(tt.want) || mv.lost != tt.lost {
+				t.Errorf("shift(%s) = %s, lost %v; want %s, %v", tt.value, got, mv.lost, tt.want, tt.lost)
+			}
+		})
+	}
+}
+
 // TestShiftEvents checks that seriesMove.shiftEvents tells of a move that
 // puts an event of the rule on a day its month lacks, also beyond the
 // first year, and only of an event the rule has (spec section 3 item 2,
@@ -435,7 +466,7 @@ func TestShiftEvents(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			mv := &seriesMove{loc: time.UTC, date: tt.mv}
+			mv := &seriesMove{loc: time.UTC, date: tt.mv, day: tt.st.t.Day()}
 			mv.shiftEvents(tt.rule, tt.st)
 			if mv.lost != tt.lost {
 				t.Errorf("lost = %v; want %v", mv.lost, tt.lost)

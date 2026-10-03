@@ -170,7 +170,13 @@ applied to the **whole series** ("All events"). `200` with the updated
     with the rule and `allDay` unchanged, `UNTIL` and the rule's events)
     on a day its month lacks: the 29th to 31st, or February 29 in a
     common year. A monthly series from the 15th can't move to the 31st,
-    since February has none.
+    since February has none. A value on another day of the month than
+    the series' first event, such as an `UNTIL` at the end of a month or
+    year, or an `RDATE` on the 31st, that a move within the month carries
+    past its month's end moves on by calendar days instead, as the events
+    do: a series on the 15th with `UNTIL=20261231T225959Z` moved to the
+    16th gets `UNTIL=20270101T225959Z`. With a change of month, it is
+    refused too.
 - **Time zone:** "Only this event" above, and this endpoint when the rule
   and the `allDay` flag are unchanged, keep the series' own time zone; the
   request's `timezone` applies to single (non-recurring) events and to a
