@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { KindSwitch } from '@/components/create/KindSwitch'
@@ -22,6 +22,7 @@ import {
   eventFormSchema,
   formDuration,
   formToInput,
+  keepsRuleAndAllDay,
   occurrenceInput,
   ruleChanged,
   shiftEnd,
@@ -118,7 +119,7 @@ function EditorForm({
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   })
-  const { register, control, handleSubmit, setValue, getValues, setFocus, formState } = form
+  const { register, control, handleSubmit, setValue, getValues, setFocus, subscribe, formState } = form
   const [allDay, recurrence, calendarId, startDate, startTime, endDate, endTime] = useWatch({
     control,
     name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
@@ -170,16 +171,30 @@ function EditorForm({
 
   // Leaves the scope question and tells the surrounding dialog it no longer needs to catch
   // Escape for it (NFR-27).
-  function cancelAsk() {
+  const cancelAsk = useCallback(() => {
     setAsking(null)
     onScopeOpenChange?.(null)
-  }
+  }, [onScopeOpenChange])
+
+  // The question is about the values Save was pressed with (FR-17): any change to the form
+  // while it is open cancels it, and the next Save asks again about the new values, or saves
+  // them right away. The focus stays where the change is made.
+  useEffect(() => {
+    if (!asking) return
+    return subscribe({
+      formState: { values: true },
+      callback: () => {
+        askedBefore.current = false
+        cancelAsk()
+      },
+    })
+  }, [asking, subscribe, cancelAsk])
 
   const onSubmit = handleSubmit((values) => {
     const input = formToInput(values, tz, event)
     // A series asks which events to change only while the rule and the all-day flag are
     // unchanged (FR-17); otherwise it saves the whole series right away (spec §4).
-    if (event?.recurring && event.recurrenceId && initial && !ruleChanged(values, initial) && values.allDay === initial.allDay) {
+    if (event?.recurring && event.recurrenceId && initial && keepsRuleAndAllDay(values, initial)) {
       setAsking(input)
       onScopeOpenChange?.(cancelAsk)
       return
@@ -230,7 +245,7 @@ function EditorForm({
   // For a series, saving only moves the time zone while the rule or the all-day flag changes
   // too (spec §4); until then, both "Only this event" and "All events" keep the series' own
   // zone, so the notice would be misleading.
-  const seriesZoneFixed = !!(event?.recurring && initial && !ruleHasChanged && allDay === initial.allDay)
+  const seriesZoneFixed = !!(event?.recurring && initial && keepsRuleAndAllDay(getValues(), initial))
   const otherZone = !allDay && event?.timezone && event.timezone !== tz && !seriesZoneFixed ? event.timezone : null
 
   return (

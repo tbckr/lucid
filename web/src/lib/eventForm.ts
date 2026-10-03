@@ -103,6 +103,16 @@ export function ruleChanged(values: EventFormValues, initial: EventFormValues): 
   )
 }
 
+/**
+ * Whether the form keeps a series' repeat rule and all-day flag as the editor
+ * opened with them (FR-17): only then does saving ask which events of the
+ * series change, keep the series' own time zone, and send the stored rule
+ * back verbatim.
+ */
+export function keepsRuleAndAllDay(values: EventFormValues, initial: EventFormValues): boolean {
+  return !ruleChanged(values, initial) && values.allDay === initial.allDay
+}
+
 /** Convert form values to the API payload. `event` is set when editing. */
 export function formToInput(v: EventFormValues, timeZone: string, event?: CalEvent): EventInput {
   let start: Date
@@ -121,9 +131,7 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
   // changed rule, losing the fast path that keeps the series' own time zone.
   const initial = event ? editFormValues(event, timeZone) : undefined
   const rrule =
-    event?.recurring && initial && !ruleChanged(v, initial) && v.allDay === initial.allDay
-      ? event.rrule
-      : buildRRule(v.recurrence, v.customRule)
+    event?.recurring && initial && keepsRuleAndAllDay(v, initial) ? event.rrule : buildRRule(v.recurrence, v.customRule)
   return {
     title: v.title.trim(),
     description: v.description,

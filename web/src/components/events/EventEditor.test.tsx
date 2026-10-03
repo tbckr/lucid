@@ -258,6 +258,54 @@ describe('EventEditor', () => {
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
 
+  // FR-17: the question is about the values Save was pressed with; the form stays editable
+  // meanwhile, and a change asks again on the next Save, about the new values.
+  it('drops the scope question once the form changes, and saves the new values on the next Save', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    within(dialog).getByRole('alertdialog')
+    const title = within(dialog).getByPlaceholderText('Add a title')
+    await user.type(title, ' moved')
+
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    // The edit keeps the focus where it is typed.
+    expect(title).toHaveFocus()
+    expect(title).toHaveValue('Event moved')
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'Only this event' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'PUT')!
+    expect(bodyOf(init)).toHaveProperty('title', 'Event moved')
+  })
+
+  it('saves without asking after the question when the change makes the series all-day', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    within(dialog).getByRole('alertdialog')
+    await user.click(within(dialog).getByRole('switch', { name: 'All day' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
+    expect(bodyOf(init)).toHaveProperty('allDay', true)
+  })
+
   // The scope question's buttons sit inside the editor's <form>; without type="button" they
   // default to "submit" and would also submit it, re-asking after Cancel or sending a second
   // PUT after a choice.
