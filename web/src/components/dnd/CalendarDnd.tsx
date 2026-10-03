@@ -344,9 +344,10 @@ export function CalendarDnd({
         // instead of falsely announcing a move (NFR-27).
         const { blocked, asked } = latest.current
         if (blocked) return limitMessage(blocked)
-        // Nothing has moved yet: the question asks first (FR-17, NFR-27).
-        if (asked) return t('dnd.chooseScope')
-        return dragData(a.data.current)?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
+        // Nothing has moved yet: the question asks first, about a change after a resize (FR-17, NFR-27).
+        const d = dragData(a.data.current)
+        if (asked) return d?.type === 'resize' ? t('dnd.chooseScopeChange') : t('dnd.chooseScope')
+        return d?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
       },
       onDragCancel: () => t('dnd.cancelled'),
     }

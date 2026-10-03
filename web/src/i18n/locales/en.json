@@ -198,7 +198,8 @@
     "cancelled": "Move cancelled.",
     "limit": "Only possible until {{date}}.",
     "limitFrom": "Only possible from {{date}} on.",
-    "chooseScope": "Choose which events should move."
+    "chooseScope": "Choose which events should move.",
+    "chooseScopeChange": "Choose which events should change."
   },
   "tasks": {
     "title": "Tasks",

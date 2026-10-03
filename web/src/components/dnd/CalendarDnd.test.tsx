@@ -562,6 +562,7 @@ describe('CalendarDnd', () => {
       // The handle takes no Tab stop, but a keyboard drag of it ends like a pointer's.
       await moveDown(screen.getByRole('button', { name: 'Change end time' }))
 
+      expect(screen.getByRole('status')).toHaveTextContent('Choose which events should change.')
       expect(
         await screen.findByRole('alertdialog', { name: 'This event repeats. Which events should change?' }),
       ).toBeInTheDocument()
