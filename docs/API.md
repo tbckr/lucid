@@ -135,20 +135,27 @@ applied to the **whole series** ("All events"). `200` with the updated
   same change of clock time, both in the series' own time zone, so it keeps
   its clock time across a daylight-saving change. The change of date is
   counted in calendar days, or for a `MONTHLY` or `YEARLY` rule without
-  `BY` parts in calendar months and then days of the month, from
+  `BY` parts and an occurrence on the day of the month of the series' first
+  event in calendar months and then days of the month, from
   `instanceStart` to that date moved by the days the occurrence moved, so
-  its events keep their day of the month. A move onto a day that the month
-  of the series' first event lacks (the 29th to 31st, or February 29) does
-  not keep that day (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md#limits)).
-  A save that turns the series all-day or timed moves its start by the
-  change of date only, a timed event's date read in the series' zone and an
-  all-day date as sent; a series made timed starts at the clock time of
-  `start` in `timezone`. The edited exception, if there is one, takes
-  `start` and `end`.
-- **Fields:** only fields changed against the shown occurrence are written
-  into the series and into the edited exception; other exceptions keep their
-  own times and fields, only their `RECURRENCE-ID` shifts along with the
-  series.
+  its events keep their day of the month. From an occurrence on another
+  day, such as an `RDATE`, it is counted in calendar days. A move onto a
+  day that the month of the series' first event lacks (the 29th to 31st,
+  or February 29) does not keep that day (see
+  [RECURRING-EVENTS.md](RECURRING-EVENTS.md#limits)). A save that turns
+  the series all-day or timed moves its start by the change of date only,
+  a timed event's date read in the series' zone and an all-day date as
+  sent; a series made timed starts at the clock time of `start` in
+  `timezone`.
+- **Edited exception:** with the rule and `allDay` unchanged, the edited
+  exception, if there is one, takes `start` and `end`. A save that changes
+  the rule or `allDay` leaves it at its own start and end (only its
+  `RECURRENCE-ID` shifts along with the series), and writes every field
+  into the series as entered.
+- **Fields:** with the rule and `allDay` unchanged, only fields changed
+  against the shown occurrence are written into the series and into the
+  edited exception; other exceptions keep their own times and fields, only
+  their `RECURRENCE-ID` shifts along with the series.
 - `UNTIL`, `EXDATE` and `RDATE` shift along with the series in the same
   way (a date-only value by the change of date only).
 - The weekdays of a weekly rule with plain `BYDAY` weekdays (no ordinal, no

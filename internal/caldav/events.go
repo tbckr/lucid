@@ -552,8 +552,9 @@ func instanceTiming(tm timing, rid time.Time) timing {
 //   - The series moves as the event moved from where it was shown (the
 //     override's DTSTART for an exception): by the same change of date (in
 //     calendar months and days for a monthly or yearly rule without BY
-//     parts, else in calendar days) and of clock time in the series' zone,
-//     see wallShift. Its rule follows as seriesShift says, and UNTIL,
+//     parts from an event on DTSTART's day of the month, else in calendar
+//     days, see dateShift) and of clock time in the series' zone, see
+//     wallShift. Its rule follows as seriesShift says, and UNTIL,
 //     EXDATE, RDATE and the RECURRENCE-IDs move the same way; DTEND moves
 //     as DTSTART did. A rule seriesShift refuses, one on fixed days or
 //     times, is an invalid input error, and cal is left as it was.
@@ -639,7 +640,7 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 func wallShift(rule string, st dateValue, rid, from, to time.Time) func(dateValue) time.Time {
 	loc := st.loc()
 	f, t := from.In(loc), to.In(loc)
-	months, days := dateShift(rule, rid.In(loc), f, t)
+	months, days := dateShift(rule, st.t.In(loc), rid.In(loc), f, t)
 	secs := secondOfDay(t) - secondOfDay(f)
 	return func(d dateValue) time.Time {
 		if d.allDay {
@@ -656,19 +657,23 @@ func wallShift(rule string, st dateValue, rid, from, to time.Time) func(dateValu
 }
 
 // dateShift returns the change of date by which a series with the rule rule
-// moves when its occurrence rid, shown at from, moves to to, each read in its
-// own location (spec section 3 items 1 and 2, FR-17). The occurrence moves
-// from its own date, rid's, by the calendar days from from to to: an
-// exception can be shown on another day than its RECURRENCE-ID, and the
-// rule's instances move from the latter. For a MONTHLY or YEARLY rule without
-// BY parts, whose events keep the day of the month of DTSTART, the change is
-// counted from rid to where it moves in calendar months and then days of the
-// month, as todoSeries.refShift counts it, so that a move across a month end
-// keeps each later event on the moved one's day of the month; for any other
-// rule in those calendar days.
-func dateShift(rule string, rid, from, to time.Time) (months, days int) {
+// and DTSTART start moves when its occurrence rid, shown at from, moves to
+// to, each read in its own location (spec section 3 items 1 and 2, FR-17).
+// The occurrence moves from its own date, rid's, by the calendar days from
+// from to to: an exception can be shown on another day than its
+// RECURRENCE-ID, and the rule's instances move from the latter. For a
+// MONTHLY or YEARLY rule without BY parts, whose events keep the day of the
+// month of DTSTART, and an occurrence on that day, the change is counted
+// from rid to where it moves in calendar months and then days of the month,
+// as todoSeries.refShift counts it, so that a move across a month end keeps
+// each later event on the moved one's day of the month. For any other rule,
+// or an occurrence on another day of the month, such as an RDATE, it is
+// those calendar days: months and days counted from another day than the
+// rule's would move the rule's events by another number of days than rid.
+func dateShift(rule string, start, rid, from, to time.Time) (months, days int) {
 	moved := dateDays(to) - dateDays(from)
-	if freq := strings.ToUpper(rulePart(rule, "FREQ")); (freq == "MONTHLY" || freq == "YEARLY") && !ruleHasFixedDays(rule, false) {
+	if freq := strings.ToUpper(rulePart(rule, "FREQ")); (freq == "MONTHLY" || freq == "YEARLY") &&
+		!ruleHasFixedDays(rule, false) && rid.Day() == start.Day() {
 		y, m, d := rid.Date()
 		dest := time.Date(y, m, d+moved, 0, 0, 0, 0, time.UTC)
 		return (dest.Year()-y)*12 + int(dest.Month()) - int(m), dest.Day() - d
@@ -692,7 +697,7 @@ func dateShift(rule string, rid, from, to time.Time) (months, days int) {
 func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.EventInput, tz string) time.Time {
 	if in.AllDay {
 		loc := st.loc()
-		months, days := dateShift(rule, rid.In(loc), from.In(loc), in.Start.UTC())
+		months, days := dateShift(rule, st.t.In(loc), rid.In(loc), from.In(loc), in.Start.UTC())
 		y, m, d := st.t.In(loc).Date()
 		return time.Date(y, m+time.Month(months), d+days, 0, 0, 0, 0, time.UTC)
 	}
@@ -701,7 +706,7 @@ func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.Even
 		loc = time.UTC // as applyEventFields writes it then
 	}
 	to := in.Start.In(loc)
-	months, days := dateShift(rule, rid.UTC(), from.UTC(), to)
+	months, days := dateShift(rule, st.t.UTC(), rid.UTC(), from.UTC(), to)
 	y, m, d := st.t.UTC().Date()
 	return time.Date(y, m+time.Month(months), d+days, to.Hour(), to.Minute(), to.Second(), 0, loc)
 }

@@ -779,7 +779,11 @@ surveyed client and server round-trips (see [Summary](#summary)).
   shown on another day than its `RECURRENCE-ID`. A move from the 30th to
   the 2nd thus puts every event, exception and deleted event on the 2nd,
   also across months of 30 and 31 days; a move onto a day that `DTSTART`'s
-  month lacks does not keep that day (see Limits). `DTSTART`, `UNTIL`,
+  month lacks does not keep that day (see Limits). This holds when the
+  edited event lies on `DTSTART`'s day of the month; from an event on
+  another day, such as an `RDATE`, the change is counted in calendar days,
+  since months and days counted from another day would move the rule's
+  events by another number of days than the edited one. `DTSTART`, `UNTIL`,
   every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and the recurrence ID the
   response is looked up by all move this way: a date-only value by the
   change of date only, a UTC or `TZID` value as an instant on the series'

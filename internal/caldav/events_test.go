@@ -1214,6 +1214,41 @@ func TestUpdateSeriesMonthlyFromMovedException(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesMonthlyFromRDateOnAnotherDay checks that "all events" from
+// an event on another day of the month than DTSTART's, here an RDATE, moves
+// a monthly series by the calendar days it moved: from 01-31 to 02-01, the
+// 15th becomes the 16th, and the EXDATE of 04-15 goes to 04-16 with it.
+// Counted in months and days from 01-31 (a month less 30 days), DTSTART and
+// the RDATE moved a day while the EXDATE stayed, so the deleted event came
+// back (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyFromRDateOnAnotherDay(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000",
+		"RRULE:FREQ=MONTHLY", "RDATE;TZID=Europe/Berlin:20260131T090000",
+		"EXDATE;TZID=Europe/Berlin:20260415T090000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 1, 31, 0, 0), date(2026, 2, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-01-31; want 1", len(evs))
+	}
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Rent", "", date(2026, 2, 1, 8, 0), date(2026, 2, 1, 9, 0)))
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics",
+		"DTSTART;TZID=Europe/Berlin:20260116T090000", "RDATE;TZID=Europe/Berlin:20260201T090000",
+		"EXDATE;TZID=Europe/Berlin:20260416T090000")
+	// 04-16 stays deleted.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 1, 0, 0), date(2026, 6, 1, 0, 0)), []occ{
+		{title: "Rent", start: date(2026, 3, 16, 8, 0), end: date(2026, 3, 16, 9, 0), rid: ptr(date(2026, 3, 16, 8, 0))},
+		{title: "Rent", start: date(2026, 5, 16, 7, 0), end: date(2026, 5, 16, 8, 0), rid: ptr(date(2026, 5, 16, 7, 0))},
+	})
+}
+
 // TestUpdateSeriesYearlyKeepsDayOfMonth checks that "all events" moves a
 // yearly series by calendar months and days too: from 02-28 to 03-01, its
 // UNTIL in the leap year 2028 goes to 03-01 as well, not to 02-29, so the

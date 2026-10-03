@@ -317,28 +317,31 @@ func TestWallShift(t *testing.T) {
 
 // TestDateShift checks how dateShift counts the change of date of a moved
 // event: from its RECURRENCE-ID, by the calendar days it moved, in calendar
-// months and days for a monthly or yearly rule without BY parts, in
-// calendar days for any other (spec section 3 items 1 and 2, FR-17).
+// months and days for a monthly or yearly rule without BY parts when that
+// RECURRENCE-ID lies on DTSTART's day of the month, in calendar days
+// otherwise (spec section 3 items 1 and 2, FR-17).
 func TestDateShift(t *testing.T) {
 	t.Parallel()
 	mar30, apr2 := date(2026, 3, 30, 7, 0), date(2026, 4, 2, 7, 0)
 	feb15, feb28, mar1 := date(2026, 2, 15, 8, 0), date(2026, 2, 28, 8, 0), date(2026, 3, 1, 8, 0)
+	jan31, feb1 := date(2026, 1, 31, 8, 0), date(2026, 2, 1, 8, 0)
 	tests := []struct {
-		name          string
-		rule          string
-		rid, from, to time.Time // a zero rid: the event is shown at it
-		months, days  int
+		name                 string
+		rule                 string
+		start, rid, from, to time.Time // a zero rid: the event is shown at it; a zero start: on rid
+		months, days         int
 	}{
-		{"monthly", "FREQ=MONTHLY", time.Time{}, mar30, apr2, 1, -28},
-		{"monthly back", "FREQ=MONTHLY", time.Time{}, apr2, mar30, -1, 28},
-		{"monthly with interval and count", "FREQ=MONTHLY;INTERVAL=2;COUNT=5", time.Time{}, mar30, apr2, 1, -28},
-		{"yearly into the next year", "FREQ=YEARLY", time.Time{}, date(2026, 12, 30, 8, 0), date(2027, 1, 2, 8, 0), 1, -28},
-		{"monthly, an exception shown on another day", "FREQ=MONTHLY", feb15, feb28, mar1, 0, 1},
-		{"monthly, an exception moved across a month end", "FREQ=MONTHLY", date(2026, 1, 31, 8, 0), date(2026, 2, 2, 8, 0), date(2026, 2, 5, 8, 0), 1, -28},
-		{"monthly on fixed days", "FREQ=MONTHLY;BYMONTHDAY=30", time.Time{}, mar30, apr2, 0, 3},
-		{"weekly", "FREQ=WEEKLY", time.Time{}, mar30, apr2, 0, 3},
-		{"weekly, an exception shown on another day", "FREQ=WEEKLY", feb15, feb28, mar1, 0, 1},
-		{"no rule", "", time.Time{}, mar30, apr2, 0, 3},
+		{"monthly", "FREQ=MONTHLY", time.Time{}, time.Time{}, mar30, apr2, 1, -28},
+		{"monthly back", "FREQ=MONTHLY", time.Time{}, time.Time{}, apr2, mar30, -1, 28},
+		{"monthly with interval and count", "FREQ=MONTHLY;INTERVAL=2;COUNT=5", time.Time{}, time.Time{}, mar30, apr2, 1, -28},
+		{"yearly into the next year", "FREQ=YEARLY", time.Time{}, time.Time{}, date(2026, 12, 30, 8, 0), date(2027, 1, 2, 8, 0), 1, -28},
+		{"monthly, an exception shown on another day", "FREQ=MONTHLY", time.Time{}, feb15, feb28, mar1, 0, 1},
+		{"monthly, an exception moved across a month end", "FREQ=MONTHLY", time.Time{}, jan31, date(2026, 2, 2, 8, 0), date(2026, 2, 5, 8, 0), 1, -28},
+		{"monthly, DTSTART on another day of the month", "FREQ=MONTHLY", date(2026, 1, 15, 8, 0), time.Time{}, jan31, feb1, 0, 1},
+		{"monthly on fixed days", "FREQ=MONTHLY;BYMONTHDAY=30", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
+		{"weekly", "FREQ=WEEKLY", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
+		{"weekly, an exception shown on another day", "FREQ=WEEKLY", time.Time{}, feb15, feb28, mar1, 0, 1},
+		{"no rule", "", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -347,7 +350,11 @@ func TestDateShift(t *testing.T) {
 			if rid.IsZero() {
 				rid = tt.from
 			}
-			months, days := dateShift(tt.rule, rid, tt.from, tt.to)
+			start := tt.start
+			if start.IsZero() {
+				start = rid
+			}
+			months, days := dateShift(tt.rule, start, rid, tt.from, tt.to)
 			if months != tt.months || days != tt.days {
 				t.Errorf("dateShift(%q) = %d months, %d days; want %d, %d", tt.rule, months, days, tt.months, tt.days)
 			}
