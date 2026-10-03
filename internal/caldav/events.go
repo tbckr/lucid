@@ -487,8 +487,12 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// entered: move it as the edited event moved from where it was
 		// shown (see wallShift), and take the new duration (spec section 3
 		// item 4, FR-17). DTSTART moves as an instant, also when the all-day
-		// flag changes: an all-day series, whose zone is UTC, that gets a
-		// time takes the time of in.Start.
+		// flag changes, which is off across a daylight-saving change
+		// (docs/RECURRING-EVENTS.md, Limits): made all-day, its date is read
+		// in UTC and can be the neighboring day; made timed, the move is
+		// measured in UTC, the all-day series' zone, so DTSTART's clock time
+		// in the request's zone can differ from in.Start's by the zone's
+		// daylight-saving difference.
 		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
 		shift := wallShift(oldTm.start, shown.start.t, in.Start)
 		start = shift(dateValue{t: oldTm.start.t})

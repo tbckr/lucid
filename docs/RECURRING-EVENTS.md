@@ -769,7 +769,8 @@ surveyed client and server round-trips (see [Summary](#summary)).
   `RDATE` and `RECURRENCE-ID`, and the recurrence ID the response is looked
   up by all move this way: a date-only value by the days only, a UTC or
   `TZID` value as an instant on the series' wall clock (written back in its
-  own form), a floating value on its own wall clock. An absolute duration
+  own form), a floating value, or one with a `TZID` Lucid cannot resolve,
+  on its own wall clock. An absolute duration
   would put them an hour off whenever a daylight-saving change lies
   between them and the edited event — a deleted occurrence would come back
   and an override would be orphaned next to the occurrence it replaces —
@@ -819,11 +820,21 @@ surveyed client and server round-trips (see [Summary](#summary)).
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.
-- Turning a timed series all-day (or back) from an occurrence on the other
-  side of a daylight-saving change than `DTSTART` can still put the new
-  `DTSTART` on the neighboring day: the move is measured on the old wall
-  clock, and its date is then read in UTC. Its `EXDATE`s and overrides
-  keep their old value type, as before.
+- Turning a series all-day, or an all-day series timed, from an occurrence
+  on the other side of a daylight-saving change than `DTSTART` still puts
+  the new `DTSTART` off by that change, since the move is measured in one
+  zone and written in another. Its `EXDATE`s and overrides keep their old
+  value type, as before.
+  - Timed to all-day: the move is measured on the series' wall clock, and
+    the new date is then read in UTC, so `DTSTART` can land on the
+    neighboring day. A Berlin series from 2026-09-04 09:00 made all-day
+    from its 11-06 event gets `DTSTART;VALUE=DATE:20260903`.
+  - All-day to timed: the move is measured in UTC, the all-day series'
+    zone, and written in the request's zone, so the series gets a clock
+    time off by the zone's daylight-saving difference. A weekly all-day
+    series from 2026-01-02 made timed from its 04-03 event at 09:00 Berlin
+    stores `DTSTART;TZID=Europe/Berlin:20260102T080000`: every event lists
+    at 08:00, while the response shows the edited one at 09:00.
 - Lucid cannot prevent what other clients do to the overrides and `EXDATE`s
   it writes. From the reports: a Nextcloud Calendar series move from the
   first occurrence leaves `EXDATE`/`UNTIL` unshifted and a weekday move
