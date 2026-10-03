@@ -346,6 +346,44 @@ func TestDateShift(t *testing.T) {
 	}
 }
 
+// TestToggledStart checks the new DTSTART of a series whose all-day flag
+// "all events" changes: moved by dates, each read where it is meant, and
+// made timed at the clock time entered in the request's zone (spec section
+// 3 item 4, FR-17).
+func TestToggledStart(t *testing.T) {
+	t.Parallel()
+	berlin, newYork := loadLocation("Europe/Berlin"), loadLocation("America/New_York")
+	timed := dateValue{t: time.Date(2026, 9, 4, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
+	monthly := dateValue{t: time.Date(2026, 1, 30, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
+	allDay := dateValue{t: date(2026, 1, 2, 0, 0), allDay: true}
+	tests := []struct {
+		name  string
+		rule  string
+		st    dateValue
+		from  time.Time
+		start time.Time
+		tz    string
+		want  time.Time
+	}{
+		{"made all-day, same date", "FREQ=WEEKLY", timed, date(2026, 11, 6, 8, 0), date(2026, 11, 6, 0, 0), "", date(2026, 9, 4, 0, 0)},
+		{"made all-day, a day later", "FREQ=WEEKLY", timed, date(2026, 11, 6, 8, 0), date(2026, 11, 7, 0, 0), "", date(2026, 9, 5, 0, 0)},
+		{"made all-day, monthly by months", "FREQ=MONTHLY", monthly, date(2026, 3, 30, 7, 0), date(2026, 5, 1, 0, 0), "", date(2026, 3, 1, 0, 0)},
+		{"made timed in summer time", "FREQ=WEEKLY", allDay, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 7, 0), "Europe/Berlin", time.Date(2026, 1, 2, 9, 0, 0, 0, berlin)},
+		{"made timed west of UTC", "FREQ=WEEKLY", allDay, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 13, 0), "America/New_York", time.Date(2026, 1, 2, 9, 0, 0, 0, newYork)},
+		{"made timed without a zone", "FREQ=WEEKLY", allDay, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 9, 30), "", date(2026, 1, 2, 9, 30)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := domain.EventInput{Start: tt.start, AllDay: !tt.st.allDay}
+			got := toggledStart(tt.rule, tt.st, tt.from, in, tt.tz)
+			if !got.Equal(tt.want) || got.Location().String() != tt.want.Location().String() {
+				t.Errorf("toggledStart = %s; want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHelpers(t *testing.T) {
 	t.Parallel()
 	for in, want := range map[string]bool{

@@ -486,16 +486,16 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// A changed rule or all-day flag applies to the whole series as
 		// entered: move it as the edited event moved from where it was
 		// shown (see wallShift), and take the new duration (spec section 3
-		// item 4, FR-17). DTSTART moves as an instant, also when the all-day
-		// flag changes, which is off across a daylight-saving change
-		// (docs/RECURRING-EVENTS.md, Limits): made all-day, its date is read
-		// in UTC and can be the neighboring day; made timed, the move is
-		// measured in UTC, the all-day series' zone, so DTSTART's clock time
-		// in the request's zone can differ from in.Start's by the zone's
-		// daylight-saving difference.
+		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
+		// instead (see toggledStart); the references keep their value type
+		// and move by the shift (docs/RECURRING-EVENTS.md, Limits).
 		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
 		shift := wallShift(rruleString(master), oldTm.start, shown.start.t, in.Start)
-		start = shift(dateValue{t: oldTm.start.t})
+		if in.AllDay == oldTm.start.allDay {
+			start = shift(dateValue{t: oldTm.start.t})
+		} else {
+			start = toggledStart(rruleString(master), oldTm.start, shown.start.t, in, tz)
+		}
 		end = start.Add(in.End.Sub(in.Start))
 		shiftRecurrenceRefs(cal, master, shift)
 		instance = &in.Start
@@ -666,6 +666,36 @@ func dateShift(rule string, from, to time.Time) (months, days int) {
 		return (to.Year()-from.Year())*12 + int(to.Month()) - int(from.Month()), to.Day() - from.Day()
 	}
 	return 0, dateDays(to) - dateDays(from)
+}
+
+// toggledStart returns the new DTSTART of the series with the rule rule and
+// DTSTART st whose all-day flag "all events" changes, from its event shown
+// at from, as in sets it (spec section 3 item 4, FR-17). DTSTART's date
+// moves by the change of date (see dateShift) between the dates the user
+// saw and entered, each read where it is meant, rather than measured in one
+// zone and written in another, which put it off by a daylight-saving change
+// between DTSTART and the edited event:
+//   - made all-day, from the edited event's date in the series' zone to the
+//     date entered (in.Start's in UTC), DTSTART's own date read in the
+//     series' zone too;
+//   - made timed, from the all-day date shown to in.Start's date in the
+//     request's zone tz, at in.Start's clock time there, so the series shows
+//     the time entered on both sides of a daylight-saving change.
+func toggledStart(rule string, st dateValue, from time.Time, in domain.EventInput, tz string) time.Time {
+	if in.AllDay {
+		loc := st.loc()
+		months, days := dateShift(rule, from.In(loc), in.Start.UTC())
+		y, m, d := st.t.In(loc).Date()
+		return time.Date(y, m+time.Month(months), d+days, 0, 0, 0, 0, time.UTC)
+	}
+	loc := loadLocation(tz)
+	if loc == nil {
+		loc = time.UTC // as applyEventFields writes it then
+	}
+	to := in.Start.In(loc)
+	months, days := dateShift(rule, from.UTC(), to)
+	y, m, d := st.t.UTC().Date()
+	return time.Date(y, m+time.Month(months), d+days, to.Hour(), to.Minute(), to.Second(), 0, loc)
 }
 
 // shownAt returns the event of o with the recurrence ID rid as ListEvents

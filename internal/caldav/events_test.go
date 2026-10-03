@@ -1228,6 +1228,82 @@ func TestUpdateSeriesMonthlyKeepsDuration(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesMadeAllDayAcrossDSTChange checks that "all events" making
+// a timed series all-day from an event on the other side of a
+// daylight-saving change than DTSTART keeps DTSTART's date: the edited
+// event's date is read in the series' zone, the date entered as written.
+// Measured on the wall clock and read in UTC, DTSTART went to the day
+// before (spec section 3 item 4, FR-17).
+func TestUpdateSeriesMadeAllDayAcrossDSTChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260904T090000", "DTEND;TZID=Europe/Berlin:20260904T100000",
+		"RRULE:FREQ=WEEKLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-11-06; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Review", "", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
+	in.AllDay = true
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Review", start: date(2026, 11, 6, 0, 0), end: date(2026, 11, 7, 0, 0), rid: ptr(date(2026, 11, 6, 0, 0)), allDay: true},
+	})
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;VALUE=DATE:20260904", "DTEND;VALUE=DATE:20260905")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 9, 1, 0, 0), date(2026, 9, 12, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 9, 4, 0, 0), end: date(2026, 9, 5, 0, 0), rid: ptr(date(2026, 9, 4, 0, 0)), allDay: true},
+		{title: "Review", start: date(2026, 9, 11, 0, 0), end: date(2026, 9, 12, 0, 0), rid: ptr(date(2026, 9, 11, 0, 0)), allDay: true},
+	})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 11, 6, 0, 0), end: date(2026, 11, 7, 0, 0), rid: ptr(date(2026, 11, 6, 0, 0)), allDay: true},
+	})
+}
+
+// TestUpdateSeriesMadeTimedAcrossDSTChange checks that "all events" giving
+// an all-day series a time, from an event on the other side of a
+// daylight-saving change than DTSTART, writes DTSTART at the clock time
+// entered in the request's zone, so every event lists at that time. Moved
+// in UTC, the all-day series' zone, DTSTART went to 08:00 Berlin time (spec
+// section 3 item 4, FR-17).
+func TestUpdateSeriesMadeTimedAcrossDSTChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Gym",
+		"DTSTART;VALUE=DATE:20260102", "DTEND;VALUE=DATE:20260103",
+		"RRULE:FREQ=WEEKLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 4, 3, 0, 0), date(2026, 4, 4, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-04-03; want 1", len(evs))
+	}
+
+	// 09:00 Berlin summer time.
+	in := seriesUpdate(evs[0], "Gym", "", date(2026, 4, 3, 7, 0), date(2026, 4, 3, 8, 0))
+	in.Timezone = "Europe/Berlin"
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Gym", start: date(2026, 4, 3, 7, 0), end: date(2026, 4, 3, 8, 0), rid: ptr(date(2026, 4, 3, 7, 0))},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"DTSTART;TZID=Europe/Berlin:20260102T090000", "DTEND;TZID=Europe/Berlin:20260102T100000")
+	// 09:00 Berlin time on both sides of the change on 03-29.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 20, 0, 0), date(2026, 4, 11, 0, 0)), []occ{
+		{title: "Gym", start: date(2026, 3, 20, 8, 0), end: date(2026, 3, 20, 9, 0), rid: ptr(date(2026, 3, 20, 8, 0))},
+		{title: "Gym", start: date(2026, 3, 27, 8, 0), end: date(2026, 3, 27, 9, 0), rid: ptr(date(2026, 3, 27, 8, 0))},
+		{title: "Gym", start: date(2026, 4, 3, 7, 0), end: date(2026, 4, 3, 8, 0), rid: ptr(date(2026, 4, 3, 7, 0))},
+		{title: "Gym", start: date(2026, 4, 10, 7, 0), end: date(2026, 4, 10, 8, 0), rid: ptr(date(2026, 4, 10, 7, 0))},
+	})
+}
+
 func TestUpdateAndDeleteErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

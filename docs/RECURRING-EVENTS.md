@@ -784,8 +784,20 @@ surveyed client and server round-trips (see [Summary](#summary)).
   between them and the edited event — a deleted occurrence would come back
   and an override would be orphaned next to the occurrence it replaces —
   and a drag from winter into summer time would move the whole series an
-  hour. The path for a changed rule or `allDay` flag moves the same way,
-  counted by the rule the series had.
+  hour. A save that changes the rule moves the same way, counted by the
+  rule the series had; one that changes the `allDay` flag moves the
+  references this way too, but `DTSTART` by dates (next item).
+- **Turning a series all-day, or an all-day series timed**, moves `DTSTART`
+  by dates instead (`toggledStart`), each read where the user saw or
+  entered it, so a daylight-saving change between `DTSTART` and the edited
+  event changes nothing: made all-day, from the edited event's date in the
+  series' zone to the date entered, `DTSTART`'s own date read in the
+  series' zone too; made timed, from the date shown to the date entered in
+  the request's `timezone`, at the clock time entered there, so every event
+  shows that time. A Berlin series from 2026-09-04 09:00 made all-day from
+  its 11-06 event gets `DTSTART;VALUE=DATE:20260904`; a weekly all-day
+  series from 2026-01-02 made timed from its 04-03 event at 09:00 Berlin
+  time gets `DTSTART;TZID=Europe/Berlin:20260102T090000`.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and
@@ -830,21 +842,12 @@ surveyed client and server round-trips (see [Summary](#summary)).
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.
-- Turning a series all-day, or an all-day series timed, from an occurrence
-  on the other side of a daylight-saving change than `DTSTART` still puts
-  the new `DTSTART` off by that change, since the move is measured in one
-  zone and written in another. Its `EXDATE`s and overrides keep their old
-  value type, as before.
-  - Timed to all-day: the move is measured on the series' wall clock, and
-    the new date is then read in UTC, so `DTSTART` can land on the
-    neighboring day. A Berlin series from 2026-09-04 09:00 made all-day
-    from its 11-06 event gets `DTSTART;VALUE=DATE:20260903`.
-  - All-day to timed: the move is measured in UTC, the all-day series'
-    zone, and written in the request's zone, so the series gets a clock
-    time off by the zone's daylight-saving difference. A weekly all-day
-    series from 2026-01-02 made timed from its 04-03 event at 09:00 Berlin
-    stores `DTSTART;TZID=Europe/Berlin:20260102T080000`: every event lists
-    at 08:00, while the response shows the edited one at 09:00.
+- Turning a series all-day, or an all-day series timed, leaves its
+  `EXDATE`s and overrides in their old value type (a date-time in a series
+  made all-day, a date in one made timed), moved by the series' shift as on
+  any other changed-rule save. They can then stop matching the series'
+  events: a deleted event can come back, and an exception can show next to
+  the event it replaces.
 - Lucid cannot prevent what other clients do to the overrides and `EXDATE`s
   it writes. From the reports: a Nextcloud Calendar series move from the
   first occurrence leaves `EXDATE`/`UNTIL` unshifted and a weekday move
