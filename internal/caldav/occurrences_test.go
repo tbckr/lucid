@@ -420,10 +420,27 @@ func countEqual(ts []time.Time, t time.Time) int {
 	return n
 }
 
+// storedETag returns the ETag the CalDAV server gives the object at
+// objPath, read with a GET past Lucid's cache.
+func storedETag(t *testing.T, e *env, objPath string) string {
+	t.Helper()
+	s, ok := e.svc.(*service)
+	if !ok {
+		t.Fatalf("service is a %T", e.svc)
+	}
+	_, etag, _, err := s.getObject(t.Context(), objPath)
+	mustNoErr(t, err)
+	if etag == "" {
+		t.Fatal("the server gave no ETag")
+	}
+	return etag
+}
+
 // TestDeleteOccurrence checks that DeleteOccurrence excludes only the
 // occurrence at recurrenceID: an EXDATE in the series' form, an existing
 // override at the same instant removed in the same write, and the resource
-// itself deleted once no occurrence is left. No case ever writes
+// itself deleted once no occurrence is left. It returns the ETag of the
+// resource it keeps, none for one it deletes. No case ever writes
 // STATUS:CANCELLED (spec section 2 "DeleteOccurrence", FR-17).
 func TestDeleteOccurrence(t *testing.T) {
 	t.Parallel()
@@ -754,7 +771,7 @@ func TestDeleteOccurrence(t *testing.T) {
 			}
 			etag := evs[0].ETag
 
-			err = e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
+			next, err := e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
 			mustNoErr(t, err)
 
 			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
@@ -768,6 +785,11 @@ func TestDeleteOccurrence(t *testing.T) {
 						t.Error("resource has STATUS:CANCELLED")
 					}
 				}
+				if want := storedETag(t, e, objPath); next != want {
+					t.Errorf("returned ETag %q; want the stored resource's %q", next, want)
+				}
+			} else if next != "" {
+				t.Errorf("returned ETag %q for a deleted resource; want none", next)
 			}
 			tt.check(t, e, cal, stored)
 		})
@@ -808,8 +830,11 @@ func TestDeleteOccurrenceErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := e.svc.DeleteOccurrence(ctx, tt.id, tt.etag, tt.rid)
+			next, err := e.svc.DeleteOccurrence(ctx, tt.id, tt.etag, tt.rid)
 			mustErr(t, err, tt.want)
+			if next != "" {
+				t.Errorf("returned ETag %q with an error; want none", next)
+			}
 		})
 	}
 }

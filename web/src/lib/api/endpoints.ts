@@ -99,8 +99,9 @@ export function createEndpoints(client: ApiClient) {
         schema: eventSchema,
       }),
 
-    deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<undefined> =>
-      client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, { method: 'DELETE', etag }),
+    /** Resolves with the series' new ETag, or null once its resource is deleted with its last event. */
+    deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<string | null> =>
+      client.requestEtag(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, { method: 'DELETE', etag }),
 
     async listTodos(calendarId: string, signal?: AbortSignal): Promise<TodoList> {
       const res = await client.request(`/calendars/${enc(calendarId)}/todos`, {

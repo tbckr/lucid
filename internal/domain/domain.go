@@ -417,9 +417,11 @@ type CalendarService interface {
 	// DeleteOccurrence excludes only the occurrence at recurrenceID of a
 	// recurring event ("only this event"): an EXDATE, removing an existing
 	// override at the same instant in the same write. It deletes the
-	// resource itself once no occurrence of the series is left. etag must
-	// match (If-Match), otherwise ErrConflict (FR-17).
-	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) error
+	// resource itself once no occurrence of the series is left. It returns
+	// the resource's new ETag, or "" once the resource is deleted or when
+	// the server tells none. etag must match (If-Match), otherwise
+	// ErrConflict (FR-17).
+	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, error)
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)
 	// ListTodoOccurrences returns the occurrences of open, readable recurring

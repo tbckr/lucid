@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -295,6 +296,37 @@ func TestOccurrenceWrites(t *testing.T) {
 				if h.svc.gotID != "e1" || h.svc.gotETag != `"etag-1"` || !h.svc.gotRID.Equal(wantRID) {
 					t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
 				}
+			}
+		})
+	}
+}
+
+// TestDeleteOccurrenceETag checks that deleting one event of a series
+// answers with the series' new ETag in an ETag header while its resource is
+// kept, and with none once it is deleted, so the client can send it with
+// the series' next write (FR-17, NFR-26).
+func TestDeleteOccurrenceETag(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		etag string
+		want []string
+	}{
+		{"resource kept", `"4"`, []string{`"4"`}},
+		{"resource deleted", "", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.occurrenceETag = tt.etag
+			w := h.do(t, c, req{
+				method: http.MethodDelete, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z",
+				headers: map[string]string{"If-Match": `"etag-1"`},
+			})
+			decode(t, w, http.StatusNoContent, nil)
+			if got := w.Header().Values("ETag"); !slices.Equal(got, tt.want) {
+				t.Errorf("ETag header = %q; want %q", got, tt.want)
 			}
 		})
 	}

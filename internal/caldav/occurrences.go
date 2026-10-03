@@ -312,13 +312,16 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 // override at the same instant in the same write, and deletes the resource
 // itself once no occurrence of the series is left, never for a rule Lucid
 // cannot read (see hasEventsLeft; FR-17; spec section 2 "DeleteOccurrence").
-func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) error {
+// It returns the new ETag of a resource it keeps, so the client's next write
+// of the series does not conflict with this one (NFR-26), and "" for one it
+// deletes.
+func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, error) {
 	if s.err != nil {
-		return s.err
+		return "", s.err
 	}
 	ls, err := s.loadSeries(ctx, eventID, etag, recurrenceID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cal, objPath, calPath, master, override, tm, rid := ls.cal, ls.objPath, ls.calPath, ls.master, ls.override, ls.tm, ls.rid
 
@@ -337,12 +340,12 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 		// 500 and Nextcloud <= 34 403 to a PUT of a series without events.
 		err := s.deleteObject(ctx, objPath, etag)
 		s.invalidate(calPath)
-		return err
+		return "", err
 	}
 
 	bumpChangeProps(master, s.p.now().UTC())
 	masterFirst(cal, master)
-	_, err = s.putObject(ctx, objPath, cal, etag, false)
+	next, err := s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
-	return err
+	return next, err
 }

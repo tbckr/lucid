@@ -61,6 +61,9 @@ type fakeService struct {
 	updateTodoResult *domain.Todo
 	// updateTodoSnapshot is returned as UpdateTodo's snapshot, if set.
 	updateTodoSnapshot *domain.TodoSnapshot
+	// occurrenceETag is the ETag DeleteOccurrence returns: "" as for a
+	// deleted resource.
+	occurrenceETag string
 
 	calls    []string
 	gotCal   string
@@ -139,11 +142,15 @@ func (f *fakeService) DeleteEvent(_ context.Context, id, etag string) error {
 	return f.record("DeleteEvent")
 }
 
-func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid time.Time) error {
+func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid time.Time) (string, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotRID = id, etag, rid
+	next := f.occurrenceETag
 	f.mu.Unlock()
-	return f.record("DeleteOccurrence")
+	if err := f.record("DeleteOccurrence"); err != nil {
+		return "", err
+	}
+	return next, nil
 }
 
 func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, error) {

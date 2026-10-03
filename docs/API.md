@@ -189,8 +189,10 @@ Excludes only this occurrence ("Only this event"): writes an `EXDATE` and, in
 the same write, removes an existing override at the same instant. `204`. If
 no occurrence of the series is left afterwards, the resource itself is
 deleted; a series whose rule the backend cannot read (such as one with the
-RFC 7529 parts `RSCALE` or `SKIP`) is always kept. Errors: as for the `PUT`
-above.
+RFC 7529 parts `RSCALE` or `SKIP`) is always kept. While the series is kept,
+the `204` carries its new `etag` in an `ETag` header (unless the CalDAV
+server tells none), to send with the series' next write; once the resource
+is deleted, it carries none. Errors: as for the `PUT` above.
 
 ## Todos
 

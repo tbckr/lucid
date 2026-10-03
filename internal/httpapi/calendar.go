@@ -251,7 +251,9 @@ func (s *Server) handleUpdateOccurrence(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleDeleteOccurrence excludes only one occurrence of a recurring series
-// ("only this event"), via EXDATE (FR-17).
+// ("only this event"), via EXDATE (FR-17). While the series' resource is
+// kept, the 204 carries its new ETag in an ETag header, for the client's next
+// write of the series (NFR-26).
 func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "eventId")
 	if !ok {
@@ -269,9 +271,13 @@ func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := svc.DeleteOccurrence(r.Context(), id, etag, rid); err != nil {
+	next, err := svc.DeleteOccurrence(r.Context(), id, etag, rid)
+	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if next != "" {
+		w.Header().Set("ETag", next)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

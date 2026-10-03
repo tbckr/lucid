@@ -369,6 +369,41 @@ describe('useDeleteOccurrence', () => {
     expect(init?.method).toBe('DELETE')
     expect((init?.headers as Record<string, string>)['If-Match']).toBe('"1"')
   })
+
+  it('gives the other events of the series the ETag the delete answered with', async () => {
+    api.setCsrfToken('tok')
+    const calendarId = 'c1'
+    const first = apiEvent({
+      id: 'e1',
+      key: 'e1@2025-03-03T08:00:00Z',
+      etag: '"1"',
+      recurring: true,
+      recurrenceId: '2025-03-03T08:00:00Z',
+    })
+    const second = apiEvent({ ...first, key: 'e1@2025-03-10T08:00:00Z', recurrenceId: '2025-03-10T08:00:00Z' })
+    const other = apiEvent({ id: 'e2', key: 'e2', etag: '"9"' })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
+      events: [first, second, other],
+      corrupted: [],
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204, headers: { ETag: '"2"' } }))
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useDeleteOccurrence(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(second))
+    })
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'))?.events).toEqual([
+        { ...first, etag: '"2"' },
+        other,
+      ])
+    })
+  })
 })
 
 /** The delete hooks of a series, for a test to pick one. */
@@ -456,6 +491,52 @@ describe('writes of one series', () => {
     expect(ifMatch(2)).toBe('"3"')
 
     answers[2]?.(new Response(null, { status: 204 }))
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  it('run a write queued behind deleting one event with the ETag the delete answered with', async () => {
+    api.setCsrfToken('tok')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const answers: ((r: Response) => void)[] = []
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve)
+        }),
+    )
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(
+      () => ({ deleteOccurrence: useDeleteOccurrence('e1'), updateOccurrence: useUpdateOccurrence('e1') }),
+      { wrapper: wrap },
+    )
+    const ifMatch = (i: number) => (fetch.mock.calls[i]?.[1]?.headers as Record<string, string>)['If-Match']
+
+    // Both from the events as shown, with the ETag they were loaded with.
+    act(() => {
+      result.current.deleteOccurrence.mutate(toCalEvent(first))
+      result.current.updateOccurrence.mutate({
+        event: toCalEvent(second),
+        input: { ...input, start: '2025-03-10T09:00:00Z', end: '2025-03-10T10:00:00Z' },
+      })
+    })
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+    expect(fetch.mock.calls[0]![1]?.method).toBe('DELETE')
+    expect(ifMatch(0)).toBe('"1"')
+
+    answers[0]?.(new Response(null, { status: 204, headers: { ETag: '"2"' } }))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(2)
+    })
+    expect(urlOf(fetch.mock.calls[1]![0])).toBe('/api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z')
+    expect(ifMatch(1)).toBe('"2"')
+
+    answers[1]?.(jsonResponse(200, apiEvent({ ...second, start: '2025-03-10T09:00:00Z', etag: '"3"', modified: true })))
     await waitFor(() => {
       expect(queryClient.isMutating()).toBe(0)
     })

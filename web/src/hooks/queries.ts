@@ -514,6 +514,13 @@ function putOccurrence(qc: QueryClient, event: CalEvent, updated: ApiEvent): voi
   )
 }
 
+/** Gives every cached event of the series of `event` the series' new ETag (FR-17), as `putOccurrence` does. */
+function setSeriesEtag(qc: QueryClient, event: CalEvent, etag: string): void {
+  qc.setQueriesData<EventList>({ queryKey: queryKeys.eventsOf(event.calendarId) }, (old) =>
+    old ? { ...old, events: old.events.map((e) => (e.id === event.id ? { ...e, etag } : e)) } : old,
+  )
+}
+
 export const MOVE_OCCURRENCE_KEY = ['moveOccurrence'] as const
 
 /**
@@ -579,16 +586,21 @@ export function useUpdateOccurrence(series?: string) {
 /**
  * Excludes a single occurrence of a series ("Only this event", FR-17):
  * removed optimistically by its own `key` (NFR-26), unlike deleting a whole
- * series, which the other occurrences of the series survive. With the `id`
- * of the series, after its other writes.
+ * series, which the other occurrences of the series survive. The series'
+ * new ETag, which the answer carries while the series is kept, is synced
+ * like a change's. With the `id` of the series, after its other writes.
  */
 export function useDeleteOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
     ...seriesScope(series),
-    mutationFn: (event: CalEvent) =>
-      endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', currentEtag(qc, event)),
+    mutationFn: async (event: CalEvent) => {
+      const etag = currentEtag(qc, event)
+      const next = await endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', etag)
+      if (next) replaceEtag(qc, event.id, etag, next)
+      return next
+    },
     onMutate: async (event) => {
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
@@ -598,8 +610,9 @@ export function useDeleteOccurrence(series?: string) {
       )
       return { snapshot }
     },
-    onSuccess: () => {
+    onSuccess: (next, event) => {
       toast.success(t('event.deleted'))
+      if (next) setSeriesEtag(qc, event, next)
     },
     onError: (err, event, ctx) => {
       ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))

@@ -185,7 +185,36 @@ export class ApiClient {
     return this.send(path, opts, true)
   }
 
+  /**
+   * Like `request` for an answer without a body, but resolves with its ETag
+   * header, or null without one: deleting one event of a series answers with
+   * the series' new ETag while its resource is kept (FR-17, NFR-26).
+   */
+  async requestEtag(path: string, opts: Omit<RequestOptions<undefined>, 'schema'> = {}): Promise<string | null> {
+    const res = await this.respond(path, opts, true)
+    return res.headers.get('ETag')
+  }
+
   private async send<T>(path: string, opts: RequestOptions<T>, allowCsrfRetry: boolean): Promise<T> {
+    const res = await this.respond(path, opts, allowCsrfRetry)
+    if (res.status === 204 || !opts.schema) {
+      return undefined as T
+    }
+    let json: unknown
+    try {
+      json = await res.json()
+    } catch {
+      throw new ApiError(res.status, 'bad_response', 'response is not valid JSON')
+    }
+    const parsed = opts.schema.safeParse(json)
+    if (!parsed.success) {
+      throw new ApiError(res.status, 'bad_response', parsed.error.message)
+    }
+    return parsed.data
+  }
+
+  /** Sends the request and resolves with its successful response; any other becomes an ApiError. */
+  private async respond<T>(path: string, opts: RequestOptions<T>, allowCsrfRetry: boolean): Promise<Response> {
     const method = opts.method ?? 'GET'
     const mutating = method !== 'GET'
     if (mutating && this.csrfToken === null) {
@@ -219,7 +248,7 @@ export class ApiClient {
       if (error.code === 'csrf_invalid' && allowCsrfRetry) {
         this.csrfToken = null
         await this.fetchSession()
-        return this.send(path, opts, false)
+        return this.respond(path, opts, false)
       }
       if (error.code === 'unauthenticated') {
         this.unauthenticatedListeners.forEach((l) => {
@@ -228,21 +257,7 @@ export class ApiClient {
       }
       throw error
     }
-
-    if (res.status === 204 || !opts.schema) {
-      return undefined as T
-    }
-    let json: unknown
-    try {
-      json = await res.json()
-    } catch {
-      throw new ApiError(res.status, 'bad_response', 'response is not valid JSON')
-    }
-    const parsed = opts.schema.safeParse(json)
-    if (!parsed.success) {
-      throw new ApiError(res.status, 'bad_response', parsed.error.message)
-    }
-    return parsed.data
+    return res
   }
 }
 
