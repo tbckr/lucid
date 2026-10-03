@@ -184,9 +184,12 @@ function parseWallClock(s: string): { days: number; hh: number; mm: number } {
  * wall-clock `from` to `to` (both "yyyy-MM-ddTHH:mm", spec §3, FR-17). Only
  * their date and clock fields matter; callers pass wall-clock values already
  * resolved to the series' own time zone. Mirrors
- * `internal/caldav/seriesshift.go`'s `seriesShift` exactly, returning the
- * rule to write, or `null` if the move is not allowed at all — a rejected
- * move must keep the series' original start.
+ * `internal/caldav/seriesshift.go`'s `seriesShift`, returning the rule to
+ * write, or `null` if the move is not allowed at all — a rejected move must
+ * keep the series' original start. One check is the server's alone: with
+ * INTERVAL > 1, `from`'s weekday (there DTSTART's) must stay in the BYDAY
+ * days' week too, which only matters for a DTSTART off those days, and the
+ * browser doesn't know DTSTART.
  */
 export function seriesShift(rule: string, from: string, to: string): string | null {
   const f = parseWallClock(from)

@@ -62,7 +62,7 @@ func seriesShift(rule string, from, to time.Time) (string, bool) {
 	// Case 2: FREQ=WEEKLY with BYDAY as its only part beyond the case 1
 	// set, every value a plain weekday — each weekday follows dayDelta.
 	if weeklySimpleByDay(rule) {
-		return weeklyByDayShift(rule, dayDelta)
+		return weeklyByDayShift(rule, dayDelta, from.Weekday())
 	}
 
 	// Case 3: everything else with a BY part (BYMONTHDAY, BYDAY with an
@@ -137,11 +137,12 @@ func weeklySimpleByDay(rule string) bool {
 
 // weeklyByDayShift implements case 2 of seriesShift (FR-17): it rotates
 // each BYDAY weekday of rule by dayDelta, mod 7, keeping their order. With
-// INTERVAL > 1 it additionally requires every weekday to land in the same
-// relative week (judged against WKST, MO if absent) — otherwise the
-// occurrences would no longer all be offset by the same amount, and the
-// move is rejected.
-func weeklyByDayShift(rule string, dayDelta int) (string, bool) {
+// INTERVAL > 1 it additionally requires every weekday, and start, the
+// weekday of DTSTART, to land in the same relative week (judged against
+// WKST, MO if absent) — otherwise the occurrences would no longer all be
+// offset by the same amount, and the move is rejected. DTSTART counts even
+// off the BYDAY days, since its week anchors the rule's weeks.
+func weeklyByDayShift(rule string, dayDelta int, start time.Weekday) (string, bool) {
 	interval := 1
 	if iv := rulePart(rule, "INTERVAL"); iv != "" {
 		if n, err := strconv.Atoi(iv); err == nil {
@@ -155,13 +156,10 @@ func weeklyByDayShift(rule string, dayDelta int) (string, bool) {
 			wkst = w
 		}
 
-		week, set := 0, false
+		week := floorDiv(floorMod(int(start)-wkst, 7)+dayDelta, 7)
 		for day := range strings.SplitSeq(rulePart(rule, "BYDAY"), ",") {
 			p := floorMod(weekdayIndex(strings.TrimSpace(day))-wkst, 7)
-			w := floorDiv(p+dayDelta, 7)
-			if !set {
-				week, set = w, true
-			} else if w != week {
+			if floorDiv(p+dayDelta, 7) != week {
 				return "", false
 			}
 		}
