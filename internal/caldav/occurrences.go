@@ -251,12 +251,22 @@ func addExdate(cal *ical.Calendar, master *ical.Component, rid time.Time, f date
 // hasEventsLeft reports whether the series of master still has an occurrence
 // after the EXDATEs and overrides currently in cal (spec section 2
 // "DeleteOccurrence", FR-17): a rule without COUNT or UNTIL never runs out,
-// so it is always true; otherwise it walks the rule's instances and the
-// RDATEs for one that is not excluded, and any remaining override counts
-// too, since Lucid shows orphaned overrides even off the rule.
+// and Lucid cannot tell what is left of a rule it cannot read, so both are
+// always true; otherwise it walks the rule's instances and the RDATEs for
+// one that is not excluded, and any remaining override counts too, since
+// Lucid shows orphaned overrides even off the rule.
 func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 	rr := rruleString(master)
 	if rr != "" && rulePart(rr, "COUNT") == "" && rulePart(rr, "UNTIL") == "" {
+		return true
+	}
+	next, err := ruleInstances(rr, tm.start.t)
+	if err != nil {
+		// A rule ruleInstances cannot parse, such as one with the RFC 7529
+		// parts RSCALE or SKIP: ListEvents shows only its DTSTART event (see
+		// expandSeries), but clients that read the rule show all of them,
+		// and would lose every one left if the resource went. So it stays,
+		// also once that DTSTART event is deleted.
 		return true
 	}
 	exdates := map[int64]bool{}
@@ -269,25 +279,13 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 			exdates[d.t.Unix()] = true
 		}
 	}
-	next, err := ruleInstances(rr, tm.start.t)
-	switch {
-	case err != nil:
-		// A rule ruleInstances cannot parse: expandSeries (events.go) still
-		// treats DTSTART as an instance in that case, so hasEventsLeft must
-		// not drop it either, or DeleteOccurrence would delete a resource
-		// whose DTSTART event ListEvents still shows.
-		if !exdates[tm.start.t.Unix()] {
-			return true
+	for range maxRRuleIterations {
+		t, ok := next()
+		if !ok {
+			break
 		}
-	default:
-		for range maxRRuleIterations {
-			t, ok := next()
-			if !ok {
-				break
-			}
-			if !exdates[t.Unix()] {
-				return true
-			}
+		if !exdates[t.Unix()] {
+			return true
 		}
 	}
 	for _, p := range master.Props.Values(ical.PropRecurrenceDates) {
@@ -312,8 +310,8 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 // DeleteOccurrence implements domain.CalendarService: it excludes only the
 // occurrence at recurrenceID of a recurring event, removing any existing
 // override at the same instant in the same write, and deletes the resource
-// itself once no occurrence of the series is left (FR-17; spec section 2
-// "DeleteOccurrence").
+// itself once no occurrence of the series is left, never for a rule Lucid
+// cannot read (see hasEventsLeft; FR-17; spec section 2 "DeleteOccurrence").
 func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) error {
 	if s.err != nil {
 		return s.err

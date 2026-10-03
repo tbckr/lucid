@@ -743,9 +743,12 @@ surveyed client and server round-trips (see [Summary](#summary)).
   attendees with it. Once no occurrence is left, the resource itself is
   deleted (Baïkal answers 500, Nextcloud ≤ 34 403 to a series-less PUT).
 - **A series whose rule Lucid cannot parse is never deleted by deleting one
-  of its events**: `hasEventsLeft` treats an unparseable rule's `DTSTART` as
-  a remaining instance, the same way `expandSeries` does, so `DeleteOccurrence`
-  cannot remove a resource whose `DTSTART` event `ListEvents` still shows.
+  of its events**: Lucid shows only the `DTSTART` event of such a rule
+  (`expandSeries`), for example one with the RFC 7529 parts `RSCALE` or
+  `SKIP`, but clients that read the rule show all of its events.
+  `hasEventsLeft` cannot tell which of them are left, so `DeleteOccurrence`
+  writes the `EXDATE` and keeps the resource, also when the deleted event is
+  that `DTSTART` event.
 
 ### "All events"
 

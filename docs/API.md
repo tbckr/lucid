@@ -188,7 +188,9 @@ Errors:
 Excludes only this occurrence ("Only this event"): writes an `EXDATE` and, in
 the same write, removes an existing override at the same instant. `204`. If
 no occurrence of the series is left afterwards, the resource itself is
-deleted. Errors: as for the `PUT` above.
+deleted; a series whose rule the backend cannot read (such as one with the
+RFC 7529 parts `RSCALE` or `SKIP`) is always kept. Errors: as for the `PUT`
+above.
 
 ## Todos
 

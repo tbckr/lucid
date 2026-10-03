@@ -628,8 +628,9 @@ func TestDeleteOccurrence(t *testing.T) {
 		},
 		{
 			// A rule rrule-go cannot parse still shows its DTSTART event
-			// (expandSeries), so that event can be deleted on its own too;
-			// with no other event, the resource goes.
+			// (expandSeries), so that event can be deleted on its own too.
+			// Lucid cannot tell which events of the rule are left, so the
+			// resource stays, with the EXDATE.
 			name: "unparseable rule, its DTSTART event",
 			lines: []string{
 				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
@@ -640,8 +641,34 @@ func TestDeleteOccurrence(t *testing.T) {
 			rid: date(2025, 3, 3, 8, 0),
 			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
 				t.Helper()
-				if stored {
-					t.Fatal("object still stored; want the resource deleted")
+				if !stored {
+					t.Fatal("object not stored; want the resource kept for its rule")
+				}
+				wantDateProp(t, vevents(cal)[0], ical.PropExceptionDates, "20250303T080000Z", "", false)
+			},
+		},
+		{
+			// An RFC 7529 rule, which rrule-go cannot read but other clients
+			// expand: deleting its DTSTART event, the last event Lucid shows,
+			// must not delete the resource and every event those clients
+			// still show.
+			name: "RSCALE rule, its DTSTART event",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+				"DTSTART;TZID=Europe/Berlin:20250331T090000", "DTEND;TZID=Europe/Berlin:20250331T091500",
+				"RRULE:RSCALE=GREGORIAN;FREQ=MONTHLY;SKIP=BACKWARD;UNTIL=20251231T230000Z",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 31, 7, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if !stored {
+					t.Fatal("object not stored; want the resource kept for its rule")
+				}
+				master := vevents(cal)[0]
+				wantDateProp(t, master, ical.PropExceptionDates, "20250331T090000", "Europe/Berlin", false)
+				if got := rruleString(master); got != "RSCALE=GREGORIAN;FREQ=MONTHLY;SKIP=BACKWARD;UNTIL=20251231T230000Z" {
+					t.Errorf("RRULE = %q; want it kept as written", got)
 				}
 			},
 		},
