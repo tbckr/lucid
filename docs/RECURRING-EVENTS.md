@@ -748,7 +748,9 @@ surveyed client and server round-trips (see [Summary](#summary)).
   `SKIP`, but clients that read the rule show all of its events.
   `hasEventsLeft` cannot tell which of them are left, so `DeleteOccurrence`
   writes the `EXDATE` and keeps the resource, also when the deleted event is
-  that `DTSTART` event.
+  that `DTSTART` event. Lucid then shows nothing of the series any more,
+  while the resource, with all of its other events, stays on the server for
+  the clients that read the rule.
 
 ### "All events"
 
@@ -771,9 +773,13 @@ surveyed client and server round-trips (see [Summary](#summary)).
   repeats on that wall clock. The change of date is counted in calendar
   days, except for a `MONTHLY` or `YEARLY` rule without `BY` parts, whose
   events keep `DTSTART`'s day of the month: there it is counted in calendar
-  months and then days of the month (`dateShift`, as for tasks), so a move
-  from the 30th to the 2nd puts every event, exception and deleted event on
-  the 2nd, whatever the length of the months in between. `DTSTART`, `UNTIL`,
+  months and then days of the month (`dateShift`, as `todoSeries.refShift`
+  does for tasks), from the edited event's `RECURRENCE-ID` to that date
+  moved by the calendar days the event moved, since an exception can be
+  shown on another day than its `RECURRENCE-ID`. A move from the 30th to
+  the 2nd thus puts every event, exception and deleted event on the 2nd,
+  also across months of 30 and 31 days; a move onto a day that `DTSTART`'s
+  month lacks does not keep that day (see Limits). `DTSTART`, `UNTIL`,
   every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and the recurrence ID the
   response is looked up by all move this way: a date-only value by the
   change of date only, a UTC or `TZID` value as an instant on the series'
@@ -842,6 +848,21 @@ surveyed client and server round-trips (see [Summary](#summary)).
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.
+- A `MONTHLY` or `YEARLY` series moved by "All events" onto a day of the
+  month that `DTSTART`'s month lacks does not stay on that day: the moved
+  `DTSTART` overflows into the next month, as dates do for tasks too.
+  - A monthly series from 2026-01-31 whose 03-31 event moves to 04-30 gets
+    `DTSTART` 03-02 and repeats on the 2nd. Its references move by the same
+    month less a day, onto the 30th (an `EXDATE` of 05-31 becomes 06-30),
+    so they match no event any more: deleted events come back, and
+    exceptions are shown next to the events they replace. The response
+    still shows the moved event on 04-30, which the list then lacks. The
+    same holds for any move onto the 29th to 31st that `DTSTART`'s month
+    does not have.
+  - A yearly series from 2026-03-01 whose 2028 event moves to 02-29 keeps
+    `DTSTART` 2026-03-01, since 2026 has no February 29, and stays on March
+    1 every year, while the response shows the event on 02-29; its
+    references in leap years go to 02-29 and match no event.
 - Turning a series all-day, or an all-day series timed, leaves its
   `EXDATE`s and overrides in their old value type (a date-time in a series
   made all-day, a date in one made timed), moved by the series' shift as on

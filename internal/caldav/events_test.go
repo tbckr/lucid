@@ -1170,6 +1170,50 @@ func TestUpdateSeriesMonthlyKeepsDayOfMonth(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesMonthlyFromMovedException checks that "all events" from
+// an exception shown on another day than its RECURRENCE-ID counts the
+// months and days of a monthly series from that RECURRENCE-ID: the
+// exception of 02-15, shown on 02-28 and moved one day to 03-01, moves the
+// series from the 15th to the 16th. Counted from 02-28 to 03-01, a month
+// less 27 days, DTSTART went to 01-19, the EXDATE to 04-18 and the
+// RECURRENCE-ID to 02-16, each by another amount (spec section 3 items 1
+// and 2, FR-17).
+func TestUpdateSeriesMonthlyFromMovedException(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000",
+		"RRULE:FREQ=MONTHLY", "EXDATE;TZID=Europe/Berlin:20260415T090000",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20260215T090000",
+		"DTSTART;TZID=Europe/Berlin:20260228T090000", "DTEND;TZID=Europe/Berlin:20260228T100000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 2, 28, 0, 0), date(2026, 3, 1, 0, 0))
+	if len(evs) != 1 || evs[0].Title != "Special" {
+		t.Fatalf("got %+v on 2026-02-28; want the exception", evs)
+	}
+
+	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Special", "", date(2026, 3, 1, 8, 0), date(2026, 3, 1, 9, 0)))
+	mustNoErr(t, err)
+	checkOccurrences(t, []domain.Event{up}, []occ{
+		{title: "Special", start: date(2026, 3, 1, 8, 0), end: date(2026, 3, 1, 9, 0), rid: ptr(date(2026, 2, 16, 8, 0))},
+	})
+
+	wantStored(t, e, "work", "series.ics",
+		"DTSTART;TZID=Europe/Berlin:20260116T090000", "EXDATE;TZID=Europe/Berlin:20260416T090000",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20260216T090000")
+	// The exception replaces the 02-16 event, and 04-16 stays deleted.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 1, 1, 0, 0), date(2026, 6, 1, 0, 0)), []occ{
+		{title: "Rent", start: date(2026, 1, 16, 8, 0), end: date(2026, 1, 16, 9, 0), rid: ptr(date(2026, 1, 16, 8, 0))},
+		{title: "Special", start: date(2026, 3, 1, 8, 0), end: date(2026, 3, 1, 9, 0), rid: ptr(date(2026, 2, 16, 8, 0))},
+		{title: "Rent", start: date(2026, 3, 16, 8, 0), end: date(2026, 3, 16, 9, 0), rid: ptr(date(2026, 3, 16, 8, 0))},
+		{title: "Rent", start: date(2026, 5, 16, 7, 0), end: date(2026, 5, 16, 8, 0), rid: ptr(date(2026, 5, 16, 7, 0))},
+	})
+}
+
 // TestUpdateSeriesYearlyKeepsDayOfMonth checks that "all events" moves a
 // yearly series by calendar months and days too: from 02-28 to 03-01, its
 // UNTIL in the leap year 2028 goes to 03-01 as well, not to 02-29, so the

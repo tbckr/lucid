@@ -489,12 +489,13 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
 		// instead (see toggledStart); the references keep their value type
 		// and move by the shift (docs/RECURRING-EVENTS.md, Limits).
-		_, shown := shownOccurrence(cal, master, oldTm, *in.InstanceStart)
-		shift := wallShift(rruleString(master), oldTm.start, shown.start.t, in.Start)
+		rid := *in.InstanceStart
+		_, shown := shownOccurrence(cal, master, oldTm, rid)
+		shift := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
 		if in.AllDay == oldTm.start.allDay {
 			start = shift(dateValue{t: oldTm.start.t})
 		} else {
-			start = toggledStart(rruleString(master), oldTm.start, shown.start.t, in, tz)
+			start = toggledStart(rruleString(master), oldTm.start, rid, shown.start.t, in, tz)
 		}
 		end = start.Add(in.End.Sub(in.Start))
 		shiftRecurrenceRefs(cal, master, shift)
@@ -565,7 +566,7 @@ func instanceTiming(tm timing, rid time.Time) timing {
 func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain.EventInput, now time.Time) (time.Time, error) {
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
-	shift := wallShift(rruleString(master), tm.start, shown.start.t, in.Start)
+	shift := wallShift(rruleString(master), tm.start, rid, shown.start.t, in.Start)
 	dur := in.End.Sub(in.Start)
 	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
 
@@ -593,7 +594,7 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
 		// DTEND moves as DTSTART did, so the series keeps its duration, also
 		// where a move by months puts the two in months of other lengths.
-		shiftDatePropBy(p, wallShift("", tm.start, tm.start.t, newStart))
+		shiftDatePropBy(p, wallShift("", tm.start, tm.start.t, tm.start.t, newStart))
 	}
 	shiftRecurrenceRefs(cal, master, shift)
 
@@ -625,20 +626,20 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 }
 
 // wallShift returns how "all events" moves the values of the series whose
-// rule is rule and whose DTSTART is st when its event shown at from moves to
-// to (spec section 3 item 2, FR-17): by the same change of date (see
-// dateShift) and the same change of clock time, both measured in the
-// series' zone. The series repeats on that wall clock, so a move by the
-// absolute time in between would put EXDATEs, RECURRENCE-IDs and DTSTART
-// itself an hour off across a daylight-saving change. A DATE moves by the
-// change of date only. A UTC or TZID value names an instant, which moves
-// with the series' wall clock and is then written in its own form again; a
-// floating value, or one with a TZID Lucid cannot resolve, moves on its own
-// wall clock.
-func wallShift(rule string, st dateValue, from, to time.Time) func(dateValue) time.Time {
+// rule is rule and whose DTSTART is st when its occurrence rid, shown at
+// from, moves to to (spec section 3 items 1 and 2, FR-17): by the same
+// change of date (see dateShift) and the same change of clock time, from the
+// shown start, both measured in the series' zone. The series repeats on that
+// wall clock, so a move by the absolute time in between would put EXDATEs,
+// RECURRENCE-IDs and DTSTART itself an hour off across a daylight-saving
+// change. A DATE moves by the change of date only. A UTC or TZID value names
+// an instant, which moves with the series' wall clock and is then written in
+// its own form again; a floating value, or one with a TZID Lucid cannot
+// resolve, moves on its own wall clock.
+func wallShift(rule string, st dateValue, rid, from, to time.Time) func(dateValue) time.Time {
 	loc := st.loc()
 	f, t := from.In(loc), to.In(loc)
-	months, days := dateShift(rule, f, t)
+	months, days := dateShift(rule, rid.In(loc), f, t)
 	secs := secondOfDay(t) - secondOfDay(f)
 	return func(d dateValue) time.Time {
 		if d.allDay {
@@ -654,37 +655,44 @@ func wallShift(rule string, st dateValue, from, to time.Time) func(dateValue) ti
 	}
 }
 
-// dateShift returns the change of date from from to to, each read in its
-// own location, as a series with the rule rule moves (spec section 3 item
-// 2, FR-17): for a MONTHLY or YEARLY rule without BY parts, whose events
-// keep the day of the month of DTSTART, in calendar months and then days of
-// the month, as todoSeries.refShift counts them, so that a move across a
-// month end keeps each later event on the moved one's day of the month; for
-// any other rule in calendar days.
-func dateShift(rule string, from, to time.Time) (months, days int) {
+// dateShift returns the change of date by which a series with the rule rule
+// moves when its occurrence rid, shown at from, moves to to, each read in its
+// own location (spec section 3 items 1 and 2, FR-17). The occurrence moves
+// from its own date, rid's, by the calendar days from from to to: an
+// exception can be shown on another day than its RECURRENCE-ID, and the
+// rule's instances move from the latter. For a MONTHLY or YEARLY rule without
+// BY parts, whose events keep the day of the month of DTSTART, the change is
+// counted from rid to where it moves in calendar months and then days of the
+// month, as todoSeries.refShift counts it, so that a move across a month end
+// keeps each later event on the moved one's day of the month; for any other
+// rule in those calendar days.
+func dateShift(rule string, rid, from, to time.Time) (months, days int) {
+	moved := dateDays(to) - dateDays(from)
 	if freq := strings.ToUpper(rulePart(rule, "FREQ")); (freq == "MONTHLY" || freq == "YEARLY") && !ruleHasFixedDays(rule, false) {
-		return (to.Year()-from.Year())*12 + int(to.Month()) - int(from.Month()), to.Day() - from.Day()
+		y, m, d := rid.Date()
+		dest := time.Date(y, m, d+moved, 0, 0, 0, 0, time.UTC)
+		return (dest.Year()-y)*12 + int(dest.Month()) - int(m), dest.Day() - d
 	}
-	return 0, dateDays(to) - dateDays(from)
+	return 0, moved
 }
 
 // toggledStart returns the new DTSTART of the series with the rule rule and
-// DTSTART st whose all-day flag "all events" changes, from its event shown
-// at from, as in sets it (spec section 3 item 4, FR-17). DTSTART's date
-// moves by the change of date (see dateShift) between the dates the user
-// saw and entered, each read where it is meant, rather than measured in one
-// zone and written in another, which put it off by a daylight-saving change
-// between DTSTART and the edited event:
+// DTSTART st whose all-day flag "all events" changes, from its occurrence
+// rid shown at from, as in sets it (spec section 3 item 4, FR-17). DTSTART's
+// date moves by the change of date (see dateShift) between the dates the
+// user saw and entered, each read where it is meant, rather than measured in
+// one zone and written in another, which put it off by a daylight-saving
+// change between DTSTART and the edited event:
 //   - made all-day, from the edited event's date in the series' zone to the
-//     date entered (in.Start's in UTC), DTSTART's own date read in the
-//     series' zone too;
+//     date entered (in.Start's in UTC), DTSTART's own date and rid's read
+//     in the series' zone too;
 //   - made timed, from the all-day date shown to in.Start's date in the
 //     request's zone tz, at in.Start's clock time there, so the series shows
 //     the time entered on both sides of a daylight-saving change.
-func toggledStart(rule string, st dateValue, from time.Time, in domain.EventInput, tz string) time.Time {
+func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.EventInput, tz string) time.Time {
 	if in.AllDay {
 		loc := st.loc()
-		months, days := dateShift(rule, from.In(loc), in.Start.UTC())
+		months, days := dateShift(rule, rid.In(loc), from.In(loc), in.Start.UTC())
 		y, m, d := st.t.In(loc).Date()
 		return time.Date(y, m+time.Month(months), d+days, 0, 0, 0, 0, time.UTC)
 	}
@@ -693,7 +701,7 @@ func toggledStart(rule string, st dateValue, from time.Time, in domain.EventInpu
 		loc = time.UTC // as applyEventFields writes it then
 	}
 	to := in.Start.In(loc)
-	months, days := dateShift(rule, from.UTC(), to)
+	months, days := dateShift(rule, rid.UTC(), from.UTC(), to)
 	y, m, d := st.t.UTC().Date()
 	return time.Date(y, m+time.Month(months), d+days, to.Hour(), to.Minute(), to.Second(), 0, loc)
 }
