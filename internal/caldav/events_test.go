@@ -857,7 +857,7 @@ func TestUpdateSeriesFixedDays(t *testing.T) {
 
 	_, err := e.svc.UpdateEvent(t.Context(), id, april.ETag,
 		seriesUpdate(april, "Review", "", date(2025, 4, 4, 7, 0), date(2025, 4, 4, 7, 15)))
-	mustErr(t, err, domain.ErrInvalidInput)
+	mustErr(t, err, domain.ErrSeriesMoveUnsupported)
 	if after := stored(t, e, "work", "series.ics"); after != before {
 		t.Fatalf("refused move changed the resource:\n%s", after)
 	}
@@ -954,6 +954,19 @@ func wantStored(t *testing.T, e *env, slug, name string, want ...string) {
 		if !strings.Contains(data, line) {
 			t.Errorf("series lacks %q:\n%s", line, data)
 		}
+	}
+}
+
+// mustRefuseMove asserts that UpdateEvent refuses in for the event ev of
+// the series id in the object series.ics of the work calendar as a move
+// the series cannot follow, and leaves that object as it was (FR-17).
+func mustRefuseMove(t *testing.T, e *env, id string, ev domain.Event, in domain.EventInput) {
+	t.Helper()
+	before := stored(t, e, "work", "series.ics")
+	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustErr(t, err, domain.ErrSeriesMoveUnsupported)
+	if after := stored(t, e, "work", "series.ics"); after != before {
+		t.Fatalf("refused move changed the resource:\n%s", after)
 	}
 }
 
@@ -1214,13 +1227,13 @@ func TestUpdateSeriesMonthlyFromMovedException(t *testing.T) {
 	})
 }
 
-// TestUpdateSeriesMonthlyFromRDateOnAnotherDay checks that "all events" from
-// an event on another day of the month than DTSTART's, here an RDATE, moves
-// a monthly series by the calendar days it moved: from 01-31 to 02-01, the
-// 15th becomes the 16th, and the EXDATE of 04-15 goes to 04-16 with it.
-// Counted in months and days from 01-31 (a month less 30 days), DTSTART and
-// the RDATE moved a day while the EXDATE stayed, so the deleted event came
-// back (spec section 3 item 2, FR-17).
+// TestUpdateSeriesMonthlyFromRDateOnAnotherDay checks that "all events"
+// refuses to change the date of a monthly series from an event on another
+// day of the month than DTSTART's, here an RDATE, and leaves the resource
+// as it was: counted in months and days from 01-31, the rule's events would
+// move by another number of days than the RDATE; counted in days, they
+// would leave DTSTART's day of the month. A change of the clock time alone
+// still moves every value (spec section 3 item 2, FR-17).
 func TestUpdateSeriesMonthlyFromRDateOnAnotherDay(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
@@ -1235,18 +1248,159 @@ func TestUpdateSeriesMonthlyFromRDateOnAnotherDay(t *testing.T) {
 		t.Fatalf("got %d events on 2026-01-31; want 1", len(evs))
 	}
 
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Rent", "", date(2026, 2, 1, 8, 0), date(2026, 2, 1, 9, 0)))
+	// Also where every value would stay in its month, and with a new rule.
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Rent", "", date(2026, 1, 30, 8, 0), date(2026, 1, 30, 9, 0)))
+	newRule := seriesUpdate(evs[0], "Rent", "", date(2026, 1, 30, 8, 0), date(2026, 1, 30, 9, 0))
+	newRule.RRule = "FREQ=MONTHLY;COUNT=12"
+	mustRefuseMove(t, e, id, evs[0], newRule)
+
 	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
-		seriesUpdate(evs[0], "Rent", "", date(2026, 2, 1, 8, 0), date(2026, 2, 1, 9, 0)))
+		seriesUpdate(evs[0], "Rent", "", date(2026, 1, 31, 9, 0), date(2026, 1, 31, 10, 0)))
+	mustNoErr(t, err)
+	wantStored(t, e, "work", "series.ics",
+		"DTSTART;TZID=Europe/Berlin:20260115T100000", "RDATE;TZID=Europe/Berlin:20260131T100000",
+		"EXDATE;TZID=Europe/Berlin:20260415T100000")
+}
+
+// TestUpdateSeriesMonthlyOntoDayMonthsLack checks that "all events" refuses
+// to move a monthly series onto a day of the month that some of its months
+// lack, and leaves the resource as it was: from the 03-15 event to 03-31,
+// DTSTART went to 01-31, and the series lost its events in February,
+// April, June, September and November (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyOntoDayMonthsLack(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000",
+		"RRULE:FREQ=MONTHLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 15, 0, 0), date(2026, 3, 16, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-15; want 1", len(evs))
+	}
+
+	// 09:00 Berlin summer time.
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Rent", "", date(2026, 3, 31, 7, 0), date(2026, 3, 31, 8, 0)))
+}
+
+// TestUpdateSeriesMonthlyRefMovedOffItsMonth checks that "all events"
+// refuses a move that puts a reference of a monthly series on a day its
+// month lacks, and leaves the resource as it was: from the 03-15 event to
+// 04-14, a month less a day, the RDATE of 01-31 went to February 30, which
+// is March 2 (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyRefMovedOffItsMonth(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260115T090000", "DTEND;TZID=Europe/Berlin:20260115T100000",
+		"RRULE:FREQ=MONTHLY", "RDATE;TZID=Europe/Berlin:20260131T090000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 15, 0, 0), date(2026, 3, 16, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-15; want 1", len(evs))
+	}
+
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Rent", "", date(2026, 4, 14, 7, 0), date(2026, 4, 14, 8, 0)))
+}
+
+// TestUpdateSeriesMonthlyFrom31stTo30th checks that "all events" moves a
+// monthly series on the 31st to the 30th, where every value keeps its
+// month: DTSTART and the EXDATE go back a day, and the series repeats on
+// the 30th (spec section 3 item 2, FR-17).
+func TestUpdateSeriesMonthlyFrom31stTo30th(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+		"DTSTART;TZID=Europe/Berlin:20260131T090000", "DTEND;TZID=Europe/Berlin:20260131T100000",
+		"RRULE:FREQ=MONTHLY", "EXDATE;TZID=Europe/Berlin:20260531T090000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 31, 0, 0), date(2026, 4, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-31; want 1", len(evs))
+	}
+
+	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Rent", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 8, 0)))
 	mustNoErr(t, err)
 
 	wantStored(t, e, "work", "series.ics",
-		"DTSTART;TZID=Europe/Berlin:20260116T090000", "RDATE;TZID=Europe/Berlin:20260201T090000",
-		"EXDATE;TZID=Europe/Berlin:20260416T090000")
-	// 04-16 stays deleted.
-	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 1, 0, 0), date(2026, 6, 1, 0, 0)), []occ{
-		{title: "Rent", start: date(2026, 3, 16, 8, 0), end: date(2026, 3, 16, 9, 0), rid: ptr(date(2026, 3, 16, 8, 0))},
-		{title: "Rent", start: date(2026, 5, 16, 7, 0), end: date(2026, 5, 16, 8, 0), rid: ptr(date(2026, 5, 16, 7, 0))},
+		"DTSTART;TZID=Europe/Berlin:20260130T090000", "EXDATE;TZID=Europe/Berlin:20260530T090000")
+	// 05-30 stays deleted.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 1, 0, 0), date(2026, 7, 1, 0, 0)), []occ{
+		{title: "Rent", start: date(2026, 3, 30, 7, 0), end: date(2026, 3, 30, 8, 0), rid: ptr(date(2026, 3, 30, 7, 0))},
+		{title: "Rent", start: date(2026, 4, 30, 7, 0), end: date(2026, 4, 30, 8, 0), rid: ptr(date(2026, 4, 30, 7, 0))},
+		{title: "Rent", start: date(2026, 6, 30, 7, 0), end: date(2026, 6, 30, 8, 0), rid: ptr(date(2026, 6, 30, 7, 0))},
 	})
+}
+
+// TestUpdateSeriesYearlyOntoFebruary29 checks that "all events" refuses to
+// move a yearly series onto February 29, which DTSTART's year 2026 lacks,
+// and leaves the resource as it was: DTSTART stayed on March 1 while the
+// edited event was shown on 2028-02-29 (spec section 3 item 2, FR-17).
+func TestUpdateSeriesYearlyOntoFebruary29(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260301T090000", "DTEND;TZID=Europe/Berlin:20260301T100000",
+		"RRULE:FREQ=YEARLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2028, 3, 1, 0, 0), date(2028, 3, 2, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2028-03-01; want 1", len(evs))
+	}
+
+	mustRefuseMove(t, e, id, evs[0], seriesUpdate(evs[0], "Review", "", date(2028, 2, 29, 8, 0), date(2028, 2, 29, 9, 0)))
+}
+
+// TestUpdateSeriesNewRuleOntoDayMonthLacks checks that a save of a monthly
+// series that changes its rule refuses the move too when DTSTART lands on
+// a day its month lacks, and leaves the resource as it was: from the 03-31
+// event to 04-30, a month less a day, DTSTART went from 01-31 to February
+// 30, which is March 2 (spec section 3 items 2 and 4, FR-17).
+func TestUpdateSeriesNewRuleOntoDayMonthLacks(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", monthlyOn31st...)
+	evs := listed(t, e, "work", date(2026, 3, 31, 0, 0), date(2026, 4, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-31; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Rent", "", date(2026, 4, 30, 7, 0), date(2026, 4, 30, 8, 0))
+	in.RRule = "FREQ=MONTHLY;COUNT=12"
+	mustRefuseMove(t, e, id, evs[0], in)
+}
+
+// TestUpdateSeriesMadeAllDayOntoDayMonthLacks checks that a save that makes
+// a monthly series all-day refuses the move too when DTSTART lands on a
+// day its month lacks, and leaves the resource as it was: from the 03-31
+// event to 04-30, DTSTART went from 01-31 to February 30, which is March 2
+// (spec section 3 items 2 and 4, FR-17).
+func TestUpdateSeriesMadeAllDayOntoDayMonthLacks(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", monthlyOn31st...)
+	evs := listed(t, e, "work", date(2026, 3, 31, 0, 0), date(2026, 4, 1, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-31; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Rent", "", date(2026, 4, 30, 0, 0), date(2026, 5, 1, 0, 0))
+	in.AllDay = true
+	mustRefuseMove(t, e, id, evs[0], in)
+}
+
+// monthlyOn31st is a monthly series from 2026-01-31 09:00 Berlin time.
+var monthlyOn31st = []string{
+	"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+	"DTSTART;TZID=Europe/Berlin:20260131T090000", "DTEND;TZID=Europe/Berlin:20260131T100000",
+	"RRULE:FREQ=MONTHLY",
+	"END:VEVENT",
 }
 
 // TestUpdateSeriesYearlyKeepsDayOfMonth checks that "all events" moves a

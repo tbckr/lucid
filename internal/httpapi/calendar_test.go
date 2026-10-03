@@ -83,6 +83,7 @@ func TestErrorMapping(t *testing.T) {
 		{domain.ErrUnauthorized, http.StatusUnauthorized, codeUnauthenticated},
 		{domain.ErrReadOnly, http.StatusForbidden, codeReadOnly},
 		{fmt.Errorf("%w: VTODO", domain.ErrUnsupportedComponent), http.StatusUnprocessableEntity, codeUnsupportedComponent},
+		{fmt.Errorf("%w: off its day", domain.ErrSeriesMoveUnsupported), http.StatusBadRequest, codeSeriesMoveUnsupported},
 		{fmt.Errorf("x: %w", domain.ErrNotFound), http.StatusNotFound, codeNotFound},
 		{domain.ErrConflict, http.StatusConflict, codeConflict},
 		{domain.ErrDiscovery, http.StatusUnprocessableEntity, codeDiscoveryFailed},

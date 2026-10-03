@@ -184,9 +184,12 @@ describe('parseErrorResponse', () => {
     expect(err.code).toBe(code)
   })
 
-  it('keeps unsupported_component', async () => {
-    const err = await parseErrorResponse(jsonResponse(422, { error: { code: 'unsupported_component', message: 'm' } }))
-    expect(err.code).toBe('unsupported_component')
+  it.each([
+    [422, 'unsupported_component'],
+    [400, 'series_move_unsupported'],
+  ])('keeps the code of a %i %s', async (status, code) => {
+    const err = await parseErrorResponse(jsonResponse(status, { error: { code, message: 'm' } }))
+    expect(err.code).toBe(code)
   })
 
   it('maps unknown codes by status', async () => {

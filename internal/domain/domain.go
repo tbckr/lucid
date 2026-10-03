@@ -28,6 +28,10 @@ var (
 	// ErrUnsupportedComponent means the target calendar does not accept the
 	// component type (e.g. an event in a calendar that only holds todos).
 	ErrUnsupportedComponent = errors.New("component type not supported by calendar")
+	// ErrSeriesMoveUnsupported means "all events" of a recurring series cannot
+	// move as asked without some of them landing elsewhere than the edited
+	// one, so only that event can move (FR-17).
+	ErrSeriesMoveUnsupported = errors.New("series move unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")
 	// ErrForbiddenTarget means the target address was rejected by SSRF protection.

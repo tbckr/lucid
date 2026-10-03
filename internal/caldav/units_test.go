@@ -244,7 +244,9 @@ func TestShiftDateProp(t *testing.T) {
 	t.Parallel()
 	st := dateValue{t: date(2025, 3, 3, 10, 0)}
 	by := func(d time.Duration) func(dateValue) time.Time {
-		return wallShift("FREQ=WEEKLY", st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
+		mv, err := wallShift("FREQ=WEEKLY", st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
+		mustNoErr(t, err)
+		return mv.shift
 	}
 	tests := []struct {
 		value, tzid, want string
@@ -282,9 +284,6 @@ func TestWallShift(t *testing.T) {
 	t.Parallel()
 	berlin := loadLocation("Europe/Berlin")
 	st := dateValue{t: time.Date(2026, 1, 2, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
-	// Shown on Friday 03-27, moved to Saturday 03-28, both 09:00 CET: one day
-	// later, which takes values on 03-28 into summer time.
-	shift := wallShift("FREQ=WEEKLY;BYDAY=FR", st, date(2026, 3, 27, 8, 0), date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
 
 	tests := []struct {
 		name  string
@@ -303,13 +302,17 @@ func TestWallShift(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			// Shown on Friday 03-27, moved to Saturday 03-28, both 09:00 CET: one
+			// day later, which takes values on 03-28 into summer time.
+			mv, err := wallShift("FREQ=WEEKLY;BYDAY=FR", st, date(2026, 3, 27, 8, 0), date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
+			mustNoErr(t, err)
 			p := ical.Prop{Value: tt.value, Params: ical.Params{}}
 			if tt.param != "" {
 				p.Params.Set(ical.ParamTimezoneID, tt.param)
 			}
-			shiftDatePropBy(&p, shift)
-			if p.Value != tt.want {
-				t.Errorf("shifted %s = %s; want %s", tt.value, p.Value, tt.want)
+			shiftDatePropBy(&p, mv.shift)
+			if p.Value != tt.want || mv.lost {
+				t.Errorf("shifted %s = %s, lost %v; want %s", tt.value, p.Value, mv.lost, tt.want)
 			}
 		})
 	}
@@ -317,31 +320,38 @@ func TestWallShift(t *testing.T) {
 
 // TestDateShift checks how dateShift counts the change of date of a moved
 // event: from its RECURRENCE-ID, by the calendar days it moved, in calendar
-// months and days for a monthly or yearly rule without BY parts when that
-// RECURRENCE-ID lies on DTSTART's day of the month, in calendar days
-// otherwise (spec section 3 items 1 and 2, FR-17).
+// months and days for a monthly or yearly rule without BY parts, in
+// calendar days otherwise; and that a monthly rule refuses a change of date
+// from an event on another day of the month than DTSTART's (spec section 3
+// items 1 and 2, FR-17).
 func TestDateShift(t *testing.T) {
 	t.Parallel()
 	mar30, apr2 := date(2026, 3, 30, 7, 0), date(2026, 4, 2, 7, 0)
 	feb15, feb28, mar1 := date(2026, 2, 15, 8, 0), date(2026, 2, 28, 8, 0), date(2026, 3, 1, 8, 0)
-	jan31, feb1 := date(2026, 1, 31, 8, 0), date(2026, 2, 1, 8, 0)
+	jan15, jan31, feb1 := date(2026, 1, 15, 8, 0), date(2026, 1, 31, 8, 0), date(2026, 2, 1, 8, 0)
+	byMonth := func(months, days int) dateMove { return dateMove{months: months, days: days, byMonth: true} }
 	tests := []struct {
 		name                 string
 		rule                 string
 		start, rid, from, to time.Time // a zero rid: the event is shown at it; a zero start: on rid
-		months, days         int
+		want                 dateMove
+		err                  error
 	}{
-		{"monthly", "FREQ=MONTHLY", time.Time{}, time.Time{}, mar30, apr2, 1, -28},
-		{"monthly back", "FREQ=MONTHLY", time.Time{}, time.Time{}, apr2, mar30, -1, 28},
-		{"monthly with interval and count", "FREQ=MONTHLY;INTERVAL=2;COUNT=5", time.Time{}, time.Time{}, mar30, apr2, 1, -28},
-		{"yearly into the next year", "FREQ=YEARLY", time.Time{}, time.Time{}, date(2026, 12, 30, 8, 0), date(2027, 1, 2, 8, 0), 1, -28},
-		{"monthly, an exception shown on another day", "FREQ=MONTHLY", time.Time{}, feb15, feb28, mar1, 0, 1},
-		{"monthly, an exception moved across a month end", "FREQ=MONTHLY", time.Time{}, jan31, date(2026, 2, 2, 8, 0), date(2026, 2, 5, 8, 0), 1, -28},
-		{"monthly, DTSTART on another day of the month", "FREQ=MONTHLY", date(2026, 1, 15, 8, 0), time.Time{}, jan31, feb1, 0, 1},
-		{"monthly on fixed days", "FREQ=MONTHLY;BYMONTHDAY=30", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
-		{"weekly", "FREQ=WEEKLY", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
-		{"weekly, an exception shown on another day", "FREQ=WEEKLY", time.Time{}, feb15, feb28, mar1, 0, 1},
-		{"no rule", "", time.Time{}, time.Time{}, mar30, apr2, 0, 3},
+		{"monthly", "FREQ=MONTHLY", time.Time{}, time.Time{}, mar30, apr2, byMonth(1, -28), nil},
+		{"monthly back", "FREQ=MONTHLY", time.Time{}, time.Time{}, apr2, mar30, byMonth(-1, 28), nil},
+		{"monthly with interval and count", "FREQ=MONTHLY;INTERVAL=2;COUNT=5", time.Time{}, time.Time{}, mar30, apr2, byMonth(1, -28), nil},
+		{"yearly into the next year", "FREQ=YEARLY", time.Time{}, time.Time{}, date(2026, 12, 30, 8, 0), date(2027, 1, 2, 8, 0), byMonth(1, -28), nil},
+		{"monthly, an exception shown on another day", "FREQ=MONTHLY", time.Time{}, feb15, feb28, mar1, byMonth(0, 1), nil},
+		{"monthly, an exception moved across a month end", "FREQ=MONTHLY", time.Time{}, jan31, date(2026, 2, 2, 8, 0), date(2026, 2, 5, 8, 0), byMonth(1, -28), nil},
+		{"monthly, from an event off DTSTART's day of the month", "FREQ=MONTHLY", jan15, time.Time{}, jan31, feb1, dateMove{}, errMoveOffDay},
+		{"yearly, from an event off DTSTART's day of the month", "FREQ=YEARLY", jan15, time.Time{}, jan31, feb1, dateMove{}, errMoveOffDay},
+		{"monthly, the clock time only of an event off DTSTART's day", "FREQ=MONTHLY", jan15, time.Time{}, jan31, jan31.Add(time.Hour), byMonth(0, 0), nil},
+		{"monthly on fixed days", "FREQ=MONTHLY;BYMONTHDAY=30", time.Time{}, time.Time{}, mar30, apr2, dateMove{days: 3}, nil},
+		{"monthly on fixed days, off DTSTART's day", "FREQ=MONTHLY;BYMONTHDAY=15,31", jan15, time.Time{}, jan31, feb1, dateMove{days: 1}, nil},
+		{"weekly", "FREQ=WEEKLY", time.Time{}, time.Time{}, mar30, apr2, dateMove{days: 3}, nil},
+		{"weekly, an exception shown on another day", "FREQ=WEEKLY", time.Time{}, feb15, feb28, mar1, dateMove{days: 1}, nil},
+		{"weekly, off DTSTART's day of the month", "FREQ=WEEKLY", jan15, time.Time{}, jan31, feb1, dateMove{days: 1}, nil},
+		{"no rule", "", time.Time{}, time.Time{}, mar30, apr2, dateMove{days: 3}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -354,9 +364,81 @@ func TestDateShift(t *testing.T) {
 			if start.IsZero() {
 				start = rid
 			}
-			months, days := dateShift(tt.rule, start, rid, tt.from, tt.to)
-			if months != tt.months || days != tt.days {
-				t.Errorf("dateShift(%q) = %d months, %d days; want %d, %d", tt.rule, months, days, tt.months, tt.days)
+			got, err := dateShift(tt.rule, start, rid, tt.from, tt.to)
+			if got != tt.want || !errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
+				t.Errorf("dateShift(%q) = %+v, %v; want %+v, %v", tt.rule, got, err, tt.want, tt.err)
+			}
+		})
+	}
+	if !errors.Is(errMoveOffDay, domain.ErrSeriesMoveUnsupported) {
+		t.Errorf("%v is no %v", errMoveOffDay, domain.ErrSeriesMoveUnsupported)
+	}
+}
+
+// TestDateMoveDate checks where dateMove.date moves a date, and that a
+// change counted in months and days fails where it names a day that month
+// lacks (spec section 3 item 2, FR-17).
+func TestDateMoveDate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		mv   dateMove
+		from time.Time
+		want time.Time
+		ok   bool
+	}{
+		{"a month less a day, onto the 30th", dateMove{months: 1, days: -1, byMonth: true}, date(2026, 3, 31, 9, 0), date(2026, 4, 30, 0, 0), true},
+		{"a month less a day, onto February 30", dateMove{months: 1, days: -1, byMonth: true}, date(2026, 1, 31, 9, 0), date(2026, 3, 2, 0, 0), false},
+		{"onto February 29 in a leap year", dateMove{months: -1, days: 28, byMonth: true}, date(2028, 3, 1, 9, 0), date(2028, 2, 29, 0, 0), true},
+		{"onto February 29 in a common year", dateMove{months: -1, days: 28, byMonth: true}, date(2026, 3, 1, 9, 0), date(2026, 3, 1, 0, 0), false},
+		{"past the month's last day", dateMove{days: 1, byMonth: true}, date(2026, 1, 31, 9, 0), date(2026, 2, 1, 0, 0), false},
+		{"before the month's first day", dateMove{days: -15, byMonth: true}, date(2026, 1, 15, 9, 0), date(2025, 12, 31, 0, 0), false},
+		{"from the 30th to the 2nd", dateMove{months: 1, days: -28, byMonth: true}, date(2026, 1, 30, 9, 0), date(2026, 2, 2, 0, 0), true},
+		{"into the next year", dateMove{months: 1, byMonth: true}, date(2026, 12, 31, 9, 0), date(2027, 1, 31, 0, 0), true},
+		{"calendar days past the month's last day", dateMove{days: 3}, date(2026, 1, 31, 9, 0), date(2026, 2, 3, 0, 0), true},
+		{"calendar days before the month's first day", dateMove{days: -15}, date(2026, 1, 15, 9, 0), date(2025, 12, 31, 0, 0), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			y, m, d, ok := tt.mv.date(tt.from)
+			if got := time.Date(y, m, d, 0, 0, 0, 0, time.UTC); !got.Equal(tt.want) || ok != tt.ok {
+				t.Errorf("date(%s) = %s, %v; want %s, %v", tt.from, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+// TestShiftEvents checks that seriesMove.shiftEvents tells of a move that
+// puts an event of the rule on a day its month lacks, also beyond the
+// first year, and only of an event the rule has (spec section 3 item 2,
+// FR-17).
+func TestShiftEvents(t *testing.T) {
+	t.Parallel()
+	on := func(y int, m time.Month, d int) dateValue { return dateValue{t: date(y, m, d, 9, 0)} }
+	tests := []struct {
+		name string
+		rule string
+		st   dateValue
+		mv   dateMove
+		lost bool
+	}{
+		{"monthly from the 15th to the 31st", "FREQ=MONTHLY", on(2026, 1, 15), dateMove{days: 16, byMonth: true}, true},
+		{"monthly from the 15th to the 31st, ending in January", "FREQ=MONTHLY;COUNT=1", on(2026, 1, 15), dateMove{days: 16, byMonth: true}, false},
+		{"monthly from the 31st to the 30th", "FREQ=MONTHLY", on(2026, 1, 31), dateMove{days: -1, byMonth: true}, false},
+		{"every 12 months on the 31st, by a month less a day", "FREQ=MONTHLY;INTERVAL=12", on(2026, 3, 31), dateMove{months: 1, days: -1, byMonth: true}, false},
+		{"yearly onto February 29 from a leap year", "FREQ=YEARLY", on(2028, 3, 1), dateMove{months: -1, days: 28, byMonth: true}, true},
+		{"every 4 years onto February 29 in leap years", "FREQ=YEARLY;INTERVAL=4;UNTIL=20961231T000000Z", on(2028, 3, 1), dateMove{months: -1, days: 28, byMonth: true}, false},
+		{"monthly in calendar days", "FREQ=MONTHLY;BYMONTHDAY=15", on(2026, 1, 15), dateMove{days: 16}, false},
+		{"a rule Lucid can't read", "FREQ=MONTHLY;BYDAY=XX", on(2026, 1, 15), dateMove{days: 16, byMonth: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mv := &seriesMove{loc: time.UTC, date: tt.mv}
+			mv.shiftEvents(tt.rule, tt.st)
+			if mv.lost != tt.lost {
+				t.Errorf("lost = %v; want %v", mv.lost, tt.lost)
 			}
 		})
 	}
@@ -374,6 +456,8 @@ func TestToggledStart(t *testing.T) {
 	allDay := dateValue{t: date(2026, 1, 2, 0, 0), allDay: true}
 	mid15 := dateValue{t: time.Date(2026, 1, 15, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
 	allDay15 := dateValue{t: date(2026, 1, 15, 0, 0), allDay: true}
+	on31st := dateValue{t: time.Date(2026, 1, 31, 9, 0, 0, 0, berlin), tzid: "Europe/Berlin", param: "Europe/Berlin"}
+	allDay31st := dateValue{t: date(2026, 1, 31, 0, 0), allDay: true}
 	tests := []struct {
 		name      string
 		rule      string
@@ -382,15 +466,20 @@ func TestToggledStart(t *testing.T) {
 		start     time.Time
 		tz        string
 		want      time.Time
+		err       error
 	}{
-		{"made all-day, same date", "FREQ=WEEKLY", timed, time.Time{}, date(2026, 11, 6, 8, 0), date(2026, 11, 6, 0, 0), "", date(2026, 9, 4, 0, 0)},
-		{"made all-day, a day later", "FREQ=WEEKLY", timed, time.Time{}, date(2026, 11, 6, 8, 0), date(2026, 11, 7, 0, 0), "", date(2026, 9, 5, 0, 0)},
-		{"made all-day, monthly by months", "FREQ=MONTHLY", monthly, time.Time{}, date(2026, 3, 30, 7, 0), date(2026, 5, 1, 0, 0), "", date(2026, 3, 1, 0, 0)},
-		{"made all-day, monthly from an exception on another day", "FREQ=MONTHLY", mid15, date(2026, 2, 15, 8, 0), date(2026, 2, 28, 8, 0), date(2026, 3, 1, 0, 0), "", date(2026, 1, 16, 0, 0)},
-		{"made timed in summer time", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 7, 0), "Europe/Berlin", time.Date(2026, 1, 2, 9, 0, 0, 0, berlin)},
-		{"made timed west of UTC", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 13, 0), "America/New_York", time.Date(2026, 1, 2, 9, 0, 0, 0, newYork)},
-		{"made timed without a zone", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 9, 30), "", date(2026, 1, 2, 9, 30)},
-		{"made timed, monthly from an exception on another day", "FREQ=MONTHLY", allDay15, date(2026, 2, 15, 0, 0), date(2026, 2, 28, 0, 0), date(2026, 3, 1, 8, 0), "Europe/Berlin", time.Date(2026, 1, 16, 9, 0, 0, 0, berlin)},
+		{"made all-day, same date", "FREQ=WEEKLY", timed, time.Time{}, date(2026, 11, 6, 8, 0), date(2026, 11, 6, 0, 0), "", date(2026, 9, 4, 0, 0), nil},
+		{"made all-day, a day later", "FREQ=WEEKLY", timed, time.Time{}, date(2026, 11, 6, 8, 0), date(2026, 11, 7, 0, 0), "", date(2026, 9, 5, 0, 0), nil},
+		{"made all-day, monthly by months", "FREQ=MONTHLY", monthly, time.Time{}, date(2026, 3, 30, 7, 0), date(2026, 5, 1, 0, 0), "", date(2026, 3, 1, 0, 0), nil},
+		{"made all-day, monthly from an exception on another day", "FREQ=MONTHLY", mid15, date(2026, 2, 15, 8, 0), date(2026, 2, 28, 8, 0), date(2026, 3, 1, 0, 0), "", date(2026, 1, 16, 0, 0), nil},
+		{"made timed in summer time", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 7, 0), "Europe/Berlin", time.Date(2026, 1, 2, 9, 0, 0, 0, berlin), nil},
+		{"made timed west of UTC", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 13, 0), "America/New_York", time.Date(2026, 1, 2, 9, 0, 0, 0, newYork), nil},
+		{"made timed without a zone", "FREQ=WEEKLY", allDay, time.Time{}, date(2026, 4, 3, 0, 0), date(2026, 4, 3, 9, 30), "", date(2026, 1, 2, 9, 30), nil},
+		{"made timed, monthly from an exception on another day", "FREQ=MONTHLY", allDay15, date(2026, 2, 15, 0, 0), date(2026, 2, 28, 0, 0), date(2026, 3, 1, 8, 0), "Europe/Berlin", time.Date(2026, 1, 16, 9, 0, 0, 0, berlin), nil},
+		{"made all-day, monthly from an event off DTSTART's day", "FREQ=MONTHLY", mid15, time.Time{}, date(2026, 1, 31, 8, 0), date(2026, 2, 1, 0, 0), "", time.Time{}, errMoveOffDay},
+		{"made timed, monthly from an event off DTSTART's day", "FREQ=MONTHLY", allDay15, time.Time{}, date(2026, 1, 31, 0, 0), date(2026, 2, 1, 8, 0), "Europe/Berlin", time.Time{}, errMoveOffDay},
+		{"made all-day, monthly onto February 30", "FREQ=MONTHLY", on31st, time.Time{}, date(2026, 3, 31, 7, 0), date(2026, 4, 30, 0, 0), "", time.Time{}, errMoveOffMonth},
+		{"made timed, monthly onto February 30", "FREQ=MONTHLY", allDay31st, time.Time{}, date(2026, 3, 31, 0, 0), date(2026, 4, 30, 7, 0), "Europe/Berlin", time.Time{}, errMoveOffMonth},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -400,9 +489,10 @@ func TestToggledStart(t *testing.T) {
 				rid = tt.from
 			}
 			in := domain.EventInput{Start: tt.start, AllDay: !tt.st.allDay}
-			got := toggledStart(tt.rule, tt.st, rid, tt.from, in, tt.tz)
-			if !got.Equal(tt.want) || got.Location().String() != tt.want.Location().String() {
-				t.Errorf("toggledStart = %s; want %s", got, tt.want)
+			got, err := toggledStart(tt.rule, tt.st, rid, tt.from, in, tt.tz)
+			if !got.Equal(tt.want) || got.Location().String() != tt.want.Location().String() ||
+				!errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
+				t.Errorf("toggledStart = %s, %v; want %s, %v", got, err, tt.want, tt.err)
 			}
 		})
 	}

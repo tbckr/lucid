@@ -25,6 +25,8 @@ export function apiErrorMessage(t: TFunction, err: unknown): string {
       return t('errors.read_only')
     case 'unsupported_component':
       return t('errors.unsupported_component')
+    case 'series_move_unsupported':
+      return t('errors.series_move_unsupported')
     case 'conflict':
       return t('errors.conflict')
     case 'not_found':

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { isSameDay } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
 import { createRef, type ReactNode, type RefObject } from 'react'
+import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventChip, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
 import { TaskChip } from '@/components/tasks/TaskItems'
@@ -365,6 +366,31 @@ describe('CalendarDnd', () => {
       await waitFor(() => {
         expect(queryClient.isMutating()).toBe(0)
       })
+    })
+
+    it('says why and leaves the series in place when it cannot move like this', async () => {
+      const user = userEvent.setup()
+      const error = vi.spyOn(toast, 'error')
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse(400, {
+            error: { code: 'series_move_unsupported', message: "all events of this series can't move like this, only this event can" },
+          }),
+        ),
+      )
+      const { queryClient } = renderWeek([standup(25)])
+
+      await moveRight(chipIn(25, standupAt10))
+      await user.click(await screen.findByRole('button', { name: 'All events' }))
+      await waitFor(() => {
+        expect(error).toHaveBeenCalledWith("All events of this series can't move like this. Move only this event instead.")
+      })
+      await waitFor(() => {
+        expect(queryClient.isMutating()).toBe(0)
+      })
+      // Back at its old place, no longer saving (NFR-26).
+      expect(chipIn(25, standupAt10)).not.toHaveAttribute('aria-busy')
+      expect(within(screen.getByTestId('day:26')).queryByRole('button')).toBeNull()
     })
 
     // All events of a series share one ETag; "Only this event" locks none of the others (FR-17).

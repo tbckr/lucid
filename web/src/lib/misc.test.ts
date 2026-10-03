@@ -35,6 +35,7 @@ describe('apiErrorMessage', () => {
     ['invalid_input', 'invalid'],
     ['read_only', 'read-only'],
     ['unsupported_component', "doesn't accept"],
+    ['series_move_unsupported', "can't move like this. Move only this event instead."],
     ['conflict', 'changed elsewhere'],
     ['not_found', 'no longer exists'],
     ['unauthenticated', 'session expired'],
@@ -54,6 +55,9 @@ describe('apiErrorMessage', () => {
   it('is translated', () => {
     const de = i18next.getFixedT('de')
     expect(apiErrorMessage(de, new ApiError(409, 'conflict', ''))).toContain('anderswo geändert')
+    expect(apiErrorMessage(de, new ApiError(400, 'series_move_unsupported', ''))).toBe(
+      'So lassen sich nicht alle Termine dieser Serie verschieben. Verschiebe nur diesen Termin.',
+    )
   })
 })
 

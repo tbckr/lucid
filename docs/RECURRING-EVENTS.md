@@ -778,25 +778,22 @@ surveyed client and server round-trips (see [Summary](#summary)).
   moved by the calendar days the event moved, since an exception can be
   shown on another day than its `RECURRENCE-ID`. A move from the 30th to
   the 2nd thus puts every event, exception and deleted event on the 2nd,
-  also across months of 30 and 31 days; a move onto a day that `DTSTART`'s
-  month lacks does not keep that day (see Limits). This holds when the
-  edited event lies on `DTSTART`'s day of the month; from an event on
-  another day, such as an `RDATE`, the change is counted in calendar days,
-  since months and days counted from another day would move the rule's
-  events by another number of days than the edited one. `DTSTART`, `UNTIL`,
-  every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and the recurrence ID the
-  response is looked up by all move this way: a date-only value by the
-  change of date only, a UTC or `TZID` value as an instant on the series'
-  wall clock (written back in its own form), a floating value, or one with
-  a `TZID` Lucid cannot resolve, on its own wall clock. `DTEND` moves as
-  `DTSTART` did, so the series keeps its duration. An absolute duration
-  would put them an hour off whenever a daylight-saving change lies
-  between them and the edited event — a deleted occurrence would come back
-  and an override would be orphaned next to the occurrence it replaces —
-  and a drag from winter into summer time would move the whole series an
-  hour. A save that changes the rule moves the same way, counted by the
-  rule the series had; one that changes the `allDay` flag moves the
-  references this way too, but `DTSTART` by dates (next item).
+  also across months of 30 and 31 days. Where this count can't keep every
+  value on its day, the move is refused (see "Which moves are refused").
+  `DTSTART`, `UNTIL`, every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and the
+  recurrence ID the response is looked up by all move this way: a
+  date-only value by the change of date only, a UTC or `TZID` value as an
+  instant on the series' wall clock (written back in its own form), a
+  floating value, or one with a `TZID` Lucid cannot resolve, on its own
+  wall clock. `DTEND` moves as `DTSTART` did, so the series keeps its
+  duration. An absolute duration would put them an hour off whenever a
+  daylight-saving change lies between them and the edited event — a
+  deleted occurrence would come back and an override would be orphaned
+  next to the occurrence it replaces — and a drag from winter into summer
+  time would move the whole series an hour. A save that changes the rule
+  moves the same way, counted by the rule the series had; one that changes
+  the `allDay` flag moves the references this way too, but `DTSTART` by
+  dates (next item).
 - **Turning a series all-day, or an all-day series timed**, moves `DTSTART`
   by dates instead (`toggledStart`), each read where the user saw or
   entered it, so a daylight-saving change between `DTSTART` and the edited
@@ -829,9 +826,33 @@ surveyed client and server round-trips (see [Summary](#summary)).
   `BYSETPOS`, `BYMONTH`, `BYYEARDAY`, `BYWEEKNO`, or a weekly rule with more
   `BY` parts) allows only a same-day move, and no clock change at all if
   the rule fixes the hour, minute or second itself. The server answers
-  `400 invalid_input` when `seriesShift` says no; the frontend does not
-  offer "All events" in that case at all (`allowAll`), so the server check
-  is the safety net, not the primary guard.
+  `400 series_move_unsupported` when `seriesShift` says no; the frontend
+  does not offer "All events" in that case at all (`allowAll`), so the
+  server check is the safety net, not the primary guard.
+- **A `MONTHLY` or `YEARLY` rule without `BY` parts** is refused too, with
+  the same `400 series_move_unsupported` and nothing written, where months
+  and days can't keep every value on its day (see Limits). The server
+  alone decides this, on every path that counts in months and days: "All
+  events" with the rule and `allDay` unchanged (`moveSeries`), a save that
+  changes the rule, and one that turns the series all-day or timed
+  (`toggledStart`). The frontend offers "All events" there and shows the
+  refusal as a toast: "All events of this series can't move like this.
+  Move only this event instead."
+  - From an event on another day of the month than `DTSTART`'s (an
+    `RDATE`, or an exception left on another day), a change of date is
+    refused (`dateShift`): counted in months and days from there, the
+    rule's events would move by another number of days than the edited
+    one, and counted in days, they would leave their day of the month. A
+    change of the clock time alone moves every value as usual.
+  - A move whose months and days would put `DTSTART`, a reference
+    (`EXDATE`, `RDATE`, `RECURRENCE-ID`, `UNTIL`) or one of the rule's
+    events on a day its month lacks, the 29th to 31st or February 29 in a
+    common year, is refused (`dateMove.date`, `seriesMove`): such a value
+    would overflow into the next month. The rule's events count on "All
+    events" with the rule and `allDay` unchanged (its first 48, after
+    which their months repeat); a save that changes the rule or `allDay`
+    writes the series as entered and checks `DTSTART` and the references
+    only.
 - **What is marked as changed**: `modified` is computed per occurrence in
   `expandObject` (`overrideModified`). It is `true` when an override
   visibly changes the occurrence's start, duration, all-day flag, title,
@@ -852,21 +873,28 @@ surveyed client and server round-trips (see [Summary](#summary)).
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.
-- A `MONTHLY` or `YEARLY` series moved by "All events" onto a day of the
-  month that `DTSTART`'s month lacks does not stay on that day: the moved
-  `DTSTART` overflows into the next month, as dates do for tasks too.
-  - A monthly series from 2026-01-31 whose 03-31 event moves to 04-30 gets
-    `DTSTART` 03-02 and repeats on the 2nd. Its references move by the same
-    month less a day, onto the 30th (an `EXDATE` of 05-31 becomes 06-30),
-    so they match no event any more: deleted events come back, and
-    exceptions are shown next to the events they replace. The response
-    still shows the moved event on 04-30, which the list then lacks. The
-    same holds for any move onto the 29th to 31st that `DTSTART`'s month
-    does not have.
-  - A yearly series from 2026-03-01 whose 2028 event moves to 02-29 keeps
-    `DTSTART` 2026-03-01, since 2026 has no February 29, and stays on March
-    1 every year, while the response shows the event on 02-29; its
-    references in leap years go to 02-29 and match no event.
+- "All events" can't move a `MONTHLY` or `YEARLY` series without `BY`
+  parts where months and days can't keep every value on its day. Rather
+  than let the series drift, Lucid refuses such a save with
+  `400 series_move_unsupported` and writes nothing; "Only this event"
+  still moves the one event.
+  - From an event on another day of the month than `DTSTART`'s, such as
+    an `RDATE`, to another date: a monthly series from 2026-01-15 with an
+    `RDATE` of 01-31 and an `EXDATE` of 04-15 can't move from the 01-31
+    event to 02-01. Counted in calendar days, `DTSTART` would leave the
+    15th; counted in months and days (a month less 30 days), the rule's
+    events would go to the 16th while the `EXDATE` stayed on 04-15, and
+    the deleted event would come back.
+  - Onto a day of the month that `DTSTART`'s month, the month of one of
+    the series' events or a reference's month lacks: a monthly series from
+    2026-01-15 can't move from its 03-15 event to 03-31 (it would lose
+    its events in the five months without a 31st), a monthly series from
+    2026-01-31 can't move from its 03-31 event to 04-30 (`DTSTART` would
+    overflow to 03-02, and the series would repeat on the 2nd), and a
+    yearly series from 2026-03-01 can't move from its 2028 event to 02-29
+    (`DTSTART` would stay on March 1, and the references in leap years
+    would match no event). A move that keeps every value in its month,
+    such as one from the 31st to the 30th, goes through.
 - Turning a series all-day, or an all-day series timed, leaves its
   `EXDATE`s and overrides in their old value type (a date-time in a series
   made all-day, a date in one made timed), moved by the series' shift as on

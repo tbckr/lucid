@@ -29,6 +29,7 @@ This is the contract between the frontend (`web/`) and the Go backend
   |--------|-----------------------|------------------------------------------------|
   | 400    | `invalid_input`       | Validation failed (`message` says why)         |
   | 400    | `forbidden_target`    | Server URL points to a blocked (internal) net  |
+  | 400    | `series_move_unsupported` | "All events" can't move the series like this; only the event can |
   | 401    | `unauthenticated`     | No/expired session → show login                |
   | 401    | `invalid_credentials` | Login rejected by the CalDAV server            |
   | 403    | `csrf_invalid`        | Missing/wrong CSRF token                       |
@@ -135,18 +136,12 @@ applied to the **whole series** ("All events"). `200` with the updated
   same change of clock time, both in the series' own time zone, so it keeps
   its clock time across a daylight-saving change. The change of date is
   counted in calendar days, or for a `MONTHLY` or `YEARLY` rule without
-  `BY` parts and an occurrence on the day of the month of the series' first
-  event in calendar months and then days of the month, from
+  `BY` parts in calendar months and then days of the month, from
   `instanceStart` to that date moved by the days the occurrence moved, so
-  its events keep their day of the month. From an occurrence on another
-  day, such as an `RDATE`, it is counted in calendar days. A move onto a
-  day that the month of the series' first event lacks (the 29th to 31st,
-  or February 29) does not keep that day (see
-  [RECURRING-EVENTS.md](RECURRING-EVENTS.md#limits)). A save that turns
-  the series all-day or timed moves its start by the change of date only,
-  a timed event's date read in the series' zone and an all-day date as
-  sent; a series made timed starts at the clock time of `start` in
-  `timezone`.
+  its events keep their day of the month. A save that turns the series
+  all-day or timed moves its start by the change of date only, a timed
+  event's date read in the series' zone and an all-day date as sent; a
+  series made timed starts at the clock time of `start` in `timezone`.
 - **Edited exception:** with the rule and `allDay` unchanged, the edited
   exception, if there is one, takes `start` and `end`. A save that changes
   the rule or `allDay` leaves it at its own start and end (only its
@@ -160,9 +155,22 @@ applied to the **whole series** ("All events"). `200` with the updated
   way (a date-only value by the change of date only).
 - The weekdays of a weekly rule with plain `BYDAY` weekdays (no ordinal, no
   other `BY` part) rotate with the shift.
-- `400 invalid_input` if a rule with fixed days would have to move to
-  another day. The frontend does not offer this; the check is the
-  server-side safeguard, and there is no new error code for it.
+- `400 series_move_unsupported`, and nothing is written, where the series
+  can't follow the move ("Only this event" can still move the occurrence
+  there; see [RECURRING-EVENTS.md](RECURRING-EVENTS.md#limits)):
+  - with the rule and `allDay` unchanged, a rule with fixed days would
+    have to move to another day. The frontend does not offer this; the
+    check is the server-side safeguard.
+  - a `MONTHLY` or `YEARLY` rule without `BY` parts, edited from an
+    occurrence on another day of the month than the series' first event
+    (an `RDATE`, or an exception left there), would change the date; a
+    change of the clock time alone is allowed.
+  - for such a rule, the change in months and days would put the series'
+    first event or a reference (`EXDATE`, `RDATE`, `RECURRENCE-ID`, and,
+    with the rule and `allDay` unchanged, `UNTIL` and the rule's events)
+    on a day its month lacks: the 29th to 31st, or February 29 in a
+    common year. A monthly series from the 15th can't move to the 31st,
+    since February has none.
 - **Time zone:** "Only this event" above, and this endpoint when the rule
   and the `allDay` flag are unchanged, keep the series' own time zone; the
   request's `timezone` applies to single (non-recurring) events and to a

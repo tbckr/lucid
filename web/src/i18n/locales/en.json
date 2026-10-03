@@ -50,6 +50,7 @@
     "invalid_input_detail": "Invalid input: {{detail}}",
     "read_only": "This calendar is read-only.",
     "unsupported_component": "This calendar doesn't accept this type of entry. Choose another calendar.",
+    "series_move_unsupported": "All events of this series can't move like this. Move only this event instead.",
     "conflict": "This item was changed elsewhere. Lucid reloaded the latest version.",
     "not_found": "This item no longer exists. Lucid reloaded the calendar.",
     "unauthenticated": "Your session expired. Sign in again.",
