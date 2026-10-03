@@ -169,7 +169,10 @@ belongs to the series, not the occurrence) and without `instanceStart`:
   "allDay": false, "timezone": "Europe/Berlin" }
 ```
 
-`200` with the changed `Event` (new `etag`, `modified: true`). The override
+`200` with the changed `Event` (new `etag`). Its `modified` is `true` when the
+override visibly changes the occurrence (as defined for the event list
+above), and omitted when the saved values are the ones the series gives
+there anyway. The override
 is written as a full copy of the series, not a diff, so other CalDAV clients
 still show a title and the other properties.
 
