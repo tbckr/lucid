@@ -35,10 +35,12 @@ func findOverride(cal *ical.Calendar, master *ical.Component, rid time.Time) *ic
 
 // isInstance reports whether rid is an occurrence the rule of master
 // produces: a time expandSeries yields for [rid, rid+1s), not excluded by an
-// EXDATE at the same instant (FR-17).
+// EXDATE at the same instant (FR-17). Like ListEvents, it takes what
+// expandSeries yields even with an error: for a rule rrule-go cannot parse,
+// that is still DTSTART (and the RDATEs), which ListEvents shows.
 func isInstance(master *ical.Component, tm timing, rid time.Time) bool {
-	occs, err := expandSeries(master, tm.start, rid, rid.Add(time.Second))
-	if err != nil || len(occs) == 0 {
+	occs, _ := expandSeries(master, tm.start, rid, rid.Add(time.Second))
+	if len(occs) == 0 {
 		return false
 	}
 	for _, p := range master.Props.Values(ical.PropExceptionDates) {
@@ -213,14 +215,16 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 		to = rid
 	}
 	to = to.Add(time.Second)
+	// Like ListEvents, look among the events expandObject yields even with an
+	// error: a rule rrule-go cannot parse still yields the override.
 	evs, err := expandObject(o, calendarID, from, to)
-	if err != nil {
-		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
-	}
 	for i := range evs {
 		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
 			return evs[i], nil
 		}
+	}
+	if err != nil {
+		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
 	}
 	return domain.Event{}, fmt.Errorf("%w: occurrence not found after update", domain.ErrUpstream)
 }

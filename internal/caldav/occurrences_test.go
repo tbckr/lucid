@@ -267,6 +267,37 @@ func TestUpdateOccurrenceOrphan(t *testing.T) {
 	}
 }
 
+// TestUpdateOccurrenceUnparseableRule checks that the DTSTART event of a
+// series whose rule rrule-go cannot parse, which ListEvents still shows, can
+// be changed on its own (FR-17).
+func TestUpdateOccurrenceUnparseableRule(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"DTSTART:20250303T080000Z", "DTEND:20250303T081500Z", "RRULE:FREQ=WEEKLY;BYDAY=XX",
+		"END:VEVENT")
+	ctx := t.Context()
+	rid := date(2025, 3, 3, 8, 0)
+	evs, err := e.svc.ListEvents(ctx, e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{{title: "Standup", start: rid, end: rid.Add(15 * time.Minute), rid: ptr(rid)}})
+
+	up, err := e.svc.UpdateOccurrence(ctx, id, evs[0].ETag, rid, domain.OccurrenceInput{
+		Title: "Changed", Start: date(2025, 3, 3, 10, 0), End: date(2025, 3, 3, 10, 15),
+	})
+	mustNoErr(t, err)
+	if up.Title != "Changed" || !up.Start.Equal(date(2025, 3, 3, 10, 0)) {
+		t.Errorf("got %q at %s; want Changed at 10:00", up.Title, up.Start)
+	}
+
+	evs, err = e.svc.ListEvents(ctx, e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkOccurrences(t, evs, []occ{
+		{title: "Changed", start: date(2025, 3, 3, 10, 0), end: date(2025, 3, 3, 10, 15), rid: ptr(rid)},
+	})
+}
+
 // TestUpdateOccurrenceEmptyDescription checks that clearing a field on an
 // occurrence writes an existing, empty property rather than removing it, so
 // the reader (textOr) does not fall back to the series' value (spec section
@@ -593,6 +624,25 @@ func TestDeleteOccurrence(t *testing.T) {
 				checkOccurrences(t, evs, []occ{
 					{title: "Moved", start: date(2025, 3, 11, 12, 0), end: date(2025, 3, 11, 12, 15), rid: ptr(date(2025, 3, 10, 8, 0))},
 				})
+			},
+		},
+		{
+			// A rule rrule-go cannot parse still shows its DTSTART event
+			// (expandSeries), so that event can be deleted on its own too;
+			// with no other event, the resource goes.
+			name: "unparseable rule, its DTSTART event",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART:20250303T080000Z", "DTEND:20250303T081500Z",
+				"RRULE:FREQ=WEEKLY;COUNT=3;BYDAY=XX",
+				"END:VEVENT",
+			},
+			rid: date(2025, 3, 3, 8, 0),
+			check: func(t *testing.T, e *env, cal *ical.Calendar, stored bool) {
+				t.Helper()
+				if stored {
+					t.Fatal("object still stored; want the resource deleted")
+				}
 			},
 		},
 		{
