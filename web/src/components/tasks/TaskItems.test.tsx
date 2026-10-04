@@ -253,6 +253,49 @@ describe('task items', () => {
       expect(block).toHaveClass('border-dashed')
       expect(block.style.backgroundColor).toBe('')
     })
+
+    // The current occurrence of a fixed-day series, as the drag overlay shows it over a day it can't reach.
+    const current = () =>
+      occurrenceTask(
+        occurrence({
+          todoId: 't1',
+          title: 'Water the flowers',
+          due: '2026-10-05T00:00:00Z',
+          dueAllDay: true,
+          state: 'current',
+          recurrenceId: '2026-10-05T00:00:00Z',
+          key: 't1@2026-10-05T00:00:00Z',
+        }),
+        series({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true }),
+      )!
+
+    it('pencils in a blocked overlay item with a stop mark instead of the checkbox', () => {
+      const t = current()
+      const items = [
+        { item: <TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} blocked />, dashed: null },
+        { item: <TaskBar task={t} colors={colors} prefs={prefs} readOnly={false} blocked />, dashed: 'root' },
+        { item: <TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" blocked />, dashed: 'button' },
+      ] as const
+      for (const { item, dashed } of items) {
+        const { container, unmount } = renderWithProviders(item)
+        expect(screen.queryByRole('checkbox')).toBeNull()
+        const stop = container.querySelector('.lucide-ban')
+        expect(stop).not.toBeNull()
+        expect(stop).toHaveAttribute('aria-hidden', 'true')
+        if (dashed) {
+          const outlined = dashed === 'root' ? container.querySelector<HTMLElement>('[data-task-key]')! : screen.getByRole('button')
+          expect(outlined).toHaveClass('border-dashed')
+          expect(outlined.style.backgroundColor).toBe('')
+        }
+        unmount()
+      }
+    })
+
+    it('keeps the checkbox of the same item without blocked', () => {
+      const { container } = renderWithProviders(<TaskBar task={current()} colors={colors} prefs={prefs} readOnly={false} />)
+      expect(screen.getByRole('checkbox')).toBeInTheDocument()
+      expect(container.querySelector('.lucide-ban')).toBeNull()
+    })
   })
 })
 

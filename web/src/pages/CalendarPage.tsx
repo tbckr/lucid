@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CalendarDnd } from '@/components/dnd/CalendarDnd'
+import { LimitPill } from '@/components/dnd/LimitPill'
 import { CreatePopover } from '@/components/create/CreatePopover'
 import { EditorDialog } from '@/components/EditorDialog'
 import { EventDetailsPopover } from '@/components/events/EventDetailsPopover'
@@ -31,6 +32,7 @@ import { overlapsRange, type CalItem } from '@/lib/events'
 import { formatPeriodTitle } from '@/lib/format'
 import { navigate } from '@/lib/router'
 import { type ShortcutAction } from '@/lib/shortcuts'
+import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi } from '@/stores/ui'
 
@@ -236,21 +238,33 @@ export function CalendarPage() {
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto border-border bg-surface lg:mr-2 lg:mb-2 lg:rounded-xl lg:border"
         >
           <CalendarDnd
-            renderOverlay={(d) => {
+            renderOverlay={(d, limit) => {
               const e = d.event
               const colors = colorsOf(e.calendarId)
               const bar = e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= 86_400_000
               if (e.kind === 'task') {
-                const item = { task: e, colors, prefs, readOnly: false }
+                // Over a day it can't reach (FR-17): pencilled in on paper, with the limit beneath.
+                const blocked = limit !== null
+                const item = { task: e, colors, prefs, readOnly: false, blocked }
+                const pill = limit && <LimitPill className="absolute top-full left-0 mt-1">{limit}</LimitPill>
                 if (d.type === 'timed') {
                   return (
-                    <div className="relative size-full shadow-float">
+                    <div className={cn('relative size-full shadow-float', blocked && 'rounded-md bg-surface')}>
                       <TaskBlock {...item} size="md" style={{ inset: 0 }} />
+                      {pill}
                     </div>
                   )
                 }
-                if (bar) return <TaskBar {...item} className="w-full shadow-float" />
-                return <TaskChip {...item} className="bg-surface shadow-float" />
+                return (
+                  <div className="relative">
+                    {bar ? (
+                      <TaskBar {...item} className={cn('w-full shadow-float', blocked && 'bg-surface')} />
+                    ) : (
+                      <TaskChip {...item} className="bg-surface shadow-float" />
+                    )}
+                    {pill}
+                  </div>
+                )
               }
               const drag = { id: 'overlay', data: d, disabled: true }
               if (d.type === 'timed') {

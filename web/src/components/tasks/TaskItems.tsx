@@ -1,5 +1,5 @@
 import { useDraggable } from '@dnd-kit/core'
-import { CheckIcon } from 'lucide-react'
+import { BanIcon, CheckIcon } from 'lucide-react'
 import { useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDndState } from '@/components/dnd/dndState'
@@ -42,6 +42,14 @@ interface TaskItemProps {
   colors: EventColors
   prefs: FormatPrefs
   readOnly: boolean
+}
+
+/**
+ * The stand-in for the checkbox on the drag overlay over a day outside the move window (FR-17): the task can't
+ * land there. Decorative, as the limit is announced and shown beneath the overlay.
+ */
+export function StopMark({ className }: { className?: string }) {
+  return <BanIcon aria-hidden className={cn('size-3.5 shrink-0 text-muted-foreground', className)} />
 }
 
 /**
@@ -177,10 +185,13 @@ export function TaskChip({
   prefs,
   readOnly,
   drag,
+  blocked = false,
   className,
   onOpen,
 }: TaskItemProps & {
   drag?: DragBinding
+  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  blocked?: boolean
   className?: string
   /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
   onOpen?: (task: CalTask) => void
@@ -188,6 +199,8 @@ export function TaskChip({
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task, onOpen)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
+  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  const pencil = upcoming || blocked
   return (
     <div
       ref={ref}
@@ -202,7 +215,7 @@ export function TaskChip({
         className,
       )}
     >
-      {!upcoming && (
+      {!pencil && (
         <TaskCheck
           title={title}
           done={done}
@@ -221,14 +234,14 @@ export function TaskChip({
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          upcoming && 'pl-1.5',
+          pencil && 'pl-1.5',
         )}
       >
-        {upcoming && <PencilMark color={colors.solid} />}
+        {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
         {!task.allDay && (
           <span className="tabular shrink-0 text-muted-foreground max-sm:hidden">{formatShortTime(task.startsAt, prefs)}</span>
         )}
-        <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
+        <span className={cn('truncate font-medium', pencil && 'text-muted-foreground', done && 'line-through')}>{title}</span>
         <RecurringMark
           recurring={task.todo.recurring}
           label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
@@ -246,12 +259,15 @@ export function TaskBar({
   prefs,
   readOnly,
   drag,
+  blocked = false,
   continuesBefore = false,
   continuesAfter = false,
   className,
   style,
 }: TaskItemProps & {
   drag?: DragBinding
+  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  blocked?: boolean
   continuesBefore?: boolean
   continuesAfter?: boolean
   className?: string
@@ -260,6 +276,8 @@ export function TaskBar({
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
+  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  const pencil = upcoming || blocked
   return (
     <div
       ref={ref}
@@ -273,12 +291,12 @@ export function TaskBar({
         continuesAfter ? 'rounded-r-none' : 'rounded-r-sm',
         done && 'opacity-60',
         isDragging && 'opacity-40',
-        upcoming && 'border-[1.5px] border-dashed bg-transparent text-muted-foreground',
+        pencil && 'border-[1.5px] border-dashed bg-transparent text-muted-foreground',
         className,
       )}
-      style={upcoming ? { borderColor: colors.solid, ...style } : { backgroundColor: colors.solid, color: colors.onSolid, ...style }}
+      style={pencil ? { borderColor: colors.solid, ...style } : { backgroundColor: colors.solid, color: colors.onSolid, ...style }}
     >
-      {!upcoming && (
+      {!pencil && (
         <TaskCheck
           title={title}
           done={done}
@@ -297,10 +315,10 @@ export function TaskBar({
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
-          upcoming && 'pl-1.5',
+          pencil && 'pl-1.5',
         )}
       >
-        {upcoming && <PencilMark color={colors.solid} />}
+        {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
         {!task.allDay && !continuesBefore && (
           <span className="tabular shrink-0 opacity-85">{formatShortTime(task.startsAt, prefs)}</span>
         )}
@@ -318,10 +336,13 @@ export function TaskBlock({
   prefs,
   readOnly,
   drag,
+  blocked = false,
   size,
   style,
 }: TaskItemProps & {
   drag?: DragBinding
+  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  blocked?: boolean
   /** Available height decides how much text fits. */
   size: 'xs' | 'sm' | 'md'
   style?: CSSProperties
@@ -330,6 +351,8 @@ export function TaskBlock({
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
+  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  const pencil = upcoming || blocked
   const markClassName = cn('absolute left-2.5 z-10', compact ? 'top-1/2 -translate-y-1/2' : 'top-[5px]')
   return (
     <div
@@ -338,10 +361,10 @@ export function TaskBlock({
       data-calendar-id={task.calendarId}
       data-dragged-series={inDrag ? '' : undefined}
       className={cn('absolute px-px', done && 'opacity-60', isDragging && 'opacity-40')}
-      style={{ ...style, color: upcoming ? undefined : colors.onTint }}
+      style={{ ...style, color: pencil ? undefined : colors.onTint }}
     >
       {/* The whole block opens the task; the checkbox sits on top of it, left of the text, the pencil mark inside it. */}
-      {!upcoming && (
+      {!pencil && (
         <TaskCheck
           title={title}
           done={done}
@@ -361,12 +384,12 @@ export function TaskBlock({
         className={cn(
           'flex size-full min-h-0 overflow-hidden rounded-md pr-1.5 pl-[1.625rem] text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
           INK_IN,
-          upcoming ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
+          pencil ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
           compact ? 'flex-row items-center gap-1 py-0 @container' : 'flex-col py-1',
         )}
-        style={upcoming ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
+        style={pencil ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
       >
-        {upcoming && <PencilMark color={colors.solid} className={markClassName} />}
+        {blocked ? <StopMark className={markClassName} /> : upcoming && <PencilMark color={colors.solid} className={markClassName} />}
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
           <RecurringMark
