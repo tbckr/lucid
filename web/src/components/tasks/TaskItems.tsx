@@ -232,8 +232,11 @@ export function TaskChip({
         INK_IN,
         done && 'opacity-60',
         isDragging && 'opacity-40',
+        // The chip's own outline only when blocked: a planned repeat pencils in with its mark alone.
+        blocked && 'border-[1.5px] border-dashed',
         className,
       )}
+      style={blocked ? { borderColor: colors.solid } : undefined}
     >
       {!pencil && (
         <TaskCheck

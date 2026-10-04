@@ -237,6 +237,13 @@ describe('TimeGridView', () => {
     expect(day).not.toHaveClass(tint)
   })
 
+  it('marks the all-day "more" button, so a blocked day dims it with the rest (FR-17)', () => {
+    const allDay = (n: number) =>
+      toCalEvent(apiEvent({ id: `e${n}`, key: `e${n}`, title: `All day ${n}`, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z', allDay: true }))
+    renderDay([1, 2, 3, 4, 5].map(allDay))
+    expect(screen.getByRole('button', { name: '3 more' })).toHaveAttribute('data-more')
+  })
+
   it('blocks only the days before the last repeat of a fixed-day series (FR-17)', () => {
     const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
     renderWithProviders(

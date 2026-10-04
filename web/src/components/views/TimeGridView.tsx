@@ -188,6 +188,7 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
             {hidden > 0 && (
               <button
                 type="button"
+                data-more=""
                 onClick={() => {
                   setExpanded(true)
                 }}

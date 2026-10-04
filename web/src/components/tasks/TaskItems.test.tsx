@@ -273,7 +273,7 @@ describe('task items', () => {
     it('pencils in a blocked overlay item with a stop mark instead of the checkbox', () => {
       const t = current()
       const items = [
-        { item: <TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} blocked />, dashed: null },
+        { item: <TaskChip task={t} colors={colors} prefs={prefs} readOnly={false} blocked />, dashed: 'root' },
         { item: <TaskBar task={t} colors={colors} prefs={prefs} readOnly={false} blocked />, dashed: 'root' },
         { item: <TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="md" blocked />, dashed: 'button' },
       ] as const
@@ -283,11 +283,10 @@ describe('task items', () => {
         const stop = container.querySelector('.lucide-ban')
         expect(stop).not.toBeNull()
         expect(stop).toHaveAttribute('aria-hidden', 'true')
-        if (dashed) {
-          const outlined = dashed === 'root' ? container.querySelector<HTMLElement>('[data-task-key]')! : screen.getByRole('button')
-          expect(outlined).toHaveClass('border-dashed')
-          expect(outlined.style.backgroundColor).toBe('')
-        }
+        const outlined = dashed === 'root' ? container.querySelector<HTMLElement>('[data-task-key]')! : screen.getByRole('button')
+        expect(outlined).toHaveClass('border-dashed')
+        expect(outlined.style.borderColor).not.toBe('')
+        expect(outlined.style.backgroundColor).toBe('')
         unmount()
       }
     })
@@ -373,6 +372,23 @@ describe('task items', () => {
 
       fireEvent.click(button())
       expect(useUi.getState().detail?.item).toBe(t)
+    })
+
+    it('keeps a click on the hint from reaching the cell, and hides it', () => {
+      // The month cell creates an entry on a click; the pill sits in a portal, but React bubbles through it.
+      const cell = vi.fn()
+      renderWithProviders(
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- stands in for the month cell's click handler.
+        <div onClick={cell}>{bar(planned())}</div>,
+      )
+      attempt(10)
+      fireEvent.pointerUp(button(), pointer)
+      fireEvent.click(button())
+      fireEvent.click(screen.getByRole('status'))
+
+      expect(cell).not.toHaveBeenCalled()
+      expect(useUi.getState().create).toBeNull()
+      expect(screen.queryByRole('status')).toBeNull()
     })
 
     it('opens the details on a click without a move', () => {

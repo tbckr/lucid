@@ -29,6 +29,12 @@ export function RepeatDragHintPopover({ hint, text }: { hint: RepeatDragHint; te
         onCloseAutoFocus={(e) => {
           e.preventDefault()
         }}
+        // A portal still bubbles through React: a click on the hint dismisses it, and stops there
+        // instead of creating an entry in the cell around the item.
+        onClick={(e) => {
+          e.stopPropagation()
+          hide()
+        }}
       >
         {text}
       </PopoverContent>
