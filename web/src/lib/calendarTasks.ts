@@ -177,7 +177,7 @@ export interface MoveWindow {
  * the rule moves alone: it also stays before the next one, but has no rule
  * day of its own to stay from (`from: null`). Days count in the series' own
  * zone, which need not be the browser's: a local day can be covered only in
- * part. The hatch keeps such a day open (`outsideWindow`), while a drop or a
+ * part. The views keep such a day open (`outsideWindow`), while a drop or a
  * picked date is checked at its exact time (`withinWindow`), as the server
  * checks it. The last repeat has no next occurrence to stay before
  * (`until: null`), so it only must not land on a day before its own. Other
@@ -221,7 +221,7 @@ export function lastAllowedDay(w: MoveWindow): Date | null {
 }
 
 /**
- * Whether `day` falls outside `w`, so the calendar views can hatch it while
+ * Whether `day` falls outside `w`, so the calendar views can block it while
  * dragging (FR-17): before `from` only when `w` has one; past the last
  * allowed day only when `w` has one.
  */

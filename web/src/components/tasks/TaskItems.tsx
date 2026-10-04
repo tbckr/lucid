@@ -61,7 +61,7 @@ export function PencilMark({ color, className }: { color: string; className?: st
 function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
   const { t } = useTranslation()
   const openDetail = useUi((s) => s.openDetail)
-  const { pendingTodos } = useDndState()
+  const { pendingTodos, draggedTodo } = useDndState()
   const { done: toggledDone, toggle } = useToggleTodo(task.todo)
   // Fixed per render, so a re-render mid-day never flips a year suffix under the pointer.
   const now = useMemo(() => new Date(), [])
@@ -74,7 +74,9 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
     if (onOpen) onOpen(task)
     else openDetail({ item: task, anchor: e.currentTarget })
   }
-  return { t, title, done, toggle, open, pending, now }
+  // An entry of the series being dragged (FR-17) stays lit in the days it can't reach.
+  const inDrag = task.todo.id === draggedTodo
+  return { t, title, done, toggle, open, pending, now, inDrag }
 }
 
 /**
@@ -183,7 +185,7 @@ export function TaskChip({
   /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
   onOpen?: (task: CalTask) => void
 }) {
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task, onOpen)
+  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task, onOpen)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   return (
@@ -191,6 +193,7 @@ export function TaskChip({
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
+      data-dragged-series={inDrag ? '' : undefined}
       className={cn(
         'flex h-5 w-full min-w-0 items-stretch rounded-sm text-xs leading-none @container hover:bg-muted',
         INK_IN,
@@ -254,7 +257,7 @@ export function TaskBar({
   className?: string
   style?: CSSProperties
 }) {
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   return (
@@ -262,6 +265,7 @@ export function TaskBar({
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
+      data-dragged-series={inDrag ? '' : undefined}
       className={cn(
         'flex h-5 min-w-0 items-stretch text-xs leading-none font-medium',
         INK_IN,
@@ -323,7 +327,7 @@ export function TaskBlock({
   style?: CSSProperties
 }) {
   const compact = size === 'xs'
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   const markClassName = cn('absolute left-2.5 z-10', compact ? 'top-1/2 -translate-y-1/2' : 'top-[5px]')
@@ -332,6 +336,7 @@ export function TaskBlock({
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
+      data-dragged-series={inDrag ? '' : undefined}
       className={cn('absolute px-px', done && 'opacity-60', isDragging && 'opacity-40')}
       style={{ ...style, color: upcoming ? undefined : colors.onTint }}
     >

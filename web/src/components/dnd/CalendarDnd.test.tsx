@@ -32,14 +32,14 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 
 /**
  * A 100 px day cell at `left`; jsdom lays nothing out, so the cells report their rects
- * themselves. Hatches like the real views' day cells while a bounded series is dragged (FR-17).
+ * themselves. Blocks like the real views' day cells while a bounded series is dragged (FR-17).
  */
 function Day({ day, left, children }: { day: Date; left: number; children?: ReactNode }) {
   const { moveWindow } = useDndState()
   const { setNodeRef } = useDroppable({ id: `day:${day.getDate()}`, data: { type: 'day', day } satisfies DropData })
-  const hatched = moveWindow != null && outsideWindow(moveWindow, day)
+  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
   return (
-    <div ref={setNodeRef} data-left={left} data-testid={`day:${day.getDate()}`} className={hatched ? 'hatched' : undefined}>
+    <div ref={setNodeRef} data-left={left} data-testid={`day:${day.getDate()}`} className={blocked ? 'blocked' : undefined}>
       {children}
     </div>
   )
@@ -753,11 +753,11 @@ describe('CalendarDnd', () => {
       return chip
     }
 
-    it('hatches the days past the next occurrence and announces the limit while over one', async () => {
+    it('blocks the days past the next occurrence and announces the limit while over one', async () => {
       await pickUpBounded()
 
-      expect(screen.getByTestId('day:9').className).toContain('hatched')
-      expect(screen.getByTestId('day:6').className).not.toContain('hatched')
+      expect(screen.getByTestId('day:9').className).toContain('blocked')
+      expect(screen.getByTestId('day:6').className).not.toContain('blocked')
 
       for (let i = 0; i < 4; i++) {
         fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
@@ -780,10 +780,10 @@ describe('CalendarDnd', () => {
       expect(fetch).not.toHaveBeenCalled()
     })
 
-    it('hatches the day before the series and announces the lower limit while over it', async () => {
+    it('blocks the day before the series and announces the lower limit while over it', async () => {
       await pickUpBounded()
 
-      expect(screen.getByTestId('day:4').className).toContain('hatched')
+      expect(screen.getByTestId('day:4').className).toContain('blocked')
 
       fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
       expect(screen.getByRole('status')).toHaveTextContent('Only possible from Mon, Oct 5 on.')

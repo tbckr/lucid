@@ -286,9 +286,9 @@ function DayCell({
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
   // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
   const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
-  // Past the move window of a bounded series being dragged (FR-17): hatch to show it's out of reach,
+  // Past the move window of a bounded series being dragged (FR-17): block it to show it's out of reach,
   // and take no drop highlight, as a drop there changes nothing.
-  const hatched = moveWindow != null && outsideWindow(moveWindow, day)
+  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
 
   return (
     <div
@@ -310,9 +310,10 @@ function DayCell({
       }}
       className={cn(
         'relative min-w-0 cursor-default border-r border-grid outline-none last:border-r-0 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-        !inMonth && 'bg-outside',
-        ((isOver && !hatched) || draft) && 'bg-primary/8',
-        hatched && 'hatched',
+        // Blocked wins over outside the month: both set the background.
+        !inMonth && !blocked && 'bg-outside',
+        ((isOver && !blocked) || draft) && 'bg-primary/8',
+        blocked && 'blocked',
       )}
     >
       <div className="flex h-[30px] items-center justify-between px-1.5 pt-1">

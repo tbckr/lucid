@@ -25,6 +25,8 @@
   --destructive: #c8313a;
   --now: #e5484d; /* current-time line */
   --outside: #f8f9fb; /* days outside the current month */
+  --blocked: #e9edf2; /* days a dragged series can't reach (FR-17) */
+  --blocked-line: #cfd6df;
   --overlay: rgb(16 20 28 / 0.4);
   --shadow-color: 220 30% 20%;
 }
@@ -44,6 +46,8 @@
   --destructive: #f2555a;
   --now: #ff6b6f;
   --outside: #151a24;
+  --blocked: #11151d;
+  --blocked-line: #2a3140;
   --overlay: rgb(0 0 0 / 0.55);
   --shadow-color: 220 40% 2%;
 }
@@ -113,7 +117,15 @@
   scrollbar-color: var(--input) transparent;
 }
 
-/* A day outside a dragged series' move window (FR-17): repeating-linear-gradient(45deg, var(--grid-line) 0 1px, transparent 1px 7px). */
-@utility hatched {
-  background-image: repeating-linear-gradient(45deg, var(--grid-line) 0 1px, transparent 1px 7px);
+/*
+ * A day outside a dragged series' move window (FR-17): greyed out and hatched, and what it shows
+ * dimmed, except the dragged series' own entries, which show where the window ends.
+ */
+@utility blocked {
+  background-color: var(--blocked);
+  background-image: repeating-linear-gradient(45deg, var(--blocked-line) 0 1px, transparent 1px 7px);
+
+  & :is([data-task-key], [data-event-key], [data-more]):not([data-dragged-series]) {
+    opacity: 0.5;
+  }
 }

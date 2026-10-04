@@ -255,7 +255,7 @@ export function CalendarDnd({
   // (FR-16). The scope is the one of the last render, which the pick-up has caused.
   const draggedTask = active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined
   const updateTodo = useUpdateTodo(draggedTask)
-  // The move window of the dragged task, fixed for the whole drag (FR-17): hatches days
+  // The move window of the dragged task, fixed for the whole drag (FR-17): blocks days
   // outside it and bounds the drop, regardless of where the pointer currently is. Memoized so
   // the context below only changes on an actual pick-up/drop, not on every render.
   const moveWindow = useMemo(
@@ -468,8 +468,18 @@ export function CalendarDnd({
     [asking, all],
   )
   const state = useMemo(
-    () => ({ pendingKeys, pendingTodos, resize, moveWindow, activeId: active?.id ?? null, scope, held, scopeAnchor }),
-    [pendingKeys, pendingTodos, resize, moveWindow, active, scope, held, scopeAnchor],
+    () => ({
+      pendingKeys,
+      pendingTodos,
+      resize,
+      moveWindow,
+      activeId: active?.id ?? null,
+      scope,
+      held,
+      scopeAnchor,
+      draggedTodo: draggedTask ?? null,
+    }),
+    [pendingKeys, pendingTodos, resize, moveWindow, active, scope, held, scopeAnchor, draggedTask],
   )
 
   return (

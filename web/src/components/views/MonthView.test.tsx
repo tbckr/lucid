@@ -249,6 +249,7 @@ describe('MonthView', () => {
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
+            draggedTodo: null,
           }}
         >
           <MonthView
@@ -270,17 +271,17 @@ describe('MonthView', () => {
       expect(friday).toHaveClass('bg-primary/8')
     })
 
-    // The same drag, with Friday past the window: hatched, and no promise of a drop.
+    // The same drag, with Friday past the window: blocked, and no promise of a drop.
     rerender(
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
       </QueryClientProvider>,
     )
-    expect(friday).toHaveClass('hatched')
+    expect(friday).toHaveClass('blocked')
     expect(friday).not.toHaveClass('bg-primary/8')
   })
 
-  it('hatches only the days before the last repeat of a fixed-day series (FR-17)', () => {
+  it('blocks only the days before the last repeat of a fixed-day series (FR-17)', () => {
     const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
     renderWithProviders(
       <DndContext>
@@ -294,6 +295,7 @@ describe('MonthView', () => {
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
+            draggedTodo: null,
           }}
         >
           <MonthView
@@ -308,9 +310,71 @@ describe('MonthView', () => {
         </DndStateContext>
       </DndContext>,
     )
-    expect(screen.getByRole('gridcell', { name: /September 24th/ })).toHaveClass('hatched')
-    expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveClass('hatched')
-    expect(screen.getByRole('gridcell', { name: /September 26th/ })).not.toHaveClass('hatched')
+    expect(screen.getByRole('gridcell', { name: /September 24th/ })).toHaveClass('blocked')
+    expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveClass('blocked')
+    expect(screen.getByRole('gridcell', { name: /September 26th/ })).not.toHaveClass('blocked')
+  })
+
+  /** The month of 2026-09-25 while a bounded series is dragged: `moveWindow` and `draggedTodo` as `CalendarDnd` gives them. */
+  function renderDragging(events: CalItem[], moveWindow: MoveWindow, draggedTodo: string | null) {
+    renderWithProviders(
+      <DndContext>
+        <DndStateContext
+          value={{
+            pendingKeys: new Set(),
+            pendingTodos: new Set(),
+            resize: null,
+            moveWindow,
+            activeId: null,
+            scope: null,
+            held: null,
+            scopeAnchor: () => undefined,
+            draggedTodo,
+          }}
+        >
+          <MonthView
+            date={new Date(2026, 8, 25)}
+            now={new Date(2026, 8, 25, 12)}
+            events={events}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndStateContext>
+      </DndContext>,
+    )
+  }
+
+  it("dims what a blocked day shows but the dragged series' repeats (FR-17)", () => {
+    const repeat = occurrenceTask(
+      occurrence({
+        todoId: 't1',
+        title: 'Water the flowers',
+        state: 'upcoming',
+        due: '2026-09-28T00:00:00Z',
+        key: 't1@2026-09-28T00:00:00Z',
+        recurrenceId: '2026-09-28T00:00:00Z',
+      }),
+      todo({ id: 't1', title: 'Water the flowers', recurring: true, fixedDays: true, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH' }),
+    )!
+    const other = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-28T08:00:00Z' }))!
+    renderDragging([repeat, other], { from: new Date(2026, 8, 24), until: new Date(2026, 8, 26) }, 't1')
+
+    expect(screen.getByRole('gridcell', { name: /September 28th/ })).toHaveClass('blocked')
+    expect(document.querySelector('[data-task-key="t1@2026-09-28T00:00:00Z"]')).toHaveAttribute('data-dragged-series')
+    expect(document.querySelector('[data-task-key="task:t2"]')).not.toHaveAttribute('data-dragged-series')
+  })
+
+  it('washes a blocked day outside the month instead of greying it as outside', () => {
+    renderDragging([], { from: new Date(2026, 8, 25), until: null }, null)
+
+    const before = screen.getByRole('gridcell', { name: /August 30th/ })
+    expect(before).toHaveClass('blocked')
+    expect(before).not.toHaveClass('bg-outside')
+    const after = screen.getByRole('gridcell', { name: /October 1st/ })
+    expect(after).toHaveClass('bg-outside')
+    expect(after).not.toHaveClass('blocked')
   })
 
   it('counts tasks apart from events in the cell label', () => {

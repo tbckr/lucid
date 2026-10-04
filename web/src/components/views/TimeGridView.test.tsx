@@ -204,6 +204,7 @@ describe('TimeGridView', () => {
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
+            draggedTodo: null,
           }}
         >
           <TimeGridView
@@ -226,17 +227,17 @@ describe('TimeGridView', () => {
       expect(day).toHaveClass(tint)
     })
 
-    // The same drag, with the day past the window: hatched, and no promise of a drop.
+    // The same drag, with the day past the window: blocked, and no promise of a drop.
     rerender(
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
       </QueryClientProvider>,
     )
-    expect(day).toHaveClass('hatched')
+    expect(day).toHaveClass('blocked')
     expect(day).not.toHaveClass(tint)
   })
 
-  it('hatches only the days before the last repeat of a fixed-day series (FR-17)', () => {
+  it('blocks only the days before the last repeat of a fixed-day series (FR-17)', () => {
     const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
     renderWithProviders(
       <DndContext>
@@ -250,6 +251,7 @@ describe('TimeGridView', () => {
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
+            draggedTodo: null,
           }}
         >
           <TimeGridView
@@ -265,9 +267,9 @@ describe('TimeGridView', () => {
       </DndContext>,
     )
     const cellOf = (date: string) => screen.getByRole('button', { name: `New all-day event on ${date}` }).parentElement!
-    expect(cellOf('Thursday, September 24th, 2026')).toHaveClass('hatched')
-    expect(cellOf('Friday, September 25th, 2026')).not.toHaveClass('hatched')
-    expect(cellOf('Saturday, September 26th, 2026')).not.toHaveClass('hatched')
+    expect(cellOf('Thursday, September 24th, 2026')).toHaveClass('blocked')
+    expect(cellOf('Friday, September 25th, 2026')).not.toHaveClass('blocked')
+    expect(cellOf('Saturday, September 26th, 2026')).not.toHaveClass('blocked')
   })
 
   it('opens the popover for an all-day event from the all-day row', () => {
@@ -383,6 +385,7 @@ describe('TimeGridView', () => {
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
+            draggedTodo: null,
           }}
         >
           <TimeGridView
