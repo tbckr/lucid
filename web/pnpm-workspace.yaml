@@ -14,9 +14,10 @@ engineStrict: true
 # Policies for every newly resolved version, direct or transitive. pnpm also
 # re-checks the committed lockfile against them on every install.
 #
-# Skip versions published less than a day ago (pnpm's default age). Strict:
-# fail when only a younger version fits instead of adding an exclusion.
-minimumReleaseAge: 1440
+# Skip versions published less than seven days ago: most malicious releases
+# are caught and unpublished within days. Strict: fail when only a younger
+# version fits instead of adding an exclusion.
+minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
 # Refuse a version with weaker publish provenance than an earlier release,
 # the typical trace of a stolen publish token. Only versions younger than 30

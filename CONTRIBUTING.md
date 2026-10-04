@@ -209,7 +209,7 @@ security fixes. `just outdated` lists what to review on every upgrade:
   commits nothing; a failure means the next upgrade needs work.
 - Dependabot only bumps the SHA-pinned GitHub Actions, monthly in one pull
   request.
-- pnpm refuses versions younger than a day and versions whose publish
+- pnpm refuses versions younger than seven days and versions whose publish
   provenance got weaker (`web/pnpm-workspace.yaml`).
 
 **When a vulnerability scan fails**, treat the finding like a reported
@@ -230,7 +230,9 @@ vulnerability:
    (`go get example.org/mod@vX.Y.Z`, or an `overrides` entry in
    `web/pnpm-workspace.yaml`), and report it upstream. This is the only
    exception to the rule above; drop an override once the direct dependency
-   ships the fix.
+   ships the fix. If an npm fix is younger than seven days, exempt exactly
+   that version from the age gate (`minimumReleaseAgeExclude:
+   ["pkg@x.y.z"]`) and drop the entry once it is older.
 3. If users are affected, cut a patch release and publish a GitHub Security
    Advisory (see [SECURITY.md](SECURITY.md)).
 4. Only if the finding does not apply to Lucid: list it under `audit.ignore`
