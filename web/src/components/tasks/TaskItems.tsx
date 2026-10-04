@@ -4,9 +4,11 @@ import { useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDndState } from '@/components/dnd/dndState'
 import { RecurringMark } from '@/components/events/EventItems'
+import { RepeatDragHintPopover } from '@/components/tasks/RepeatDragHint'
+import { useRepeatDragHint } from '@/components/tasks/useRepeatDragHint'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
+import { anchorOf, canComplete, canDrag, recurringLabel, type CalTask } from '@/lib/calendarTasks'
 import { type DragBinding } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
@@ -105,6 +107,23 @@ function useTaskDrag(task: CalTask, drag: DragBinding | undefined) {
   return { ref: setNodeRef, handle, isDragging }
 }
 
+/**
+ * Says why an upcoming repeat can't be dragged once someone tries (FR-17): on
+ * the items the calendar views let drag, where only its rule keeps it in place,
+ * not a read-only calendar or an update on its way. The date is the current
+ * repeat's, as in the details.
+ */
+function useRepeatHint(task: CalTask, drag: DragBinding | undefined, readOnly: boolean, pending: boolean, prefs: FormatPrefs, now: Date) {
+  const { t } = useTranslation()
+  const hint = useRepeatDragHint(
+    drag !== undefined && task.occurrence?.state === 'upcoming' && !canDrag(task) && !readOnly && !pending,
+  )
+  const text = hint.at
+    ? t('tasks.upcomingFixedHint', { date: formatPickerDate(anchorOf(task.todo) ?? task.startsAt, prefs, now) })
+    : ''
+  return { hint, hintPopover: <RepeatDragHintPopover hint={hint} text={text} /> }
+}
+
 /** A point shows its time; a span shows start – end unless `compact`. */
 function timeText(task: CalTask, prefs: FormatPrefs, compact = false): string {
   const start = formatShortTime(task.startsAt, prefs)
@@ -198,6 +217,7 @@ export function TaskChip({
 }) {
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task, onOpen)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
   const pencil = upcoming || blocked
@@ -229,12 +249,14 @@ export function TaskChip({
       <button
         type="button"
         {...handle}
+        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
           pencil && 'pl-1.5',
+          hint.attempting && 'cursor-not-allowed',
         )}
       >
         {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
@@ -248,6 +270,7 @@ export function TaskChip({
           className={CHIP_MARK_IF_ROOM}
         />
       </button>
+      {hintPopover}
     </div>
   )
 }
@@ -275,6 +298,7 @@ export function TaskBar({
 }) {
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
   const pencil = upcoming || blocked
@@ -310,12 +334,14 @@ export function TaskBar({
       <button
         type="button"
         {...handle}
+        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
           pencil && 'pl-1.5',
+          hint.attempting && 'cursor-not-allowed',
         )}
       >
         {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
@@ -325,6 +351,7 @@ export function TaskBar({
         <span className={cn('truncate', done && 'line-through')}>{title}</span>
         <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
       </button>
+      {hintPopover}
     </div>
   )
 }
@@ -350,6 +377,7 @@ export function TaskBlock({
   const compact = size === 'xs'
   const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
   const pencil = upcoming || blocked
@@ -378,6 +406,7 @@ export function TaskBlock({
       <button
         type="button"
         {...handle}
+        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
@@ -386,6 +415,7 @@ export function TaskBlock({
           INK_IN,
           pencil ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
           compact ? 'flex-row items-center gap-1 py-0 @container' : 'flex-col py-1',
+          hint.attempting && 'cursor-not-allowed',
         )}
         style={pencil ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
       >
@@ -400,6 +430,7 @@ export function TaskBlock({
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
       </button>
+      {hintPopover}
     </div>
   )
 }
