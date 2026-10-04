@@ -7,9 +7,11 @@ const taskList = (page: Page) => page.getByTestId('tasks-list')
 /**
  * The seeded tasks in the month grid that don't repeat, whichever fall into it: they are
  * dated relative to today. A repeating one, marked by its ⟳ image, moves on to its next
- * repeat when completed and keeps the completed one as a task of its own (FR-17).
+ * repeat when completed and keeps the completed one as a task of its own (FR-17). A chip
+ * too narrow for the mark hides it, so match the element rather than the visible role.
  */
-const singleTasks = (page: Page) => monthGrid(page).locator('[data-task-key]').filter({ hasNot: page.getByRole('img') })
+const singleTasks = (page: Page) =>
+  monthGrid(page).locator('[data-task-key]').filter({ hasNot: page.locator('[role="img"]') })
 
 // A failed test never reaches its own clean-up; remove the tasks the specs created.
 test.afterEach(async ({ page }) => {
