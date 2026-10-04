@@ -180,3 +180,9 @@ clean:
     rm -rf bin dist {{ COVERAGE_OUT }} web/coverage web/playwright-report web/test-results
     find web/dist -mindepth 1 ! -name .gitkeep -delete 2>/dev/null || true
     @mkdir -p web/dist && touch web/dist/.gitkeep
+
+# Clear the Go build and module caches and prune unreferenced packages from the pnpm store
+[group('release')]
+clean-cache:
+    {{ GO }} clean -cache -modcache
+    {{ PNPM }} --dir web store prune

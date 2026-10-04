@@ -56,6 +56,7 @@ Other useful recipes (`just` lists all):
 | `just screenshots` | Regenerate the README screenshots in `docs/screenshots`; commit them when the UI changed |
 | `just snapshot` | Local GoReleaser build of all binaries and images |
 | `just clean` | Remove build output |
+| `just clean-cache` | Clear the Go build and module caches, prune unreferenced packages from the pnpm store |
 
 `web/dist/.gitkeep` is committed so that `go build ./...` works without a
 frontend build; the binary then serves a placeholder page.
