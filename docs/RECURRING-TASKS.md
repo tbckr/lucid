@@ -1135,12 +1135,20 @@ that repeats are completed in order.
   shows no limit.
 - **Dragging**: the current occurrence, and with an interval rule any
   upcoming one, which moves the series by the distance it was dragged and
-  shows where it lands itself. Days outside the move window are hatched. A
-  day of the browser's that the window covers only in part, for a series in
-  another zone, is not; a drop there is checked at its time. A drop outside
-  the window changes nothing, and screen readers hear "Only possible until
-  *date*." For the last repeat, only the days before it are hatched, and a
-  blocked drop there says "Only possible from *date* on."
+  shows where it lands itself. Days outside the move window are greyed out
+  and hatched, and what they show is dimmed, except the series' own repeats:
+  the next one is where the window ends. A day of the browser's that the
+  window covers only in part, for a series in another zone, is not; a drop
+  there is checked at its time. Over a day it can't reach, the dragged task
+  is pencilled in with a stop mark and says "Only possible until *date*.",
+  which screen readers hear too; for the last repeat, before its day, "Only
+  possible from *date* on." A drop there changes nothing, and a toast says
+  "Not moved" with "Until *date*, then the next repeat is due." or "Only
+  possible from *date* on."
+- **Upcoming repeats on fixed days** can't be dragged: pressing one and
+  moving the pointer shows "Can be completed and moved once *date* is done."
+  next to it while it is held and for two seconds after, and the release
+  opens nothing.
 - **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
   "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
   *date*.", or after dragging an upcoming occurrence "Series moved. Next up:

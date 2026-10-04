@@ -123,6 +123,11 @@ test('dragging a repeat on fixed days stays before the next one', async ({ page 
   const title = 'E2E weekly'
   const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
   await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
+  // Something else in a day the series can't reach, which dims while the series is dragged.
+  await createTestTask(page, { title: 'E2E other', due: day(4).toISOString(), dueAllDay: true })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+  await page.keyboard.press('m')
   const cells = monthGrid(page).getByRole('gridcell')
   const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
   // The current repeat on day `n`: the planned ones have no checkbox.
@@ -140,7 +145,15 @@ test('dragging a repeat on fixed days stays before the next one', async ({ page 
   // Three more days would pass it: the drop keeps the task where it is, and says why.
   await dragOver(page, handle(1), cells.nth(at + 4))
   await expect(page.getByRole('status').filter({ hasText: `Only possible until ${short(day(2))}.` })).toHaveCount(1)
+  // Beneath the dragged task too, not only for screen readers.
+  await expect(page.locator('p[aria-hidden="true"]', { hasText: `Only possible until ${short(day(2))}.` })).toBeVisible()
+  // The days past the next repeat are blocked, and dim what they show but the series' repeats.
+  await expect(cells.nth(at + 4)).toHaveClass(/\bblocked\b/)
+  await expect(cells.nth(at + 4).locator('[data-task-key]', { hasText: 'E2E other' })).toHaveCSS('opacity', '0.5')
+  await expect(cells.nth(at + 3).locator('[data-task-key]', { hasText: title })).toHaveCSS('opacity', '1')
   await page.mouse.up()
+  await expect(page.getByText('Not moved')).toBeVisible()
+  await expect(page.getByText(`Until ${short(day(2))}, then the next repeat is due.`)).toBeVisible()
   await expect(current(1)).toBeVisible()
   await expect(current(4)).toHaveCount(0)
   await expect(page.getByText(`Moved to ${short(day(4))}`)).toHaveCount(0)
@@ -182,9 +195,12 @@ test('a later repeat on fixed days stays in place', async ({ page }) => {
   const planned = cells.nth(at + 3).getByRole('button', { name: `${title}, planned repeat on ${short(day(3))}` })
 
   await dragOver(page, planned, cells.nth(at + 1))
+  // Trying says why it stays, next to it.
+  await expect(page.getByRole('status').filter({ hasText: `Can be completed and moved once ${short(today)} is done.` })).toBeVisible()
   await page.mouse.up()
   await expect(planned).toBeVisible()
   await expect(cells.nth(at + 1).locator('[data-task-key]', { hasText: title })).toHaveCount(0)
+  // The release opens nothing: no details, no new entry.
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
 
