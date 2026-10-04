@@ -709,7 +709,7 @@ describe('CalendarDnd', () => {
      * [10-05, 10-08)) draggable across day cells 10-05..10-09, and picks it up with the
      * keyboard. Callers move it and finish the drag themselves.
      */
-    async function pickUpBounded() {
+    async function pickUpBounded(renderOverlay: (data: DragData, limit: string | null) => ReactNode = () => null) {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
@@ -728,7 +728,7 @@ describe('CalendarDnd', () => {
         }),
       )!
       renderWithProviders(
-        <CalendarDnd renderOverlay={() => null}>
+        <CalendarDnd renderOverlay={renderOverlay}>
           <Day day={new Date(2026, 9, 4)} left={-100} />
           <Day day={new Date(2026, 9, 5)} left={0}>
             <TaskChip
@@ -767,8 +767,25 @@ describe('CalendarDnd', () => {
       fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })
 
-    it('saves nothing and announces the limit when a keyboard drop completes on a blocked day', async () => {
+    it('hands the overlay the limit while over a blocked day, and none back inside', async () => {
+      const overlay = vi.fn((_data: DragData, _limit: string | null): ReactNode => null)
+      await pickUpBounded(overlay)
+      for (let i = 0; i < 4; i++) {
+        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+      }
+      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), 'Only possible until Wed, Oct 7.')
+
+      for (let i = 0; i < 3; i++) {
+        fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
+      }
+      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), null)
+
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+    })
+
+    it('saves nothing and toasts why when a keyboard drop completes on a blocked day', async () => {
       const fetch = vi.spyOn(globalThis, 'fetch')
+      const message = vi.spyOn(toast, 'message')
       await pickUpBounded()
       for (let i = 0; i < 4; i++) {
         fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
@@ -776,8 +793,28 @@ describe('CalendarDnd', () => {
       // End, not cancel: completes the drop instead of abandoning it.
       fireEvent.keyDown(document, { code: 'Space', key: ' ' })
 
-      expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
+      expect(message).toHaveBeenCalledWith('Not moved', { description: 'Until Wed, Oct 7, then the next repeat is due.' })
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it("toasts the lower limit for a drop before the series' day", async () => {
+      const message = vi.spyOn(toast, 'message')
+      await pickUpBounded()
+      fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
+      fireEvent.keyDown(document, { code: 'Space', key: ' ' })
+
+      expect(message).toHaveBeenCalledWith('Not moved', { description: 'Only possible from Mon, Oct 5 on.' })
+    })
+
+    it('toasts nothing when the drag is cancelled over a blocked day', async () => {
+      const message = vi.spyOn(toast, 'message')
+      await pickUpBounded()
+      for (let i = 0; i < 4; i++) {
+        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+      }
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+
+      expect(message).not.toHaveBeenCalled()
     })
 
     it('blocks the day before the series and announces the lower limit while over it', async () => {

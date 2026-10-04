@@ -15,6 +15,9 @@ import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 
 /** Pixel height of one hour in the time grid. */
+/** Pointer travel before a press becomes a drag (FR-10): for moving entries, drawing new ones, and an attempt on one that can't move (FR-17). */
+export const DRAG_DISTANCE = 6
+
 export const HOUR_HEIGHT = 48
 export const PX_PER_MINUTE = HOUR_HEIGHT / 60
 export const SNAP_MINUTES = 15

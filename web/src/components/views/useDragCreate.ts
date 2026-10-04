@@ -1,8 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
-import { createRange, PX_PER_MINUTE } from '@/lib/dnd'
-
-/** Pointer travel before a press becomes a drag, as for moving events. */
-const DRAG_DISTANCE = 6
+import { createRange, DRAG_DISTANCE, PX_PER_MINUTE } from '@/lib/dnd'
 
 interface Gesture {
   pointerId: number

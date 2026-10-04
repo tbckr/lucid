@@ -199,6 +199,7 @@
     "cancelled": "Move cancelled.",
     "limit": "Only possible until {{date}}.",
     "limitFrom": "Only possible from {{date}} on.",
+    "notMoved": "Not moved",
     "chooseScope": "Choose which events should move.",
     "chooseScopeChange": "Choose which events should change."
   },

@@ -19,6 +19,7 @@ import {
 import { useMutationState } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { ScopeChoice, type Scope } from '@/components/events/ScopeChoice'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
@@ -34,6 +35,7 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { moveWindow as windowOfTask } from '@/lib/calendarTasks'
 import {
   acceptsDrop,
+  DRAG_DISTANCE,
   dropBlocked,
   dropResult,
   SNAP_PX,
@@ -243,7 +245,8 @@ export function CalendarDnd({
   renderOverlay,
 }: {
   children: ReactNode
-  renderOverlay: (data: DragData) => ReactNode
+  /** `limit`: why the dragged task can't land where it is (FR-17), or null while it can. */
+  renderOverlay: (data: DragData, limit: string | null) => ReactNode
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -264,6 +267,8 @@ export function CalendarDnd({
   )
   /** What a drop right now would save; null while it would change nothing. */
   const [target, setTarget] = useState<DropResult | null>(null)
+  /** Which edge of the dragged series' move window a drop right now would cross (FR-17), for the overlay. */
+  const [blocked, setBlocked] = useState<DropBlocked | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
   // `target` re-renders. `moved`: the drag has had a target since the pick-up. `blocked`: which
   // edge of a bounded series' window the current drop would cross (FR-17). `asked`: the drop
@@ -307,7 +312,7 @@ export function CalendarDnd({
   const pendingTodos = usePendingSeries()
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: DRAG_DISTANCE } }),
     useSensor(KeyboardSensor, {
       coordinateGetter: keyboardCoordinates,
       keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space', 'Enter'] },
@@ -317,12 +322,17 @@ export function CalendarDnd({
     }),
   )
 
-  const announcements: Announcements = useMemo(() => {
-    // Which edge of a bounded series' move window (FR-17) blocked the drop, in words.
-    const limitMessage = (blocked: DropBlocked) =>
+  // Which edge of a bounded series' move window (FR-17) blocks the drop, in words: for screen
+  // readers and under the dragged task.
+  const limitMessage = useCallback(
+    (blocked: DropBlocked) =>
       blocked.edge === 'until'
         ? t('dnd.limit', { date: formatPickerDate(blocked.date, prefs, now) })
-        : t('dnd.limitFrom', { date: formatPickerDate(blocked.date, prefs, now) })
+        : t('dnd.limitFrom', { date: formatPickerDate(blocked.date, prefs, now) }),
+    [t, prefs, now],
+  )
+
+  const announcements: Announcements = useMemo(() => {
     // The target time for screen readers (NFR-27), like the preview shows it.
     const announceTarget: Announcements['onDragOver'] = ({ active: a, over }) => {
       const d = dragData(a.data.current)
@@ -355,10 +365,11 @@ export function CalendarDnd({
       },
       onDragCancel: () => t('dnd.cancelled'),
     }
-  }, [t, prefs, now])
+  }, [t, prefs, limitMessage])
 
   const onDragStart = (e: DragStartEvent) => {
     latest.current = { target: null, moved: false, blocked: null, asked: false }
+    setBlocked(null)
     const d = dragData(e.active.data.current)
     if (d) setActive({ id: String(e.active.id), data: d })
   }
@@ -373,6 +384,7 @@ export function CalendarDnd({
     const blocked = dropBlocked(d, drop, e.delta.y)
     latest.current = { ...latest.current, target: next, moved: latest.current.moved || next !== null, blocked }
     setTarget((prev) => (sameDrop(prev, next) ? prev : next))
+    setBlocked((prev) => (prev?.edge === blocked?.edge && prev?.date.getTime() === blocked?.date.getTime() ? prev : blocked))
   }
 
   // The create popover's entry takes the times instead of saving them, and a move takes the
@@ -391,6 +403,7 @@ export function CalendarDnd({
   const onDragEnd = (e: DragEndEvent) => {
     setActive(null)
     setTarget(null)
+    setBlocked(null)
     const d = dragData(e.active.data.current)
     if (!d) return
     const drop = dropData(e.over?.data.current)
@@ -398,6 +411,14 @@ export function CalendarDnd({
     if (d.type !== 'event' && d.draft) {
       if (result) dropDraft(d, result, drop)
       return
+    }
+    // A bounded series (FR-17) dropped where it can't go stays put: say so, and why.
+    const refused = dropBlocked(d, drop, e.delta.y)
+    if (refused) {
+      const date = formatPickerDate(refused.date, prefs, now)
+      toast.message(t('dnd.notMoved'), {
+        description: refused.edge === 'until' ? t('tasks.moveLimit', { date }) : t('tasks.moveFrom', { date }),
+      })
     }
     if (result?.kind === 'event') {
       if (asksScope(result.event)) {
@@ -496,11 +517,12 @@ export function CalendarDnd({
         onDragCancel={() => {
           setActive(null)
           setTarget(null)
+          setBlocked(null)
         }}
       >
         {children}
         <DragOverlay dropAnimation={null}>
-          {preview && preview.type !== 'resize' ? renderOverlay(preview) : null}
+          {preview && preview.type !== 'resize' ? renderOverlay(preview, blocked ? limitMessage(blocked) : null) : null}
         </DragOverlay>
       </DndContext>
       <Popover
