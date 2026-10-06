@@ -375,3 +375,50 @@ test('moves all events of a series within the day', async ({ page }) => {
   await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
   await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
 })
+
+/** The toast with `message`, after hovering it: that pauses sonner's 8 s timer, so a slow run keeps its Undo. */
+async function hoverToast(page: Page, message: string): Promise<Locator> {
+  const toast = page.locator('[data-sonner-toast]', { hasText: message })
+  await expect(toast).toBeVisible()
+  await toast.hover()
+  return toast
+}
+
+test('undoes moving only one event of a series', async ({ page }) => {
+  const block = await createSeries(page)
+
+  const question = await dragAnHourLater(page, block)
+  await question.getByRole('button', { name: 'Only this event' }).click()
+  await expect(question).toBeHidden()
+  const toast = await hoverToast(page, 'Only this event moved.')
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+  await expect(block.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
+
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByText('Undone.')).toBeVisible()
+  // The series as it was: no override, so no mark of a change either.
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+  await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
+  await expect(block.getByRole('img', { name: 'Repeating event, changed individually' })).toHaveCount(0)
+})
+
+test('undoes moving all events of a series', async ({ page }) => {
+  const block = await createSeries(page)
+
+  const question = await dragAnHourLater(page, block)
+  await question.getByRole('button', { name: 'All events' }).click()
+  await expect(question).toBeHidden()
+  const toast = await hoverToast(page, 'All events moved.')
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByText('Undone.')).toBeVisible()
+  // This week's and next week's event are back at 9 AM.
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
+  await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
+})

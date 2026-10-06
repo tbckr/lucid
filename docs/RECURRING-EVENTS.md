@@ -874,6 +874,22 @@ surveyed client and server round-trips (see [Summary](#summary)).
   from its `RECURRENCE-ID` or any of those fields differs from the series,
   since it is shown as a changed occurrence of its own.
 
+### Undo
+
+A change to a series that leaves its resource in place, and whose new ETag
+the CalDAV server tells, returns an `undoToken` (FR-17), also a save that
+removes the rule; a non-recurring event gets none, nor does a delete that
+removes the whole resource (a whole series, or the last event of one).
+Undo restores the resource **byte for byte** as it was read before that
+write, a snapshot the backend keeps under the token, with one `PUT` and
+`If-Match` of the ETag the write produced, instead of reversing the write:
+the override, `EXDATE`s, shifted references and `UNTIL` all come back
+together. If another client has changed the series since, the `PUT` fails,
+the undo is refused (`409`) and nothing is written. The store keeps a
+snapshot for 2 minutes and refuses one over 1 MiB, so a series with years of
+overrides changes without an undo. The UI offers the Undo for 8 seconds, in
+the toast that says what the change did.
+
 ### Limits
 
 - "This and following" is not offered this round: every surveyed writer

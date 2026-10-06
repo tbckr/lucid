@@ -96,6 +96,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
   * **Only this event:** a single occurrence can be changed or deleted independently of the series, via an RFC 5545 override (an EXDATE on delete).
   * **All events:** a change to the series shifts by the distance from the edited occurrence's shown start and carries along only the fields that changed.
   * Events changed individually by an override are marked (`modified`).
+  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change.
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**
