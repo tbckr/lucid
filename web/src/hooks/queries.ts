@@ -8,9 +8,11 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { createElement, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
+import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList, type TodoOccurrenceList } from '@/lib/api/endpoints'
@@ -32,6 +34,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
+import { glyphSlots, type Scope } from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
@@ -331,6 +334,68 @@ function replaceEtag(qc: QueryClient, id: string, from: string, to: string): voi
 }
 
 /* ------------------------------------------------------------------------ */
+/* The latest change of a series                                            */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * How many writes of each resource (a series, a task) the client started
+ * (FR-17): the server refuses the Undo of a change once a later write
+ * changed the resource again, so only the latest change offers one.
+ */
+const seriesWrites = new WeakMap<QueryClient, Map<string, number>>()
+
+function seriesWritesOf(qc: QueryClient): Map<string, number> {
+  let map = seriesWrites.get(qc)
+  if (!map) {
+    map = new Map()
+    seriesWrites.set(qc, map)
+  }
+  return map
+}
+
+/** The ID of the toast about the latest change of the series or task `id`, so a later change replaces it. */
+function seriesToastId(id: string): string {
+  return `series:${id}`
+}
+
+/**
+ * Notes that a write of the series or task `id` starts, in `onMutate`, and
+ * returns its generation (FR-17). A toast of an earlier change still shown
+ * stays, but loses its Undo in place: dismissed, sonner 2.0.8 would also
+ * remove a toast of the same ID shown within its next two animation frames,
+ * as this write's own toast is when the server answers fast.
+ */
+function startSeriesWrite(qc: QueryClient, id: string): number {
+  const map = seriesWritesOf(qc)
+  const generation = (map.get(id) ?? 0) + 1
+  map.set(id, generation)
+  const toastId = seriesToastId(id)
+  const shown = toast.getToasts().find((x) => x.id === toastId)
+  // Merged into the toast shown, which keeps its icon and how long it stays.
+  if (shown && 'title' in shown) toast.success(shown.title, { id: toastId, action: undefined })
+  return generation
+}
+
+/** The generation of the latest write of the series or task `id` the client started (FR-17). */
+function latestSeriesWrite(qc: QueryClient, id: string): number {
+  return seriesWritesOf(qc).get(id) ?? 0
+}
+
+/**
+ * The undo token of the answer to the write `generation` of `id`, while it is
+ * still the latest one (FR-17): a write started since, even one still on its
+ * way, makes the Undo fail, so it offers none.
+ */
+function latestUndoToken(
+  qc: QueryClient,
+  id: string,
+  generation: number,
+  token: string | null | undefined,
+): string | undefined {
+  return generation === latestSeriesWrite(qc, id) ? (token ?? undefined) : undefined
+}
+
+/* ------------------------------------------------------------------------ */
 /* Event mutations                                                          */
 /* ------------------------------------------------------------------------ */
 
@@ -407,6 +472,8 @@ async function undoEventChange(
  * token (FR-17). `after` is the server's answer to this change: a token on
  * `event`, or one cached with it, is from an earlier answer and never offered.
  * The ID is the series', so a later change replaces this toast and its Undo.
+ * Its icon shows the events the change reached, `look.reach`, in the
+ * series' calendar color.
  */
 function eventToast(
   qc: QueryClient,
@@ -414,11 +481,15 @@ function eventToast(
   event: CalEvent,
   message: string,
   after: { etag: string; undoToken?: string | null },
+  look: { reach: Scope; color: string },
 ): void {
   const { etag, undoToken } = after
   toast.success(message, {
-    id: `series:${event.id}`,
+    id: seriesToastId(event.id),
     duration: ACTION_TOAST_MS,
+    icon: createElement(ScopeGlyph, { slots: glyphSlots(look.reach), color: look.color }),
+    // Sonner's icon box is 16px wide; the glyph is 44px.
+    classNames: { icon: 'w-auto!' },
     // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
     action: undoToken
       ? {
@@ -451,13 +522,22 @@ export function useCreateEvent() {
 export function useUpdateEvent(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
   return useMutation({
     ...seriesScope(series),
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) =>
       writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, input)),
-    onSuccess: (updated, { event }) => {
-      if (event.recurring) eventToast(qc, t, event, t('scope.toast.allChanged'), updated)
-      else toast.success(t('event.saved'))
+    onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
+    onSuccess: (updated, { event }, ctx) => {
+      if (event.recurring) {
+        const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
+        eventToast(qc, t, event, t('scope.toast.allChanged'), { etag: updated.etag, undoToken }, {
+          reach: 'all',
+          color: colorsOf(event.calendarId).solid,
+        })
+      } else {
+        toast.success(t('event.saved'))
+      }
       return qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) })
     },
     onError: (err, { event }) => {
@@ -474,6 +554,7 @@ export function useDeleteEvent(series?: string) {
     ...seriesScope(series),
     mutationFn: (event: CalEvent) => endpoints.deleteEvent(event.id, currentEtag(qc, event)),
     onMutate: async (event) => {
+      startSeriesWrite(qc, event.id)
       if (event.recurring) return { snapshot: [] as [readonly unknown[], EventList | undefined][] }
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
@@ -528,13 +609,15 @@ export function moveInput(event: CalEvent, start: string, end: string): EventInp
 export function useMoveEvent(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
   return useMutation({
     mutationKey: MOVE_EVENT_KEY,
     ...seriesScope(series),
     mutationFn: ({ event, start, end }: MoveVars) =>
       writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, moveInput(event, start, end))),
     onMutate: async ({ event, start, end }) => {
-      if (event.recurring) return { snapshot: [] as [readonly unknown[], EventList | undefined][] }
+      const generation = startSeriesWrite(qc, event.id)
+      if (event.recurring) return { generation, snapshot: [] as [readonly unknown[], EventList | undefined][] }
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
       const snapshot = qc.getQueriesData<EventList>({ queryKey: key })
@@ -543,11 +626,19 @@ export function useMoveEvent(series?: string) {
           ? { ...old, events: old.events.map((e) => (e.key === event.key ? { ...e, start, end } : e)) }
           : old,
       )
-      return { snapshot }
+      return { generation, snapshot }
     },
-    onSuccess: (updated, { event, change }) => {
+    onSuccess: (updated, { event, change }, ctx) => {
       if (event.recurring) {
-        eventToast(qc, t, event, t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved'), updated)
+        const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
+        eventToast(
+          qc,
+          t,
+          event,
+          t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved'),
+          { etag: updated.etag, undoToken },
+          { reach: 'all', color: colorsOf(event.calendarId).solid },
+        )
       } else {
         // Keep the new ETag so a follow-up drag does not conflict.
         qc.setQueriesData<EventList>({ queryKey: queryKeys.eventsOf(event.calendarId) }, (old) =>
@@ -614,6 +705,7 @@ export const MOVE_OCCURRENCE_KEY = ['moveOccurrence'] as const
 export function useMoveOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
   return useMutation({
     mutationKey: MOVE_OCCURRENCE_KEY,
     ...seriesScope(series),
@@ -622,17 +714,26 @@ export function useMoveOccurrence(series?: string) {
         endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', etag, moveOccurrenceInput(event, start, end)),
       ),
     onMutate: async ({ event, start, end }) => {
+      const generation = startSeriesWrite(qc, event.id)
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
       const snapshot = qc.getQueriesData<EventList>({ queryKey: key })
       qc.setQueriesData<EventList>({ queryKey: key }, (old) =>
         old ? { ...old, events: old.events.map((e) => (e.key === event.key ? { ...e, start, end } : e)) } : old,
       )
-      return { snapshot }
+      return { generation, snapshot }
     },
-    onSuccess: (updated, { event, change }) => {
+    onSuccess: (updated, { event, change }, ctx) => {
       putOccurrence(qc, event, updated)
-      eventToast(qc, t, event, t(change ? 'scope.toast.thisChanged' : 'scope.toast.thisMoved'), updated)
+      const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
+      eventToast(
+        qc,
+        t,
+        event,
+        t(change ? 'scope.toast.thisChanged' : 'scope.toast.thisMoved'),
+        { etag: updated.etag, undoToken },
+        { reach: 'this', color: colorsOf(event.calendarId).solid },
+      )
     },
     onError: (err, { event }, ctx) => {
       ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))
@@ -650,13 +751,19 @@ export function useMoveOccurrence(series?: string) {
 export function useUpdateOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
   return useMutation({
     ...seriesScope(series),
     mutationFn: ({ event, input }: { event: CalEvent; input: OccurrenceInput }) =>
       writeEvent(qc, event, (etag) => endpoints.updateOccurrence(event.id, event.recurrenceId ?? '', etag, input)),
-    onSuccess: (updated, { event }) => {
+    onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
+    onSuccess: (updated, { event }, ctx) => {
       putOccurrence(qc, event, updated)
-      eventToast(qc, t, event, t('scope.toast.thisChanged'), updated)
+      const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
+      eventToast(qc, t, event, t('scope.toast.thisChanged'), { etag: updated.etag, undoToken }, {
+        reach: 'this',
+        color: colorsOf(event.calendarId).solid,
+      })
     },
     onError: (err, { event }) => {
       reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
@@ -675,6 +782,7 @@ export function useUpdateOccurrence(series?: string) {
 export function useDeleteOccurrence(series?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
   return useMutation({
     ...seriesScope(series),
     mutationFn: async (event: CalEvent) => {
@@ -684,17 +792,22 @@ export function useDeleteOccurrence(series?: string) {
       return res
     },
     onMutate: async (event) => {
+      const generation = startSeriesWrite(qc, event.id)
       const key = queryKeys.eventsOf(event.calendarId)
       await qc.cancelQueries({ queryKey: key })
       const snapshot = qc.getQueriesData<EventList>({ queryKey: key })
       qc.setQueriesData<EventList>({ queryKey: key }, (old) =>
         old ? { ...old, events: old.events.filter((e) => e.key !== event.key) } : old,
       )
-      return { snapshot }
+      return { generation, snapshot }
     },
-    onSuccess: (res, event) => {
+    onSuccess: (res, event, ctx) => {
       // No answer: the series went with its last event, so there is nothing to undo.
-      eventToast(qc, t, event, t('scope.toast.thisDeleted'), res ?? { etag: '' })
+      const undoToken = latestUndoToken(qc, event.id, ctx.generation, res?.undoToken)
+      eventToast(qc, t, event, t('scope.toast.thisDeleted'), { etag: res?.etag ?? '', undoToken }, {
+        reach: 'this',
+        color: colorsOf(event.calendarId).solid,
+      })
       if (res) setSeriesEtag(qc, event, res.etag)
     },
     onError: (err, event, ctx) => {
@@ -858,26 +971,27 @@ export function useUpdateTodo(id?: string) {
       return updated
     },
     onMutate: async ({ todo, input }) => {
+      const generation = startSeriesWrite(qc, todo.id)
       const key = queryKeys.todos(todo.calendarId)
       await qc.cancelQueries({ queryKey: key })
-      if (isSeriesCompletion(todo, input)) return { snapshot: undefined }
+      if (isSeriesCompletion(todo, input)) return { generation, snapshot: undefined }
       const snapshot = qc.getQueryData<TodoList>(key)
       qc.setQueryData<TodoList>(key, (old) =>
         old ? { ...old, todos: old.todos.map((x) => (x.id === todo.id ? { ...x, ...input } : x)) } : old,
       )
-      return { snapshot }
+      return { generation, snapshot }
     },
-    onSuccess: (updated, vars) => {
+    onSuccess: (updated, vars, ctx) => {
       const { todo } = vars
       putTodo(qc, todo.calendarId, updated)
       // `now` only decides whether the date needs its year.
       const message = seriesMessage(vars, updated, t, prefs, new Date())
       if (!message) return
       toast.success(message, {
-        id: `series:${todo.id}`,
+        id: seriesToastId(todo.id),
         duration: ACTION_TOAST_MS,
         // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
-        action: updated.undoToken
+        action: latestUndoToken(qc, todo.id, ctx.generation, updated.undoToken)
           ? {
               label: t('common.undo'),
               onClick: () => {
@@ -921,6 +1035,9 @@ export function useDeleteTodo(id?: string) {
   return useMutation({
     ...(id ? { scope: { id: `todo:${id}` } } : {}),
     mutationFn: (todo: Todo) => endpoints.deleteTodo(todo.id, currentEtag(qc, todo)),
+    onMutate: (todo) => {
+      startSeriesWrite(qc, todo.id)
+    },
     onSuccess: (_d, todo) => {
       toast.success(t('tasks.deleted'))
       removeTodo(qc, todo)

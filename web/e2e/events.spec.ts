@@ -422,3 +422,29 @@ test('undoes moving all events of a series', async ({ page }) => {
   await expect(block).toHaveAccessibleName(`${SERIES}, 9 AM – 9:30 AM`)
   await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
 })
+
+test('keeps the undo of the latest change only', async ({ page }) => {
+  const block = await createSeries(page)
+
+  const first = await dragAnHourLater(page, block)
+  await first.getByRole('button', { name: 'Only this event' }).click()
+  await expect(page.locator('[data-sonner-toast]', { hasText: 'Only this event moved.' })).toBeVisible()
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+
+  // Again within the 8 s of the first toast: the second change takes its Undo away as it starts.
+  const second = await dragAnHourLater(page, block)
+  const answered = page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().includes('/occurrences/'))
+  await second.getByRole('button', { name: 'Only this event' }).click()
+  await answered
+  await expect(block).toHaveAccessibleName(`${SERIES}, 11 AM – 11:30 AM`)
+  // Still there well after the answer: a dismissal of the first toast would take this one along.
+  await page.waitForTimeout(1500)
+  const toast = await hoverToast(page, 'Only this event moved.')
+  await expect(toast.getByRole('button', { name: 'Undo' })).toBeVisible()
+
+  // The second change's Undo: back where the first move put it.
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByText('Undone.')).toBeVisible()
+  await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
+  await expect(block.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
+})

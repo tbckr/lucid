@@ -1,5 +1,5 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
-import { MutationObserver } from '@tanstack/react-query'
+import { MutationObserver, type QueryClient } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { isSameDay } from 'date-fns'
@@ -118,6 +118,14 @@ function standup(day: number): CalEvent {
   )
 }
 
+/**
+ * Loads the calendars before the first render, as the calendar page has them: the drop's
+ * writes take their colors, and would fetch them otherwise.
+ */
+function loadCalendars(queryClient: QueryClient) {
+  queryClient.setQueryData(queryKeys.calendars, [calendar()])
+}
+
 /** The views' overlay as the tests see it: what it is handed, nothing drawn. */
 type Overlay = (data: DragData, limit: string | null, hint: ScopeHint | null) => ReactNode
 
@@ -135,14 +143,13 @@ function renderWeek(
     return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(10, 40, 80, 20)
   })
   api.setCsrfToken('tok')
-  const result = renderWithProviders(
+  return renderWithProviders(
     <CalendarDnd renderOverlay={overlay}>
       <Week days={days} events={events} />
       {more}
     </CalendarDnd>,
+    loadCalendars,
   )
-  result.queryClient.setQueryData(queryKeys.calendars, [calendar()])
-  return result
 }
 
 /** The chip named `name` in the day cell of the `day`th. */
@@ -159,7 +166,7 @@ function renderBlock(event: CalEvent, children?: ReactNode, overlay: Overlay = (
     return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 1152) : rect(10, 480, 80, 46)
   })
   const fri = new Date(2026, 8, 25)
-  const result = renderWithProviders(
+  return renderWithProviders(
     <CalendarDnd renderOverlay={overlay}>
       <Column day={fri} left={0} columnRef={createRef<HTMLDivElement>()}>
         <TimedBlock
@@ -173,9 +180,8 @@ function renderBlock(event: CalEvent, children?: ReactNode, overlay: Overlay = (
         </TimedBlock>
       </Column>
     </CalendarDnd>,
+    loadCalendars,
   )
-  result.queryClient.setQueryData(queryKeys.calendars, [calendar()])
-  return result
 }
 
 /** Moves `item` 15 minutes down with the keyboard (NFR-27). */
@@ -234,6 +240,7 @@ describe('CalendarDnd', () => {
         </Day>
         <Day day={new Date(2026, 8, 26)} left={100} />
       </CalendarDnd>,
+      loadCalendars,
     )
 
     const chip = screen.getByRole('button', { name: 'Pay rent, all day' })
@@ -280,6 +287,7 @@ describe('CalendarDnd', () => {
         </Column>
         <Column day={sat} left={100} columnRef={saturday} />
       </CalendarDnd>,
+      loadCalendars,
     )
 
     await moveRight(screen.getByRole('button', { name: 'Draft' }))
@@ -631,7 +639,7 @@ describe('CalendarDnd', () => {
       })
       vi.spyOn(globalThis, 'fetch')
       const days = [25, 26, 27].map((d) => new Date(2026, 8, d))
-      const { queryClient } = renderWithProviders(
+      renderWithProviders(
         // The views' overlay: the dragged event's own tile, which can't be dragged itself.
         <CalendarDnd
           renderOverlay={(d) =>
@@ -640,8 +648,8 @@ describe('CalendarDnd', () => {
         >
           <Week days={days} events={[standup(25)]} full={full} />
         </CalendarDnd>,
+        loadCalendars,
       )
-      queryClient.setQueryData(queryKeys.calendars, [calendar()])
 
       await moveRight(chipIn(25, standupAt10))
       await screen.findByRole('alertdialog', { name: moveQuestion })
@@ -909,6 +917,7 @@ describe('CalendarDnd', () => {
           <Day day={new Date(2026, 9, 8)} left={300} />
           <Day day={new Date(2026, 9, 9)} left={400} />
         </CalendarDnd>,
+        loadCalendars,
       )
 
       const chip = screen.getByRole('button', { name: 'Water the flowers, all day' })

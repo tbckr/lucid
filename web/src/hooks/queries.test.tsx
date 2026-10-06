@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -33,7 +33,20 @@ function wrapper({ children }: { children: ReactNode }) {
 
 afterEach(() => {
   useSettings.setState(defaultSettings)
+  // Sonner keeps its toasts in module state, and without a Toaster none ever closes: a write of
+  // the next test would find this test's toast of its series.
+  toast.dismiss()
 })
+
+/** The color of calendar `c1`, which the toast after a change of a series takes (FR-17). */
+const CALENDAR_COLOR = '#0e9f6e'
+
+/** A client with calendar `c1` loaded, as the calendar page has it: event writes take its colors. */
+function eventClient(): QueryClient {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  queryClient.setQueryData(queryKeys.calendars, [calendar({ id: 'c1', color: CALENDAR_COLOR })])
+  return queryClient
+}
 
 /** The current action of the live toast `series:<id>`, sonner's own state (A-26 dedup). */
 function seriesToastAction(id: string): Action | undefined {
@@ -49,6 +62,7 @@ function toastOf(calls: Parameters<typeof toast.success>[], message: string) {
   return {
     id: options?.id,
     duration: options?.duration,
+    icon: options?.icon,
     action: action?.label,
     click: () => {
       action?.onClick({} as MouseEvent<HTMLButtonElement>)
@@ -274,7 +288,7 @@ describe('useMoveOccurrence', () => {
   /** A client holding `first` and `second`, and PUTs that answer only when told to. */
   function setup() {
     api.setCsrfToken('tok')
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
       events: [first, second],
       corrupted: [],
@@ -368,7 +382,7 @@ describe('useDeleteOccurrence', () => {
       recurring: true,
       recurrenceId: '2025-03-10T08:00:00Z',
     })
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
       events: [first, second],
       corrupted: [],
@@ -404,7 +418,7 @@ describe('useDeleteOccurrence', () => {
     })
     const second = apiEvent({ ...first, key: 'e1@2025-03-10T08:00:00Z', recurrenceId: '2025-03-10T08:00:00Z' })
     const other = apiEvent({ id: 'e2', key: 'e2', etag: '"9"' })
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     queryClient.setQueryData<EventList>(queryKeys.events(calendarId, 'r1', 'r2'), {
       events: [first, second, other],
       corrupted: [],
@@ -453,7 +467,7 @@ describe('writes of one series', () => {
     ['the whole series', (h: Hooks) => h.deleteEvent],
   ])('run one after another, each with the ETag the one before got, up to deleting %s', async (_, del) => {
     api.setCsrfToken('tok')
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     const answers: ((r: Response) => void)[] = []
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
       () =>
@@ -520,7 +534,7 @@ describe('writes of one series', () => {
 
   it('run a write queued behind deleting one event with the ETag the delete answered with', async () => {
     api.setCsrfToken('tok')
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     const answers: ((r: Response) => void)[] = []
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
       () =>
@@ -588,7 +602,7 @@ describe('event series toasts', () => {
   /** A client holding the events, and a server answering each request with the next of `answers`. */
   function setup(...answers: (Response | Promise<Response>)[]) {
     api.setCsrfToken('tok')
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     queryClient.setQueryData<EventList>(key, { events: [first, second, single], corrupted: [] })
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
       const next = answers.shift()
@@ -637,6 +651,24 @@ describe('event series toasts', () => {
     })
   })
 
+  it('shows the reach of the change as the toast icon', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const { container } = render(<>{toastOf(success.mock.calls, 'Only this event moved.').icon}</>)
+
+    // Five dots, only the middle one filled: the event moved, in the color of its calendar.
+    const dots = [...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))
+    expect(dots).toEqual(['none', 'none', CALENDAR_COLOR, 'none', 'none'])
+  })
+
   it('says only this event changed after a resize', async () => {
     const success = vi.spyOn(toast, 'success')
     const { wrap } = setup(answer('"2"', 'tok'))
@@ -667,12 +699,14 @@ describe('event series toasts', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
-    expect(toastOf(success.mock.calls, 'All events moved.')).toMatchObject({
-      id: 'series:e1',
-      duration: 8000,
-      action: 'Undo',
-    })
+    const shown = toastOf(success.mock.calls, 'All events moved.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
     expect(success).toHaveBeenCalledTimes(1)
+    // Every dot filled: all events moved.
+    const { container } = render(<>{shown.icon}</>)
+    expect([...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))).toEqual(
+      Array<string>(5).fill(CALENDAR_COLOR),
+    )
   })
 
   it('says all events changed after a resize', async () => {
@@ -830,8 +864,9 @@ describe('event series toasts', () => {
     act(() => {
       result.current.mutate({ event: toCalEvent(second), ...to })
     })
+    // The first change's toast, the same without its Undo as the second starts, the second's.
     await waitFor(() => {
-      expect(success).toHaveBeenCalledTimes(2)
+      expect(success).toHaveBeenCalledTimes(3)
     })
     // Sonner merges a toast into the one of its ID: the earlier action stays unless it is overridden.
     expect(toast.getToasts().filter((x) => x.id === 'series:e1')).toHaveLength(1)
@@ -858,11 +893,13 @@ describe('event series toasts', () => {
       result.current.mutate({ event: toCalEvent(second), ...to })
     })
     await waitFor(() => {
-      expect(success).toHaveBeenCalledTimes(2)
+      expect(success).toHaveBeenCalledTimes(3)
     })
-    // One toast, whose Undo is the second change's.
-    const [one, two] = success.mock.calls.map((call) => toastOf([call], 'Only this event moved.'))
+    // One toast, whose Undo is the second change's: the first's went as the second started.
+    const [one, taken, two] = success.mock.calls.map((call) => toastOf([call], 'Only this event moved.'))
     expect(one).toMatchObject({ id: 'series:e1', action: 'Undo' })
+    expect(taken?.id).toBe('series:e1')
+    expect(taken?.action).toBeUndefined()
     expect(two).toMatchObject({ id: 'series:e1', action: 'Undo' })
     expect(toast.getToasts().filter((x) => x.id === 'series:e1')).toHaveLength(1)
 
@@ -883,6 +920,93 @@ describe('event series toasts', () => {
       expect(writes()).toHaveLength(4)
     })
     expect(writes()[3]?.etag).toBe('"7"')
+  })
+
+  // FR-17: a later write of the series makes the Undo of an earlier change fail (409), so only the
+  // latest change keeps one. The earlier toast stays, without its Undo: dismissing it would take
+  // the next toast of its ID away too, when that comes within sonner's two animation frames.
+  it('takes the undo of an earlier change away once the series changes again', async () => {
+    let answerSecond: (r: Response) => void = () => undefined
+    const { wrap, writes } = setup(
+      answer('"2"', 'tok1'),
+      new Promise<Response>((resolve) => (answerSecond = resolve)),
+      jsonResponse(200, { etag: '"4"' }),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(seriesToastAction('e1')?.label).toBe('Undo')
+    })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    // While the second change is on its way, the first's toast says what it did, without Undo.
+    const shown = toast.getToasts().find((x) => x.id === 'series:e1')
+    expect(shown && 'title' in shown ? shown.title : undefined).toBe('Only this event moved.')
+    expect(seriesToastAction('e1')).toBeUndefined()
+
+    answerSecond(answer('"3"', 'tok2'))
+    await waitFor(() => {
+      expect(seriesToastAction('e1')?.label).toBe('Undo')
+    })
+    act(() => {
+      seriesToastAction('e1')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok2' } })
+  })
+
+  it('offers no undo for a change overtaken while it was saving', async () => {
+    const success = vi.spyOn(toast, 'success')
+    let answerFirst: (r: Response) => void = () => undefined
+    let answerSecond: (r: Response) => void = () => undefined
+    const { wrap, writes } = setup(
+      new Promise<Response>((resolve) => (answerFirst = resolve)),
+      new Promise<Response>((resolve) => (answerSecond = resolve)),
+      jsonResponse(200, { etag: '"4"' }),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+    // The second change waits for the first, which then answers with a token.
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    answerFirst(answer('"2"', 'tok1'))
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    const first = toastOf(success.mock.calls, 'Only this event moved.')
+    expect(first.id).toBe('series:e1')
+    expect(first.action).toBeUndefined()
+    expect(toast.getToasts().some((x) => x.id === 'series:e1')).toBe(true)
+    expect(seriesToastAction('e1')).toBeUndefined()
+
+    answerSecond(answer('"3"', 'tok2'))
+    await waitFor(() => {
+      expect(seriesToastAction('e1')?.label).toBe('Undo')
+    })
+    act(() => {
+      seriesToastAction('e1')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok2' } })
   })
 
   it('runs an undo after the writes of the series ahead of it', async () => {
@@ -920,6 +1044,102 @@ describe('event series toasts', () => {
       expect(writes()).toHaveLength(3)
     })
     expect(writes()[2]?.request).toBe('POST /api/v1/events/e1/undo')
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  // Every write of the series takes the earlier Undo away as it starts, also one that shows no
+  // toast of its own (deleting the series, or moving it after it became a single event).
+  describe('when another write of the series starts', () => {
+    function useSeriesWrites() {
+      return {
+        moveEvent: useMoveEvent('e1'),
+        moveOccurrence: useMoveOccurrence('e1'),
+        updateEvent: useUpdateEvent('e1'),
+        updateOccurrence: useUpdateOccurrence('e1'),
+        deleteOccurrence: useDeleteOccurrence('e1'),
+        deleteEvent: useDeleteEvent('e1'),
+      }
+    }
+
+    const starts: [string, (h: ReturnType<typeof useSeriesWrites>) => void][] = [
+      ['moving all events', (h) => h.moveEvent.mutate({ event: toCalEvent(second), ...to })],
+      ['moving a single event of it', (h) => h.moveEvent.mutate({ event: toCalEvent({ ...second, recurring: false }), ...to })],
+      ['moving only this event', (h) => h.moveOccurrence.mutate({ event: toCalEvent(second), ...to })],
+      [
+        'changing all events',
+        (h) => {
+          h.updateEvent.mutate({
+            event: toCalEvent(second),
+            input: { ...input, rrule: 'FREQ=WEEKLY', instanceStart: second.recurrenceId! },
+          })
+        },
+      ],
+      ['changing only this event', (h) => h.updateOccurrence.mutate({ event: toCalEvent(second), input })],
+      ['deleting only this event', (h) => h.deleteOccurrence.mutate(toCalEvent(second))],
+      ['deleting the series', (h) => h.deleteEvent.mutate(toCalEvent(second))],
+    ]
+
+    it.each(starts)('takes the undo of an earlier change away as soon as %s starts', async (_name, start) => {
+      // The second write's answer never comes: the Undo is gone before it.
+      const { wrap, writes } = setup(answer('"2"', 'tok1'), new Promise<Response>(() => undefined))
+      const { result } = renderHook(useSeriesWrites, { wrapper: wrap })
+
+      act(() => {
+        result.current.moveOccurrence.mutate({ event: toCalEvent(second), ...to })
+      })
+      await waitFor(() => {
+        expect(seriesToastAction('e1')?.label).toBe('Undo')
+      })
+
+      act(() => {
+        start(result.current)
+      })
+      await waitFor(() => {
+        expect(writes()).toHaveLength(2)
+      })
+      expect(toast.getToasts().some((x) => x.id === 'series:e1')).toBe(true)
+      expect(seriesToastAction('e1')).toBeUndefined()
+    })
+  })
+
+  it('queues a write behind a pending undo with the ETag the undo answered with', async () => {
+    const success = vi.spyOn(toast, 'success')
+    let answerUndo: (r: Response) => void = () => undefined
+    const { queryClient, wrap, writes } = setup(
+      answer('"2"', 'tok1'),
+      new Promise<Response>((resolve) => (answerUndo = resolve)),
+      answer('"8"', 'tok2'),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(toastOf(success.mock.calls, 'Only this event moved.').click)
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+
+    // A drag of the event as it was loaded, while the undo is on its way: it waits for the undo.
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(writes()).toHaveLength(2)
+
+    answerUndo(jsonResponse(200, { etag: '"7"' }))
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]).toMatchObject({
+      request: 'PUT /api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z',
+      etag: '"7"',
+    })
     await waitFor(() => {
       expect(queryClient.isMutating()).toBe(0)
     })
@@ -1578,6 +1798,85 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(seriesToastAction('t2')).toBeUndefined()
   })
 
+  it('takes the undo of an earlier change away once the series changes again', async () => {
+    let answerSecond: (a: Answer) => void = () => undefined
+    const { result, writes } = setup([
+      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok1' },
+      new Promise<Answer>((resolve) => (answerSecond = resolve)),
+      { ...series, etag: '"4"' },
+    ])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(seriesToastAction('t2')?.label).toBe('Undo')
+    const after1 = result.current.data!
+
+    act(() => {
+      result.current.mutate({ todo: after1, input: todoToInput(after1, { due: '2026-10-09T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    // While the second change is on its way, the first's toast says what it did, without Undo.
+    expect(toast.getToasts().some((x) => x.id === 'series:t2')).toBe(true)
+    expect(seriesToastAction('t2')).toBeUndefined()
+
+    answerSecond({ ...series, etag: '"3"', due: '2026-10-09T00:00:00Z', undoToken: 'tok2' })
+    await waitFor(() => {
+      expect(seriesToastAction('t2')?.label).toBe('Undo')
+    })
+    act(() => {
+      seriesToastAction('t2')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok2' } })
+  })
+
+  it('offers no undo for a change overtaken while it was saving', async () => {
+    let answerFirst: (a: Answer) => void = () => undefined
+    let answerSecond: (a: Answer) => void = () => undefined
+    const { result, writes } = setup([
+      new Promise<Answer>((resolve) => (answerFirst = resolve)),
+      new Promise<Answer>((resolve) => (answerSecond = resolve)),
+      { ...series, etag: '"4"' },
+    ])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+    // The second change waits for the first, which then answers with a token.
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-09T00:00:00.000Z' }) })
+    })
+    answerFirst({ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok1' })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect(toast.getToasts().some((x) => x.id === 'series:t2')).toBe(true)
+    expect(seriesToastAction('t2')).toBeUndefined()
+
+    answerSecond({ ...series, etag: '"3"', due: '2026-10-09T00:00:00Z', undoToken: 'tok2' })
+    await waitFor(() => {
+      expect(seriesToastAction('t2')?.label).toBe('Undo')
+    })
+    act(() => {
+      seriesToastAction('t2')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok2' } })
+  })
+
   it('reports a gone undo', async () => {
     const success = vi.spyOn(toast, 'success')
     const error = vi.spyOn(toast, 'error')
@@ -1721,6 +2020,29 @@ describe('usePendingSeries', () => {
 })
 
 describe('useDeleteTodo', () => {
+  it('takes the undo of an earlier change of the task away when it starts', async () => {
+    api.setCsrfToken('tok')
+    const series = todo({ id: 'x', calendarId: 'c1', etag: '"2"', recurring: true })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [series], corrupted: [] })
+    // The answer never comes: the Undo is gone before it.
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => undefined))
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useDeleteTodo('x'), { wrapper: wrap })
+    toast.success('Moved to Thu, Oct 8.', { id: 'series:x', action: { label: 'Undo', onClick: () => undefined } })
+
+    act(() => {
+      result.current.mutate(series)
+    })
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+    expect(toast.getToasts().some((x) => x.id === 'series:x')).toBe(true)
+    expect(seriesToastAction('x')).toBeUndefined()
+  })
+
   it('deletes a task only after its update in flight, with the ETag that update got', async () => {
     api.setCsrfToken('tok')
     const old = todo({ id: 'x', calendarId: 'c1', etag: '"1"' })
