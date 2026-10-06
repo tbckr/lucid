@@ -131,6 +131,15 @@ describe('EventDetailsPopover', () => {
       name: 'This event repeats. Which events should be deleted?',
     })
     expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    // Each option says what it reaches; the events a delete reaches are red (FR-17).
+    expect(within(question).getByRole('button', { name: 'Only this event' })).toHaveAccessibleDescription(
+      /^Only Fri, Sep 25(, 2026)?\.$/,
+    )
+    const all = within(question).getByRole('button', { name: 'All events' })
+    expect(all).toHaveAccessibleDescription('Past ones too.')
+    expect(Array.from(all.querySelectorAll('circle')).map((c) => c.getAttribute('fill'))).toEqual(
+      Array(5).fill('var(--destructive)'),
+    )
 
     await user.click(within(question).getByRole('button', { name: 'Only this event' }))
     await waitFor(() => {

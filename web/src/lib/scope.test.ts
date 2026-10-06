@@ -1,6 +1,10 @@
+import { de } from 'date-fns/locale/de'
+import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
+import i18n from '@/i18n'
 import { toCalEvent } from './events'
-import { scopeOptions, type ScopeAction, type ScopeResult } from './scope'
+import { type FormatPrefs } from './format'
+import { eventScopeItems, scopeOptions, type ScopeAction, type ScopeResult } from './scope'
 import { apiEvent } from '@/test/fixtures'
 
 const tz = 'Europe/Berlin'
@@ -77,5 +81,31 @@ describe('scopeOptions for events', () => {
 
   it.each(rows)('$name', ({ action, item, to, want }) => {
     expect(scopeOptions({ kind: 'event', action, item, to, tz })).toEqual(want)
+  })
+})
+
+describe('eventScopeItems', () => {
+  const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
+  const deDE: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
+  const now = new Date(2026, 0, 1)
+  // Its shown start is Monday, 9 March 2026, 09:00 in Berlin.
+  const event = occurrence('FREQ=WEEKLY;BYDAY=MO')
+
+  it('names each option and what it reaches, in order', () => {
+    expect(eventScopeItems(i18n.getFixedT('en'), event, ['this', 'all'], us, now)).toEqual([
+      { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 9.' },
+      { scope: 'all', label: 'All events', note: 'Past ones too.' },
+    ])
+  })
+
+  it('says it in German', () => {
+    expect(eventScopeItems(i18n.getFixedT('de'), event, ['this', 'all'], deDE, now)).toEqual([
+      { scope: 'this', label: 'Nur diesen Termin', note: 'Nur Mo., 9. März.' },
+      { scope: 'all', label: 'Alle Termine', note: 'Auch vergangene.' },
+    ])
+  })
+
+  it('has no words for "this and following" before it can be chosen', () => {
+    expect(() => eventScopeItems(i18n.getFixedT('en'), event, ['following'], us, now)).toThrow()
   })
 })

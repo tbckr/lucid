@@ -20,7 +20,7 @@ import { useMutationState } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { ScopeChoice, type Scope } from '@/components/events/ScopeChoice'
+import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   MOVE_EVENT_KEY,
@@ -52,7 +52,7 @@ import { formatEventSpan, formatPickerDate } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
 import { draggedWhen } from '@/lib/quickCreate'
-import { canMoveAll } from '@/lib/seriesShift'
+import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
 
@@ -70,19 +70,12 @@ function sameDrop(a: DropResult | null, b: DropResult | null): boolean {
   return a === b
 }
 
-/**
- * Whether a drop of `e` asks which events move first (FR-17): an event of a
- * series does. An invitation to one event of a series (an override without
- * its series) is a single event to Lucid and moves right away.
- */
-function asksScope(e: CalEvent): boolean {
-  return e.recurring && !!e.recurrenceId
-}
-
 /** A dropped event of a series waiting for the answer which events move (FR-17). */
 interface Asking extends MoveVars {
   /** Its length was changed rather than the event moved. */
   change: boolean
+  /** What the answer can be (`scopeOptions`), two options or more. */
+  options: Scope[]
   /** Where the drop ended, for the question to point at while the event's tile isn't shown. */
   at: DOMRect
 }
@@ -100,22 +93,22 @@ function tileOf(key: string): HTMLElement | undefined {
 function ScopeQuestion({
   asking,
   anchor,
-  tz,
   onChoose,
   onCancel,
   onPreview,
 }: {
   asking: Asking
   anchor: HTMLElement | null
-  /** The browser's time zone, for a series without one of its own. */
-  tz: string
   onChoose: (scope: Scope) => void
   onCancel: () => void
   onPreview: (scope: Scope | null) => void
 }) {
   const { t } = useTranslation()
+  const prefs = usePrefs()
+  const now = useMemo(() => new Date(), [])
   const colorsOf = useCalendarColors()
-  const { event, start, change, at } = asking
+  const { event, change, options, at } = asking
+  const color = colorsOf(event.calendarId).solid
   // The tile at the event's new place; while none is on the page (a full month cell), where the
   // drop ended. floating-ui follows the scrolling of the tile's ancestors through `contextElement`.
   const virtualRef = useMemo(
@@ -134,8 +127,8 @@ function ScopeQuestion({
         // The question itself is the alertdialog (NFR-27); the popover around it is no second, unnamed dialog.
         role={undefined}
         align="start"
-        className="w-[min(24rem,calc(100vw-2rem))] border-l-4"
-        style={{ borderLeftColor: colorsOf(event.calendarId).solid }}
+        className="w-[min(26rem,calc(100vw-2rem))] border-l-4"
+        style={{ borderLeftColor: color }}
         // ScopeChoice focuses its default choice itself.
         onOpenAutoFocus={(e) => {
           e.preventDefault()
@@ -150,9 +143,9 @@ function ScopeQuestion({
         }}
       >
         <ScopeChoice
-          question={change ? t('event.scope.change') : t('event.scope.move')}
-          note={t('event.scope.pastIncluded')}
-          allowAll={canMoveAll(event, new Date(start), tz)}
+          question={change ? t('scope.event.change') : t('scope.event.move')}
+          items={eventScopeItems(t, event, options, prefs, now)}
+          color={color}
           onChoose={onChoose}
           onCancel={onCancel}
           onPreview={onPreview}
@@ -282,9 +275,9 @@ export function CalendarDnd({
   })
 
   // FR-17: a dropped event of a series waits for the answer which events move, shown at its new
-  // place meanwhile. `all`: "All events" has the focus or the pointer, which rings the series.
+  // place meanwhile. `reach`: the option with the focus or the pointer; "All events" rings the series.
   const [asking, setAsking] = useState<Asking | null>(null)
-  const [all, setAll] = useState(false)
+  const [reach, setReach] = useState<Scope | null>(null)
   // The moves of a series run one after another, each with the ETag the one before got
   // (FR-17): the series of the event the question asks about, or else of the dragged one.
   const moving = asking?.event ?? (active?.data.event.kind === 'event' ? active.data.event : undefined)
@@ -430,18 +423,32 @@ export function CalendarDnd({
       })
     }
     if (result?.kind === 'event') {
-      if (asksScope(result.event)) {
-        // FR-17: asks which events move before anything is saved.
+      // FR-17: an event of a series asks which events move before anything is saved, but only
+      // when there is a choice; the one thing it can do, it does right away. An invitation to one
+      // event of a series (an override without its series) is a single event to Lucid.
+      const change = d.type === 'resize'
+      const { options } = scopeOptions({
+        kind: 'event',
+        action: change ? 'change' : 'move',
+        item: result.event,
+        to: new Date(result.times.start),
+        tz,
+      })
+      const [only] = options
+      if (options.length > 1) {
         const r = e.active.rect.current.translated ?? e.active.rect.current.initial
         latest.current.asked = true
         setAnchor(null)
-        setAll(false)
+        setReach(null)
         setAsking({
           event: result.event,
           ...result.times,
-          change: d.type === 'resize',
+          change,
+          options,
           at: r ? new DOMRect(r.left, r.top, r.width, r.height) : new DOMRect(),
         })
+      } else if (only) {
+        saveScope(only, { event: result.event, ...result.times, change })
       } else {
         move.mutate({ event: result.event, ...result.times })
         // Detached like a task's update below, so a series' scope can't change under it.
@@ -461,28 +468,39 @@ export function CalendarDnd({
   // (the question's own Escape and the popover's) changes nothing more.
   const cancelScope = () => {
     setAsking(null)
-    setAll(false)
+    setReach(null)
   }
 
   // "Only this event" moves the event optimistically (NFR-26); "All events" moves the series and
   // shows its saving state until it is reloaded. Either is detached from its hook right away, like
   // a task's drop: the series' scope goes with the question.
+  function saveScope(scope: Scope, vars: MoveVars) {
+    const { event, start, end } = vars
+    switch (scope) {
+      case 'this': {
+        const key = event.key
+        setHeld({ key, id: event.id, start, end, reach: 'this' })
+        // A detached mutation tells only its own promise that it has settled.
+        const release = () => {
+          setHeld((h) => (h?.key === key ? null : h))
+        }
+        moveOccurrence.mutateAsync(vars).then(release, release)
+        moveOccurrence.reset()
+        break
+      }
+      case 'all':
+        move.mutate(vars)
+        move.reset()
+        break
+      case 'following':
+        throw new Error('"This and following events" is not offered for events yet')
+    }
+  }
+
   const chooseScope = (scope: Scope) => {
     if (!asking) return
     const { event, start, end, change } = asking
-    if (scope === 'this') {
-      const key = event.key
-      setHeld({ key, id: event.id, start, end, all: false })
-      // A detached mutation tells only its own promise that it has settled.
-      const release = () => {
-        setHeld((h) => (h?.key === key ? null : h))
-      }
-      moveOccurrence.mutateAsync({ event, start, end, change }).then(release, release)
-      moveOccurrence.reset()
-    } else {
-      move.mutate({ event, start, end, change })
-      move.reset()
-    }
+    saveScope(scope, { event, start, end, change })
     cancelScope()
   }
 
@@ -494,8 +512,8 @@ export function CalendarDnd({
   const resize = preview?.type === 'resize' ? preview.event : null
   const scope = useMemo(
     () =>
-      asking ? { key: asking.event.key, id: asking.event.id, start: asking.start, end: asking.end, all } : null,
-    [asking, all],
+      asking ? { key: asking.event.key, id: asking.event.id, start: asking.start, end: asking.end, reach } : null,
+    [asking, reach],
   )
   const state = useMemo(
     () => ({
@@ -545,12 +563,9 @@ export function CalendarDnd({
           <ScopeQuestion
             asking={asking}
             anchor={anchor}
-            tz={tz}
             onChoose={chooseScope}
             onCancel={cancelScope}
-            onPreview={(s) => {
-              setAll(s === 'all')
-            }}
+            onPreview={setReach}
           />
         )}
       </Popover>

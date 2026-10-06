@@ -646,12 +646,13 @@ describe('CalendarDnd', () => {
       expect(chipIn(26, standupAt10).style.getPropertyValue('--tw-ring-color')).toBe(colors.solid)
       expect(chipIn(27, standupAt10)).not.toHaveClass('ring-2')
 
-      await user.tab({ shift: true })
+      await user.tab()
       expect(screen.getByRole('button', { name: 'All events' })).toHaveFocus()
       expect(chipIn(26, standupAt10)).toHaveClass('ring-2')
       expect(chipIn(27, standupAt10)).toHaveClass('ring-2')
 
       await user.tab()
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
       expect(chipIn(27, standupAt10)).not.toHaveClass('ring-2')
       await user.keyboard('{Escape}')
     })
@@ -721,27 +722,44 @@ describe('CalendarDnd', () => {
       fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
     })
 
-    it('offers only this event when a series on fixed days moves to another day', async () => {
-      vi.spyOn(globalThis, 'fetch')
+    it("moves only this event without asking when the series can't follow", async () => {
+      let release: (r: Response) => void = () => undefined
+      const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve
+          }),
+      )
+      // On the 15th of each month: another day is beyond the series (FR-17), only this one can go there.
       const monthly = toCalEvent(
         apiEvent({
           title: 'Rent',
-          key: 'e1@2026-10-09T08:00:00Z',
-          start: '2026-10-09T08:00:00Z',
-          end: '2026-10-09T09:00:00Z',
+          key: 'e1@2026-10-15T08:00:00Z',
+          start: '2026-10-15T08:00:00Z',
+          end: '2026-10-15T09:00:00Z',
           recurring: true,
-          rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
-          recurrenceId: '2026-10-09T08:00:00Z',
+          rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+          recurrenceId: '2026-10-15T08:00:00Z',
         }),
       )
-      renderWeek([monthly], [9, 10, 11].map((d) => new Date(2026, 9, d)))
+      const { queryClient } = renderWeek([monthly], [15, 16, 17].map((d) => new Date(2026, 9, d)))
 
-      await moveRight(chipIn(9, 'Rent, 10 AM'))
-      const question = await screen.findByRole('alertdialog', { name: moveQuestion })
-
-      expect(within(question).queryByRole('button', { name: 'All events' })).toBeNull()
-      expect(question).toHaveAccessibleDescription('The series stays on its days. Only this event can move to another day.')
-      fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
+      await moveRight(chipIn(15, 'Rent, 10 AM'))
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe(`/api/v1/events/e1/occurrences/${encodeURIComponent('2026-10-15T08:00:00Z')}`)
+      expect(init?.method).toBe('PUT')
+      expect(bodyOf(init)).toMatchObject({ start: '2026-10-16T08:00:00.000Z', end: '2026-10-16T09:00:00.000Z' })
+      expect(screen.getByRole('status')).toHaveTextContent('Event moved.')
+      // Held at its new place while it saves, as after "Only this event" (NFR-26).
+      expect(chipIn(16, 'Rent, 10 AM')).not.toHaveAttribute('aria-busy')
+      release(jsonResponse(200, apiEvent({ ...monthly, start: '2026-10-16T08:00:00Z', end: '2026-10-16T09:00:00Z' })))
+      await waitFor(() => {
+        expect(queryClient.isMutating()).toBe(0)
+      })
     })
 
     it('keeps the question after a keyboard move within the day', async () => {

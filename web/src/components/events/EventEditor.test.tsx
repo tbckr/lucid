@@ -202,22 +202,57 @@ describe('EventEditor', () => {
     })
   })
 
-  it('offers only this event when a series on fixed days moves to another day', async () => {
+  it("saves only this event without asking when the series can't follow the new day", async () => {
     const user = userEvent.setup()
     const event = toCalEvent(
       apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
     )
-    const { dialog } = await openEditor({ mode: 'edit', event })
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
     await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Sep 25/ }))
     await user.click(screen.getByRole('button', { name: 'Saturday, September 26th, 2026' }))
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-    const question = within(dialog).getByRole('alertdialog')
-    expect(within(question).queryByRole('button', { name: 'All events' })).toBeNull()
-    expect(
-      within(question).getByText('The series stays on its days. Only this event can move to another day.'),
-    ).toBeInTheDocument()
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const puts = fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    const [url, init] = puts[0]!
+    expect(urlOf(url)).toBe(`/api/v1/events/e1/occurrences/${encodeURIComponent('2026-09-25T08:00:00Z')}`)
+    expect(bodyOf(init)).toMatchObject({ start: '2026-09-26T08:00:00.000Z', end: '2026-09-26T09:00:00.000Z' })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+
+  // A new rule can only be the whole series' (FR-17), whatever day the event moves to with it.
+  it('saves a new rule for the whole series without asking', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Sep 25/ }))
+    await user.click(screen.getByRole('button', { name: 'Saturday, September 26th, 2026' }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const puts = fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    const [url, init] = puts[0]!
+    expect(urlOf(url)).toBe('/api/v1/events/e1')
+    expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=DAILY', start: '2026-09-26T08:00:00.000Z' })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
   })
 
   // FR-17: Apple writes an explicit "INTERVAL=1" the presets would otherwise

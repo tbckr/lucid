@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { KindSwitch } from '@/components/create/KindSwitch'
+import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { Button } from '@/components/ui/button'
 import { DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -28,16 +29,16 @@ import {
   shiftEnd,
   type EventFormValues,
 } from '@/lib/eventForm'
+import { type CalEvent } from '@/lib/events'
 import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
-import { canMoveAll } from '@/lib/seriesShift'
+import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
-import { ScopeChoice } from './ScopeChoice'
 import { TimeSelect } from './TimeSelect'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
@@ -108,7 +109,9 @@ function EditorForm({
   const askedBefore = useRef(false)
   // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
   const initial = event ? editFormValues(event, tz) : null
-  const [asking, setAsking] = useState<EventInput | null>(null)
+  // A save of a series waiting for the answer which events change (FR-17): what it saves, and
+  // the options, two or more.
+  const [asking, setAsking] = useState<{ input: EventInput; options: Scope[] } | null>(null)
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(eventFormSchema),
@@ -190,14 +193,43 @@ function EditorForm({
     })
   }, [asking, subscribe, cancelAsk])
 
+  // "Only this event" saves an override of the occurrence; "All events" the series (FR-17).
+  const saveScope = (scope: Scope, e: CalEvent, input: EventInput) => {
+    switch (scope) {
+      case 'this':
+        updateOccurrence.mutate({ event: e, input: occurrenceInput(input) }, { onSuccess: onDone })
+        break
+      case 'all':
+        update.mutate({ event: e, input }, { onSuccess: onDone })
+        break
+      case 'following':
+        throw new Error('"This and following events" is not offered for events yet')
+    }
+  }
+
   const onSubmit = handleSubmit((values) => {
     const input = formToInput(values, tz, event)
-    // A series asks which events to change only while the rule and the all-day flag are
-    // unchanged (FR-17); otherwise it saves the whole series right away (spec §4).
-    if (event?.recurring && event.recurrenceId && initial && keepsRuleAndAllDay(values, initial)) {
-      setAsking(input)
-      onScopeOpenChange?.(cancelAsk)
-      return
+    if (event && initial) {
+      // A series asks which events to change only when there is a choice (FR-17): a changed rule
+      // or all-day flag is the whole series', and a day the series can't follow only this
+      // event's. The one thing a save can do, it does right away.
+      const { options } = scopeOptions({
+        kind: 'event',
+        action: keepsRuleAndAllDay(values, initial) ? 'change' : 'rule',
+        item: event,
+        to: new Date(input.start),
+        tz,
+      })
+      const [only] = options
+      if (options.length > 1) {
+        setAsking({ input, options })
+        onScopeOpenChange?.(cancelAsk)
+        return
+      }
+      if (only) {
+        saveScope(only, event, input)
+        return
+      }
     }
     if (event) {
       update.mutate({ event, input }, { onSuccess: onDone })
@@ -206,13 +238,9 @@ function EditorForm({
     }
   })
 
-  const onChooseScope = (scope: 'this' | 'all') => {
+  const onChooseScope = (scope: Scope) => {
     if (!event || !asking) return
-    if (scope === 'this') {
-      updateOccurrence.mutate({ event, input: occurrenceInput(asking) }, { onSuccess: onDone })
-    } else {
-      update.mutate({ event, input: asking }, { onSuccess: onDone })
-    }
+    saveScope(scope, event, asking.input)
     cancelAsk()
   }
 
@@ -475,9 +503,9 @@ function EditorForm({
           // change (FR-17, spec §4); Escape cancels just this, not the editor dialog (NFR-27).
           <div className="w-full">
             <ScopeChoice
-              question={t('event.scope.change')}
-              note={t('event.scope.pastIncluded')}
-              allowAll={canMoveAll(event, new Date(asking.start), tz)}
+              question={t('scope.event.change')}
+              items={eventScopeItems(t, event, asking.options, prefs, now)}
+              color={colors.solid}
               onChoose={onChooseScope}
               onCancel={cancelAsk}
             />

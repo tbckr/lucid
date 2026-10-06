@@ -1,11 +1,12 @@
 import { PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { Button } from '@/components/ui/button'
 import { PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { splitLinks } from '@/lib/links'
 import { detailPlacement, lastKnownBox, type Box } from '@/lib/placement'
-import { ScopeChoice, type Scope } from './ScopeChoice'
+import { type Scope, type ScopeItem } from '@/lib/scope'
 
 /*
  * Parts of the details popovers of events (FR-09) and tasks (FR-16): the
@@ -135,6 +136,7 @@ export function DetailActions({
   onEdit,
   onDelete,
   onDeleteScope,
+  deleteScope,
   onScopeOpenChange,
 }: {
   editRef: Ref<HTMLButtonElement>
@@ -146,6 +148,8 @@ export function DetailActions({
   onDelete: () => void
   /** Deletes one event of a series or the whole series (FR-17); omitted for single events and tasks. */
   onDeleteScope?: (scope: Scope) => void
+  /** With `onDeleteScope`: the options the question offers (`eventScopeItems`), and the series' calendar color. */
+  deleteScope?: { items: ScopeItem[]; color: string }
   /**
    * Reports how to cancel the scope question while it is open, or `null` once it isn't, so the
    * surrounding popover can route Escape to it instead of closing (NFR-27): Radix's dismissable
@@ -171,13 +175,13 @@ export function DetailActions({
     onScopeOpenChange?.(null)
   }
 
-  if (confirming && onDeleteScope) {
+  if (confirming && onDeleteScope && deleteScope) {
     return (
       <ScopeChoice
         tone="destructive"
-        allowAll
-        question={t('event.scope.delete')}
-        note={t('event.scope.pastIncluded')}
+        question={t('scope.event.delete')}
+        items={deleteScope.items}
+        color={deleteScope.color}
         onChoose={onDeleteScope}
         onCancel={cancel}
       />

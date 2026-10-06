@@ -1,4 +1,6 @@
+import { type TFunction } from 'i18next'
 import { type CalEvent } from './events'
+import { formatPickerDate, type FormatPrefs } from './format'
 import { moveAllRefusal, type ShiftReason } from './seriesShift'
 
 /** Which events of a recurring series a change reaches: this one, this and the later ones, or all. */
@@ -53,4 +55,52 @@ export function scopeOptions(input: {
       return reason === null ? { options: ['this', 'all'] } : { options: ['this'], reason }
     }
   }
+}
+
+/** One of the five places of the reach glyph: an event the change reaches, or one it leaves as it is. */
+export type GlyphSlot = 'affected' | 'kept'
+
+/**
+ * The five places of the reach glyph for `reach` (FR-17): the middle one is
+ * the event acted on, the ones left of it earlier events, the ones right of it
+ * later ones.
+ */
+export function glyphSlots(reach: Scope): GlyphSlot[] {
+  switch (reach) {
+    case 'this':
+      return ['kept', 'kept', 'affected', 'kept', 'kept']
+    case 'following':
+      return ['kept', 'kept', 'affected', 'affected', 'affected']
+    case 'all':
+      return ['affected', 'affected', 'affected', 'affected', 'affected']
+  }
+}
+
+/** An option of the scope question: its scope, its label, and a line on what it reaches. */
+export interface ScopeItem {
+  scope: Scope
+  label: string
+  note: string
+}
+
+/**
+ * The options `options` of a change of `event` as the scope question lists
+ * them (FR-17), in the same order. "Only this event" names the day the event
+ * is shown on. `'following'` has no words before phase 3 and throws.
+ */
+export function eventScopeItems(t: TFunction, event: CalEvent, options: Scope[], prefs: FormatPrefs, now: Date): ScopeItem[] {
+  return options.map((scope) => {
+    switch (scope) {
+      case 'this':
+        return {
+          scope,
+          label: t('scope.event.this'),
+          note: t('scope.event.thisNote', { date: formatPickerDate(event.startsAt, prefs, now) }),
+        }
+      case 'all':
+        return { scope, label: t('scope.event.all'), note: t('scope.event.allNote') }
+      case 'following':
+        throw new Error('"This and following events" is not offered for events yet')
+    }
+  })
 }

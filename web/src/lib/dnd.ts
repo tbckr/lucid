@@ -13,6 +13,7 @@ import {
 } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
+import { type Scope } from './scope'
 
 /** Pixel height of one hour in the time grid. */
 /** Pointer travel before a press becomes a drag (FR-10): for moving entries, drawing new ones, and an attempt on one that can't move (FR-17). */
@@ -147,14 +148,15 @@ export function withDrop(drag: DragData, result: DropResult): DragData {
 /**
  * An event of a series dropped at new times while the user picks which
  * events move (FR-10, FR-17): `key` is the dropped occurrence, `id` its
- * series, and `all` is true while "All events" has the focus or the pointer.
+ * series, and `reach` the option that has the focus or the pointer, null
+ * while none has.
  */
 export interface ScopePreview {
   key: string
   id: string
   start: string
   end: string
-  all: boolean
+  reach: Scope | null
 }
 
 /**

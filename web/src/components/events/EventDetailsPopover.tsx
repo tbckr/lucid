@@ -9,6 +9,7 @@ import { eventTitle, type CalEvent } from '@/lib/events'
 import { formatEventWhen, type FormatPrefs } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { describeRRule } from '@/lib/rrule'
+import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from './DetailParts'
 import { RepeatGlyph } from './EventItems'
@@ -66,6 +67,21 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
     : t('event.recurring')
   const inZone = zoneTimes(event, tz, prefs, now)
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
+  // An event of a series asks which events to delete (FR-17); a single event only whether.
+  const deleteOptions = scopeOptions({ kind: 'event', action: 'delete', item: event, tz }).options
+  const deleteScoped = (scope: Scope) => {
+    switch (scope) {
+      case 'this':
+        deleteOccurrence.mutate(event)
+        break
+      case 'all':
+        del.mutate(event)
+        break
+      case 'following':
+        throw new Error('"This and following events" is not offered for events yet')
+    }
+    openDetail(null)
+  }
 
   return (
     <DetailContent
@@ -154,15 +170,8 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
               del.mutate(event)
               openDetail(null)
             }}
-            onDeleteScope={
-              event.recurring
-                ? (scope) => {
-                    if (scope === 'this') deleteOccurrence.mutate(event)
-                    else del.mutate(event)
-                    openDetail(null)
-                  }
-                : undefined
-            }
+            onDeleteScope={deleteOptions.length > 1 ? deleteScoped : undefined}
+            deleteScope={{ items: eventScopeItems(t, event, deleteOptions, prefs, now), color: colors.solid }}
             onScopeOpenChange={(cancel) => {
               cancelScope.current = cancel
             }}

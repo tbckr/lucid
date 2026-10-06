@@ -148,13 +148,6 @@
     "modifiedNotice": "Dieser Termin wurde einzeln geändert.",
     "confirmDelete": "Diesen Termin löschen?",
     "scope": {
-      "this": "Nur diesen Termin",
-      "all": "Alle Termine",
-      "move": "Dieser Termin wiederholt sich. Welche Termine verschieben?",
-      "change": "Dieser Termin wiederholt sich. Welche Termine ändern?",
-      "delete": "Dieser Termin wiederholt sich. Welche Termine löschen?",
-      "pastIncluded": "„Alle Termine“ schließt vergangene ein.",
-      "fixedDays": "Die Serie bleibt auf ihren Tagen. Auf einen anderen Tag lässt sich nur dieser Termin verschieben.",
       "newRule": "Eine neue Regel gilt für alle Termine der Serie."
     },
     "corrupted": "Beschädigter Termin",
@@ -205,6 +198,15 @@
     "chooseScopeChange": "Wähle, welche Termine sich ändern."
   },
   "scope": {
+    "event": {
+      "move": "Dieser Termin wiederholt sich. Welche Termine verschieben?",
+      "change": "Dieser Termin wiederholt sich. Welche Termine ändern?",
+      "delete": "Dieser Termin wiederholt sich. Welche Termine löschen?",
+      "this": "Nur diesen Termin",
+      "thisNote": "Nur {{date}}.",
+      "all": "Alle Termine",
+      "allNote": "Auch vergangene."
+    },
     "toast": {
       "thisMoved": "Nur dieser Termin verschoben.",
       "thisChanged": "Nur dieser Termin geändert.",

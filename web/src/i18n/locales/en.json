@@ -148,13 +148,6 @@
     "modifiedNotice": "This event was changed individually.",
     "confirmDelete": "Delete this event?",
     "scope": {
-      "this": "Only this event",
-      "all": "All events",
-      "move": "This event repeats. Which events should move?",
-      "change": "This event repeats. Which events should change?",
-      "delete": "This event repeats. Which events should be deleted?",
-      "pastIncluded": "“All events” includes past ones.",
-      "fixedDays": "The series stays on its days. Only this event can move to another day.",
       "newRule": "A new repeat rule applies to every event in the series."
     },
     "corrupted": "Corrupted event",
@@ -205,6 +198,15 @@
     "chooseScopeChange": "Choose which events should change."
   },
   "scope": {
+    "event": {
+      "move": "This event repeats. Which events should move?",
+      "change": "This event repeats. Which events should change?",
+      "delete": "This event repeats. Which events should be deleted?",
+      "this": "Only this event",
+      "thisNote": "Only {{date}}.",
+      "all": "All events",
+      "allNote": "Past ones too."
+    },
     "toast": {
       "thisMoved": "Only this event moved.",
       "thisChanged": "Only this event changed.",

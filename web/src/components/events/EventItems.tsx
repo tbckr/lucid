@@ -24,7 +24,7 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   const { pendingKeys, pendingSeries, scope, scopeAnchor } = useDndState()
   const pending = pendingKeys.has(event.key) || pendingSeries.has(event.id)
   const asked = scope?.key === event.key
-  const ringed = asked || (scope?.all === true && scope.id === event.id)
+  const ringed = asked || (scope?.reach === 'all' && scope.id === event.id)
   // The drag overlay shows the dropped event for a moment after the drop, then is gone: as the
   // one tile of it that can't be dragged, it doesn't anchor the question.
   const anchors = asked && !drag.disabled
