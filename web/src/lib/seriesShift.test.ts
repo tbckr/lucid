@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { canMoveAll, seriesShift } from './seriesShift'
+import { canMoveAll, moveAllRefusal, seriesShift } from './seriesShift'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
 interface SeriesShiftCase {
@@ -107,5 +107,55 @@ describe('canMoveAll', () => {
     } finally {
       process.env.TZ = originalTz
     }
+  })
+})
+
+describe('moveAllRefusal', () => {
+  /** A timed Berlin series whose shown occurrence starts at `startsAt`. */
+  function series(rrule: string, startsAt: string) {
+    return { rrule, allDay: false, timezone: '', start: new Date(startsAt).toISOString(), startsAt: new Date(startsAt) }
+  }
+
+  it('allows a move the series can follow', () => {
+    const event = series('FREQ=WEEKLY;BYDAY=MO', '2026-03-09T09:00:00+01:00') // Monday
+    const tuesday = new Date('2026-03-10T09:00:00+01:00')
+    expect(moveAllRefusal(event, tuesday, 'Europe/Berlin')).toBeNull()
+  })
+
+  it('refuses another day of a monthly series on fixed days', () => {
+    const event = series('FREQ=MONTHLY;BYMONTHDAY=15', '2026-03-15T09:00:00+01:00')
+    const nextDay = new Date('2026-03-16T09:00:00+01:00')
+    expect(moveAllRefusal(event, nextDay, 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('refuses another time when the rule fixes the hour', () => {
+    const event = series('FREQ=DAILY;BYHOUR=9', '2026-03-09T09:00:00+01:00')
+    const later = new Date('2026-03-09T10:00:00+01:00')
+    expect(moveAllRefusal(event, later, 'Europe/Berlin')).toBe('fixedTimes')
+  })
+
+  it('refuses another day even when the rule fixes the hour', () => {
+    // BYHOUR is another BY part: no rotation, so Monday -> Wednesday is refused.
+    const event = series('FREQ=WEEKLY;BYDAY=MO;BYHOUR=9', '2026-03-09T09:00:00+01:00')
+    const wednesday = new Date('2026-03-11T09:00:00+01:00')
+    expect(moveAllRefusal(event, wednesday, 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('blames the time when only the time keeps the series from following', () => {
+    // Every day at 09:00: the day is not what the rule fixes, the hour is.
+    const event = series('FREQ=DAILY;BYHOUR=9', '2026-03-09T09:00:00+01:00')
+    const nextDayLater = new Date('2026-03-10T10:00:00+01:00')
+    expect(moveAllRefusal(event, nextDayLater, 'Europe/Berlin')).toBe('fixedTimes')
+  })
+
+  it('always blames the days for an all-day event', () => {
+    const event = {
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+      allDay: true,
+      timezone: '',
+      start: '2026-03-15T00:00:00Z',
+      startsAt: new Date(2026, 2, 15),
+    }
+    expect(moveAllRefusal(event, new Date('2026-03-16T00:00:00Z'), 'Europe/Berlin')).toBe('fixedDays')
   })
 })

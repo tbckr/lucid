@@ -230,24 +230,50 @@ function allDayWallClock(date: Date): string {
   return `${formatInTimeZone(date, 'UTC', 'yyyy-MM-dd')}T00:00`
 }
 
+/** Why a series cannot follow a move: it stays on its days, or at its times of day. */
+export type ShiftReason = 'fixedDays' | 'fixedTimes'
+
 /**
- * Whether a series can follow its event all the way to `newStart` (FR-17):
- * `seriesShift` of the event's rule from its current wall-clock start to
- * `newStart`'s. All-day events have no real zone, so their day comes from
- * the UTC-midnight wire format (`start`), read in UTC, never from
- * `startsAt` or `browserZone`; timed events use `event.timezone` (the
- * series' own zone) or, lacking one, `browserZone`, as before.
+ * Why a series cannot follow its event all the way to `newStart` (FR-17), or
+ * `null` if it can: `seriesShift` of the event's rule from its current
+ * wall-clock start to `newStart`'s. All-day events have no real zone, so
+ * their day comes from the UTC-midnight wire format (`start`), read in UTC,
+ * never from `startsAt` or `browserZone`; timed events use `event.timezone`
+ * (the series' own zone) or, lacking one, `browserZone`, as before.
+ *
+ * A refusal is `'fixedTimes'` when the rule fixes the clock itself (BYHOUR,
+ * BYMINUTE or BYSECOND) and the move changes the clock — that is what the
+ * user can change — and `'fixedDays'` otherwise. All-day events have no
+ * clock, so theirs is always `'fixedDays'`.
  */
+export function moveAllRefusal(
+  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
+  newStart: Date,
+  browserZone: string,
+): ShiftReason | null {
+  let from: string
+  let to: string
+  if (event.allDay) {
+    from = allDayWallClock(new Date(event.start))
+    to = allDayWallClock(newStart)
+  } else {
+    const zone = event.timezone || browserZone
+    from = wallClock(event.startsAt, zone)
+    to = wallClock(newStart, zone)
+  }
+  if (seriesShift(event.rrule, from, to) !== null) return null
+
+  const f = parseWallClock(from)
+  const t = parseWallClock(to)
+  const clockChanged = f.hh !== t.hh || f.mm !== t.mm
+  return hasClockParts(event.rrule) && clockChanged ? 'fixedTimes' : 'fixedDays'
+}
+
+/** Whether a series can follow its event all the way to `newStart` (FR-17); see `moveAllRefusal`. */
 export function canMoveAll(
   event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
   newStart: Date,
   browserZone: string,
 ): boolean {
-  if (event.allDay) {
-    return seriesShift(event.rrule, allDayWallClock(new Date(event.start)), allDayWallClock(newStart)) !== null
-  }
-  const zone = event.timezone || browserZone
-  const from = wallClock(event.startsAt, zone)
-  const to = wallClock(newStart, zone)
-  return seriesShift(event.rrule, from, to) !== null
+  return moveAllRefusal(event, newStart, browserZone) === null
 }
