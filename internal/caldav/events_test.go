@@ -740,6 +740,52 @@ func TestUpdateSeriesChangedFieldsOnly(t *testing.T) {
 	wantDateProp(t, master, ical.PropDateTimeEnd, "20250303T091500", "Europe/Berlin", false)
 }
 
+// TestRuleChangeFromAnExceptionKeepsItsTitleOut checks that changing the rule
+// from an exception takes only the changed title into the series, as "all
+// events" with the rule as it is does: the exception's own title does not
+// replace the series' title (spec section 3 items 3 and 4, FR-17).
+func TestRuleChangeFromAnExceptionKeepsItsTitleOut(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, title string
+		wantMaster  string // the series' title afterwards
+	}{
+		{"title unchanged", "Special", "Standup"},
+		{"title changed", "Renamed", "Renamed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+				"DTSTART:20250310T080000Z", "DTEND:20250310T083000Z", "RRULE:FREQ=WEEKLY",
+				"END:VEVENT",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Special",
+				"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T080000Z", "DTEND:20250317T083000Z",
+				"END:VEVENT")
+			special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, special.ETag, domain.EventInput{
+				Title: tt.title, Start: special.Start, End: special.End,
+				RRule: "FREQ=DAILY;COUNT=5", InstanceStart: special.RecurrenceID,
+			})
+			mustNoErr(t, err)
+
+			wantStored(t, e, "work", "series.ics", "SUMMARY:"+tt.wantMaster, "RRULE:FREQ=DAILY;COUNT=5")
+			ves := vevents(mustParse(t, stored(t, e, "work", "series.ics")))
+			if len(ves) != 2 || ves[0].Props.Get(ical.PropRecurrenceID) != nil || ves[1].Props.Get(ical.PropRecurrenceID) == nil {
+				t.Fatalf("want the series, then its exception; got %d VEVENTs", len(ves))
+			}
+			if got := text(ves[0].Props, ical.PropSummary); got != tt.wantMaster {
+				t.Errorf("series title = %q; want %q", got, tt.wantMaster)
+			}
+			if got := text(ves[1].Props, ical.PropSummary); got != tt.title {
+				t.Errorf("exception title = %q; want %q", got, tt.title)
+			}
+		})
+	}
+}
+
 // TestUpdateSeriesKeepsOtherExceptions checks that "all events" from a plain
 // event moves the RECURRENCE-IDs of the other exceptions along, but leaves
 // their own times and fields, and writes the series as the first VEVENT
@@ -880,9 +926,10 @@ func TestUpdateSeriesFixedDays(t *testing.T) {
 }
 
 // TestUpdateSeriesNewRule checks that "all events" with a changed rule
-// writes the rule and every field as entered, and still moves the series by
-// the distance from where the edited exception was shown (spec section 3
-// items 2 and 4, FR-17).
+// writes the rule and the fields changed from the event as shown into the
+// series and the edited exception, and still moves the series by the
+// distance from where the edited exception was shown (spec section 3 items
+// 2 and 4, FR-17).
 func TestUpdateSeriesNewRule(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
@@ -908,7 +955,7 @@ func TestUpdateSeriesNewRule(t *testing.T) {
 	mustNoErr(t, err)
 	checkOccurrences(t, evs, []occ{
 		{title: "Planning", start: date(2025, 3, 3, 9, 0), end: date(2025, 3, 3, 10, 0), rid: ptr(date(2025, 3, 3, 9, 0))},
-		{title: "Special", start: date(2025, 3, 17, 12, 0), end: date(2025, 3, 17, 13, 0), rid: ptr(date(2025, 3, 17, 9, 0))},
+		{title: "Planning", start: date(2025, 3, 17, 12, 0), end: date(2025, 3, 17, 13, 0), rid: ptr(date(2025, 3, 17, 9, 0))},
 	})
 }
 

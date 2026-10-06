@@ -813,7 +813,9 @@ surveyed client and server round-trips (see [Summary](#summary)).
   series moved later could lose its last occurrence.
 - A changed `RRULE` or `allDay` flag applies to the whole series as entered,
   with the request's own `timezone` (see "Only this event" above for the
-  unchanged-rule case).
+  unchanged-rule case). It takes only the changed title, description and
+  location into the series too (`applyChangedEventFields`), so an
+  exception's own title stays out of it.
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,

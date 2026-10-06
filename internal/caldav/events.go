@@ -496,9 +496,11 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A move
 		// the series cannot follow is refused as in moveSeries, judged on
 		// DTSTART and the references, since the rule is the one entered, and
-		// nothing is written.
+		// nothing is written. Of title, description and location only what
+		// changed from the event as shown goes into the series, see
+		// applyChangedEventFields.
 		rid := *in.InstanceStart
-		_, shown := shownOccurrence(cal, master, oldTm, rid)
+		ov, shown := shownOccurrence(cal, master, oldTm, rid)
 		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
 		if err != nil {
 			return domain.Event{}, nil, err
@@ -517,7 +519,8 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		}
 		end = start.Add(in.End.Sub(in.Start))
 		instance = &in.Start
-		applyEventFields(cal, master, in, rr, start, end, tz)
+		applyEventSchedule(cal, master, in, rr, start, end, tz)
+		applyChangedEventFields(master, ov, in)
 	default:
 		if rr == "" {
 			removeRecurrence(cal, master)
@@ -637,6 +640,24 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		shiftDatePropBy(p, asStart.shift)
 	}
 
+	applyChangedEventFields(master, ov, in)
+
+	if ov != nil {
+		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, f))
+		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, f))
+		ov.Props.Del(ical.PropDuration)
+		bumpChangeProps(ov, now)
+	}
+	return mv.shift(dateValue{t: rid, allDay: tm.start.allDay}), nil
+}
+
+// applyChangedEventFields writes the title, description and location of in
+// into the series master, each only where it differs from the event as shown:
+// the override ov's own value, else the master's. An exception's own title
+// does not replace the series' title that way. A changed field goes into ov,
+// the exception edited, too (spec section 3 items 3 and 5, FR-17). ov is nil
+// where the edited event is no exception.
+func applyChangedEventFields(master, ov *ical.Component, in domain.EventInput) {
 	for _, field := range []struct{ name, value string }{
 		{ical.PropSummary, in.Title},
 		{ical.PropDescription, in.Description},
@@ -654,14 +675,6 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 			setTextKept(ov.Props, field.name, field.value)
 		}
 	}
-
-	if ov != nil {
-		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, f))
-		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, f))
-		ov.Props.Del(ical.PropDuration)
-		bumpChangeProps(ov, now)
-	}
-	return mv.shift(dateValue{t: rid, allDay: tm.start.allDay}), nil
 }
 
 // Why "all events" refuses to move a series (FR-17). Each is a
@@ -905,6 +918,13 @@ func applyEventFields(cal *ical.Calendar, c *ical.Component, in domain.EventInpu
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, in.Description)
 	setText(c.Props, ical.PropLocation, in.Location)
+	applyEventSchedule(cal, c, in, rr, start, end, tz)
+}
+
+// applyEventSchedule writes the rule rr (unless empty) and the dates of
+// applyEventFields into c, and leaves its title, description and location
+// alone (FR-17).
+func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start, end time.Time, tz string) {
 	if rr != "" {
 		p := ical.NewProp(ical.PropRecurrenceRule)
 		p.Value = rr

@@ -155,12 +155,12 @@ attendees. A single event gets none.
 - **Edited exception:** with the rule and `allDay` unchanged, the edited
   exception, if there is one, takes `start` and `end`. A save that changes
   the rule or `allDay` leaves it at its own start and end (only its
-  `RECURRENCE-ID` shifts along with the series), and writes every field
-  into the series as entered.
-- **Fields:** with the rule and `allDay` unchanged, only fields changed
-  against the shown occurrence are written into the series and into the
-  edited exception; other exceptions keep their own times and fields, only
-  their `RECURRENCE-ID` shifts along with the series.
+  `RECURRENCE-ID` shifts along with the series).
+- **Fields:** only fields changed against the shown occurrence are written
+  into the series and into the edited exception, also where the rule or
+  `allDay` changes, so an exception's own title does not replace the
+  series'; other exceptions keep their own times and fields, only their
+  `RECURRENCE-ID` shifts along with the series.
 - `UNTIL`, `EXDATE` and `RDATE` shift along with the series in the same
   way (a date-only value by the change of date only).
 - The weekdays of a weekly rule with plain `BYDAY` weekdays (no ordinal, no
