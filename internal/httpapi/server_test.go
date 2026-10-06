@@ -280,7 +280,7 @@ func TestLogoutDropsUndo(t *testing.T) {
 	h := newHarness(t, func(o *Options) { o.Undo = undo.New(undo.Options{}) })
 	c := h.login(t)
 	h.svc.todos = []domain.Todo{{ID: "t1", Title: "Water plants"}}
-	h.svc.updateTodoSnapshot = &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+	h.svc.updateTodoSnapshot = &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
 	w := h.do(t, c, req{
 		method: http.MethodPut, path: "/api/v1/todos/t1",
 		body:    `{"title":"Water plants","status":"COMPLETED"}`,

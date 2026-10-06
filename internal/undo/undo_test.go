@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -45,14 +46,14 @@ func newStore(t *testing.T, mod func(*Options)) (*Store, *fakeClock) {
 }
 
 // snapshot returns a snapshot of data; Put stamps its TakenAt.
-func snapshot(data []byte) domain.TodoSnapshot {
-	return domain.TodoSnapshot{
-		TodoID:   "todo-1",
-		ETag:     "etag-1",
-		Data:     data,
-		CopyID:   "copy-1",
-		CopyETag: "copy-etag-1",
-		Account:  "https://dav.example.com\x00tim",
+func snapshot(data []byte) domain.Snapshot {
+	return domain.Snapshot{
+		Kind:    domain.SnapshotTodo,
+		ID:      "todo-1",
+		ETag:    "etag-1",
+		Data:    data,
+		Created: []domain.CreatedRef{{ID: "copy-1", ETag: "copy-etag-1"}},
+		Account: "https://dav.example.com\x00tim",
 	}
 }
 
@@ -70,14 +71,39 @@ func TestPutGet(t *testing.T) {
 	if !ok {
 		t.Fatalf("Get(s1) ok = false")
 	}
-	if got.TodoID != snap.TodoID || got.ETag != snap.ETag || !bytes.Equal(got.Data, snap.Data) ||
-		got.CopyID != snap.CopyID || got.CopyETag != snap.CopyETag || got.Account != snap.Account ||
+	if got.Kind != snap.Kind || got.ID != snap.ID || got.ETag != snap.ETag || !bytes.Equal(got.Data, snap.Data) ||
+		!reflect.DeepEqual(got.Created, snap.Created) || got.Account != snap.Account ||
 		!got.TakenAt.Equal(clk.Now()) {
 		t.Errorf("Get() = %+v, want %+v taken at %v", got, snap, clk.Now())
 	}
 
 	if _, ok := s.Get("s2", token); ok {
 		t.Error("Get() with another owner ok = true, want false")
+	}
+}
+
+// A snapshot of an event keeps its kind and the resources its write created
+// (FR-17).
+func TestPutKeepsKindAndCreated(t *testing.T) {
+	t.Parallel()
+	s, _ := newStore(t, nil)
+	snap := domain.Snapshot{
+		Kind:    domain.SnapshotEvent,
+		ID:      "e1",
+		ETag:    `"2"`,
+		Data:    []byte("x"),
+		Created: []domain.CreatedRef{{ID: "c1", ETag: `"1"`}},
+	}
+	token, ok := s.Put("s1", snap)
+	if !ok {
+		t.Fatalf("Put() ok = false")
+	}
+	got, ok := s.Get("s1", token)
+	if !ok {
+		t.Fatalf("Get() ok = false")
+	}
+	if got.Kind != domain.SnapshotEvent || got.ID != "e1" || !reflect.DeepEqual(got.Created, snap.Created) {
+		t.Errorf("Get() = %+v; want kind %q, ID e1 and created %v", got, domain.SnapshotEvent, snap.Created)
 	}
 }
 

@@ -388,17 +388,30 @@ func (e *ValidationError) Error() string { return "invalid input: " + e.Msg }
 // Is reports ErrInvalidInput as a match.
 func (e *ValidationError) Is(target error) bool { return target == ErrInvalidInput }
 
-// TodoSnapshot captures a todo's resource exactly as it was before a write,
-// so that write can be undone (FR-17). It is kept in the undo store, keyed by
-// a token handed to the client.
-type TodoSnapshot struct {
-	TodoID   string // master ID
-	ETag     string // master ETag after the write: If-Match of the restore
-	Data     []byte // the resource exactly as read before the write
-	CopyID   string // completed copy created by the write, "" if none
-	CopyETag string
-	Account  string    // origin + "\x00" + username
-	TakenAt  time.Time // when the undo store took it in: stamped by the store, not by the service
+// SnapshotKind tells which kind of resource a Snapshot was taken of, so an
+// undo token of one kind never restores the other.
+type SnapshotKind string
+
+// The kinds of resource a Snapshot is taken of.
+const (
+	SnapshotTodo  SnapshotKind = "todo"
+	SnapshotEvent SnapshotKind = "event"
+)
+
+// CreatedRef is a resource a write created, removed again by its undo.
+type CreatedRef struct{ ID, ETag string }
+
+// Snapshot captures a resource, a todo's or an event's, exactly as it was
+// before a write, so that write can be undone (FR-17). It is kept in the undo
+// store, keyed by a token handed to the client.
+type Snapshot struct {
+	Kind    SnapshotKind
+	ID      string       // the changed resource (todo or event ID)
+	ETag    string       // its ETag after the write: If-Match of the restore
+	Data    []byte       // the resource exactly as read before the write
+	Created []CreatedRef // resources the write created, e.g. a completed copy
+	Account string       // origin + "\x00" + username
+	TakenAt time.Time    // when the undo store took it in: stamped by the store, not by the service
 }
 
 // CalendarService is bound to one account. Implementations must be safe for
@@ -435,12 +448,12 @@ type CalendarService interface {
 	// UpdateTodo replaces the todo. etag must match (If-Match), otherwise
 	// ErrConflict. The change of a recurring todo returns the snapshot that
 	// RestoreTodo undoes it with, or nil when it cannot be undone (FR-17).
-	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, *TodoSnapshot, error)
+	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, *Snapshot, error)
 	// RestoreTodo undoes a change of a todo by writing back the resource as
 	// the change read it, unless the todo changed since (ErrConflict), and
 	// removes the completed copy the change left, unless that changed since:
 	// then it stays, and the todo reports CopyKept (FR-17).
-	RestoreTodo(ctx context.Context, snap TodoSnapshot) (Todo, error)
+	RestoreTodo(ctx context.Context, snap Snapshot) (Todo, error)
 	DeleteTodo(ctx context.Context, todoID, etag string) error
 }
 

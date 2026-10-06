@@ -60,7 +60,7 @@ type fakeService struct {
 	// updateTodoResult overrides UpdateTodo's default response, if set.
 	updateTodoResult *domain.Todo
 	// updateTodoSnapshot is returned as UpdateTodo's snapshot, if set.
-	updateTodoSnapshot *domain.TodoSnapshot
+	updateTodoSnapshot *domain.Snapshot
 	// occurrenceETag is the ETag DeleteOccurrence returns: "" as for a
 	// deleted resource.
 	occurrenceETag string
@@ -73,7 +73,7 @@ type fakeService struct {
 	gotEnd   time.Time
 	gotEvent domain.EventInput
 	gotTodo  domain.TodoInput
-	gotSnap  domain.TodoSnapshot
+	gotSnap  domain.Snapshot
 	gotRID   time.Time
 	gotOcc   domain.OccurrenceInput
 }
@@ -183,7 +183,7 @@ func (f *fakeService) CreateTodo(_ context.Context, cal string, in domain.TodoIn
 	return domain.Todo{ID: "t-new", CalendarID: cal, Title: in.Title}, nil
 }
 
-func (f *fakeService) UpdateTodo(_ context.Context, id, etag string, in domain.TodoInput) (domain.Todo, *domain.TodoSnapshot, error) {
+func (f *fakeService) UpdateTodo(_ context.Context, id, etag string, in domain.TodoInput) (domain.Todo, *domain.Snapshot, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotTodo = id, etag, in
 	snap := f.updateTodoSnapshot
@@ -197,14 +197,14 @@ func (f *fakeService) UpdateTodo(_ context.Context, id, etag string, in domain.T
 	return domain.Todo{ID: id, Title: in.Title, Checklist: in.Checklist}, snap, nil
 }
 
-func (f *fakeService) RestoreTodo(_ context.Context, snap domain.TodoSnapshot) (domain.Todo, error) {
+func (f *fakeService) RestoreTodo(_ context.Context, snap domain.Snapshot) (domain.Todo, error) {
 	f.mu.Lock()
 	f.gotSnap = snap
 	f.mu.Unlock()
 	if err := f.record("RestoreTodo"); err != nil {
 		return domain.Todo{}, err
 	}
-	return domain.Todo{ID: snap.TodoID}, nil
+	return domain.Todo{ID: snap.ID}, nil
 }
 
 func (f *fakeService) DeleteTodo(_ context.Context, id, etag string) error {

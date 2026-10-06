@@ -492,7 +492,7 @@ var completeIfMatch = map[string]string{"If-Match": `"t-etag"`}
 
 // putTodoSnapshot drives a PUT that the fake answers with snap as the
 // change's snapshot, and returns the decoded response.
-func putTodoSnapshot(t *testing.T, h *harness, c *client, id string, snap *domain.TodoSnapshot) domain.Todo {
+func putTodoSnapshot(t *testing.T, h *harness, c *client, id string, snap *domain.Snapshot) domain.Todo {
 	t.Helper()
 	h.svc.todos = []domain.Todo{{ID: id, Title: "Water plants"}}
 	h.svc.updateTodoSnapshot = snap
@@ -504,7 +504,7 @@ func putTodoSnapshot(t *testing.T, h *harness, c *client, id string, snap *domai
 
 func TestUpdateTodoReturnsUndoToken(t *testing.T) {
 	t.Parallel()
-	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
 
 	h := newHarness(t, withUndo)
 	c := h.login(t)
@@ -524,7 +524,7 @@ func TestUpdateTodoReturnsUndoToken(t *testing.T) {
 
 func TestUndoTodo(t *testing.T) {
 	t.Parallel()
-	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"2"`, Data: []byte("snapshot bytes"), Account: "acct", TakenAt: time.Now()}
 
 	h := newHarness(t, withUndo)
 	c := h.login(t)
@@ -540,7 +540,7 @@ func TestUndoTodo(t *testing.T) {
 	if restored.ID != "t1" {
 		t.Errorf("restored = %+v", restored)
 	}
-	if h.svc.gotSnap.TodoID != "t1" || string(h.svc.gotSnap.Data) != "snapshot bytes" || h.svc.gotSnap.ETag != `"2"` {
+	if h.svc.gotSnap.ID != "t1" || string(h.svc.gotSnap.Data) != "snapshot bytes" || h.svc.gotSnap.ETag != `"2"` {
 		t.Errorf("RestoreTodo got %+v", h.svc.gotSnap)
 	}
 
@@ -554,7 +554,7 @@ func TestUndoTodo(t *testing.T) {
 
 func TestUndoTodoErrors(t *testing.T) {
 	t.Parallel()
-	snap := &domain.TodoSnapshot{TodoID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
 
 	// tokenHarness logs in, performs a PUT that yields a token, and returns
 	// the harness, its client and the token.
@@ -647,6 +647,23 @@ func TestUndoTodoErrors(t *testing.T) {
 		h, c, token := tokenHarness(t)
 		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`, noCSRF: true})
 		expectError(t, w, http.StatusForbidden, middleware.CodeCSRFInvalid)
+	})
+
+	// A token an event change returned never undoes a todo, even for the same
+	// ID: the kind is part of what it was issued for.
+	t.Run("token of an event change", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		todo := putTodoSnapshot(t, h, c, "t1", &domain.Snapshot{Kind: domain.SnapshotEvent, ID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()})
+		if todo.UndoToken == "" {
+			t.Fatalf("no undo token")
+		}
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + todo.UndoToken + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+		if slices.Contains(h.svc.calls, "RestoreTodo") {
+			t.Errorf("calls = %v; want no RestoreTodo", h.svc.calls)
+		}
 	})
 
 	t.Run("token from another session", func(t *testing.T) {

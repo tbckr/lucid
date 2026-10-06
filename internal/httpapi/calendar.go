@@ -379,37 +379,56 @@ func (s *Server) handleUpdateTodo(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if snap != nil && s.undo != nil {
-		if c, cerr := r.Cookie(CookieName); cerr == nil {
-			if token, ok := s.undo.Put(c.Value, *snap); ok {
-				todo.UndoToken = token
-			}
-		}
-	}
+	todo.UndoToken = s.storeUndo(r, snap)
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
 }
 
-// undoRequest is the strictly decoded body of handleUndoTodo.
+// storeUndo keeps snap in the undo store for the caller's session and returns
+// the token that undoes it (FR-17). It returns "" when snap is nil, when undo
+// is off, when the request has no session cookie, or when the store refuses
+// the snapshot as too large: the change has succeeded all the same, it just
+// has no undo.
+func (s *Server) storeUndo(r *http.Request, snap *domain.Snapshot) string {
+	if snap == nil || s.undo == nil {
+		return ""
+	}
+	c, err := r.Cookie(CookieName)
+	if err != nil {
+		return ""
+	}
+	token, ok := s.undo.Put(c.Value, *snap)
+	if !ok {
+		return ""
+	}
+	return token
+}
+
+// undoRequest is the strictly decoded body of an undo route.
 type undoRequest struct {
 	Token string `json:"token"`
 }
 
-// handleUndoTodo undoes the recurring-todo change that returned Token, by
-// restoring the snapshot it is associated with (FR-17). There is no If-Match:
+// takeUndo is what an undo route of resources of kind does before it calls
+// the service: it resolves the path parameter idParam, the session's service
+// and the token of the body, and looks up the snapshot of the token (FR-17).
+// owner and token identify the entry for settleUndo. There is no If-Match:
 // the token itself, single-use and short-lived, is the concurrency control.
-func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, "todoId")
+// A token that is unknown, expired, used, another session's, of another kind
+// or for another resource is "nothing to undo" (404). On failure it writes
+// the response and returns ok=false.
+func (s *Server) takeUndo(w http.ResponseWriter, r *http.Request, idParam string, kind domain.SnapshotKind) (svc domain.CalendarService, snap domain.Snapshot, owner, token string, ok bool) {
+	id, ok := pathID(w, r, idParam)
 	if !ok {
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
-	svc, ok := s.service(w, r)
+	svc, ok = s.service(w, r)
 	if !ok {
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
 	var in undoRequest
 	if err := decodeJSON(r, &in); err != nil {
 		s.writeError(w, r, err)
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
 	// A malformed token is invalid input, distinct from a well-formed one
 	// that is simply unknown/expired/used/foreign (404 below). Checked
@@ -417,35 +436,49 @@ func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
 	// of whether undo is wired up.
 	if !undo.ValidToken(in.Token) {
 		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "malformed token")
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
 	if s.undo == nil {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "nothing to undo")
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
 	// s.service above already required a valid session cookie, so this
 	// cannot actually fail; kept defensive rather than ignoring the error.
 	c, err := r.Cookie(CookieName)
 	if err != nil {
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
-		return
+		return nil, domain.Snapshot{}, "", "", false
 	}
-	snap, ok := s.undo.Get(c.Value, in.Token)
-	if !ok || snap.TodoID != id {
+	snap, ok = s.undo.Get(c.Value, in.Token)
+	if !ok || snap.Kind != kind || snap.ID != id {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "nothing to undo")
+		return nil, domain.Snapshot{}, "", "", false
+	}
+	return svc, snap, c.Value, in.Token, true
+}
+
+// settleUndo settles the token of an undo that the service answered with err.
+// A temporary upstream failure keeps the snapshot so the client can retry;
+// everything else (success, conflict, gone) consumes it.
+func (s *Server) settleUndo(owner, token string, err error) {
+	if err == nil || errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
+		s.undo.Delete(owner, token)
+	}
+}
+
+// handleUndoTodo undoes the recurring-todo change that returned Token, by
+// restoring the snapshot it is associated with (FR-17), see takeUndo.
+func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
+	svc, snap, owner, token, ok := s.takeUndo(w, r, "todoId", domain.SnapshotTodo)
+	if !ok {
 		return
 	}
 	restored, err := svc.RestoreTodo(r.Context(), snap)
+	s.settleUndo(owner, token, err)
 	if err != nil {
-		// A temporary upstream failure keeps the snapshot so the client can
-		// retry; everything else (conflict, gone) consumes it.
-		if errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrNotFound) {
-			s.undo.Delete(c.Value, in.Token)
-		}
 		s.fail(w, r, err)
 		return
 	}
-	s.undo.Delete(c.Value, in.Token)
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(restored))
 }
 

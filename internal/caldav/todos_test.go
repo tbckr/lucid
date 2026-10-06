@@ -1317,7 +1317,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		if c == nil || !sameTime(c.Start, ptr(date(2025, 3, 10, 15, 0))) {
 			t.Fatalf("completed copy = %+v; want one at 2025-03-10T15:00Z", c)
 		}
-		if snap == nil || snap.CopyID != c.ID || snap.CopyETag != c.ETag || snap.ETag != got.ETag {
+		if snap == nil || !reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: c.ID, ETag: c.ETag}}) || snap.ETag != got.ETag {
 			t.Errorf("snapshot = %+v; want one with the copy %s (%s)", snap, c.ID, c.ETag)
 		}
 		if !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) ||
@@ -3289,7 +3289,7 @@ func TestRuleChangeKeepsCompletions(t *testing.T) {
 		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
 		mustNoErr(t, err)
 		if snap != nil {
-			t.Errorf("snapshot for %s; want none", snap.TodoID)
+			t.Errorf("snapshot for %s; want none", snap.ID)
 		}
 		if got.Recurring || !sameTime(got.Start, ptr(date(2025, 3, 17, 9, 0))) || got.CompletedCopy != nil {
 			t.Errorf("single task = %+v; want it at 17 March without a rule", got)
@@ -3332,7 +3332,7 @@ func TestRuleChangeKeepsCompletions(t *testing.T) {
 		got, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), "FREQ=DAILY"))
 		mustNoErr(t, err)
 		if snap != nil {
-			t.Errorf("snapshot for %s; want none", snap.TodoID)
+			t.Errorf("snapshot for %s; want none", snap.ID)
 		}
 		if got.RRule != "FREQ=DAILY" || !sameTime(got.Start, ptr(date(2025, 3, 17, 9, 0))) {
 			t.Errorf("updated series = %+v", got)
@@ -3648,7 +3648,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 	t.Parallel()
 	// complete completes the occurrence of a seeded weekly series and returns
 	// the series' ID, its seeded resource, the change and its snapshot.
-	complete := func(t *testing.T, e *env) (id, seeded string, done domain.Todo, snap domain.TodoSnapshot) {
+	complete := func(t *testing.T, e *env) (id, seeded string, done domain.Todo, snap domain.Snapshot) {
 		t.Helper()
 		id = seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
 		seeded = storedObject(t, e, id)
@@ -3731,7 +3731,8 @@ func TestRestoreTodoFailures(t *testing.T) {
 		f := listedTodo(t, e, id)
 		done, snap, err := e.svc.UpdateTodo(ctx, id, f.ETag, completeInput(&f))
 		mustNoErr(t, err)
-		if done.CompletedCopy == nil || done.CompletedCopy.ETag != "" || snap == nil || snap.CopyETag != "" {
+		if done.CompletedCopy == nil || done.CompletedCopy.ETag != "" || snap == nil ||
+			!reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: done.CompletedCopy.ID}}) {
 			t.Fatalf("completion = %+v, snapshot %+v; want a copy without ETag and a snapshot", done, snap)
 		}
 		copyPath, _, err := decodeObjectID(e.mock.HomePath(), done.CompletedCopy.ID)
@@ -3768,6 +3769,25 @@ func TestRestoreTodoFailures(t *testing.T) {
 		mustErr(t, err, domain.ErrNotFound)
 		if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
 			t.Errorf("%d writes; want none", n)
+		}
+	})
+
+	// A snapshot of an event change is no todo's: the kind is checked before
+	// anything is written (FR-17).
+	t.Run("a snapshot of an event is no todo's", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, _, snap := complete(t, e)
+		completed := storedObject(t, e, id)
+		snap.Kind = domain.SnapshotEvent
+		e.mock.ResetCounts()
+		_, err := e.svc.RestoreTodo(t.Context(), snap)
+		mustErr(t, err, domain.ErrNotFound)
+		if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+			t.Errorf("%d writes; want none", n)
+		}
+		if stored := storedObject(t, e, id); stored != completed {
+			t.Errorf("series:\n%s\nwant the completed state:\n%s", stored, completed)
 		}
 	})
 

@@ -1,9 +1,9 @@
-// Package undo keeps a short-lived, in-memory record of a todo's resource
-// bytes from just before a write, so a recurring task change can be undone
-// exactly (FR-17). The store itself never keeps raw owner strings (normally
-// a session ID): entries are keyed by SHA-256(owner), as internal/session
-// keys sessions, so a memory dump of the map alone does not yield usable
-// session IDs.
+// Package undo keeps a short-lived, in-memory record of a resource's bytes
+// from just before a write, so a change of a recurring task or event series
+// can be undone exactly (FR-17). The store itself never keeps raw owner
+// strings (normally a session ID): entries are keyed by SHA-256(owner), as
+// internal/session keys sessions, so a memory dump of the map alone does not
+// yield usable session IDs.
 package undo
 
 import (
@@ -30,7 +30,7 @@ const tokenBytes = 32 // 256-bit undo tokens
 // Options configures a Store.
 type Options struct {
 	// TTL is how long a snapshot stays undoable after Put stored it
-	// (domain.TodoSnapshot.TakenAt). Default DefaultTTL.
+	// (domain.Snapshot.TakenAt). Default DefaultTTL.
 	TTL time.Duration
 	// PerOwner caps the number of snapshots kept per owner; a Put beyond it
 	// evicts that owner's oldest. Default DefaultPerOwner.
@@ -54,8 +54,8 @@ type Store struct {
 	opts Options
 
 	mu     sync.Mutex
-	owners map[hashKey]map[string]domain.TodoSnapshot // owner hash -> token -> snapshot
-	bytes  int64                                      // total size of all stored Data
+	owners map[hashKey]map[string]domain.Snapshot // owner hash -> token -> snapshot
+	bytes  int64                                  // total size of all stored Data
 }
 
 // New creates a Store.
@@ -77,7 +77,7 @@ func New(opts Options) *Store {
 	}
 	return &Store{
 		opts:   opts,
-		owners: make(map[hashKey]map[string]domain.TodoSnapshot),
+		owners: make(map[hashKey]map[string]domain.Snapshot),
 	}
 }
 
@@ -85,7 +85,7 @@ func New(opts Options) *Store {
 // ok=false, storing nothing, when snap.Data exceeds MaxSnapshot. The store
 // stamps TakenAt with its own clock, whatever the caller set: expiry and
 // eviction are judged by that clock alone.
-func (s *Store) Put(owner string, snap domain.TodoSnapshot) (token string, ok bool) {
+func (s *Store) Put(owner string, snap domain.Snapshot) (token string, ok bool) {
 	size := int64(len(snap.Data))
 	if size > s.opts.MaxSnapshot {
 		return "", false
@@ -109,7 +109,7 @@ func (s *Store) Put(owner string, snap domain.TodoSnapshot) (token string, ok bo
 	// bucket from the map.
 	bucket := s.owners[k]
 	if bucket == nil {
-		bucket = make(map[string]domain.TodoSnapshot)
+		bucket = make(map[string]domain.Snapshot)
 		s.owners[k] = bucket
 	}
 	bucket[tok] = snap
@@ -121,9 +121,9 @@ func (s *Store) Put(owner string, snap domain.TodoSnapshot) (token string, ok bo
 // when the token is malformed, unknown, expired, or was stored under another
 // owner. An expired entry is left for Cleanup/Run to remove, so Get alone
 // never mutates the store.
-func (s *Store) Get(owner, token string) (domain.TodoSnapshot, bool) {
+func (s *Store) Get(owner, token string) (domain.Snapshot, bool) {
 	if !ValidToken(token) {
-		return domain.TodoSnapshot{}, false
+		return domain.Snapshot{}, false
 	}
 	k := hashOwner(owner)
 	now := s.opts.Now()
@@ -132,11 +132,11 @@ func (s *Store) Get(owner, token string) (domain.TodoSnapshot, bool) {
 	defer s.mu.Unlock()
 	bucket, ok := s.owners[k]
 	if !ok {
-		return domain.TodoSnapshot{}, false
+		return domain.Snapshot{}, false
 	}
 	snap, ok := bucket[token]
 	if !ok || s.expired(snap, now) {
-		return domain.TodoSnapshot{}, false
+		return domain.Snapshot{}, false
 	}
 	return snap, true
 }
@@ -215,13 +215,13 @@ func (s *Store) ownerKeys() []hashKey {
 	return keys
 }
 
-func (s *Store) expired(snap domain.TodoSnapshot, now time.Time) bool {
+func (s *Store) expired(snap domain.Snapshot, now time.Time) bool {
 	return !now.Before(snap.TakenAt.Add(s.opts.TTL))
 }
 
 // evictOwnerOldestLocked removes the oldest (by TakenAt) entry of one
 // owner's bucket.
-func (s *Store) evictOwnerOldestLocked(k hashKey, bucket map[string]domain.TodoSnapshot) {
+func (s *Store) evictOwnerOldestLocked(k hashKey, bucket map[string]domain.Snapshot) {
 	token, _, found := oldestInBucket(bucket)
 	if !found {
 		return
@@ -254,7 +254,7 @@ func (s *Store) evictGlobalOldestLocked() bool {
 	return true
 }
 
-func oldestInBucket(bucket map[string]domain.TodoSnapshot) (token string, at time.Time, found bool) {
+func oldestInBucket(bucket map[string]domain.Snapshot) (token string, at time.Time, found bool) {
 	for tok := range bucket {
 		ts := bucket[tok].TakenAt
 		if !found || ts.Before(at) {
@@ -266,7 +266,7 @@ func oldestInBucket(bucket map[string]domain.TodoSnapshot) (token string, at tim
 
 // removeLocked deletes one entry and keeps the byte budget and owner map
 // consistent. bucket must be s.owners[k].
-func (s *Store) removeLocked(k hashKey, bucket map[string]domain.TodoSnapshot, token string) {
+func (s *Store) removeLocked(k hashKey, bucket map[string]domain.Snapshot, token string) {
 	snap, ok := bucket[token]
 	if !ok {
 		return

@@ -1,7 +1,6 @@
 package caldav
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -17,10 +16,6 @@ import (
 
 	"github.com/tbckr/lucid/internal/domain"
 )
-
-// copyRemovalTimeout bounds the compensating DELETE of a completed copy,
-// which runs on after the request that started it is cancelled (FR-17).
-const copyRemovalTimeout = 10 * time.Second
 
 // ListTodos implements domain.CalendarService. A recurring todo is listed
 // once, at its current occurrence (FR-17).
@@ -333,7 +328,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 // UpdateTodo implements domain.CalendarService. Unknown properties and
 // components are preserved. The change of a recurring todo returns a
 // snapshot of the resource as read, see snapshot (FR-17).
-func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (_ domain.Todo, _ *domain.TodoSnapshot, err error) {
+func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (_ domain.Todo, _ *domain.Snapshot, err error) {
 	if s.err != nil {
 		return domain.Todo{}, nil, s.err
 	}
@@ -482,89 +477,28 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 // overrides into the entries entries gets none: restoring raw would bring
 // the overrides back next to their entries (A-18). The undo store stamps
 // when it took the snapshot in, by its own clock.
-func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.TodoSnapshot {
+func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.Snapshot {
 	if !cur.Recurring || t.ETag == "" || len(entries) > 0 {
 		return nil
 	}
-	snap := &domain.TodoSnapshot{TodoID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
 	if c := t.CompletedCopy; c != nil {
-		snap.CopyID, snap.CopyETag = c.ID, c.ETag
+		snap.Created = []domain.CreatedRef{{ID: c.ID, ETag: c.ETag}}
 	}
 	return snap
 }
 
 // RestoreTodo implements domain.CalendarService. It writes the resource of
 // snap back as it is, if it still has the ETag the change gave it, and then
-// removes the completed copy the change left, see removeCopy (FR-17).
-func (s *service) RestoreTodo(ctx context.Context, snap domain.TodoSnapshot) (domain.Todo, error) {
-	if s.err != nil {
-		return domain.Todo{}, s.err
-	}
-	objPath, calPath, err := decodeObjectID(s.homePath, snap.TodoID)
+// removes the completed copy the change left, see restoreResource (FR-17).
+func (s *service) RestoreTodo(ctx context.Context, snap domain.Snapshot) (domain.Todo, error) {
+	o, c, calPath, createdKept, err := s.restoreResource(ctx, snap, domain.SnapshotTodo, ical.CompToDo)
 	if err != nil {
-		return domain.Todo{}, err
-	}
-	if snap.Account != s.identity() {
-		return domain.Todo{}, fmt.Errorf("%w: snapshot of another account", domain.ErrNotFound)
-	}
-	// snapshot never hands out a snapshot without an ETag (an unknown one
-	// yields none), but a caller-constructed one could; refuse it rather
-	// than send a meaningless empty If-Match (review minor).
-	if snap.ETag == "" {
-		return domain.Todo{}, fmt.Errorf("%w: snapshot has no etag", domain.ErrNotFound)
-	}
-	if err := s.checkWritable(ctx, calPath, ""); err != nil {
-		return domain.Todo{}, err
-	}
-	// Parsed before the write, so that nothing is written that could not be
-	// reported; UpdateTodo parsed the same data when it read it.
-	cal, err := ical.NewDecoder(bytes.NewReader(snap.Data)).Decode()
-	if err != nil {
-		return domain.Todo{}, fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
-	}
-	c := mainComponent(cal, ical.CompToDo)
-	if c == nil {
-		return domain.Todo{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
-	}
-
-	defer s.invalidate(calPath)
-	o := calObject{path: objPath, cal: cal}
-	if o.etag, err = s.putBytes(ctx, objPath, snap.Data, snap.ETag, false); err != nil {
 		return domain.Todo{}, err
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
-	if snap.CopyID != "" {
-		t.CopyKept = !s.removeCopy(ctx, snap.CopyID, snap.CopyETag)
-	}
+	t.CopyKept = createdKept
 	return t, nil
-}
-
-// removeCopy deletes the completed copy copyID a change left, unless it no
-// longer has the ETag etag, and reports whether it is gone (FR-17). An
-// unknown ETag keeps it: a delete could not tell a copy another client
-// changed since from the one the change left, so it never weakens its
-// precondition to If-Match: *. It runs on after the request is cancelled:
-// the series is restored, and a closed tab would leave the copy next to its
-// occurrence.
-func (s *service) removeCopy(ctx context.Context, copyID, etag string) bool {
-	copyPath, _, err := decodeObjectID(s.homePath, copyID)
-	switch {
-	case err != nil:
-	case etag == "":
-		// Paths only, never task content.
-		s.p.log.WarnContext(ctx, "keeping the copy of a completed occurrence on undo: its etag is unknown", "path", copyPath)
-		return false
-	default:
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
-		defer cancel()
-		err = s.deleteObject(dctx, copyPath, etag)
-	}
-	if err == nil || errors.Is(err, domain.ErrNotFound) {
-		return true
-	}
-	// Paths and errors only, never task content.
-	s.p.log.WarnContext(ctx, "keeping the copy of a completed occurrence on undo", "path", copyPath, "error", err)
-	return false
 }
 
 // ruleEdit is what an update does to the rule of a todo (FR-17).
@@ -753,79 +687,6 @@ func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal 
 		entries = append(entries, entry)
 	}
 	return entries, nil
-}
-
-// removeEntries deletes the entries in calPath a change created before its
-// master was not written, a completed copy or the entries of other apps'
-// completions, unless they changed since (FR-17). One whose ETag is unknown
-// stays, logged: a delete could not tell it from one another client changed
-// since, so it never weakens its precondition to If-Match: *. It runs on
-// after the request is cancelled: a closed tab would leave the entries next
-// to the occurrences they were made from.
-func (s *service) removeEntries(ctx context.Context, calPath string, entries []calObject) {
-	if len(entries) == 0 {
-		return
-	}
-	defer s.invalidate(calPath)
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
-	defer cancel()
-	for _, o := range entries {
-		// Paths and errors only, never task content.
-		if o.etag == "" {
-			s.p.log.WarnContext(ctx, "keeping the entry of a completed repeat whose etag is unknown", "path", o.path)
-			continue
-		}
-		if err := s.deleteObject(dctx, o.path, o.etag); err != nil {
-			s.p.log.WarnContext(ctx, "could not remove the entry of a completed repeat", "path", o.path, "error", err)
-		}
-	}
-}
-
-// errWriteUnverified marks the error of a master PUT that failed without the
-// server's definite refusal and whose outcome could not be verified either,
-// see settleWrite: the write may have been applied, so what the change
-// wrote before it stays.
-var errWriteUnverified = errors.New("the write could not be verified")
-
-// settleWrite settles the failure err of the PUT of objPath with If-Match
-// etag, the master write of a change that wrote other objects before it, a
-// completed copy or the entries of other apps' completions (FR-17, A-01):
-//   - the server refused it (see writeRefused): the write was not applied,
-//     and err is returned, so that the caller removes what it wrote before;
-//   - an ambiguous failure, and the master's ETag is no longer etag: the
-//     write counts as applied all the same, as behind a reverse proxy whose
-//     read timeout fired after the server committed. The change succeeded,
-//     and nil is returned: the caller goes on with the new ETag unknown, as
-//     after a write whose ETag cannot be read back. Another client's write
-//     in the meantime looks the same; what the change wrote before then
-//     stays as a duplicate the user can see;
-//   - an ambiguous failure, and the ETag is still etag: not applied, err;
-//   - an ambiguous failure, and the ETag cannot be read, or the server tells
-//     none: err wrapped in errWriteUnverified, so that the caller keeps what
-//     it wrote. A stray copy or entry is a duplicate the user can see and
-//     delete; a completion deleted on doubt is a loss nobody sees.
-//
-// A change that wrote nothing before has nothing to decide on and returns
-// its error as it is: a changed ETag can as well be another client's write
-// while its own was lost. The verification runs on after the request is
-// cancelled, like the compensation it decides on.
-func (s *service) settleWrite(ctx context.Context, objPath, etag string, err error) error {
-	if writeRefused(err) {
-		return err
-	}
-	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
-	defer cancel()
-	current, verr := s.objectETag(vctx, objPath)
-	switch {
-	case verr != nil || current == "":
-		// Paths and errors only, never task content.
-		s.p.log.WarnContext(ctx, "keeping what a change wrote before a write that could not be verified",
-			"path", objPath, "error", err, "verification_error", verr)
-		return fmt.Errorf("%w: %w", err, errWriteUnverified)
-	case current == etag:
-		return err
-	}
-	return nil
 }
 
 // propExRule is RFC 2445's EXRULE, which RFC 5545 deprecates but which is a
