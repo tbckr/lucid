@@ -387,7 +387,7 @@ describe('useDeleteOccurrence', () => {
       events: [first, second, other],
       corrupted: [],
     })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204, headers: { ETag: '"2"' } }))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { etag: '"2"' }))
     const wrap = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     )
@@ -529,7 +529,7 @@ describe('writes of one series', () => {
     expect(fetch.mock.calls[0]![1]?.method).toBe('DELETE')
     expect(ifMatch(0)).toBe('"1"')
 
-    answers[0]?.(new Response(null, { status: 204, headers: { ETag: '"2"' } }))
+    answers[0]?.(jsonResponse(200, { etag: '"2"' }))
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledTimes(2)
     })

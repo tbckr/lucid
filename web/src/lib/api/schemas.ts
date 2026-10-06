@@ -61,12 +61,33 @@ export const eventSchema = z
     recurrenceId: isoDateTime.nullish(),
     // FR-17: true for an occurrence of a series an override visibly changed.
     modified: z.boolean().optional().default(false),
+    // FR-17: set on the answer of a change of a recurring series that can be undone (POST /events/{id}/undo).
+    undoToken: z.string().nullish(),
   })
   .refine((e) => Date.parse(e.end) >= Date.parse(e.start), {
     message: 'end must not be before start',
     path: ['end'],
   })
 export type ApiEvent = z.infer<typeof eventSchema>
+
+/**
+ * DELETE /api/v1/events/{eventId}/occurrences/{recurrenceId} response while
+ * the series is kept: its new ETag, and an undo token when the delete can be
+ * undone (FR-17, NFR-26).
+ */
+export const deletedOccurrenceSchema = z.object({ etag: z.string(), undoToken: z.string().nullish() })
+export type DeletedOccurrence = z.infer<typeof deletedOccurrenceSchema>
+
+/**
+ * POST /api/v1/events/{eventId}/undo response: the series' ETag after the
+ * restore, and whether a resource the change created stayed because it was
+ * changed since (FR-17). Both are left out when empty.
+ */
+export const eventRestoreSchema = z.object({
+  etag: z.string().optional().default(''),
+  copyKept: z.boolean().optional().default(false),
+})
+export type EventRestore = z.infer<typeof eventRestoreSchema>
 
 export const checklistItemSchema = z.object({
   text: z.string(),

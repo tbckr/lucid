@@ -597,9 +597,9 @@ export function useDeleteOccurrence(series?: string) {
     ...seriesScope(series),
     mutationFn: async (event: CalEvent) => {
       const etag = currentEtag(qc, event)
-      const next = await endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', etag)
-      if (next) replaceEtag(qc, event.id, etag, next)
-      return next
+      const res = await endpoints.deleteOccurrence(event.id, event.recurrenceId ?? '', etag)
+      if (res) replaceEtag(qc, event.id, etag, res.etag)
+      return res
     },
     onMutate: async (event) => {
       const key = queryKeys.eventsOf(event.calendarId)
@@ -610,9 +610,9 @@ export function useDeleteOccurrence(series?: string) {
       )
       return { snapshot }
     },
-    onSuccess: (next, event) => {
+    onSuccess: (res, event) => {
       toast.success(t('event.deleted'))
-      if (next) setSeriesEtag(qc, event, next)
+      if (res) setSeriesEtag(qc, event, res.etag)
     },
     onError: (err, event, ctx) => {
       ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))

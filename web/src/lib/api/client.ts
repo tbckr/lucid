@@ -187,16 +187,6 @@ export class ApiClient {
     return this.send(path, opts, true)
   }
 
-  /**
-   * Like `request` for an answer without a body, but resolves with its ETag
-   * header, or null without one: deleting one event of a series answers with
-   * the series' new ETag while its resource is kept (FR-17, NFR-26).
-   */
-  async requestEtag(path: string, opts: Omit<RequestOptions<undefined>, 'schema'> = {}): Promise<string | null> {
-    const res = await this.respond(path, opts, true)
-    return res.headers.get('ETag')
-  }
-
   private async send<T>(path: string, opts: RequestOptions<T>, allowCsrfRetry: boolean): Promise<T> {
     const res = await this.respond(path, opts, allowCsrfRetry)
     if (res.status === 204 || !opts.schema) {

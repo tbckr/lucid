@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { api, type ApiClient } from './client'
 import {
   calendarSchema,
+  deletedOccurrenceSchema,
+  eventRestoreSchema,
   eventSchema,
   parseList,
   restoredTodoSchema,
@@ -12,7 +14,9 @@ import {
   type ApiEvent,
   type Calendar,
   type CorruptedItem,
+  type DeletedOccurrence,
   type EventInput,
+  type EventRestore,
   type OccurrenceInput,
   type RestoredTodo,
   type Session,
@@ -99,9 +103,17 @@ export function createEndpoints(client: ApiClient) {
         schema: eventSchema,
       }),
 
-    /** Resolves with the series' new ETag, or null once its resource is deleted with its last event. */
-    deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<string | null> =>
-      client.requestEtag(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, { method: 'DELETE', etag }),
+    /** Resolves with the series' new ETag and undo token, or with nothing once its resource is deleted with its last event. */
+    deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<DeletedOccurrence | undefined> =>
+      client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, {
+        method: 'DELETE',
+        etag,
+        schema: deletedOccurrenceSchema.optional(),
+      }),
+
+    /** Undoes the change that returned `token` as `undoToken` (FR-17); no `If-Match`, the token is the concurrency control. */
+    undoEvent: (eventId: string, token: string): Promise<EventRestore> =>
+      client.request(`/events/${enc(eventId)}/undo`, { method: 'POST', body: { token }, schema: eventRestoreSchema }),
 
     async listTodos(calendarId: string, signal?: AbortSignal): Promise<TodoList> {
       const res = await client.request(`/calendars/${enc(calendarId)}/todos`, {

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { apiEvent, occurrence } from '@/test/fixtures'
 import {
   calendarSchema,
+  deletedOccurrenceSchema,
+  eventRestoreSchema,
   eventSchema,
   parseList,
   restoredTodoSchema,
@@ -23,6 +25,11 @@ describe('schemas', () => {
 
   it('parses modified', () => {
     expect(eventSchema.parse(apiEvent({ modified: true })).modified).toBe(true)
+  })
+
+  it('keeps the undo token of a change of an event series, and parses events without one', () => {
+    expect(eventSchema.parse(apiEvent()).undoToken).toBeUndefined()
+    expect(eventSchema.parse(apiEvent({ undoToken: 'tok' })).undoToken).toBe('tok')
   })
 
   it('rejects events whose end is before start or with bad dates', () => {
@@ -124,6 +131,17 @@ describe('schemas', () => {
     }
     expect(restoredTodoSchema.parse(base).copyKept).toBe(false)
     expect(restoredTodoSchema.parse({ ...base, copyKept: true }).copyKept).toBe(true)
+  })
+
+  it('eventRestoreSchema accepts an empty answer and keeps what it carries', () => {
+    expect(eventRestoreSchema.parse({})).toEqual({ etag: '', copyKept: false })
+    expect(eventRestoreSchema.parse({ etag: '"3"', copyKept: true })).toEqual({ etag: '"3"', copyKept: true })
+  })
+
+  it('deletedOccurrenceSchema requires the ETag, the undo token is optional', () => {
+    expect(deletedOccurrenceSchema.parse({ etag: '"3"' }).undoToken).toBeUndefined()
+    expect(deletedOccurrenceSchema.parse({ etag: '"3"', undoToken: 'tok' })).toEqual({ etag: '"3"', undoToken: 'tok' })
+    expect(deletedOccurrenceSchema.safeParse({ undoToken: 'tok' }).success).toBe(false)
   })
 
   it('requires a CSRF token in sessions', () => {

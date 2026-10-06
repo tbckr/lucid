@@ -70,18 +70,27 @@ describe('endpoints', () => {
     expect(bodyOf(calls[1]?.init).instanceStart).toBe(e.start)
   })
 
-  it('deletes one occurrence with If-Match and resolves with the ETag the series got, null without one', async () => {
-    const { api, calls } = setup(
-      new Response(null, { status: 204, headers: { ETag: '"8"' } }),
-      new Response(null, { status: 204 }),
-    )
-    expect(await api.deleteOccurrence('e1', '2026-03-13T08:00:00Z', '"7"')).toBe('"8"')
-    expect(await api.deleteOccurrence('e1', '2026-03-20T08:00:00Z', '"8"')).toBeNull()
+  it('reads the series ETag and the undo token after deleting one event', async () => {
+    const { api, calls } = setup(jsonResponse(200, { etag: '"5"', undoToken: 'tok' }, { ETag: '"5"' }))
+    expect(await api.deleteOccurrence('e1', '2026-03-13T08:00:00Z', '"4"')).toEqual({ etag: '"5"', undoToken: 'tok' })
     expect(calls.map((c) => [c.init.method, c.url])).toEqual([
       ['DELETE', '/api/v1/events/e1/occurrences/2026-03-13T08%3A00%3A00Z'],
-      ['DELETE', '/api/v1/events/e1/occurrences/2026-03-20T08%3A00%3A00Z'],
     ])
-    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBe('"7"')
+    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBe('"4"')
+  })
+
+  it('resolves with nothing once the series is gone', async () => {
+    const { api } = setup(new Response(null, { status: 204 }))
+    expect(await api.deleteOccurrence('e1', '2026-03-20T08:00:00Z', '"8"')).toBeUndefined()
+  })
+
+  it('undoes a change of an event series with its token, no If-Match', async () => {
+    const { api, calls } = setup(jsonResponse(200, {}))
+    expect(await api.undoEvent('e1', 'tok')).toEqual({ etag: '', copyKept: false })
+    expect(calls[0]?.url).toBe('/api/v1/events/e1/undo')
+    expect(calls[0]?.init.method).toBe('POST')
+    expect(bodyOf(calls[0]?.init)).toEqual({ token: 'tok' })
+    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBeUndefined()
   })
 
   it('handles todos', async () => {
