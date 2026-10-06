@@ -3522,19 +3522,22 @@ func TestRuleChangeKeepsCompletions(t *testing.T) {
 	})
 }
 
+// berlinTimezone is a VTIMEZONE of Europe/Berlin, for resources whose
+// components refer to it by TZID.
+var berlinTimezone = []string{
+	"BEGIN:VTIMEZONE", "TZID:Europe/Berlin",
+	"BEGIN:DAYLIGHT", "DTSTART:19700329T020000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+	"TZOFFSETFROM:+0100", "TZOFFSETTO:+0200", "END:DAYLIGHT",
+	"BEGIN:STANDARD", "DTSTART:19701025T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+	"TZOFFSETFROM:+0200", "TZOFFSETTO:+0100", "END:STANDARD",
+	"END:VTIMEZONE",
+}
+
 // Undoing a change of a recurring todo writes back the resource exactly as
 // the change read it, whatever other clients recorded in it, and removes the
 // completed copy the change left (FR-17).
 func TestRestoreTodo(t *testing.T) {
 	t.Parallel()
-	berlin := []string{
-		"BEGIN:VTIMEZONE", "TZID:Europe/Berlin",
-		"BEGIN:DAYLIGHT", "DTSTART:19700329T020000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
-		"TZOFFSETFROM:+0100", "TZOFFSETTO:+0200", "END:DAYLIGHT",
-		"BEGIN:STANDARD", "DTSTART:19701025T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
-		"TZOFFSETFROM:+0200", "TZOFFSETTO:+0100", "END:STANDARD",
-		"END:VTIMEZONE",
-	}
 	seeds := []struct {
 		name string
 		// rule is the RRULE of the series; last that of its variant whose
@@ -3548,7 +3551,7 @@ func TestRestoreTodo(t *testing.T) {
 		{
 			name: "tzid with due", rule: "FREQ=WEEKLY", last: "FREQ=WEEKLY;COUNT=1",
 			master:     []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T100000"},
-			components: berlin,
+			components: berlinTimezone,
 		},
 		{
 			name: "all-day fixed days", rule: "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20250327", last: "FREQ=WEEKLY;BYDAY=MO,TH;COUNT=1",

@@ -433,37 +433,42 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 }
 
 // UpdateEvent implements domain.CalendarService. Unknown properties and
-// components (alarms, attendees, X- properties) are preserved.
-func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in domain.EventInput) (domain.Event, error) {
+// components (alarms, attendees, X- properties) are preserved. The change of
+// a series that was recurring before it, also one that removes the rule,
+// returns the snapshot RestoreEvent undoes it with, see eventSnapshot
+// (FR-17).
+func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in domain.EventInput) (domain.Event, *domain.Snapshot, error) {
 	if s.err != nil {
-		return domain.Event{}, s.err
+		return domain.Event{}, nil, s.err
 	}
 	objPath, calPath, err := decodeObjectID(s.homePath, eventID)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	if err := requireETag(etag); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	rr, err := normalizeEventInput(in)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	if err := s.checkWritable(ctx, calPath, ""); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
-	cal, current, _, err := s.getObject(ctx, objPath)
+	cal, current, raw, err := s.getObject(ctx, objPath)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	if current != "" && current != etag {
-		return domain.Event{}, fmt.Errorf("%w: etag mismatch", domain.ErrConflict)
+		return domain.Event{}, nil, fmt.Errorf("%w: etag mismatch", domain.ErrConflict)
 	}
 	master := mainComponent(cal, ical.CompEvent)
 	if master == nil {
-		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
+		return domain.Event{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 
+	// Judged before the change, which may remove the rule.
+	wasRecurring := isRecurring(master)
 	start, end := in.Start, in.End
 	var instance, moved *time.Time
 	oldTm, tmErr := parseTiming(master)
@@ -479,7 +484,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		// section 3, FR-17).
 		rid, err := moveSeries(cal, master, oldTm, in, now)
 		if err != nil {
-			return domain.Event{}, err
+			return domain.Event{}, nil, err
 		}
 		instance, moved = &in.Start, &rid
 	case series && rr != "":
@@ -496,19 +501,19 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		_, shown := shownOccurrence(cal, master, oldTm, rid)
 		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
 		if err != nil {
-			return domain.Event{}, err
+			return domain.Event{}, nil, err
 		}
 		if in.AllDay == oldTm.start.allDay {
 			start = mv.shift(dateValue{t: oldTm.start.t})
 		} else {
 			start, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start.t, in, tz)
 			if err != nil {
-				return domain.Event{}, err
+				return domain.Event{}, nil, err
 			}
 		}
 		shiftRecurrenceRefs(cal, master, mv.shift)
 		if mv.lost {
-			return domain.Event{}, errMoveOffMonth
+			return domain.Event{}, nil, errMoveOffMonth
 		}
 		end = start.Add(in.End.Sub(in.Start))
 		instance = &in.Start
@@ -526,15 +531,23 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
+	}
+	var snap *domain.Snapshot
+	if wasRecurring {
+		snap = s.eventSnapshot(eventID, raw, o.etag)
 	}
 	calendarID := encodeID(calPath)
 	if moved != nil {
 		if ev, ok := shownAt(o, calendarID, *moved, in.Start, in.End); ok {
-			return ev, nil
+			return ev, snap, nil
 		}
 	}
-	return eventAt(o, calendarID, master, instance)
+	ev, err := eventAt(o, calendarID, master, instance)
+	if err != nil {
+		return domain.Event{}, nil, err
+	}
+	return ev, snap, nil
 }
 
 // shownOccurrence returns the override of the series master at the

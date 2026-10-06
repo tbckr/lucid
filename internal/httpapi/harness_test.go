@@ -64,6 +64,10 @@ type fakeService struct {
 	// occurrenceETag is the ETag DeleteOccurrence returns: "" as for a
 	// deleted resource.
 	occurrenceETag string
+	// updateEventSnapshot, occurrenceSnapshot and deleteOccurrenceSnapshot
+	// are returned as the snapshot of UpdateEvent, UpdateOccurrence and
+	// DeleteOccurrence, if set.
+	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot *domain.Snapshot
 
 	calls    []string
 	gotCal   string
@@ -115,24 +119,36 @@ func (f *fakeService) CreateEvent(_ context.Context, cal string, in domain.Event
 	return domain.Event{ID: "new", CalendarID: cal, Title: in.Title, ETag: `"1"`}, nil
 }
 
-func (f *fakeService) UpdateEvent(_ context.Context, id, etag string, in domain.EventInput) (domain.Event, error) {
+func (f *fakeService) UpdateEvent(_ context.Context, id, etag string, in domain.EventInput) (domain.Event, *domain.Snapshot, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotEvent = id, etag, in
+	snap := f.updateEventSnapshot
 	f.mu.Unlock()
 	if err := f.record("UpdateEvent"); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
-	return domain.Event{ID: id, Title: in.Title, ETag: `"2"`}, nil
+	return domain.Event{ID: id, Title: in.Title, ETag: `"2"`}, snap, nil
 }
 
-func (f *fakeService) UpdateOccurrence(_ context.Context, id, etag string, rid time.Time, in domain.OccurrenceInput) (domain.Event, error) {
+func (f *fakeService) UpdateOccurrence(_ context.Context, id, etag string, rid time.Time, in domain.OccurrenceInput) (domain.Event, *domain.Snapshot, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotRID, f.gotOcc = id, etag, rid, in
+	snap := f.occurrenceSnapshot
 	f.mu.Unlock()
 	if err := f.record("UpdateOccurrence"); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
-	return domain.Event{ID: id, Title: in.Title, ETag: `"3"`}, nil
+	return domain.Event{ID: id, Title: in.Title, ETag: `"3"`}, snap, nil
+}
+
+func (f *fakeService) RestoreEvent(_ context.Context, snap domain.Snapshot) (domain.EventRestore, error) {
+	f.mu.Lock()
+	f.gotSnap = snap
+	f.mu.Unlock()
+	if err := f.record("RestoreEvent"); err != nil {
+		return domain.EventRestore{}, err
+	}
+	return domain.EventRestore{ETag: `"9"`}, nil
 }
 
 func (f *fakeService) DeleteEvent(_ context.Context, id, etag string) error {
@@ -142,15 +158,15 @@ func (f *fakeService) DeleteEvent(_ context.Context, id, etag string) error {
 	return f.record("DeleteEvent")
 }
 
-func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid time.Time) (string, error) {
+func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid time.Time) (string, *domain.Snapshot, error) {
 	f.mu.Lock()
 	f.gotID, f.gotETag, f.gotRID = id, etag, rid
-	next := f.occurrenceETag
+	next, snap := f.occurrenceETag, f.deleteOccurrenceSnapshot
 	f.mu.Unlock()
 	if err := f.record("DeleteOccurrence"); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return next, nil
+	return next, snap, nil
 }
 
 func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, error) {

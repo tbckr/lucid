@@ -100,7 +100,7 @@ func TestUpdateOccurrenceCreatesOverride(t *testing.T) {
 			}
 			id, etag := evs[0].ID, evs[0].ETag
 
-			up, err := e.svc.UpdateOccurrence(ctx, id, etag, tt.rid, domain.OccurrenceInput{
+			up, _, err := e.svc.UpdateOccurrence(ctx, id, etag, tt.rid, domain.OccurrenceInput{
 				Title: "Moved", Description: "Agenda", Start: tt.newStart, End: tt.newEnd, AllDay: tt.allDay,
 			})
 			mustNoErr(t, err)
@@ -184,7 +184,7 @@ func TestUpdateOccurrenceEditsExistingOverride(t *testing.T) {
 	}
 
 	rid := date(2025, 3, 17, 8, 0)
-	up, err := e.svc.UpdateOccurrence(ctx, inst.ID, inst.ETag, rid, domain.OccurrenceInput{
+	up, _, err := e.svc.UpdateOccurrence(ctx, inst.ID, inst.ETag, rid, domain.OccurrenceInput{
 		Title: "Retro", Start: date(2025, 3, 17, 12, 0), End: date(2025, 3, 17, 13, 0),
 	})
 	mustNoErr(t, err)
@@ -251,7 +251,7 @@ func TestUpdateOccurrenceOrphan(t *testing.T) {
 		t.Fatal("orphan occurrence not found")
 	}
 
-	up, err := e.svc.UpdateOccurrence(ctx, orphan.ID, orphan.ETag, rid, domain.OccurrenceInput{
+	up, _, err := e.svc.UpdateOccurrence(ctx, orphan.ID, orphan.ETag, rid, domain.OccurrenceInput{
 		Title: "Changed", Start: date(2025, 3, 4, 10, 0), End: date(2025, 3, 4, 10, 15),
 	})
 	mustNoErr(t, err)
@@ -283,7 +283,7 @@ func TestUpdateOccurrenceUnparseableRule(t *testing.T) {
 	mustNoErr(t, err)
 	checkOccurrences(t, evs, []occ{{title: "Standup", start: rid, end: rid.Add(15 * time.Minute), rid: ptr(rid)}})
 
-	up, err := e.svc.UpdateOccurrence(ctx, id, evs[0].ETag, rid, domain.OccurrenceInput{
+	up, _, err := e.svc.UpdateOccurrence(ctx, id, evs[0].ETag, rid, domain.OccurrenceInput{
 		Title: "Changed", Start: date(2025, 3, 3, 10, 0), End: date(2025, 3, 3, 10, 15),
 	})
 	mustNoErr(t, err)
@@ -315,7 +315,7 @@ func TestUpdateOccurrenceEmptyDescription(t *testing.T) {
 	mustNoErr(t, err)
 	id, etag := evs[0].ID, evs[0].ETag
 
-	up, err := e.svc.UpdateOccurrence(ctx, id, etag, rid, domain.OccurrenceInput{
+	up, _, err := e.svc.UpdateOccurrence(ctx, id, etag, rid, domain.OccurrenceInput{
 		Title: "Standup", Description: "", Start: rid, End: rid.Add(15 * time.Minute),
 	})
 	mustNoErr(t, err)
@@ -389,7 +389,7 @@ func TestUpdateOccurrenceErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := e.svc.UpdateOccurrence(ctx, tt.id, tt.etag, tt.rid, tt.in)
+			_, _, err := e.svc.UpdateOccurrence(ctx, tt.id, tt.etag, tt.rid, tt.in)
 			mustErr(t, err, tt.want)
 		})
 	}
@@ -771,7 +771,7 @@ func TestDeleteOccurrence(t *testing.T) {
 			}
 			etag := evs[0].ETag
 
-			next, err := e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
+			next, _, err := e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
 			mustNoErr(t, err)
 
 			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
@@ -830,7 +830,7 @@ func TestDeleteOccurrenceErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			next, err := e.svc.DeleteOccurrence(ctx, tt.id, tt.etag, tt.rid)
+			next, _, err := e.svc.DeleteOccurrence(ctx, tt.id, tt.etag, tt.rid)
 			mustErr(t, err, tt.want)
 			if next != "" {
 				t.Errorf("returned ETag %q with an error; want none", next)

@@ -414,6 +414,12 @@ type Snapshot struct {
 	TakenAt time.Time    // when the undo store took it in: stamped by the store, not by the service
 }
 
+// EventRestore answers an undo of a change to an event series (FR-17).
+type EventRestore struct {
+	ETag     string `json:"etag,omitempty"`     // the series' ETag after the restore, if the server tells it
+	CopyKept bool   `json:"copyKept,omitempty"` // a resource the change created stays, as it changed since
+}
+
 // CalendarService is bound to one account. Implementations must be safe for
 // concurrent use.
 type CalendarService interface {
@@ -423,22 +429,37 @@ type CalendarService interface {
 	// recurring series expanded to that window.
 	ListEvents(ctx context.Context, calendarID string, start, end time.Time) ([]Event, error)
 	CreateEvent(ctx context.Context, calendarID string, in EventInput) (Event, error)
-	// UpdateEvent replaces the event. etag must match (If-Match), otherwise ErrConflict.
-	UpdateEvent(ctx context.Context, eventID, etag string, in EventInput) (Event, error)
+	// UpdateEvent replaces the event. etag must match (If-Match), otherwise
+	// ErrConflict. The change of a series that was recurring before it,
+	// including one that removes the rule, returns the snapshot that
+	// RestoreEvent undoes it with. A single event, and a change whose new
+	// ETag the server does not tell, return nil: nothing could be restored
+	// safely (FR-17).
+	UpdateEvent(ctx context.Context, eventID, etag string, in EventInput) (Event, *Snapshot, error)
 	// UpdateOccurrence changes only the occurrence at recurrenceID of a
 	// recurring event ("only this event"), writing or editing an RFC 5545
 	// override in the series' resource. etag must match (If-Match),
-	// otherwise ErrConflict (FR-17).
-	UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in OccurrenceInput) (Event, error)
+	// otherwise ErrConflict. It returns the snapshot that RestoreEvent undoes
+	// the change with, or nil when the server does not tell the new ETag
+	// (FR-17).
+	UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in OccurrenceInput) (Event, *Snapshot, error)
+	// RestoreEvent undoes a change of an event series by writing back the
+	// resource as the change read it, unless the series changed since
+	// (ErrConflict), and removes what the change created, unless that
+	// changed since: then it stays, and the answer reports CopyKept
+	// (FR-17).
+	RestoreEvent(ctx context.Context, snap Snapshot) (EventRestore, error)
 	DeleteEvent(ctx context.Context, eventID, etag string) error
 	// DeleteOccurrence excludes only the occurrence at recurrenceID of a
 	// recurring event ("only this event"): an EXDATE, removing an existing
 	// override at the same instant in the same write. It deletes the
 	// resource itself once no occurrence of the series is left. It returns
 	// the resource's new ETag, or "" once the resource is deleted or when
-	// the server tells none. etag must match (If-Match), otherwise
-	// ErrConflict (FR-17).
-	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, error)
+	// the server tells none, and the snapshot that RestoreEvent undoes the
+	// change with: nil when the resource is deleted, since nothing is left
+	// to restore, or when the new ETag is unknown. etag must match
+	// (If-Match), otherwise ErrConflict (FR-17).
+	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)
 	// ListTodoOccurrences returns the occurrences of open, readable recurring

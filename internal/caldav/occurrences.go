@@ -103,6 +103,7 @@ func setTextKept(props ical.Props, name, value string) {
 // its existing override if it has one (FR-17; spec section 2 steps 1-2).
 type loadedSeries struct {
 	cal      *ical.Calendar
+	raw      []byte // the resource as read, which a snapshot keeps
 	objPath  string
 	calPath  string
 	master   *ical.Component
@@ -127,7 +128,7 @@ func (s *service) loadSeries(ctx context.Context, eventID, etag string, recurren
 	if err := s.checkWritable(ctx, calPath, ""); err != nil {
 		return loadedSeries{}, err
 	}
-	cal, current, _, err := s.getObject(ctx, objPath)
+	cal, current, raw, err := s.getObject(ctx, objPath)
 	if err != nil {
 		return loadedSeries{}, err
 	}
@@ -153,29 +154,31 @@ func (s *service) loadSeries(ctx context.Context, eventID, etag string, recurren
 	if override == nil && !isInstance(master, tm, rid) {
 		return loadedSeries{}, fmt.Errorf("%w: not an occurrence of the series", domain.ErrNotFound)
 	}
-	return loadedSeries{cal: cal, objPath: objPath, calPath: calPath, master: master, override: override, tm: tm, rid: rid}, nil
+	return loadedSeries{cal: cal, raw: raw, objPath: objPath, calPath: calPath, master: master, override: override, tm: tm, rid: rid}, nil
 }
 
 // UpdateOccurrence implements domain.CalendarService: it changes only the
 // occurrence at recurrenceID of a recurring event, writing or editing an
-// RFC 5545 override in the series' resource (FR-17; spec section 2).
-func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in domain.OccurrenceInput) (domain.Event, error) {
+// RFC 5545 override in the series' resource (FR-17; spec section 2). It
+// returns the snapshot RestoreEvent undoes the change with, see
+// eventSnapshot.
+func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in domain.OccurrenceInput) (domain.Event, *domain.Snapshot, error) {
 	if s.err != nil {
-		return domain.Event{}, s.err
+		return domain.Event{}, nil, s.err
 	}
 	if err := in.Validate(); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	ls, err := s.loadSeries(ctx, eventID, etag, recurrenceID)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 	cal, objPath, calPath, master, override, tm, rid := ls.cal, ls.objPath, ls.calPath, ls.master, ls.override, ls.tm, ls.rid
 
 	// Step 3: allDay must match the series; switching it changes the whole
 	// series instead (spec section 2 step 3).
 	if in.AllDay != tm.start.allDay {
-		return domain.Event{}, &domain.ValidationError{Msg: "allDay must match the series"}
+		return domain.Event{}, nil, &domain.ValidationError{Msg: "allDay must match the series"}
 	}
 
 	// Steps 4-5: edit the existing override, or build a full copy of the
@@ -203,7 +206,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
 	if err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, nil, err
 	}
 
 	calendarID := encodeID(calPath)
@@ -220,13 +223,13 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	evs, err := expandObject(o, calendarID, from, to)
 	for i := range evs {
 		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
-			return evs[i], nil
+			return evs[i], s.eventSnapshot(eventID, ls.raw, o.etag), nil
 		}
 	}
 	if err != nil {
-		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
+		return domain.Event{}, nil, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
 	}
-	return domain.Event{}, fmt.Errorf("%w: occurrence not found after update", domain.ErrUpstream)
+	return domain.Event{}, nil, fmt.Errorf("%w: occurrence not found after update", domain.ErrUpstream)
 }
 
 // addExdate adds an EXDATE for rid, in the form f, to master, unless an
@@ -314,14 +317,16 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 // cannot read (see hasEventsLeft; FR-17; spec section 2 "DeleteOccurrence").
 // It returns the new ETag of a resource it keeps, so the client's next write
 // of the series does not conflict with this one (NFR-26), and "" for one it
-// deletes.
-func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, error) {
+// deletes. For a resource it keeps, it also returns the snapshot
+// RestoreEvent undoes the change with, see eventSnapshot; one it deletes
+// leaves nothing to restore (FR-17).
+func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *domain.Snapshot, error) {
 	if s.err != nil {
-		return "", s.err
+		return "", nil, s.err
 	}
 	ls, err := s.loadSeries(ctx, eventID, etag, recurrenceID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	cal, objPath, calPath, master, override, tm, rid := ls.cal, ls.objPath, ls.calPath, ls.master, ls.override, ls.tm, ls.rid
 
@@ -340,12 +345,15 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 		// 500 and Nextcloud <= 34 403 to a PUT of a series without events.
 		err := s.deleteObject(ctx, objPath, etag)
 		s.invalidate(calPath)
-		return "", err
+		return "", nil, err
 	}
 
 	bumpChangeProps(master, s.p.now().UTC())
 	masterFirst(cal, master)
 	next, err := s.putObject(ctx, objPath, cal, etag, false)
 	s.invalidate(calPath)
-	return next, err
+	if err != nil {
+		return "", nil, err
+	}
+	return next, s.eventSnapshot(eventID, ls.raw, next), nil
 }

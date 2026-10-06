@@ -538,7 +538,7 @@ func TestUpdateEventPreservesUnknownProperties(t *testing.T) {
 		t.Fatalf("got %d events", len(evs))
 	}
 
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, domain.EventInput{
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, domain.EventInput{
 		Title: "New", Start: date(2025, 3, 6, 10, 0), End: date(2025, 3, 6, 12, 0),
 	})
 	mustNoErr(t, err)
@@ -582,7 +582,7 @@ func TestUpdateRecurringInstance(t *testing.T) {
 	inst := evs[0] // Mar 31, 09:00 CEST = 07:00Z
 
 	// Move the (summer) instance one hour later and make it 30 minutes long.
-	up, err := e.svc.UpdateEvent(ctx, inst.ID, inst.ETag, domain.EventInput{
+	up, _, err := e.svc.UpdateEvent(ctx, inst.ID, inst.ETag, domain.EventInput{
 		Title: "Standup", Start: date(2025, 3, 31, 8, 0), End: date(2025, 3, 31, 8, 30),
 		RRule: inst.RRule, InstanceStart: inst.RecurrenceID,
 	})
@@ -611,7 +611,7 @@ func TestUpdateRecurringInstance(t *testing.T) {
 
 	// Removing the RRULE turns the series into a single event and drops
 	// exceptions and overrides.
-	single, err := e.svc.UpdateEvent(ctx, up.ID, up.ETag, domain.EventInput{
+	single, _, err := e.svc.UpdateEvent(ctx, up.ID, up.ETag, domain.EventInput{
 		Title: "Once", Start: date(2025, 4, 1, 8, 0), End: date(2025, 4, 1, 9, 0),
 	})
 	mustNoErr(t, err)
@@ -683,7 +683,7 @@ func TestUpdateSeriesFromException(t *testing.T) {
 	special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
 
 	// Drag "Special" from 12:00Z to 13:00Z: the series moves by +1 h.
-	up, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
 		seriesUpdate(special, "Special", "", date(2025, 3, 17, 13, 0), date(2025, 3, 17, 14, 0)))
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -710,7 +710,7 @@ func TestUpdateSeriesChangedFieldsOnly(t *testing.T) {
 	id := e.put(t, "work", "series.ics", standupSeries...)
 	special := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, special.ETag,
 		seriesUpdate(special, special.Title, "Room 2", special.Start, special.End))
 	mustNoErr(t, err)
 
@@ -760,7 +760,7 @@ func TestUpdateSeriesKeepsOtherExceptions(t *testing.T) {
 		"END:VEVENT")
 	plain := shownEvent(t, e, "work", date(2025, 3, 24, 8, 0))
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, plain.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, plain.ETag,
 		seriesUpdate(plain, "Standup", "", date(2025, 3, 24, 9, 0), date(2025, 3, 24, 9, 15)))
 	mustNoErr(t, err)
 
@@ -791,7 +791,7 @@ func TestUpdateSeriesShiftsUntil(t *testing.T) {
 		"END:VEVENT")
 	ev := shownEvent(t, e, "work", date(2025, 3, 10, 8, 0))
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
 		seriesUpdate(ev, "Standup", "", date(2025, 3, 10, 9, 0), date(2025, 3, 10, 9, 15)))
 	mustNoErr(t, err)
 
@@ -821,7 +821,7 @@ func TestUpdateSeriesWeekday(t *testing.T) {
 		"END:VEVENT")
 	monday := shownEvent(t, e, "work", date(2025, 3, 31, 7, 0)) // 09:00 CEST
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, monday.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, monday.ETag,
 		seriesUpdate(monday, "Standup", "", date(2025, 4, 1, 7, 0), date(2025, 4, 1, 7, 15)))
 	mustNoErr(t, err)
 
@@ -855,14 +855,14 @@ func TestUpdateSeriesFixedDays(t *testing.T) {
 	april := shownEvent(t, e, "work", date(2025, 4, 3, 7, 0)) // 09:00 CEST
 	before := stored(t, e, "work", "series.ics")
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, april.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, april.ETag,
 		seriesUpdate(april, "Review", "", date(2025, 4, 4, 7, 0), date(2025, 4, 4, 7, 15)))
 	mustErr(t, err, domain.ErrSeriesMoveUnsupported)
 	if after := stored(t, e, "work", "series.ics"); after != before {
 		t.Fatalf("refused move changed the resource:\n%s", after)
 	}
 
-	_, err = e.svc.UpdateEvent(t.Context(), id, april.ETag,
+	_, _, err = e.svc.UpdateEvent(t.Context(), id, april.ETag,
 		seriesUpdate(april, "Review", "", date(2025, 4, 3, 9, 0), date(2025, 4, 3, 9, 15)))
 	mustNoErr(t, err)
 	data := stored(t, e, "work", "series.ics")
@@ -891,7 +891,7 @@ func TestUpdateSeriesNewRule(t *testing.T) {
 
 	in := seriesUpdate(special, "Planning", "", date(2025, 3, 17, 13, 0), date(2025, 3, 17, 14, 0))
 	in.RRule = "FREQ=WEEKLY;BYDAY=MO;COUNT=3"
-	_, err := e.svc.UpdateEvent(t.Context(), id, special.ETag, in)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, special.ETag, in)
 	mustNoErr(t, err)
 
 	data := stored(t, e, "work", "series.ics")
@@ -924,7 +924,7 @@ func TestUpdateSeriesRDateOnly(t *testing.T) {
 		"END:VEVENT")
 	ev := shownEvent(t, e, "work", date(2025, 3, 5, 10, 0))
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
 		seriesUpdate(ev, "Lecture", "", date(2025, 3, 5, 11, 0), date(2025, 3, 5, 12, 0)))
 	mustNoErr(t, err)
 
@@ -963,7 +963,7 @@ func wantStored(t *testing.T, e *env, slug, name string, want ...string) {
 func mustRefuseMove(t *testing.T, e *env, id string, ev domain.Event, in domain.EventInput) {
 	t.Helper()
 	before := stored(t, e, "work", "series.ics")
-	_, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustErr(t, err, domain.ErrSeriesMoveUnsupported)
 	if after := stored(t, e, "work", "series.ics"); after != before {
 		t.Fatalf("refused move changed the resource:\n%s", after)
@@ -994,7 +994,7 @@ func TestUpdateSeriesKeepsRefsOnWallClock(t *testing.T) {
 		t.Fatalf("got %d events on 2026-01-10; want 1", len(evs))
 	}
 
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Run", "", date(2026, 1, 11, 8, 0), date(2026, 1, 11, 9, 0)))
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -1035,7 +1035,7 @@ func TestUpdateSeriesAcrossDSTChange(t *testing.T) {
 		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
 	}
 
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30)))
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -1070,7 +1070,7 @@ func TestUpdateSeriesNewRuleAcrossDSTChange(t *testing.T) {
 
 	in := seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30))
 	in.RRule = "FREQ=WEEKLY;BYDAY=MO;COUNT=20"
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
 	wantStored(t, e, "work", "series.ics",
@@ -1101,7 +1101,7 @@ func TestUpdateSeriesAllDay(t *testing.T) {
 
 	in := seriesUpdate(evs[0], "Gym", "", date(2026, 3, 30, 0, 0), date(2026, 3, 31, 0, 0))
 	in.AllDay = true
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
 		{title: "Gym", start: date(2026, 3, 30, 0, 0), end: date(2026, 3, 31, 0, 0), rid: ptr(date(2026, 3, 30, 0, 0)), allDay: true},
@@ -1134,7 +1134,7 @@ func TestUpdateSeriesDateUntil(t *testing.T) {
 		t.Fatalf("got %d events on 2026-03-27; want 1", len(evs))
 	}
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Review", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 7, 30)))
 	mustNoErr(t, err)
 
@@ -1164,7 +1164,7 @@ func TestUpdateSeriesMonthlyKeepsDayOfMonth(t *testing.T) {
 		t.Fatalf("got %d events on 2026-03-30; want 1", len(evs))
 	}
 
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Rent", "", date(2026, 4, 2, 7, 0), date(2026, 4, 2, 8, 0)))
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -1208,7 +1208,7 @@ func TestUpdateSeriesMonthlyFromMovedException(t *testing.T) {
 		t.Fatalf("got %+v on 2026-02-28; want the exception", evs)
 	}
 
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Special", "", date(2026, 3, 1, 8, 0), date(2026, 3, 1, 9, 0)))
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -1255,7 +1255,7 @@ func TestUpdateSeriesMonthlyFromRDateOnAnotherDay(t *testing.T) {
 	newRule.RRule = "FREQ=MONTHLY;COUNT=12"
 	mustRefuseMove(t, e, id, evs[0], newRule)
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Rent", "", date(2026, 1, 31, 9, 0), date(2026, 1, 31, 10, 0)))
 	mustNoErr(t, err)
 	wantStored(t, e, "work", "series.ics",
@@ -1323,7 +1323,7 @@ func TestUpdateSeriesMonthlyFrom31stTo30th(t *testing.T) {
 		t.Fatalf("got %d events on 2026-03-31; want 1", len(evs))
 	}
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Rent", "", date(2026, 3, 30, 7, 0), date(2026, 3, 30, 8, 0)))
 	mustNoErr(t, err)
 
@@ -1398,7 +1398,7 @@ func TestUpdateSeriesMovesValuesOffItsDayPastMonthEnd(t *testing.T) {
 			start := evs[0].Start.AddDate(0, 0, tt.days)
 			in := seriesUpdate(evs[0], "Rent", "", start, start.Add(evs[0].End.Sub(evs[0].Start)))
 			in.AllDay = tt.allDay
-			_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 			mustNoErr(t, err)
 			wantStored(t, e, "work", "series.ics", tt.wantStored...)
 		})
@@ -1510,7 +1510,7 @@ func TestUpdateSeriesYearlyKeepsDayOfMonth(t *testing.T) {
 		t.Fatalf("got %d events on 2027-02-28; want 1", len(evs))
 	}
 
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
 		seriesUpdate(evs[0], "Review", "", date(2027, 3, 1, 8, 0), date(2027, 3, 1, 9, 0)))
 	mustNoErr(t, err)
 
@@ -1541,7 +1541,7 @@ func TestUpdateSeriesMonthlyKeepsDuration(t *testing.T) {
 
 	in := seriesUpdate(evs[0], "Trip", "", date(2026, 4, 2, 0, 0), date(2026, 4, 4, 0, 0))
 	in.AllDay = true
-	_, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
 	wantStored(t, e, "work", "series.ics", "DTSTART;VALUE=DATE:20260202", "DTEND;VALUE=DATE:20260204")
@@ -1572,7 +1572,7 @@ func TestUpdateSeriesMadeAllDayAcrossDSTChange(t *testing.T) {
 
 	in := seriesUpdate(evs[0], "Review", "", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
 	in.AllDay = true
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
 		{title: "Review", start: date(2026, 11, 6, 0, 0), end: date(2026, 11, 7, 0, 0), rid: ptr(date(2026, 11, 6, 0, 0)), allDay: true},
@@ -1610,7 +1610,7 @@ func TestUpdateSeriesMadeTimedAcrossDSTChange(t *testing.T) {
 	// 09:00 Berlin summer time.
 	in := seriesUpdate(evs[0], "Gym", "", date(2026, 4, 3, 7, 0), date(2026, 4, 3, 8, 0))
 	in.Timezone = "Europe/Berlin"
-	up, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
 		{title: "Gym", start: date(2026, 4, 3, 7, 0), end: date(2026, 4, 3, 8, 0), rid: ptr(date(2026, 4, 3, 7, 0))},
@@ -1658,7 +1658,7 @@ func TestUpdateAndDeleteErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run("update "+tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := e.svc.UpdateEvent(ctx, tt.id, tt.etag, tt.in)
+			_, _, err := e.svc.UpdateEvent(ctx, tt.id, tt.etag, tt.in)
 			mustErr(t, err, tt.want)
 		})
 	}
@@ -1688,7 +1688,7 @@ func TestUpdateEventConflictOnPut(t *testing.T) {
 		}
 		return false
 	})
-	_, err = e.svc.UpdateEvent(ctx, ev.ID, ev.ETag, domain.EventInput{Title: "y", Start: ev.Start, End: ev.End})
+	_, _, err = e.svc.UpdateEvent(ctx, ev.ID, ev.ETag, domain.EventInput{Title: "y", Start: ev.Start, End: ev.End})
 	mustErr(t, err, domain.ErrConflict)
 }
 

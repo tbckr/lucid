@@ -12,8 +12,11 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 )
 
-// copyRemovalTimeout bounds the compensating DELETE of a completed copy,
-// which runs on after the request that started it is cancelled (FR-17).
+// copyRemovalTimeout bounds what a change settles after the request that
+// started it is cancelled, for a resource of any kind: the verification of a
+// write that failed ambiguously, see settleWrite, and each compensating
+// DELETE of what the change wrote before, see removeEntries and
+// removeCreated (FR-17).
 const copyRemovalTimeout = 10 * time.Second
 
 // removeEntries deletes the entries in calPath a change created before its

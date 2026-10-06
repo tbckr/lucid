@@ -191,7 +191,7 @@ func (s *Server) handleUpdateEvent(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	ev, err := svc.UpdateEvent(r.Context(), id, etag, in)
+	ev, _, err := svc.UpdateEvent(r.Context(), id, etag, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -242,7 +242,7 @@ func (s *Server) handleUpdateOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	ev, err := svc.UpdateOccurrence(r.Context(), id, etag, rid, in)
+	ev, _, err := svc.UpdateOccurrence(r.Context(), id, etag, rid, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -271,7 +271,7 @@ func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	next, err := svc.DeleteOccurrence(r.Context(), id, etag, rid)
+	next, _, err := svc.DeleteOccurrence(r.Context(), id, etag, rid)
 	if err != nil {
 		s.fail(w, r, err)
 		return
