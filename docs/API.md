@@ -112,8 +112,9 @@ location or description); it is omitted (`false`) otherwise.
 `undoToken` is a response-only field, never part of `EventInput` and never
 seen in the list: it appears on the response of the changes below that can be
 undone (`POST /api/v1/events/{eventId}/undo`, below). The change of a series
-whose resource is larger than 1 MiB, such as one with years of overrides,
-succeeds without it.
+whose resource is larger than 1 MiB, such as one with years of overrides, or
+that has an `ORGANIZER` or an `ATTENDEE` on any of its events, succeeds without
+it.
 
 ### `POST /api/v1/calendars/{calendarId}/events`
 
@@ -136,8 +137,8 @@ Body: `EventInput`. For an occurrence of a recurring series additionally send
 applied to the **whole series** ("All events"). `200` with the updated
 `Event` (new `etag`), and an `undoToken` if the change can be undone: the
 series was recurring before the change (a save that removes its rule
-included) and the CalDAV server tells its new `etag`. A single event gets
-none.
+included), the CalDAV server tells its new `etag`, and the series has no
+attendees. A single event gets none.
 
 - **Distance:** measured from the occurrence's *shown* start (an exception's
   own start, if the edited occurrence is one), not from `instanceStart`
@@ -210,12 +211,11 @@ belongs to the series, not the occurrence) and without `instanceStart`:
 ```
 
 `200` with the changed `Event` (new `etag`), and an `undoToken` if the CalDAV
-server tells the new `etag`. Its `modified` is `true` when the
-override visibly changes the occurrence (as defined for the event list
-above), and omitted when the saved values are the ones the series gives
-there anyway. The override
-is written as a full copy of the series, not a diff, so other CalDAV clients
-still show a title and the other properties.
+server tells the new `etag` and the series has no attendees. Its `modified` is
+`true` when the override visibly changes the occurrence (as defined for the
+event list above), and omitted when the saved values are the ones the series
+gives there anyway. The override is written as a full copy of the series, not
+a diff, so other CalDAV clients still show a title and the other properties.
 
 Errors:
 - `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
@@ -234,7 +234,8 @@ parts `RSCALE` or `SKIP`) is always kept.
 
 While the series is kept and the CalDAV server tells its new `etag`: `200`
 with the new `etag` in the body and in an `ETag` header, to send with the
-series' next write, and an `undoToken`:
+series' next write, and, if the change can be undone (the series has no
+attendees, see `undoToken` above), an `undoToken`:
 
 ```json
 { "etag": "\"def\"", "undoToken": "..." }

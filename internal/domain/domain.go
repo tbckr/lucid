@@ -435,16 +435,16 @@ type CalendarService interface {
 	// UpdateEvent replaces the event. etag must match (If-Match), otherwise
 	// ErrConflict. The change of a series that was recurring before it,
 	// including one that removes the rule, returns the snapshot that
-	// RestoreEvent undoes it with. A single event, and a change whose new
-	// ETag the server does not tell, return nil: nothing could be restored
-	// safely (FR-17).
+	// RestoreEvent undoes it with. A single event, a series with an
+	// ORGANIZER or an ATTENDEE, and a change whose new ETag the server does
+	// not tell, return nil: nothing could be restored safely (FR-17).
 	UpdateEvent(ctx context.Context, eventID, etag string, in EventInput) (Event, *Snapshot, error)
 	// UpdateOccurrence changes only the occurrence at recurrenceID of a
 	// recurring event ("only this event"), writing or editing an RFC 5545
 	// override in the series' resource. etag must match (If-Match),
 	// otherwise ErrConflict. It returns the snapshot that RestoreEvent undoes
-	// the change with, or nil when the server does not tell the new ETag
-	// (FR-17).
+	// the change with, or nil when the server does not tell the new ETag or
+	// the series has an ORGANIZER or an ATTENDEE (FR-17).
 	UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in OccurrenceInput) (Event, *Snapshot, error)
 	// RestoreEvent undoes a change of an event series by writing back the
 	// resource as the change read it, unless the series changed since
@@ -460,7 +460,8 @@ type CalendarService interface {
 	// the resource's new ETag, or "" once the resource is deleted or when
 	// the server tells none, and the snapshot that RestoreEvent undoes the
 	// change with: nil when the resource is deleted, since nothing is left
-	// to restore, or when the new ETag is unknown. etag must match
+	// to restore, when the new ETag is unknown, or when the series has an
+	// ORGANIZER or an ATTENDEE. etag must match
 	// (If-Match), otherwise ErrConflict (FR-17).
 	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
 

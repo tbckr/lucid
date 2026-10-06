@@ -291,6 +291,73 @@ func TestEventWritesWithoutSnapshot(t *testing.T) {
 		}
 	})
 
+	// With attendees the server may have scheduled the change with the
+	// SEQUENCE it carries, and a restore would write an older one back (RFC
+	// 5545 section 3.8.7.4), so there is none (FR-17). The resource is judged
+	// as the change read it: deleting the one override that has the attendees
+	// leaves none, but it had them.
+	attendees := []string{"ORGANIZER:mailto:boss@example.com", "ATTENDEE;PARTSTAT=ACCEPTED:mailto:me@example.com"}
+	series := func(extra ...string) []string {
+		return slices.Concat([]string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup",
+			"DTSTART:20250310T090000Z", "DTEND:20250310T093000Z", "RRULE:FREQ=WEEKLY;COUNT=6",
+		}, extra, []string{"END:VEVENT"})
+	}
+	override := func(extra ...string) []string {
+		return slices.Concat([]string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Moved",
+			"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250317T110000Z", "DTEND:20250317T113000Z",
+		}, extra, []string{"END:VEVENT"})
+	}
+	// noSnapshotWithAttendees changes the series of lines at rid in every way
+	// that can be undone otherwise.
+	noSnapshotWithAttendees := func(t *testing.T, lines []string, rid time.Time) {
+		t.Helper()
+		for _, a := range eventActions() {
+			if a.name != "all events a day later" && a.name != "only this moved" && a.name != "delete only this" {
+				continue
+			}
+			t.Run(a.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, caldavtest.Options{})
+				id := e.put(t, "work", "series.ics", lines...)
+				seeded := storedObject(t, e, id)
+				ev := shownEvent(t, e, "work", rid)
+
+				_, snap, err := a.do(t.Context(), e, ev)
+				mustNoErr(t, err)
+				if snap != nil {
+					t.Error("returned a snapshot; want none for a series with attendees")
+				}
+				if storedObject(t, e, id) == seeded {
+					t.Error("the change did not write")
+				}
+			})
+		}
+	}
+
+	t.Run("attendees on the series", func(t *testing.T) {
+		t.Parallel()
+		noSnapshotWithAttendees(t, series(attendees...), date(2025, 3, 17, 9, 0))
+	})
+
+	t.Run("an organizer only", func(t *testing.T) {
+		t.Parallel()
+		noSnapshotWithAttendees(t, series(attendees[0]), date(2025, 3, 17, 9, 0))
+	})
+
+	// The occurrence the change is made on has no attendees itself.
+	t.Run("attendees on an override", func(t *testing.T) {
+		t.Parallel()
+		noSnapshotWithAttendees(t, slices.Concat(series(), override(attendees...)), date(2025, 3, 24, 9, 0))
+	})
+
+	// The change replaces or deletes the override that has the attendees.
+	t.Run("attendees on the changed override", func(t *testing.T) {
+		t.Parallel()
+		noSnapshotWithAttendees(t, slices.Concat(series(), override(attendees...)), date(2025, 3, 17, 9, 0))
+	})
+
 	t.Run("unknown new etag", func(t *testing.T) {
 		t.Parallel()
 		seed := eventSeeds()[0]

@@ -174,6 +174,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 		return domain.Event{}, nil, err
 	}
 	cal, objPath, calPath, master, override, tm, rid := ls.cal, ls.objPath, ls.calPath, ls.master, ls.override, ls.tm, ls.rid
+	attendees := hasAttendees(cal) // as the change reads it
 
 	// Step 3: allDay must match the series; switching it changes the whole
 	// series instead (spec section 2 step 3).
@@ -223,7 +224,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	evs, err := expandObject(o, calendarID, from, to)
 	for i := range evs {
 		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
-			return evs[i], s.eventSnapshot(eventID, ls.raw, o.etag), nil
+			return evs[i], s.eventSnapshot(eventID, ls.raw, o.etag, attendees), nil
 		}
 	}
 	if err != nil {
@@ -329,6 +330,7 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 		return "", nil, err
 	}
 	cal, objPath, calPath, master, override, tm, rid := ls.cal, ls.objPath, ls.calPath, ls.master, ls.override, ls.tm, ls.rid
+	attendees := hasAttendees(cal) // as the change reads it: it may remove the override that has them
 
 	// EXDATE for rid, in the series' form, unless one is already there; an
 	// override at the same instant is removed in the same write, never left
@@ -355,5 +357,5 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 	if err != nil {
 		return "", nil, err
 	}
-	return next, s.eventSnapshot(eventID, ls.raw, next), nil
+	return next, s.eventSnapshot(eventID, ls.raw, next, attendees), nil
 }

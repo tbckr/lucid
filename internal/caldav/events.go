@@ -468,7 +468,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	}
 
 	// Judged before the change, which may remove the rule.
-	wasRecurring := isRecurring(master)
+	wasRecurring, attendees := isRecurring(master), hasAttendees(cal)
 	start, end := in.Start, in.End
 	var instance, moved *time.Time
 	oldTm, tmErr := parseTiming(master)
@@ -535,7 +535,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	}
 	var snap *domain.Snapshot
 	if wasRecurring {
-		snap = s.eventSnapshot(eventID, raw, o.etag)
+		snap = s.eventSnapshot(eventID, raw, o.etag, attendees)
 	}
 	calendarID := encodeID(calPath)
 	if moved != nil {
