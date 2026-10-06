@@ -520,7 +520,9 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		end = start.Add(in.End.Sub(in.Start))
 		instance = &in.Start
 		applyEventSchedule(cal, master, in, rr, start, end, tz)
-		applyChangedEventFields(master, ov, in)
+		if applyChangedEventFields(master, ov, in) {
+			bumpChangeProps(ov, now)
+		}
 	default:
 		if rr == "" {
 			removeRecurrence(cal, master)
@@ -656,8 +658,9 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 // the override ov's own value, else the master's. An exception's own title
 // does not replace the series' title that way. A changed field goes into ov,
 // the exception edited, too (spec section 3 items 3 and 5, FR-17). ov is nil
-// where the edited event is no exception.
-func applyChangedEventFields(master, ov *ical.Component, in domain.EventInput) {
+// where the edited event is no exception. It returns whether it wrote a field
+// into ov, which the caller then bumps (see bumpChangeProps).
+func applyChangedEventFields(master, ov *ical.Component, in domain.EventInput) (changedOverride bool) {
 	for _, field := range []struct{ name, value string }{
 		{ical.PropSummary, in.Title},
 		{ical.PropDescription, in.Description},
@@ -673,8 +676,10 @@ func applyChangedEventFields(master, ov *ical.Component, in domain.EventInput) {
 		setText(master.Props, field.name, field.value)
 		if ov != nil {
 			setTextKept(ov.Props, field.name, field.value)
+			changedOverride = true
 		}
 	}
+	return changedOverride
 }
 
 // Why "all events" refuses to move a series (FR-17). Each is a

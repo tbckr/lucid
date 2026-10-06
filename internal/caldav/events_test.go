@@ -749,9 +749,10 @@ func TestRuleChangeFromAnExceptionKeepsItsTitleOut(t *testing.T) {
 	for _, tt := range []struct {
 		name, title string
 		wantMaster  string // the series' title afterwards
+		wantBumped  bool   // whether the exception is bumped: its text changed
 	}{
-		{"title unchanged", "Special", "Standup"},
-		{"title changed", "Renamed", "Renamed"},
+		{"title unchanged", "Special", "Standup", false},
+		{"title changed", "Renamed", "Renamed", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -781,6 +782,21 @@ func TestRuleChangeFromAnExceptionKeepsItsTitleOut(t *testing.T) {
 			}
 			if got := text(ves[1].Props, ical.PropSummary); got != tt.title {
 				t.Errorf("exception title = %q; want %q", got, tt.title)
+			}
+			// The series is always bumped; the exception only where its text was
+			// rewritten, as every other write to an override does.
+			if got := text(ves[0].Props, ical.PropSequence); got != "1" {
+				t.Errorf("series sequence = %q; want 1", got)
+			}
+			wantSeq, wantModified := "", ""
+			if tt.wantBumped {
+				wantSeq, wantModified = "1", text(ves[0].Props, ical.PropLastModified)
+			}
+			if got := text(ves[1].Props, ical.PropSequence); got != wantSeq {
+				t.Errorf("exception sequence = %q; want %q", got, wantSeq)
+			}
+			if got := text(ves[1].Props, ical.PropLastModified); got != wantModified {
+				t.Errorf("exception last-modified = %q; want %q", got, wantModified)
 			}
 		})
 	}
