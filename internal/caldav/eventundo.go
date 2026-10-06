@@ -16,12 +16,15 @@ import (
 // eventSnapshot returns the snapshot RestoreEvent undoes a change of the
 // series eventID with: raw, the resource exactly as the change read it. The
 // restore sends it with If-Match newETag, the series' ETag after the change,
-// so a later change by anyone else is never overwritten. Without a known
-// newETag there is none (nil): an undo could not tell its own change from
-// another client's. There is none either if the resource has attendees: the
-// server may have sent them the change with the SEQUENCE it carries, and a
-// restore would write an older one back (RFC 5545 section 3.8.7.4). attendees
-// is hasAttendees of the calendar as the change read it (FR-17).
+// so a later change by anyone else makes the restore fail and is not
+// overwritten, except for a write that lands in the single round trip in
+// which putBytes reads back an ETag the server did not send with its answer.
+// Without a known newETag there is none (nil): an undo could not tell its own
+// change from another client's. There is none either if the resource has
+// attendees: the server may have sent them the change with the SEQUENCE it
+// carries, and a restore would write an older one back (RFC 5545 section
+// 3.8.7.4). attendees is hasAttendees of the calendar as the change read it
+// (FR-17).
 func (s *service) eventSnapshot(eventID string, raw []byte, newETag string, attendees bool) *domain.Snapshot {
 	if newETag == "" || attendees {
 		return nil

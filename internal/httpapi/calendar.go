@@ -264,7 +264,8 @@ type deletedOccurrence struct {
 // kept, it answers 200 with the series' new ETag, in the body and in an ETag
 // header, for the client's next write of the series (NFR-26), and with the
 // undo token if there is one. Once the last occurrence is gone and the
-// resource is deleted, it answers 204 with neither.
+// resource is deleted, it answers 204 with neither, and so it does for a
+// series that is kept but whose new ETag the server did not tell.
 func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "eventId")
 	if !ok {

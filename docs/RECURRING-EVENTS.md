@@ -876,23 +876,28 @@ surveyed client and server round-trips (see [Summary](#summary)).
 
 ### Undo
 
-A change to a series that leaves its resource in place, and whose new ETag
-the CalDAV server tells, returns an `undoToken` (FR-17), also a save that
-removes the rule; a non-recurring event gets none, nor does a delete that
-removes the whole resource (a whole series, or the last event of one). Nor
-does a resource with an `ORGANIZER` or an `ATTENDEE` on any of its events: a
-server that schedules implicitly may have sent the attendees the change with
-its `SEQUENCE`, which must never go down (RFC 5545 section 3.8.7.4), and the
+A change to a series returns an `undoToken` (FR-17) if its resource stays in
+place and the CalDAV server tells the new ETag; a save that removes the rule
+counts too. A non-recurring event gets none, nor does a delete that removes
+the whole resource (a whole series, or the last event of one). Nor does a
+resource with an `ORGANIZER` or an `ATTENDEE` on any of its events: a server
+that schedules implicitly may have sent the attendees the change with its
+`SEQUENCE`, which must never go down (RFC 5545 section 3.8.7.4), and the
 restore would write the older one back.
+
 Undo restores the resource **byte for byte** as it was read before that
 write, a snapshot the backend keeps under the token, with one `PUT` and
 `If-Match` of the ETag the write produced, instead of reversing the write:
 the override, `EXDATE`s, shifted references and `UNTIL` all come back
 together. If another client has changed the series since, the `PUT` fails,
-the undo is refused (`409`) and nothing is written. The store keeps a
-snapshot for 2 minutes and refuses one over 1 MiB, so a series with years of
-overrides changes without an undo. The UI offers the Undo for 8 seconds, in
-the toast that says what the change did.
+the undo is refused (`409`) and nothing is written. The one exception is a
+write that lands in the single round trip in which Lucid reads back an ETag
+the server did not send with its answer to the change: the snapshot then
+carries that ETag. The store keeps a snapshot for 2 minutes and refuses one
+over 1 MiB, so a series with years of overrides changes without an undo; it
+can also drop a snapshot earlier, to keep at most 8 per session and 64 MiB
+in total. The UI offers the Undo for 8 seconds, in the toast that says what
+the change did.
 
 ### Limits
 
