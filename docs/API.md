@@ -109,6 +109,12 @@ resource for updates/deletes. `modified` is `true` for an occurrence of a
 series whose override visibly changed it (start, duration, all-day, title,
 location or description); it is omitted (`false`) otherwise.
 
+`undoToken` is a response-only field, never part of `EventInput` and never
+seen in the list: it appears on the response of the changes below that can be
+undone (`POST /api/v1/events/{eventId}/undo`, below). The change of a series
+whose resource is larger than 1 MiB, such as one with years of overrides,
+succeeds without it.
+
 ### `POST /api/v1/calendars/{calendarId}/events`
 
 Body (`EventInput`):
@@ -128,7 +134,10 @@ first occurrence).
 Body: `EventInput`. For an occurrence of a recurring series additionally send
 `"instanceStart": <recurrenceId of the edited occurrence>`: the change is
 applied to the **whole series** ("All events"). `200` with the updated
-`Event` (new `etag`).
+`Event` (new `etag`), and an `undoToken` if the change can be undone: the
+series was recurring before the change (a save that removes its rule
+included) and the CalDAV server tells its new `etag`. A single event gets
+none.
 
 - **Distance:** measured from the occurrence's *shown* start (an exception's
   own start, if the edited occurrence is one), not from `instanceStart`
@@ -200,7 +209,8 @@ belongs to the series, not the occurrence) and without `instanceStart`:
   "allDay": false, "timezone": "Europe/Berlin" }
 ```
 
-`200` with the changed `Event` (new `etag`). Its `modified` is `true` when the
+`200` with the changed `Event` (new `etag`), and an `undoToken` if the CalDAV
+server tells the new `etag`. Its `modified` is `true` when the
 override visibly changes the occurrence (as defined for the event list
 above), and omitted when the saved values are the ones the series gives
 there anyway. The override
@@ -217,13 +227,51 @@ Errors:
 ### `DELETE /api/v1/events/{eventId}/occurrences/{recurrenceId}` (header `If-Match`)
 
 Excludes only this occurrence ("Only this event"): writes an `EXDATE` and, in
-the same write, removes an existing override at the same instant. `204`. If
-no occurrence of the series is left afterwards, the resource itself is
-deleted; a series whose rule the backend cannot read (such as one with the
-RFC 7529 parts `RSCALE` or `SKIP`) is always kept. While the series is kept,
-the `204` carries its new `etag` in an `ETag` header (unless the CalDAV
-server tells none), to send with the series' next write; once the resource
-is deleted, it carries none. Errors: as for the `PUT` above.
+the same write, removes an existing override at the same instant. If no
+occurrence of the series is left afterwards, the resource itself is deleted;
+a series whose rule the backend cannot read (such as one with the RFC 7529
+parts `RSCALE` or `SKIP`) is always kept.
+
+While the series is kept and the CalDAV server tells its new `etag`: `200`
+with the new `etag` in the body and in an `ETag` header, to send with the
+series' next write, and an `undoToken`:
+
+```json
+{ "etag": "\"def\"", "undoToken": "..." }
+```
+
+Once the resource is deleted: `204` without a body, an `ETag` header or an
+`undoToken`; there is nothing to restore it from. A kept series whose new
+`etag` the server does not tell answers `204` as well. Errors: as for the
+`PUT` above.
+
+### `POST /api/v1/events/{eventId}/undo` → `200` `{etag, copyKept}`
+
+Body: `{ "token": "..." }`, strictly decoded; no `If-Match` (the token itself,
+single-use and short-lived, is the concurrency control).
+
+Undoes the change that returned `undoToken`, which is one of the changes
+above, by writing the series' resource back exactly as that change had read
+it. Response `200`:
+
+```json
+{ "etag": "\"ghi\"" }
+```
+
+`etag` is the resource's new ETag, for the client's next write of the series;
+`copyKept: true` would report a resource the change had created that could
+not be removed; no change of an event creates one, so it is not set today.
+
+| Status | code             | Meaning                                                                      |
+|--------|------------------|-------------------------------------------------------------------------------|
+| 400    | `invalid_input`  | Malformed body or token                                                     |
+| 401    | `unauthenticated`| No/expired session, as elsewhere                                            |
+| 403    | `csrf_invalid`   | Missing/wrong CSRF token                                                    |
+| 403    | `read_only`      | Calendar is read-only                                                       |
+| 404    | `not_found`      | Token unknown, expired, already used, or belongs to another event or to a todo ("nothing to undo") |
+| 409    | `conflict`       | The series changed or was deleted since (`If-Match` would have failed); the token is used up |
+| 429    | `rate_limited`   | Too many requests                                                           |
+| 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
 
 ## Todos
 

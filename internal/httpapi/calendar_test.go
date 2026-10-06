@@ -33,6 +33,7 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPut, path: "/api/v1/todos/t1", body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"x"}`},
+		{method: http.MethodPost, path: "/api/v1/events/e1/undo", body: `{"token":"x"}`},
 	} {
 		// Anonymous session (valid CSRF token) but not logged in.
 		expectError(t, h.do(t, anon, rq), http.StatusUnauthorized, codeUnauthenticated)
@@ -302,35 +303,64 @@ func TestOccurrenceWrites(t *testing.T) {
 	}
 }
 
-// TestDeleteOccurrenceETag checks that deleting one event of a series
-// answers with the series' new ETag in an ETag header while its resource is
-// kept, and with none once it is deleted, so the client can send it with
-// the series' next write (FR-17, NFR-26).
-func TestDeleteOccurrenceETag(t *testing.T) {
+// TestDeleteOccurrenceAnswers checks what deleting one event of a series
+// answers: 200 with the series' new ETag in the body and in an ETag header,
+// and the undo token if there is a snapshot, while its resource is kept; 204
+// without a body or ETag once it is deleted, so the client can send the ETag
+// with the series' next write (FR-17, NFR-26).
+func TestDeleteOccurrenceAnswers(t *testing.T) {
 	t.Parallel()
-	for _, tt := range []struct {
-		name string
-		etag string
-		want []string
-	}{
-		{"resource kept", `"4"`, []string{`"4"`}},
-		{"resource deleted", "", nil},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			h := newHarness(t, nil)
-			c := h.login(t)
-			h.svc.occurrenceETag = tt.etag
-			w := h.do(t, c, req{
-				method: http.MethodDelete, path: "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z",
-				headers: map[string]string{"If-Match": `"etag-1"`},
-			})
-			decode(t, w, http.StatusNoContent, nil)
-			if got := w.Header().Values("ETag"); !slices.Equal(got, tt.want) {
-				t.Errorf("ETag header = %q; want %q", got, tt.want)
-			}
-		})
-	}
+	const path = "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z"
+	ifMatch := map[string]string{"If-Match": `"etag-1"`}
+
+	t.Run("resource kept", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.occurrenceETag = `"5"`
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		decode(t, w, http.StatusOK, nil)
+		if got, want := w.Body.String(), `{"etag":"\"5\""}`; strings.TrimSpace(got) != want {
+			t.Errorf("body = %s; want %s", got, want)
+		}
+		if got := w.Header().Values("ETag"); !slices.Equal(got, []string{`"5"`}) {
+			t.Errorf("ETag header = %q; want %q", got, `"5"`)
+		}
+	})
+
+	t.Run("resource kept with a snapshot", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.occurrenceETag = `"5"`
+		h.svc.deleteOccurrenceSnapshot = eventSnapshot("e1")
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		var got struct {
+			ETag      string `json:"etag"`
+			UndoToken string `json:"undoToken"`
+		}
+		decode(t, w, http.StatusOK, &got)
+		if got.ETag != `"5"` || len(got.UndoToken) != 43 {
+			t.Errorf("answer = %+v; want etag %q and a token of length 43", got, `"5"`)
+		}
+		if hdr := w.Header().Values("ETag"); !slices.Equal(hdr, []string{`"5"`}) {
+			t.Errorf("ETag header = %q; want %q", hdr, `"5"`)
+		}
+	})
+
+	t.Run("resource deleted", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		decode(t, w, http.StatusNoContent, nil)
+		if w.Body.Len() != 0 {
+			t.Errorf("body = %q; want empty", w.Body)
+		}
+		if got := w.Header().Values("ETag"); got != nil {
+			t.Errorf("ETag header = %q; want none", got)
+		}
+	})
 }
 
 func TestTodos(t *testing.T) {
@@ -671,6 +701,260 @@ func TestUndoTodoErrors(t *testing.T) {
 		h, _, token := tokenHarness(t)
 		other := h.login(t)
 		w := h.do(t, other, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+}
+
+// eventSnapshot is a snapshot a fake service hands out for a change of the
+// series id.
+func eventSnapshot(id string) *domain.Snapshot {
+	return &domain.Snapshot{Kind: domain.SnapshotEvent, ID: id, ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+}
+
+const (
+	allEventsPath     = "/api/v1/events/e1"
+	onlyThisEventPath = "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z"
+	occurrenceBody    = `{"title":"Lunch","start":"2025-03-10T08:00:00Z","end":"2025-03-10T09:00:00Z","allDay":false,"timezone":"Europe/Berlin"}`
+)
+
+var eventIfMatch = map[string]string{"If-Match": `"etag-1"`}
+
+// eventChange is one of the three event routes that answer with an undo
+// token: the change of a whole series, of one occurrence, and the deletion of
+// one occurrence (FR-17).
+type eventChange struct {
+	name string
+	// setSnapshot hands the fake the snapshot its next change returns.
+	setSnapshot func(f *fakeService, snap *domain.Snapshot)
+	rq          req
+}
+
+var eventChanges = []eventChange{
+	{
+		"all events",
+		func(f *fakeService, snap *domain.Snapshot) { f.updateEventSnapshot = snap },
+		req{
+			method: http.MethodPut, path: allEventsPath, headers: eventIfMatch,
+			body: strings.TrimSuffix(eventBody, "}") + `,"instanceStart":"2025-01-06T12:00:00Z"}`,
+		},
+	},
+	{
+		"only this event",
+		func(f *fakeService, snap *domain.Snapshot) { f.occurrenceSnapshot = snap },
+		req{method: http.MethodPut, path: onlyThisEventPath, headers: eventIfMatch, body: occurrenceBody},
+	},
+	{
+		"delete only this event",
+		func(f *fakeService, snap *domain.Snapshot) {
+			f.deleteOccurrenceSnapshot = snap
+			f.occurrenceETag = `"5"`
+		},
+		req{method: http.MethodDelete, path: onlyThisEventPath, headers: eventIfMatch},
+	},
+}
+
+// undoTokenOf performs the change and returns the undoToken of its answer.
+func undoTokenOf(t *testing.T, h *harness, c *client, ch eventChange, snap *domain.Snapshot) string {
+	t.Helper()
+	ch.setSnapshot(h.svc, snap)
+	var got struct {
+		UndoToken string `json:"undoToken"`
+	}
+	decode(t, h.do(t, c, ch.rq), http.StatusOK, &got)
+	return got.UndoToken
+}
+
+func TestEventChangesReturnUndoToken(t *testing.T) {
+	t.Parallel()
+	for _, ch := range eventChanges {
+		t.Run(ch.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			if got := undoTokenOf(t, h, h.login(t), ch, eventSnapshot("e1")); len(got) != 43 {
+				t.Errorf("undoToken = %q, want length 43", got)
+			}
+
+			// Options.Undo == nil: no token at all.
+			h2 := newHarness(t, nil)
+			if got := undoTokenOf(t, h2, h2.login(t), ch, eventSnapshot("e1")); got != "" {
+				t.Errorf("undoToken = %q, want empty with Options.Undo == nil", got)
+			}
+
+			// No snapshot (a single event, or no ETag to undo with): no token.
+			h3 := newHarness(t, withUndo)
+			if got := undoTokenOf(t, h3, h3.login(t), ch, nil); got != "" {
+				t.Errorf("undoToken = %q, want empty without a snapshot", got)
+			}
+		})
+	}
+}
+
+// TestUndoTokenTooLarge covers a series whose resource exceeds the undo
+// store's limit, such as one with years of overrides: the change succeeds
+// all the same, it just has no undo (FR-17).
+func TestUndoTokenTooLarge(t *testing.T) {
+	t.Parallel()
+	for _, ch := range eventChanges {
+		t.Run(ch.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			snap := eventSnapshot("e1")
+			snap.Data = make([]byte, undo.DefaultMaxSnapshot+1)
+			if got := undoTokenOf(t, h, h.login(t), ch, snap); got != "" {
+				t.Errorf("undoToken = %q, want none for a snapshot over the limit", got)
+			}
+		})
+	}
+}
+
+func TestUndoEvent(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withUndo)
+	c := h.login(t)
+	token := undoTokenOf(t, h, c, eventChanges[1], eventSnapshot("e1"))
+	if token == "" {
+		t.Fatalf("no undo token")
+	}
+
+	w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/events/e1/undo", body: `{"token":"` + token + `"}`})
+	decode(t, w, http.StatusOK, nil)
+	if got, want := strings.TrimSpace(w.Body.String()), `{"etag":"\"9\""}`; got != want {
+		t.Errorf("body = %s; want %s", got, want)
+	}
+	if h.svc.gotSnap.ID != "e1" || string(h.svc.gotSnap.Data) != "x" || h.svc.gotSnap.ETag != `"2"` {
+		t.Errorf("RestoreEvent got %+v", h.svc.gotSnap)
+	}
+
+	// Single use: a second POST with the same token finds nothing to undo.
+	w = h.do(t, c, req{method: http.MethodPost, path: "/api/v1/events/e1/undo", body: `{"token":"` + token + `"}`})
+	expectError(t, w, http.StatusNotFound, codeNotFound)
+	if !strings.Contains(w.Body.String(), "nothing to undo") {
+		t.Errorf("message = %s", w.Body)
+	}
+}
+
+func TestUndoEventErrors(t *testing.T) {
+	t.Parallel()
+
+	// tokenHarness logs in, performs a change that yields a token, and
+	// returns the harness, its client and the token.
+	tokenHarness := func(t *testing.T) (*harness, *client, string) {
+		t.Helper()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		token := undoTokenOf(t, h, c, eventChanges[1], eventSnapshot("e1"))
+		if token == "" {
+			t.Fatalf("no undo token")
+		}
+		return h, c, token
+	}
+	undoReq := func(id, body string) req {
+		return req{method: http.MethodPost, path: "/api/v1/events/" + id + "/undo", body: body}
+	}
+
+	t.Run("unknown token", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		// Well-formed (right length, right charset) but never issued.
+		w := h.do(t, c, undoReq("e1", `{"token":"`+strings.Repeat("A", 43)+`"}`))
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+
+	t.Run("malformed token", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		// Syntactically invalid (wrong length/charset), as opposed to a
+		// well-formed but unknown one above: invalid input, not "not found".
+		w := h.do(t, c, undoReq("e1", `{"token":"x"}`))
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
+	})
+
+	t.Run("token for another event", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		w := h.do(t, c, undoReq("other", `{"token":"`+token+`"}`))
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+		// The token still works for its own event.
+		w = h.do(t, c, undoReq("e1", `{"token":"`+token+`"}`))
+		decode(t, w, http.StatusOK, nil)
+	})
+
+	t.Run("conflict consumes the token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		h.svc.err = domain.ErrConflict
+		w := h.do(t, c, undoReq("e1", `{"token":"`+token+`"}`))
+		expectError(t, w, http.StatusConflict, codeConflict)
+		h.svc.err = nil
+		w = h.do(t, c, undoReq("e1", `{"token":"`+token+`"}`))
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+
+	t.Run("upstream error keeps the token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		h.svc.err = domain.ErrUpstream
+		w := h.do(t, c, undoReq("e1", `{"token":"`+token+`"}`))
+		expectError(t, w, http.StatusBadGateway, codeUpstreamError)
+		h.svc.err = nil
+		w = h.do(t, c, undoReq("e1", `{"token":"`+token+`"}`))
+		decode(t, w, http.StatusOK, nil)
+	})
+
+	t.Run("malformed body", func(t *testing.T) {
+		t.Parallel()
+		h, c, _ := tokenHarness(t)
+		w := h.do(t, c, undoReq("e1", `{"token":`))
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
+	})
+
+	t.Run("extra field", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		w := h.do(t, c, undoReq("e1", `{"token":"`+token+`","extra":1}`))
+		expectError(t, w, http.StatusBadRequest, codeInvalidInput)
+	})
+
+	t.Run("no session cookie", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		anon := h.anonymous(t)
+		w := h.do(t, anon, undoReq("e1", `{"token":"`+strings.Repeat("A", 43)+`"}`))
+		expectError(t, w, http.StatusUnauthorized, codeUnauthenticated)
+	})
+
+	t.Run("missing csrf token", func(t *testing.T) {
+		t.Parallel()
+		h, c, token := tokenHarness(t)
+		rq := undoReq("e1", `{"token":"`+token+`"}`)
+		rq.noCSRF = true
+		expectError(t, h.do(t, c, rq), http.StatusForbidden, middleware.CodeCSRFInvalid)
+	})
+
+	// A token a todo change returned never undoes an event, even for the same
+	// ID: the kind is part of what it was issued for.
+	t.Run("token of a todo change", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		todo := putTodoSnapshot(t, h, c, "e1", &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "e1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()})
+		if todo.UndoToken == "" {
+			t.Fatalf("no undo token")
+		}
+		w := h.do(t, c, undoReq("e1", `{"token":"`+todo.UndoToken+`"}`))
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+		if slices.Contains(h.svc.calls, "RestoreEvent") {
+			t.Errorf("calls = %v; want no RestoreEvent", h.svc.calls)
+		}
+	})
+
+	t.Run("token from another session", func(t *testing.T) {
+		t.Parallel()
+		h, _, token := tokenHarness(t)
+		other := h.login(t)
+		w := h.do(t, other, undoReq("e1", `{"token":"`+token+`"}`))
 		expectError(t, w, http.StatusNotFound, codeNotFound)
 	})
 }

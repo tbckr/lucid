@@ -191,11 +191,12 @@ func (s *Server) handleUpdateEvent(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	ev, _, err := svc.UpdateEvent(r.Context(), id, etag, in)
+	ev, snap, err := svc.UpdateEvent(r.Context(), id, etag, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	ev.UndoToken = s.storeUndo(r, snap)
 	middleware.WriteJSON(w, http.StatusOK, ev)
 }
 
@@ -242,18 +243,28 @@ func (s *Server) handleUpdateOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !s.decodeValid(w, r, &in) {
 		return
 	}
-	ev, _, err := svc.UpdateOccurrence(r.Context(), id, etag, rid, in)
+	ev, snap, err := svc.UpdateOccurrence(r.Context(), id, etag, rid, in)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	ev.UndoToken = s.storeUndo(r, snap)
 	middleware.WriteJSON(w, http.StatusOK, ev)
+}
+
+// deletedOccurrence answers a delete of one occurrence whose series is kept:
+// the series' new ETag, and the token that undoes the delete (FR-17).
+type deletedOccurrence struct {
+	ETag      string `json:"etag"`
+	UndoToken string `json:"undoToken,omitempty"`
 }
 
 // handleDeleteOccurrence excludes only one occurrence of a recurring series
 // ("only this event"), via EXDATE (FR-17). While the series' resource is
-// kept, the 204 carries its new ETag in an ETag header, for the client's next
-// write of the series (NFR-26).
+// kept, it answers 200 with the series' new ETag, in the body and in an ETag
+// header, for the client's next write of the series (NFR-26), and with the
+// undo token if there is one. Once the last occurrence is gone and the
+// resource is deleted, it answers 204 with neither.
 func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "eventId")
 	if !ok {
@@ -271,15 +282,17 @@ func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	next, _, err := svc.DeleteOccurrence(r.Context(), id, etag, rid)
+	next, snap, err := svc.DeleteOccurrence(r.Context(), id, etag, rid)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if next != "" {
-		w.Header().Set("ETag", next)
+	if next == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("ETag", next)
+	middleware.WriteJSON(w, http.StatusOK, deletedOccurrence{ETag: next, UndoToken: s.storeUndo(r, snap)})
 }
 
 type todosResponse struct {
@@ -480,6 +493,22 @@ func (s *Server) handleUndoTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(restored))
+}
+
+// handleUndoEvent undoes the change of an event series that returned Token,
+// by restoring the snapshot it is associated with (FR-17), see takeUndo.
+func (s *Server) handleUndoEvent(w http.ResponseWriter, r *http.Request) {
+	svc, snap, owner, token, ok := s.takeUndo(w, r, "eventId", domain.SnapshotEvent)
+	if !ok {
+		return
+	}
+	restored, err := svc.RestoreEvent(r.Context(), snap)
+	s.settleUndo(owner, token, err)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	middleware.WriteJSON(w, http.StatusOK, restored)
 }
 
 func (s *Server) handleDeleteTodo(w http.ResponseWriter, r *http.Request) {

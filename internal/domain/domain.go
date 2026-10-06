@@ -94,6 +94,9 @@ type Event struct {
 	// description. Invisible differences, such as PARTSTAT or an added
 	// VALARM, do not set it (FR-17).
 	Modified bool `json:"modified,omitempty"`
+	// UndoToken undoes the change of the series whose response carries it
+	// (FR-17).
+	UndoToken string `json:"undoToken,omitempty"`
 }
 
 // EventInput is the payload for creating or updating an event.

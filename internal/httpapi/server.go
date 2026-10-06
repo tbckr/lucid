@@ -40,9 +40,10 @@ type Options struct {
 	Provider domain.Provider
 	// Sessions stores sessions. Required.
 	Sessions SessionStore
-	// Undo stores the short-lived snapshots that undo a recurring-todo
-	// change (FR-17). nil means no undo tokens are ever issued, and the
-	// undo route always answers 404 "nothing to undo".
+	// Undo stores the short-lived snapshots that undo a change of a
+	// recurring todo or of an event series (FR-17). nil means no undo
+	// tokens are ever issued, and the undo routes always answer 404
+	// "nothing to undo".
 	Undo *undo.Store
 	// Logger receives access and error logs. Default slog.Default().
 	Logger *slog.Logger
@@ -114,6 +115,7 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/v1/events/{eventId}", s.handleDeleteEvent)
 	mux.HandleFunc("PUT /api/v1/events/{eventId}/occurrences/{recurrenceId}", s.handleUpdateOccurrence)
 	mux.HandleFunc("DELETE /api/v1/events/{eventId}/occurrences/{recurrenceId}", s.handleDeleteOccurrence)
+	mux.HandleFunc("POST /api/v1/events/{eventId}/undo", s.handleUndoEvent)
 	mux.HandleFunc("GET /api/v1/calendars/{calendarId}/todos", s.handleListTodos)
 	mux.HandleFunc("GET /api/v1/calendars/{calendarId}/todos/occurrences", s.handleListTodoOccurrences)
 	mux.HandleFunc("POST /api/v1/calendars/{calendarId}/todos", s.handleCreateTodo)
