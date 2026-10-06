@@ -876,16 +876,15 @@ export function useUpdateTodo(id?: string) {
       toast.success(message, {
         id: `series:${todo.id}`,
         duration: ACTION_TOAST_MS,
-        ...(updated.undoToken
+        // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
+        action: updated.undoToken
           ? {
-              action: {
-                label: t('common.undo'),
-                onClick: () => {
-                  void undoSeriesChange(qc, t, updated)
-                },
+              label: t('common.undo'),
+              onClick: () => {
+                void undoSeriesChange(qc, t, updated)
               },
             }
-          : {}),
+          : undefined,
       })
     },
     onError: (err, { todo }, ctx) => {

@@ -1550,6 +1550,34 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(undo?.body).toEqual({ token: 'tok2' })
   })
 
+  it('takes the undo of an earlier change away when the next one has none', async () => {
+    const { result, writes } = setup([
+      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok1' },
+      { ...series, etag: '"3"', due: '2026-10-09T00:00:00Z' },
+    ])
+
+    act(() => {
+      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(seriesToastAction('t2')?.label).toBe('Undo')
+    })
+    const after1 = result.current.data!
+
+    act(() => {
+      result.current.mutate({ todo: after1, input: todoToInput(after1, { due: '2026-10-09T00:00:00.000Z' }) })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    await waitFor(() => {
+      expect(result.current.data?.etag).toBe('"3"')
+    })
+    // One toast, the second change's, which has no Undo: sonner merges a toast into the one of its ID.
+    expect(toast.getToasts().filter((x) => x.id === 'series:t2')).toHaveLength(1)
+    expect(seriesToastAction('t2')).toBeUndefined()
+  })
+
   it('reports a gone undo', async () => {
     const success = vi.spyOn(toast, 'success')
     const error = vi.spyOn(toast, 'error')
