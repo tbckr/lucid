@@ -5,6 +5,7 @@ import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { KindSwitch } from '@/components/create/KindSwitch'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
+import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { Button } from '@/components/ui/button'
 import { DialogClose, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -25,7 +26,6 @@ import {
   formToInput,
   keepsRuleAndAllDay,
   occurrenceInput,
-  ruleChanged,
   shiftEnd,
   type EventFormValues,
 } from '@/lib/eventForm'
@@ -34,7 +34,7 @@ import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
-import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
+import { eventScopeHint, eventScopeItems, glyphSlots, scopeOptions, type Scope, type ScopeResult } from '@/lib/scope'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
@@ -132,9 +132,6 @@ function EditorForm({
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
   const start = parseDayKey(startDate)
-  // Whether the repeat rule differs from the editor's initial values (FR-17); while it stays the
-  // same, saving can ask which events of the series to change instead of rewriting all of it.
-  const ruleHasChanged = !!(initial && ruleChanged(getValues(), initial))
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
   useEffect(() => {
@@ -193,6 +190,20 @@ function EditorForm({
     })
   }, [asking, subscribe, cancelAsk])
 
+  // Which events of a series a save of `values` (sent as `input`) can reach (FR-17): a changed
+  // rule or all-day flag is the whole series', and a day the series can't follow only this
+  // event's. Empty for a single event.
+  const saveScopes = (values: EventFormValues, input: EventInput): ScopeResult =>
+    event && initial
+      ? scopeOptions({
+          kind: 'event',
+          action: keepsRuleAndAllDay(values, initial) ? 'change' : 'rule',
+          item: event,
+          to: new Date(input.start),
+          tz,
+        })
+      : { options: [] }
+
   // "Only this event" saves an override of the occurrence; "All events" the series (FR-17).
   const saveScope = (scope: Scope, e: CalEvent, input: EventInput) => {
     switch (scope) {
@@ -209,17 +220,10 @@ function EditorForm({
 
   const onSubmit = handleSubmit((values) => {
     const input = formToInput(values, tz, event)
-    if (event && initial) {
-      // A series asks which events to change only when there is a choice (FR-17): a changed rule
-      // or all-day flag is the whole series', and a day the series can't follow only this
-      // event's. The one thing a save can do, it does right away.
-      const { options } = scopeOptions({
-        kind: 'event',
-        action: keepsRuleAndAllDay(values, initial) ? 'change' : 'rule',
-        item: event,
-        to: new Date(input.start),
-        tz,
-      })
+    if (event) {
+      // A series asks which events to change only when there is a choice (FR-17). The one thing
+      // a save can do, it does right away; the footer has said which beforehand.
+      const { options } = saveScopes(values, input)
       const [only] = options
       if (options.length > 1) {
         setAsking({ input, options })
@@ -267,6 +271,13 @@ function EditorForm({
       </div>
     )
   }
+
+  // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
+  // with the form: the watched fields above re-render the editor whenever the answer can change.
+  const formValues = getValues()
+  const hint = event
+    ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, event)), recurrence === 'none')
+    : null
 
   const titleError = err('title')
   const endError = err('endDate')
@@ -467,8 +478,6 @@ function EditorForm({
               {repeatText(customRule) ?? customRule}
             </p>
           )}
-          {/* A changed rule applies to the whole series without asking (FR-17); say so up front. */}
-          {event?.recurring && ruleHasChanged && <p className="pt-1 text-xs text-muted-foreground">{t('event.scope.newRule')}</p>}
         </EditorRow>
 
         <EditorRow icon={<MapPinIcon />}>
@@ -512,10 +521,18 @@ function EditorForm({
           </div>
         ) : (
           <>
+            {hint && (
+              // Left of the buttons; on narrow screens, where they stack, above them. Save names it
+              // as its description (NFR-27).
+              <p id={`${id}-hint`} className="mr-auto flex items-center gap-2 text-xs text-muted-foreground max-sm:order-last">
+                <ScopeGlyph slots={glyphSlots(hint.reach)} tone={hint.tone} color={colors.solid} className="shrink-0" />
+                {hint.text}
+              </p>
+            )}
             <Button type="button" variant="ghost" onClick={onDone}>
               {t('common.cancel')}
             </Button>
-            <Button ref={saveRef} type="submit" disabled={pending}>
+            <Button ref={saveRef} type="submit" disabled={pending} aria-describedby={hint ? `${id}-hint` : undefined}>
               {pending && <Spinner />}
               {event ? t('common.save') : t('event.createAction')}
             </Button>

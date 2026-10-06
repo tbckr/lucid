@@ -19,6 +19,7 @@ import { type DragData, type DropData } from '@/lib/dnd'
 import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { previewOf } from '@/lib/quickCreate'
+import { type ScopeHint } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { apiEvent, bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -117,17 +118,25 @@ function standup(day: number): CalEvent {
   )
 }
 
+/** The views' overlay as the tests see it: what it is handed, nothing drawn. */
+type Overlay = (data: DragData, limit: string | null, hint: ScopeHint | null) => ReactNode
+
 /**
  * Renders `events` in a week of day cells from 09-25 (or `days`), and `more` after them, with
  * the calendars loaded as in the app.
  */
-function renderWeek(events: CalEvent[], days = [25, 26, 27].map((d) => new Date(2026, 8, d)), more?: ReactNode) {
+function renderWeek(
+  events: CalEvent[],
+  days = [25, 26, 27].map((d) => new Date(2026, 8, d)),
+  more?: ReactNode,
+  overlay: Overlay = () => null,
+) {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(10, 40, 80, 20)
   })
   api.setCsrfToken('tok')
   const result = renderWithProviders(
-    <CalendarDnd renderOverlay={() => null}>
+    <CalendarDnd renderOverlay={overlay}>
       <Week days={days} events={events} />
       {more}
     </CalendarDnd>,
@@ -145,13 +154,13 @@ function chipIn(day: number, name: string): HTMLElement {
  * Renders `event` as a block in Friday's (09-25) column of the time grid, with `children`
  * (a resize handle) in it, and the calendars loaded as in the app.
  */
-function renderBlock(event: CalEvent, children?: ReactNode) {
+function renderBlock(event: CalEvent, children?: ReactNode, overlay: Overlay = () => null) {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 1152) : rect(10, 480, 80, 46)
   })
   const fri = new Date(2026, 8, 25)
   const result = renderWithProviders(
-    <CalendarDnd renderOverlay={() => null}>
+    <CalendarDnd renderOverlay={overlay}>
       <Column day={fri} left={0} columnRef={createRef<HTMLDivElement>()}>
         <TimedBlock
           event={event}
@@ -292,6 +301,19 @@ describe('CalendarDnd', () => {
   describe('an event of a series asks which events move (FR-10, FR-17)', () => {
     const standupAt10 = 'Standup, 10 AM'
     const moveQuestion = 'This event repeats. Which events should move?'
+    // On the 15th of each month: another day is beyond the series (FR-17), only this one can go there.
+    const monthly = toCalEvent(
+      apiEvent({
+        title: 'Rent',
+        key: 'e1@2026-10-15T08:00:00Z',
+        start: '2026-10-15T08:00:00Z',
+        end: '2026-10-15T09:00:00Z',
+        recurring: true,
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+        recurrenceId: '2026-10-15T08:00:00Z',
+      }),
+    )
+    const october = [15, 16, 17].map((d) => new Date(2026, 9, d))
 
     it('asks after dropping an event of a series, and moves only it', async () => {
       const user = userEvent.setup()
@@ -730,19 +752,7 @@ describe('CalendarDnd', () => {
             release = resolve
           }),
       )
-      // On the 15th of each month: another day is beyond the series (FR-17), only this one can go there.
-      const monthly = toCalEvent(
-        apiEvent({
-          title: 'Rent',
-          key: 'e1@2026-10-15T08:00:00Z',
-          start: '2026-10-15T08:00:00Z',
-          end: '2026-10-15T09:00:00Z',
-          recurring: true,
-          rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
-          recurrenceId: '2026-10-15T08:00:00Z',
-        }),
-      )
-      const { queryClient } = renderWeek([monthly], [15, 16, 17].map((d) => new Date(2026, 9, d)))
+      const { queryClient } = renderWeek([monthly], october)
 
       await moveRight(chipIn(15, 'Rent, 10 AM'))
       await waitFor(() => {
@@ -760,6 +770,62 @@ describe('CalendarDnd', () => {
       await waitFor(() => {
         expect(queryClient.isMutating()).toBe(0)
       })
+    })
+
+    // The pill under the dragged event is hidden from screen readers; the announcement says the same
+    // (FR-17, NFR-27).
+    it('tells under the dragged event that only it can move', async () => {
+      vi.spyOn(globalThis, 'fetch')
+      const overlay = vi.fn<Overlay>(() => null)
+      renderWeek([monthly], october, undefined, overlay)
+
+      const chip = chipIn(15, 'Rent, 10 AM')
+      chip.focus()
+      fireEvent.keyDown(chip, { code: 'Space', key: ' ' })
+      await act(() => new Promise((resolve) => setTimeout(resolve)))
+      expect(overlay.mock.lastCall?.[2]).toBeNull()
+
+      fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+      const hint = overlay.mock.lastCall?.[2]
+      expect(hint?.text).toBe('Only this event. The series stays on its days.')
+      expect(hint?.reach).toBe('this')
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /^New time: .+\. Only this event\. The series stays on its days\.$/,
+      )
+
+      // Back on its own day, a drop would change nothing, and there is nothing to say.
+      fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
+      expect(overlay.mock.lastCall?.[2]).toBeNull()
+      expect(screen.getByRole('status')).toHaveTextContent('Time unchanged.')
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+    })
+
+    it('gives no hint where the series can follow', async () => {
+      vi.spyOn(globalThis, 'fetch')
+      const overlay = vi.fn<Overlay>(() => null)
+      const weekly = toCalEvent(
+        apiEvent({
+          title: 'Standup',
+          key: 'e1@2026-09-25T08:00:00Z',
+          recurring: true,
+          rrule: 'FREQ=WEEKLY',
+          recurrenceId: '2026-09-25T08:00:00Z',
+        }),
+      )
+      renderBlock(weekly, undefined, overlay)
+
+      const block = screen.getByRole('button', { name: 'Standup, 10 AM – 11 AM' })
+      block.focus()
+      fireEvent.keyDown(block, { code: 'Space', key: ' ' })
+      await act(() => new Promise((resolve) => setTimeout(resolve)))
+      fireEvent.keyDown(document, { code: 'ArrowDown', key: 'ArrowDown' })
+
+      // The drag has a target, 15 minutes later the same day, which the whole series can follow.
+      const [data, , hint] = overlay.mock.lastCall ?? []
+      expect(data?.event.startsAt).toEqual(new Date('2026-09-25T08:15:00Z'))
+      expect(hint).toBeNull()
+      expect(screen.getByRole('status')).toHaveTextContent(/^New time: [^.]+\.$/)
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })
 
     it('keeps the question after a keyboard move within the day', async () => {
@@ -808,7 +874,7 @@ describe('CalendarDnd', () => {
      * [10-05, 10-08)) draggable across day cells 10-05..10-09, and picks it up with the
      * keyboard. Callers move it and finish the drag themselves.
      */
-    async function pickUpBounded(renderOverlay: (data: DragData, limit: string | null) => ReactNode = () => null) {
+    async function pickUpBounded(renderOverlay: Overlay = () => null) {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
@@ -867,17 +933,17 @@ describe('CalendarDnd', () => {
     })
 
     it('hands the overlay the limit while over a blocked day, and none back inside', async () => {
-      const overlay = vi.fn((_data: DragData, _limit: string | null): ReactNode => null)
+      const overlay = vi.fn<Overlay>(() => null)
       await pickUpBounded(overlay)
       for (let i = 0; i < 4; i++) {
         fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
       }
-      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), 'Only possible until Wed, Oct 7.')
+      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), 'Only possible until Wed, Oct 7.', null)
 
       for (let i = 0; i < 3; i++) {
         fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
       }
-      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), null)
+      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), null, null)
 
       fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })

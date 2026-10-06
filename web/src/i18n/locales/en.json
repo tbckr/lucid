@@ -147,9 +147,6 @@
     "modified": "Repeating event, changed individually",
     "modifiedNotice": "This event was changed individually.",
     "confirmDelete": "Delete this event?",
-    "scope": {
-      "newRule": "A new repeat rule applies to every event in the series."
-    },
     "corrupted": "Corrupted event",
     "resize": "Change end time",
     "noWritableCalendar": "None of your calendars accept new events.",
@@ -206,6 +203,15 @@
       "thisNote": "Only {{date}}.",
       "all": "All events",
       "allNote": "Past ones too."
+    },
+    "reason": {
+      "fixedDays": "The series stays on its days.",
+      "fixedTimes": "The series keeps its times."
+    },
+    "hint": {
+      "eventThis": "Only this event. {{reason}}",
+      "eventAll": "Applies to every event in the series.",
+      "eventRuleRemoved": "The series becomes this one event. All others are deleted."
     },
     "toast": {
       "thisMoved": "Only this event moved.",

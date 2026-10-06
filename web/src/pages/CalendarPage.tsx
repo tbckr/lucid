@@ -10,6 +10,7 @@ import { EventDetailsPopover } from '@/components/events/EventDetailsPopover'
 import { EventBar, EventChip, TimedBlock } from '@/components/events/EventItems'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { TopBar } from '@/components/layout/TopBar'
+import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { ShortcutsDialog } from '@/components/settings/ShortcutsDialog'
 import { TaskDetailsPopover } from '@/components/tasks/TaskDetailsPopover'
@@ -31,6 +32,7 @@ import { eachDay, stepDate, visibleRange } from '@/lib/dates'
 import { overlapsRange, type CalItem } from '@/lib/events'
 import { formatPeriodTitle } from '@/lib/format'
 import { navigate } from '@/lib/router'
+import { glyphSlots } from '@/lib/scope'
 import { type ShortcutAction } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
@@ -238,7 +240,7 @@ export function CalendarPage() {
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto border-border bg-surface lg:mr-2 lg:mb-2 lg:rounded-xl lg:border"
         >
           <CalendarDnd
-            renderOverlay={(d, limit) => {
+            renderOverlay={(d, limit, hint) => {
               const e = d.event
               const colors = colorsOf(e.calendarId)
               const bar = e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= 86_400_000
@@ -267,15 +269,31 @@ export function CalendarPage() {
                 )
               }
               const drag = { id: 'overlay', data: d, disabled: true }
+              // Which events of its series the drop reaches when there is no choice (FR-17), beneath.
+              const pill = hint && (
+                <LimitPill className="absolute top-full left-0 mt-1">
+                  <ScopeGlyph inverted slots={glyphSlots(hint.reach)} className="mr-1.5 inline align-[-1px]" />
+                  {hint.text}
+                </LimitPill>
+              )
               if (d.type === 'timed') {
                 return (
                   <div className="relative size-full shadow-float">
                     <TimedBlock event={e} colors={colors} prefs={prefs} drag={drag} size="md" style={{ inset: 0 }} />
+                    {pill}
                   </div>
                 )
               }
-              if (bar) return <EventBar event={e} colors={colors} prefs={prefs} drag={drag} className="w-full shadow-float" />
-              return <EventChip event={e} colors={colors} prefs={prefs} drag={drag} className="bg-surface shadow-float" />
+              return (
+                <div className="relative">
+                  {bar ? (
+                    <EventBar event={e} colors={colors} prefs={prefs} drag={drag} className="w-full shadow-float" />
+                  ) : (
+                    <EventChip event={e} colors={colors} prefs={prefs} drag={drag} className="bg-surface shadow-float" />
+                  )}
+                  {pill}
+                </div>
+              )
             }}
           >
             {renderView()}

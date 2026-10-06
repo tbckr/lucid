@@ -104,3 +104,35 @@ export function eventScopeItems(t: TFunction, event: CalEvent, options: Scope[],
     }
   })
 }
+
+/** What a change of a series reaches when there is no choice: in words, as reach glyph, and whether in red. */
+export interface ScopeHint {
+  text: string
+  reach: Scope
+  tone: 'default' | 'destructive'
+}
+
+/**
+ * What a change of an event series reaches when it has exactly one option
+ * (FR-17), said before it happens: under the dragged event, in the editor's
+ * footer, and to screen readers while dragging (NFR-27). `null` with a
+ * choice, which the question asks, or for a single event. `ruleRemoved`: the
+ * series becomes this one event, which deletes all others, the only hint in
+ * red. `'following'` has no words before phase 3 and throws.
+ */
+export function eventScopeHint(t: TFunction, result: ScopeResult, ruleRemoved: boolean): ScopeHint | null {
+  const [only] = result.options
+  if (result.options.length !== 1 || !only) return null
+  switch (only) {
+    case 'this': {
+      const reason = result.reason ? t(`scope.reason.${result.reason}`) : ''
+      return { text: t('scope.hint.eventThis', { reason }).trim(), reach: 'this', tone: 'default' }
+    }
+    case 'all':
+      return ruleRemoved
+        ? { text: t('scope.hint.eventRuleRemoved'), reach: 'all', tone: 'destructive' }
+        : { text: t('scope.hint.eventAll'), reach: 'all', tone: 'default' }
+    case 'following':
+      throw new Error('"This and following events" is not offered for events yet')
+  }
+}

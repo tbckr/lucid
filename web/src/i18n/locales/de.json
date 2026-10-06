@@ -147,9 +147,6 @@
     "modified": "Wiederkehrender Termin, einzeln geändert",
     "modifiedNotice": "Dieser Termin wurde einzeln geändert.",
     "confirmDelete": "Diesen Termin löschen?",
-    "scope": {
-      "newRule": "Eine neue Regel gilt für alle Termine der Serie."
-    },
     "corrupted": "Beschädigter Termin",
     "resize": "Endzeit ändern",
     "noWritableCalendar": "Keiner deiner Kalender nimmt neue Termine an.",
@@ -206,6 +203,15 @@
       "thisNote": "Nur {{date}}.",
       "all": "Alle Termine",
       "allNote": "Auch vergangene."
+    },
+    "reason": {
+      "fixedDays": "Die Serie bleibt auf ihren Tagen.",
+      "fixedTimes": "Die Serie behält ihre Uhrzeiten."
+    },
+    "hint": {
+      "eventThis": "Nur dieser Termin. {{reason}}",
+      "eventAll": "Gilt für alle Termine der Serie.",
+      "eventRuleRemoved": "Die Serie wird zu diesem einen Termin. Alle anderen werden gelöscht."
     },
     "toast": {
       "thisMoved": "Nur dieser Termin verschoben.",

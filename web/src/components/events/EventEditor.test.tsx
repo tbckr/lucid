@@ -169,24 +169,6 @@ describe('EventEditor', () => {
     expect(bodyOf(init)).toHaveProperty('instanceStart', '2026-09-25T08:00:00Z')
   })
 
-  it('saves a changed rule for the whole series without asking, and says so', async () => {
-    const user = userEvent.setup()
-    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
-    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
-
-    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
-    await user.click(screen.getByRole('option', { name: 'Every day' }))
-    expect(within(dialog).getByText('A new repeat rule applies to every event in the series.')).toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
-    await waitFor(() => {
-      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
-        true,
-      )
-    })
-  })
-
   it('saves a change between all-day and timed for the whole series without asking', async () => {
     const user = userEvent.setup()
     const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
@@ -225,6 +207,64 @@ describe('EventEditor', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull()
     })
+  })
+
+  // FR-17: with one option, the footer says before Save what it reaches; red only where it deletes.
+  it('warns in the footer before a new rule replaces the series', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    // Unchanged, a save can still reach either, and the question will ask.
+    expect(within(dialog).queryByText('Applies to every event in the series.')).toBeNull()
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    const all = within(dialog).getByText('Applies to every event in the series.')
+    expect(all).toHaveClass('text-muted-foreground')
+    expect(Array.from(all.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(Array(5).fill('#3b82f6'))
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
+    expect(within(dialog).queryByText('Applies to every event in the series.')).toBeNull()
+    const removed = within(dialog).getByText('The series becomes this one event. All others are deleted.')
+    expect(removed).toHaveClass('text-muted-foreground')
+    expect(Array.from(removed.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(
+      Array(5).fill('var(--destructive)'),
+    )
+    // Screen readers hear it with Save (NFR-27).
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(
+      'The series becomes this one event. All others are deleted.',
+    )
+  })
+
+  // FR-17: the hint follows the form; it is about what Save would do now, not when it opened.
+  it('shows the hint only while the date keeps the series from following', async () => {
+    const user = userEvent.setup()
+    const hint = 'Only this event. The series stays on its days.'
+    const event = toCalEvent(
+      apiEvent({
+        id: 'e1',
+        start: '2026-10-15T08:00:00Z',
+        end: '2026-10-15T09:00:00Z',
+        recurring: true,
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+        recurrenceId: '2026-10-15T08:00:00Z',
+      }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).queryByText(hint)).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: /^Start Thu, Oct 15/ }))
+    await user.click(screen.getByRole('button', { name: 'Friday, October 16th, 2026' }))
+    expect(within(dialog).getByText(hint)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Oct 16/ }))
+    await user.click(screen.getByRole('button', { name: 'Thursday, October 15th, 2026' }))
+    expect(within(dialog).queryByText(hint)).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })).toBeInTheDocument()
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
 
   // A new rule can only be the whole series' (FR-17), whatever day the event moves to with it.

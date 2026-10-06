@@ -52,7 +52,7 @@ import { formatEventSpan, formatPickerDate } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
 import { draggedWhen } from '@/lib/quickCreate'
-import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
+import { eventScopeHint, eventScopeItems, scopeOptions, type Scope, type ScopeHint, type ScopeResult } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
 
@@ -78,6 +78,20 @@ interface Asking extends MoveVars {
   options: Scope[]
   /** Where the drop ended, for the question to point at while the event's tile isn't shown. */
   at: DOMRect
+}
+
+/**
+ * Which events of a series a drop of the dragged event onto `result` can reach (FR-17): a
+ * resize changes the event, anything else moves it.
+ */
+function dropScopes(d: DragData, result: Extract<DropResult, { kind: 'event' }>, tz: string): ScopeResult {
+  return scopeOptions({
+    kind: 'event',
+    action: d.type === 'resize' ? 'change' : 'move',
+    item: result.event,
+    to: new Date(result.times.start),
+    tz,
+  })
 }
 
 /** The tile of the event `key` in the views, to give the focus back to (NFR-27). */
@@ -239,8 +253,13 @@ export function CalendarDnd({
   renderOverlay,
 }: {
   children: ReactNode
-  /** `limit`: why the dragged task can't land where it is (FR-17), or null while it can. */
-  renderOverlay: (data: DragData, limit: string | null) => ReactNode
+  /**
+   * `limit`: why the dragged task can't land where it is (FR-17), or null while it can. `hint`:
+   * which events of its series a drop of the dragged event right here reaches when there is no
+   * choice (FR-17); null with a choice, which the question asks, for anything but an event of a
+   * series, and while a drop would change nothing.
+   */
+  renderOverlay: (data: DragData, limit: string | null, hint: ScopeHint | null) => ReactNode
 }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -263,14 +282,24 @@ export function CalendarDnd({
   const [target, setTarget] = useState<DropResult | null>(null)
   /** Which edge of the dragged series' move window a drop right now would cross (FR-17), for the overlay. */
   const [blocked, setBlocked] = useState<DropBlocked | null>(null)
+  /** Which events of its series a drop of the dragged event right now reaches, when there is no choice (FR-17). */
+  const [hint, setHint] = useState<ScopeHint | null>(null)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
   // `target` re-renders. `moved`: the drag has had a target since the pick-up. `blocked`: which
-  // edge of a bounded series' window the current drop would cross (FR-17). `asked`: the drop
-  // asks which events of a series move (FR-17).
-  const latest = useRef<{ target: DropResult | null; moved: boolean; blocked: DropBlocked | null; asked: boolean }>({
+  // edge of a bounded series' window the current drop would cross (FR-17). `hint`: what the
+  // current drop of an event of a series reaches without asking (FR-17). `asked`: the drop asks
+  // which events of a series move (FR-17).
+  const latest = useRef<{
+    target: DropResult | null
+    moved: boolean
+    blocked: DropBlocked | null
+    hint: ScopeHint | null
+    asked: boolean
+  }>({
     target: null,
     moved: false,
     blocked: null,
+    hint: null,
     asked: false,
   })
 
@@ -339,8 +368,12 @@ export function CalendarDnd({
     const announceTarget: Announcements['onDragOver'] = ({ active: a, over }) => {
       const d = dragData(a.data.current)
       if (!d) return undefined
-      const { target: next, moved, blocked } = latest.current
-      if (next) return t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
+      const { target: next, moved, blocked, hint } = latest.current
+      if (next) {
+        const over = t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
+        // What the drop reaches without asking, like the pill under the event says it (FR-17).
+        return hint ? `${over} ${hint.text}` : over
+      }
       // A bounded series (FR-17) can't move here: say why instead of "unchanged".
       if (blocked) return limitMessage(blocked)
       if (!over && d.type !== 'resize') return t('dnd.notOver')
@@ -370,8 +403,9 @@ export function CalendarDnd({
   }, [t, prefs, limitMessage])
 
   const onDragStart = (e: DragStartEvent) => {
-    latest.current = { target: null, moved: false, blocked: null, asked: false }
+    latest.current = { target: null, moved: false, blocked: null, hint: null, asked: false }
     setBlocked(null)
+    setHint(null)
     const d = dragData(e.active.data.current)
     if (d) setActive({ id: String(e.active.id), data: d })
   }
@@ -384,9 +418,17 @@ export function CalendarDnd({
     const drop = dropData(e.over?.data.current)
     const next = dropResult(d, drop, e.delta.y)
     const blocked = dropBlocked(d, drop, e.delta.y)
-    latest.current = { ...latest.current, target: next, moved: latest.current.moved || next !== null, blocked }
+    // FR-17: with one option, the drop of an event of a series won't ask; say beforehand what it
+    // reaches. Worked out again only for a new target, not on every move of the pointer.
+    const hint = sameDrop(latest.current.target, next)
+      ? latest.current.hint
+      : next?.kind === 'event'
+        ? eventScopeHint(t, dropScopes(d, next, tz), false)
+        : null
+    latest.current = { ...latest.current, target: next, moved: latest.current.moved || next !== null, blocked, hint }
     setTarget((prev) => (sameDrop(prev, next) ? prev : next))
     setBlocked((prev) => (prev?.edge === blocked?.edge && prev?.date.getTime() === blocked?.date.getTime() ? prev : blocked))
+    setHint(hint)
   }
 
   // The create popover's entry takes the times instead of saving them, and a move takes the
@@ -406,6 +448,7 @@ export function CalendarDnd({
     setActive(null)
     setTarget(null)
     setBlocked(null)
+    setHint(null)
     const d = dragData(e.active.data.current)
     if (!d) return
     const drop = dropData(e.over?.data.current)
@@ -427,13 +470,7 @@ export function CalendarDnd({
       // when there is a choice; the one thing it can do, it does right away. An invitation to one
       // event of a series (an override without its series) is a single event to Lucid.
       const change = d.type === 'resize'
-      const { options } = scopeOptions({
-        kind: 'event',
-        action: change ? 'change' : 'move',
-        item: result.event,
-        to: new Date(result.times.start),
-        tz,
-      })
+      const { options } = dropScopes(d, result, tz)
       const [only] = options
       if (options.length > 1) {
         const r = e.active.rect.current.translated ?? e.active.rect.current.initial
@@ -546,11 +583,14 @@ export function CalendarDnd({
           setActive(null)
           setTarget(null)
           setBlocked(null)
+          setHint(null)
         }}
       >
         {children}
         <DragOverlay dropAnimation={null}>
-          {preview && preview.type !== 'resize' ? renderOverlay(preview, blocked ? limitMessage(blocked) : null) : null}
+          {preview && preview.type !== 'resize'
+            ? renderOverlay(preview, blocked ? limitMessage(blocked) : null, hint)
+            : null}
         </DragOverlay>
       </DndContext>
       <Popover

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
 import { toCalEvent } from './events'
 import { type FormatPrefs } from './format'
-import { eventScopeItems, scopeOptions, type ScopeAction, type ScopeResult } from './scope'
+import { eventScopeHint, eventScopeItems, scopeOptions, type ScopeAction, type ScopeResult } from './scope'
 import { apiEvent } from '@/test/fixtures'
 
 const tz = 'Europe/Berlin'
@@ -107,5 +107,53 @@ describe('eventScopeItems', () => {
 
   it('has no words for "this and following" before it can be chosen', () => {
     expect(() => eventScopeItems(i18n.getFixedT('en'), event, ['following'], us, now)).toThrow()
+  })
+})
+
+describe('eventScopeHint', () => {
+  const t = i18n.getFixedT('en')
+
+  it('says that only this event changes, and why the series stays', () => {
+    expect(eventScopeHint(t, { options: ['this'], reason: 'fixedDays' }, false)).toEqual({
+      text: 'Only this event. The series stays on its days.',
+      reach: 'this',
+      tone: 'default',
+    })
+    expect(eventScopeHint(t, { options: ['this'], reason: 'fixedTimes' }, false)).toEqual({
+      text: 'Only this event. The series keeps its times.',
+      reach: 'this',
+      tone: 'default',
+    })
+  })
+
+  it('says that a new rule applies to every event', () => {
+    expect(eventScopeHint(t, { options: ['all'] }, false)).toEqual({
+      text: 'Applies to every event in the series.',
+      reach: 'all',
+      tone: 'default',
+    })
+  })
+
+  it('warns in red that a removed rule deletes every other event', () => {
+    expect(eventScopeHint(t, { options: ['all'] }, true)).toEqual({
+      text: 'The series becomes this one event. All others are deleted.',
+      reach: 'all',
+      tone: 'destructive',
+    })
+  })
+
+  it('says it in German', () => {
+    const de = i18n.getFixedT('de')
+    expect(eventScopeHint(de, { options: ['this'], reason: 'fixedDays' }, false)?.text).toBe(
+      'Nur dieser Termin. Die Serie bleibt auf ihren Tagen.',
+    )
+    expect(eventScopeHint(de, { options: ['all'] }, true)?.text).toBe(
+      'Die Serie wird zu diesem einen Termin. Alle anderen werden gelöscht.',
+    )
+  })
+
+  it('has nothing to say with a choice, which the question asks, or without a series', () => {
+    expect(eventScopeHint(t, { options: ['this', 'all'] }, false)).toBeNull()
+    expect(eventScopeHint(t, { options: [] }, false)).toBeNull()
   })
 })
