@@ -473,7 +473,8 @@ async function undoEventChange(
  * `event`, or one cached with it, is from an earlier answer and never offered.
  * The ID is the series', so a later change replaces this toast and its Undo.
  * Its icon shows the events the change reached, `look.reach`, in the
- * series' calendar color.
+ * series' calendar color, or in red (`look.tone`) for events deleted, as
+ * the question or the hint before the change drew them.
  */
 function eventToast(
   qc: QueryClient,
@@ -481,13 +482,13 @@ function eventToast(
   event: CalEvent,
   message: string,
   after: { etag: string; undoToken?: string | null },
-  look: { reach: Scope; color: string },
+  look: { reach: Scope; color: string; tone?: 'default' | 'destructive' },
 ): void {
   const { etag, undoToken } = after
   toast.success(message, {
     id: seriesToastId(event.id),
     duration: ACTION_TOAST_MS,
-    icon: createElement(ScopeGlyph, { slots: glyphSlots(look.reach), color: look.color }),
+    icon: createElement(ScopeGlyph, { slots: glyphSlots(look.reach), color: look.color, tone: look.tone }),
     // Sonner's icon box is 16px wide; the glyph is 44px.
     classNames: { icon: 'w-auto!' },
     // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
@@ -528,12 +529,14 @@ export function useUpdateEvent(series?: string) {
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) =>
       writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, input)),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
-    onSuccess: (updated, { event }, ctx) => {
+    onSuccess: (updated, { event, input }, ctx) => {
       if (event.recurring) {
         const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
         eventToast(qc, t, event, t('scope.toast.allChanged'), { etag: updated.etag, undoToken }, {
           reach: 'all',
           color: colorsOf(event.calendarId).solid,
+          // Without its rule, the series became this one event: all the others are deleted.
+          tone: input.rrule ? 'default' : 'destructive',
         })
       } else {
         toast.success(t('event.saved'))
@@ -807,6 +810,7 @@ export function useDeleteOccurrence(series?: string) {
       eventToast(qc, t, event, t('scope.toast.thisDeleted'), { etag: res?.etag ?? '', undoToken }, {
         reach: 'this',
         color: colorsOf(event.calendarId).solid,
+        tone: 'destructive',
       })
       if (res) setSeriesEtag(qc, event, res.etag)
     },

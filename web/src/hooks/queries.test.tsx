@@ -55,6 +55,12 @@ function seriesToastAction(id: string): Action | undefined {
   return entry.action as Action | undefined
 }
 
+/** The fill of each dot of a toast's reach icon, from left to right ('none' for a ring). */
+function dotsOf(icon: ReactNode): (string | null)[] {
+  const { container } = render(<>{icon}</>)
+  return [...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))
+}
+
 /** The toast `toast.success` showed with `message`: its ID, how long it stays, and its action. */
 function toastOf(calls: Parameters<typeof toast.success>[], message: string) {
   const options = calls.find(([m]) => m === message)?.[1]
@@ -662,11 +668,14 @@ describe('event series toasts', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
-    const { container } = render(<>{toastOf(success.mock.calls, 'Only this event moved.').icon}</>)
-
     // Five dots, only the middle one filled: the event moved, in the color of its calendar.
-    const dots = [...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))
-    expect(dots).toEqual(['none', 'none', CALENDAR_COLOR, 'none', 'none'])
+    expect(dotsOf(toastOf(success.mock.calls, 'Only this event moved.').icon)).toEqual([
+      'none',
+      'none',
+      CALENDAR_COLOR,
+      'none',
+      'none',
+    ])
   })
 
   it('says only this event changed after a resize', async () => {
@@ -703,10 +712,7 @@ describe('event series toasts', () => {
     expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
     expect(success).toHaveBeenCalledTimes(1)
     // Every dot filled: all events moved.
-    const { container } = render(<>{shown.icon}</>)
-    expect([...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))).toEqual(
-      Array<string>(5).fill(CALENDAR_COLOR),
-    )
+    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill(CALENDAR_COLOR))
   })
 
   it('says all events changed after a resize', async () => {
@@ -751,12 +757,30 @@ describe('event series toasts', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
-    expect(toastOf(success.mock.calls, 'All events changed.')).toMatchObject({
-      id: 'series:e1',
-      duration: 8000,
-      action: 'Undo',
-    })
+    const shown = toastOf(success.mock.calls, 'All events changed.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
     expect(success).not.toHaveBeenCalledWith('Event saved')
+    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill(CALENDAR_COLOR))
+  })
+
+  it('draws the reach of a removed rule in red', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useUpdateEvent('e1'), { wrapper: wrap })
+
+    // "Does not repeat": the series becomes this one event, and all the others go.
+    act(() => {
+      result.current.mutate({
+        event: toCalEvent(second),
+        input: { ...input, rrule: '', instanceStart: second.recurrenceId! },
+      })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'All events changed.')
+    expect(shown).toMatchObject({ id: 'series:e1', action: 'Undo' })
+    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill('var(--destructive)'))
   })
 
   it('says a single event was saved', async () => {
@@ -806,6 +830,8 @@ describe('event series toasts', () => {
     })
     const shown = toastOf(success.mock.calls, 'Only this event deleted.')
     expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    // The event deleted, in red, as the question that deleted it drew it.
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', 'var(--destructive)', 'none', 'none'])
 
     act(shown.click)
     await waitFor(() => {
