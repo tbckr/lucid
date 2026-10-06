@@ -242,6 +242,7 @@ describe('MonthView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: null,
             moveWindow,
@@ -288,6 +289,7 @@ describe('MonthView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: null,
             moveWindow: w,
@@ -322,6 +324,7 @@ describe('MonthView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: null,
             moveWindow,

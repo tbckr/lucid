@@ -401,6 +401,54 @@ describe('CalendarDnd', () => {
       })
     })
 
+    // After "All events" the series is reloaded with other recurrence IDs, so the event the undo
+    // was started with matches none of the tiles any more: the series is busy by its ID.
+    it('marks all events of a series busy while it is undone, whatever their keys', async () => {
+      let release: (r: Response) => void = () => undefined
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve
+          }),
+      )
+      const other = toCalEvent(
+        apiEvent({
+          id: 'e2',
+          title: 'Review',
+          key: 'e2@2026-09-27T08:00:00Z',
+          start: '2026-09-27T08:00:00Z',
+          end: '2026-09-27T09:00:00Z',
+          recurring: true,
+          rrule: 'FREQ=DAILY',
+          recurrenceId: '2026-09-27T08:00:00Z',
+        }),
+      )
+      const { queryClient } = renderWeek([standup(25), standup(26), other])
+      const busy = (day: number, name: string) => chipIn(day, name).getAttribute('aria-busy')
+      expect(busy(25, standupAt10)).toBeNull()
+
+      // The undo of a change that moved the series a day, as the toast runs it: its event is the
+      // one as it was shown before, which the reloaded series has no tile of.
+      const undo = new MutationObserver<EventRestore, unknown, { event: CalEvent }>(queryClient, {
+        mutationKey: UNDO_EVENT_KEY,
+        mutationFn: ({ event: e }) => endpoints.undoEvent(e.id, 'tok'),
+      })
+      act(() => {
+        void undo.mutate({ event: standup(24) })
+      })
+      await waitFor(() => {
+        expect(busy(25, standupAt10)).toBe('true')
+      })
+      expect(busy(26, standupAt10)).toBe('true')
+      expect(busy(27, 'Review, 10 AM')).toBeNull()
+
+      release(jsonResponse(200, { etag: '"3"' }))
+      await waitFor(() => {
+        expect(busy(25, standupAt10)).toBeNull()
+      })
+      expect(busy(26, standupAt10)).toBeNull()
+    })
+
     it('says why and leaves the series in place when it cannot move like this', async () => {
       const user = userEvent.setup()
       const error = vi.spyOn(toast, 'error')

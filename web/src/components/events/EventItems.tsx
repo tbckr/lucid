@@ -21,8 +21,8 @@ import { useUi } from '@/stores/ui'
  */
 function useEventInteraction(event: CalEvent, drag: DragBinding) {
   const openDetail = useUi((s) => s.openDetail)
-  const { pendingKeys, scope, scopeAnchor } = useDndState()
-  const pending = pendingKeys.has(event.key)
+  const { pendingKeys, pendingSeries, scope, scopeAnchor } = useDndState()
+  const pending = pendingKeys.has(event.key) || pendingSeries.has(event.id)
   const asked = scope?.key === event.key
   const ringed = asked || (scope?.all === true && scope.id === event.id)
   // The drag overlay shows the dropped event for a moment after the drop, then is gone: as the

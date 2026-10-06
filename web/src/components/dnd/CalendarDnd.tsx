@@ -301,19 +301,22 @@ export function CalendarDnd({
     if (el) setAnchor(el)
   }, [])
 
-  // An event of a series is busy while a move of it, or the undo of a change of its series, is on its way.
-  const pending = useMutationState({
-    filters: {
-      predicate: (m) =>
-        m.state.status === 'pending' &&
-        (m.options.mutationKey?.[0] === MOVE_EVENT_KEY[0] || m.options.mutationKey?.[0] === UNDO_EVENT_KEY[0]),
-    },
+  // An event of a series is busy while a move of it is on its way: its tile, by key.
+  const moves = useMutationState({
+    filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
     select: (m) => (m.state.variables as MoveVars | undefined)?.event,
   })
   const pendingKeys = useMemo(
-    () => new Set(pending.flatMap((e) => (e?.recurring ? [e.key] : []))),
-    [pending],
+    () => new Set(moves.flatMap((e) => (e?.recurring ? [e.key] : []))),
+    [moves],
   )
+  // So are all events of a series while a change of it is undone (FR-17): by ID, since after "All
+  // events" the series is reloaded with other keys than the undo's event has.
+  const undoing = useMutationState({
+    filters: { mutationKey: UNDO_EVENT_KEY, status: 'pending' },
+    select: (m) => (m.state.variables as { event: CalEvent } | undefined)?.event.id,
+  })
+  const pendingSeries = useMemo(() => new Set(undoing.filter((id) => id !== undefined)), [undoing])
   // Recurring todos with a task update on the way (FR-17): busy and not draggable until reloaded.
   const pendingTodos = usePendingSeries()
 
@@ -497,6 +500,7 @@ export function CalendarDnd({
   const state = useMemo(
     () => ({
       pendingKeys,
+      pendingSeries,
       pendingTodos,
       resize,
       moveWindow,
@@ -506,7 +510,7 @@ export function CalendarDnd({
       scopeAnchor,
       draggedTodo: draggedTask ?? null,
     }),
-    [pendingKeys, pendingTodos, resize, moveWindow, active, scope, held, scopeAnchor, draggedTask],
+    [pendingKeys, pendingSeries, pendingTodos, resize, moveWindow, active, scope, held, scopeAnchor, draggedTask],
   )
 
   return (

@@ -197,6 +197,7 @@ describe('TimeGridView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: null,
             moveWindow,
@@ -251,6 +252,7 @@ describe('TimeGridView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: null,
             moveWindow: w,
@@ -385,6 +387,7 @@ describe('TimeGridView', () => {
         <DndStateContext
           value={{
             pendingKeys: new Set(),
+            pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent,
             moveWindow: null,

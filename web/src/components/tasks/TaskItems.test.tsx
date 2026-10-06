@@ -404,6 +404,7 @@ describe('task items', () => {
     it("shows no hint where the repeat can't move for another reason", () => {
       const pending: DndState = {
         pendingKeys: new Set(),
+        pendingSeries: new Set(),
         pendingTodos: new Set(['t1']),
         resize: null,
         moveWindow: null,
