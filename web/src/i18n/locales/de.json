@@ -120,6 +120,7 @@
     "created": "Termin erstellt",
     "saved": "Termin gespeichert",
     "deleted": "Termin gelöscht",
+    "undoConflict": "Nicht rückgängig gemacht: Der Termin wurde inzwischen anderswo geändert.",
     "dialogDescription": "Titel, Zeit, Kalender und Details des Termins.",
     "title": "Titel",
     "titlePlaceholder": "Titel hinzufügen",
@@ -202,6 +203,17 @@
     "notMoved": "Nicht verschoben",
     "chooseScope": "Wähle, welche Termine sich verschieben.",
     "chooseScopeChange": "Wähle, welche Termine sich ändern."
+  },
+  "scope": {
+    "toast": {
+      "thisMoved": "Nur dieser Termin verschoben.",
+      "thisChanged": "Nur dieser Termin geändert.",
+      "thisDeleted": "Nur dieser Termin gelöscht.",
+      "allMoved": "Alle Termine verschoben.",
+      "allChanged": "Alle Termine geändert."
+    },
+    "undone": "Rückgängig gemacht.",
+    "undoGone": "Nichts mehr rückgängig zu machen."
   },
   "tasks": {
     "title": "Aufgaben",
@@ -288,8 +300,6 @@
     "movedTo": "Auf {{date}} verschoben. Danach: {{next}}",
     "movedToLast": "Auf {{date}} verschoben.",
     "seriesMoved": "Serie verschoben. Als Nächstes: {{date}}",
-    "undone": "Rückgängig gemacht.",
-    "undoGone": "Nichts mehr rückgängig zu machen.",
     "undoConflict": "Nicht rückgängig gemacht: Die Aufgabe wurde inzwischen anderswo geändert.",
     "undoneCopyKept": "Rückgängig gemacht. Der erledigte Eintrag wurde in einer anderen App geändert und bleibt.",
     "moveLimit": "Bis {{date}}, danach kommt die nächste Wiederholung.",

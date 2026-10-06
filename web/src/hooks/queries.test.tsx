@@ -17,6 +17,7 @@ import {
   useDeleteOccurrence,
   useDeleteTodo,
   useDeleteTodos,
+  useMoveEvent,
   useMoveOccurrence,
   usePendingSeries,
   useTodos,
@@ -33,6 +34,27 @@ function wrapper({ children }: { children: ReactNode }) {
 afterEach(() => {
   useSettings.setState(defaultSettings)
 })
+
+/** The current action of the live toast `series:<id>`, sonner's own state (A-26 dedup). */
+function seriesToastAction(id: string): Action | undefined {
+  const entry = toast.getToasts().find((x) => x.id === `series:${id}`)
+  if (!entry || !('action' in entry)) return undefined
+  return entry.action as Action | undefined
+}
+
+/** The toast `toast.success` showed with `message`: its ID, how long it stays, and its action. */
+function toastOf(calls: Parameters<typeof toast.success>[], message: string) {
+  const options = calls.find(([m]) => m === message)?.[1]
+  const action = options?.action as Action | undefined
+  return {
+    id: options?.id,
+    duration: options?.duration,
+    action: action?.label,
+    click: () => {
+      action?.onClick({} as MouseEvent<HTMLButtonElement>)
+    },
+  }
+}
 
 describe('useTodos', () => {
   it('keeps the tasks of calendars hidden in the sidebar', async () => {
@@ -543,6 +565,413 @@ describe('writes of one series', () => {
   })
 })
 
+// FR-10, FR-17: a change of a series says which events it changed, with an Undo while the server
+// handed out a token for it.
+describe('event series toasts', () => {
+  const key = queryKeys.events('c1', 'r1', 'r2')
+  const first = apiEvent({
+    id: 'e1',
+    key: 'e1@2025-03-03T08:00:00Z',
+    etag: '"1"',
+    recurring: true,
+    rrule: 'FREQ=WEEKLY',
+    recurrenceId: '2025-03-03T08:00:00Z',
+  })
+  const second = apiEvent({ ...first, key: 'e1@2025-03-10T08:00:00Z', recurrenceId: '2025-03-10T08:00:00Z' })
+  const single = apiEvent({ id: 'e2', key: 'e2', etag: '"5"' })
+  const to = { start: '2025-03-10T09:00:00Z', end: '2025-03-10T10:00:00Z' }
+  const input = { title: 'Event', description: '', location: '', allDay: false, timezone: 'Europe/Berlin', ...to }
+  /** The server's answer to a write of the series: its new ETag, and the token to undo the write. */
+  const answer = (etag: string, undoToken?: string) =>
+    jsonResponse(200, apiEvent({ ...second, ...to, etag, modified: true, ...(undoToken ? { undoToken } : {}) }))
+
+  /** A client holding the events, and a server answering each request with the next of `answers`. */
+  function setup(...answers: (Response | Promise<Response>)[]) {
+    api.setCsrfToken('tok')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData<EventList>(key, { events: [first, second, single], corrupted: [] })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const next = answers.shift()
+      return next ? Promise.resolve(next) : Promise.reject(new Error('unexpected request'))
+    })
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const writes = () =>
+      fetch.mock.calls.map(([url, init]) => ({
+        request: `${init?.method} ${urlOf(url)}`,
+        etag: (init?.headers as Record<string, string>)['If-Match'],
+        body: bodyOf(init),
+      }))
+    return { queryClient, wrap, writes }
+  }
+
+  it('says only this event moved, with an undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { queryClient, wrap, writes } = setup(answer('"2"', 'tok'), jsonResponse(200, { etag: '"3"' }))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Only this event moved.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    // The reload the change itself asked for is done: only the undo's is left to see.
+    queryClient.setQueryData<EventList>(key, { events: [first, second, single], corrupted: [] })
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false)
+
+    act(shown.click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes().map((w) => w.request)).toEqual([
+      'PUT /api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z',
+      'POST /api/v1/events/e1/undo',
+    ])
+    expect(writes()[1]?.body).toEqual({ token: 'tok' })
+    await waitFor(() => {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+    })
+  })
+
+  it('says only this event changed after a resize', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to, change: true })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Only this event changed.')).toMatchObject({
+      id: 'series:e1',
+      duration: 8000,
+      action: 'Undo',
+    })
+    expect(success).toHaveBeenCalledTimes(1)
+  })
+
+  it('says all events moved', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveEvent('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'All events moved.')).toMatchObject({
+      id: 'series:e1',
+      duration: 8000,
+      action: 'Undo',
+    })
+    expect(success).toHaveBeenCalledTimes(1)
+  })
+
+  it('says all events changed after a resize', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveEvent('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to, change: true })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'All events changed.')).toMatchObject({ id: 'series:e1', action: 'Undo' })
+  })
+
+  it('shows nothing after moving a single event', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(jsonResponse(200, apiEvent({ ...single, ...to, etag: '"6"' })))
+    const { result } = renderHook(() => useMoveEvent(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(single), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(success).not.toHaveBeenCalled()
+  })
+
+  it('says all events changed', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useUpdateEvent('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({
+        event: toCalEvent(second),
+        input: { ...input, rrule: 'FREQ=WEEKLY', instanceStart: second.recurrenceId! },
+      })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'All events changed.')).toMatchObject({
+      id: 'series:e1',
+      duration: 8000,
+      action: 'Undo',
+    })
+    expect(success).not.toHaveBeenCalledWith('Event saved')
+  })
+
+  it('says a single event was saved', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(jsonResponse(200, apiEvent({ ...single, ...to, etag: '"6"' })))
+    const { result } = renderHook(() => useUpdateEvent(), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(single), input: { ...input, rrule: '' } })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(success).toHaveBeenCalledTimes(1)
+    expect(success).toHaveBeenCalledWith('Event saved')
+  })
+
+  it('says only this event changed', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok'))
+    const { result } = renderHook(() => useUpdateOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), input })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Only this event changed.')).toMatchObject({
+      id: 'series:e1',
+      duration: 8000,
+      action: 'Undo',
+    })
+    expect(success).not.toHaveBeenCalledWith('Event saved')
+  })
+
+  it('says only this event deleted, with an undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap, writes } = setup(jsonResponse(200, { etag: '"2"', undoToken: 'tok' }), jsonResponse(200, { etag: '"3"' }))
+    const { result } = renderHook(() => useDeleteOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(second))
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Only this event deleted.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+
+    act(shown.click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok' } })
+  })
+
+  it('offers no undo once the series is gone', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(new Response(null, { status: 204 }))
+    const { result } = renderHook(() => useDeleteOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(second))
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Only this event deleted.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000 })
+    expect(shown.action).toBeUndefined()
+  })
+
+  it('offers no undo without a token, whatever the event it changed carried', async () => {
+    const success = vi.spyOn(toast, 'success')
+    // The server kept no snapshot (no ETag to restore against, or too big): the answer has no token.
+    // The event as shown still carries the token of an earlier answer, which must not be offered.
+    const { wrap } = setup(answer('"2"'))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent({ ...second, undoToken: 'stale' }), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Only this event moved.')
+    expect(shown.duration).toBe(8000)
+    expect(shown.action).toBeUndefined()
+  })
+
+  it('takes the undo of an earlier change away when the next one has none', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(answer('"2"', 'tok1'), answer('"3"'))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(seriesToastAction('e1')?.label).toBe('Undo')
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledTimes(2)
+    })
+    // Sonner merges a toast into the one of its ID: the earlier action stays unless it is overridden.
+    expect(toast.getToasts().filter((x) => x.id === 'series:e1')).toHaveLength(1)
+    expect(seriesToastAction('e1')).toBeUndefined()
+  })
+
+  it('replaces the undo toast of an earlier change of the series', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap, writes } = setup(
+      answer('"2"', 'tok1'),
+      answer('"3"', 'tok2'),
+      jsonResponse(200, { etag: '"7"' }),
+      answer('"8"', 'tok3'),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledTimes(2)
+    })
+    // One toast, whose Undo is the second change's.
+    const [one, two] = success.mock.calls.map((call) => toastOf([call], 'Only this event moved.'))
+    expect(one).toMatchObject({ id: 'series:e1', action: 'Undo' })
+    expect(two).toMatchObject({ id: 'series:e1', action: 'Undo' })
+    expect(toast.getToasts().filter((x) => x.id === 'series:e1')).toHaveLength(1)
+
+    act(() => {
+      two?.click()
+    })
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes().map((w) => w.etag)).toEqual(['"1"', '"2"', undefined])
+    expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok2' } })
+
+    // The next drag, of an event as it was loaded, writes on top of what the undo restored.
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(4)
+    })
+    expect(writes()[3]?.etag).toBe('"7"')
+  })
+
+  it('runs an undo after the writes of the series ahead of it', async () => {
+    const success = vi.spyOn(toast, 'success')
+    let answerSecond: (r: Response) => void = () => undefined
+    const { queryClient, wrap, writes } = setup(
+      answer('"2"', 'tok1'),
+      new Promise<Response>((resolve) => (answerSecond = resolve)),
+      jsonResponse(200, { etag: '"4"' }),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const undo = toastOf(success.mock.calls, 'Only this event moved.')
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+
+    act(undo.click)
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    // Queued behind the change still on its way, not sent beside it.
+    expect(writes()).toHaveLength(2)
+    expect(queryClient.isMutating()).toBe(2)
+
+    answerSecond(answer('"3"', 'tok2'))
+    await waitFor(() => {
+      expect(writes()).toHaveLength(3)
+    })
+    expect(writes()[2]?.request).toBe('POST /api/v1/events/e1/undo')
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  it('reports a gone undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const error = vi.spyOn(toast, 'error')
+    const { wrap } = setup(answer('"2"', 'tok'), jsonResponse(404, { error: { code: 'not_found', message: 'x' } }))
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(toastOf(success.mock.calls, 'Only this event moved.').click)
+
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith('Nothing to undo anymore.')
+    })
+  })
+
+  it('reports an undo conflict', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const error = vi.spyOn(toast, 'error')
+    const { queryClient, wrap } = setup(
+      answer('"2"', 'tok'),
+      jsonResponse(409, { error: { code: 'conflict', message: 'x' } }),
+    )
+    const { result } = renderHook(() => useMoveOccurrence('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(second), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    queryClient.setQueryData<EventList>(key, { events: [first, second, single], corrupted: [] })
+
+    act(toastOf(success.mock.calls, 'Only this event moved.').click)
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith("Couldn't undo: the event was changed elsewhere in the meantime.")
+    })
+    expect(success).not.toHaveBeenCalledWith('Undone.')
+    await waitFor(() => {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+    })
+  })
+})
+
 describe('useUpdateTodo', () => {
   const old = todo({ id: 'x', calendarId: 'c1', etag: '"1"', title: 'Old' })
 
@@ -749,26 +1178,6 @@ describe('useUpdateTodo with a recurring task', () => {
         body: bodyOf(init),
       }))
     return { queryClient, result, cached, writes }
-  }
-
-  /** The toast `toast.success` showed with `message`: how long it stays, and its action. */
-  function toastOf(calls: Parameters<typeof toast.success>[], message: string) {
-    const options = calls.find(([m]) => m === message)?.[1]
-    const action = options?.action as Action | undefined
-    return {
-      duration: options?.duration,
-      action: action?.label,
-      click: () => {
-        action?.onClick({} as MouseEvent<HTMLButtonElement>)
-      },
-    }
-  }
-
-  /** The current `Undo` action of the live toast `series:<todoId>`, sonner's own state (A-26 dedup). */
-  function seriesToastAction(todoId: string): Action | undefined {
-    const entry = toast.getToasts().find((x) => x.id === `series:${todoId}`)
-    if (!entry || !('action' in entry)) return undefined
-    return entry.action as Action | undefined
   }
 
   it('completes a series without showing it done, and keeps the completed repeat', async () => {

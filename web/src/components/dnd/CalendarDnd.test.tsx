@@ -1,4 +1,5 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
+import { MutationObserver } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { isSameDay } from 'date-fns'
@@ -8,8 +9,10 @@ import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventChip, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
 import { TaskChip } from '@/components/tasks/TaskItems'
-import { queryKeys } from '@/hooks/queries'
+import { queryKeys, UNDO_EVENT_KEY } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import { type EventRestore } from '@/lib/api/schemas'
 import { outsideWindow, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type DragData, type DropData } from '@/lib/dnd'
@@ -365,6 +368,36 @@ describe('CalendarDnd', () => {
       release(jsonResponse(200, apiEvent({ title: 'Standup', start: '2026-09-26T08:00:00Z', end: '2026-09-26T09:00:00Z' })))
       await waitFor(() => {
         expect(queryClient.isMutating()).toBe(0)
+      })
+    })
+
+    it('marks an event busy while its series is undone', async () => {
+      let release: (r: Response) => void = () => undefined
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve
+          }),
+      )
+      const event = standup(25)
+      const { queryClient } = renderWeek([event])
+      expect(chipIn(25, standupAt10)).not.toHaveAttribute('aria-busy')
+
+      // An undo as the toast after a change of the series runs it (FR-17).
+      const undo = new MutationObserver<EventRestore, unknown, { event: CalEvent }>(queryClient, {
+        mutationKey: UNDO_EVENT_KEY,
+        mutationFn: ({ event: e }) => endpoints.undoEvent(e.id, 'tok'),
+      })
+      act(() => {
+        void undo.mutate({ event })
+      })
+      await waitFor(() => {
+        expect(chipIn(25, standupAt10)).toHaveAttribute('aria-busy', 'true')
+      })
+
+      release(jsonResponse(200, { etag: '"3"' }))
+      await waitFor(() => {
+        expect(chipIn(25, standupAt10)).not.toHaveAttribute('aria-busy')
       })
     })
 

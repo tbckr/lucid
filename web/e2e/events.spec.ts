@@ -351,7 +351,7 @@ test('deletes only one event of a series', async ({ page }) => {
     .click()
   await expect(details).toBeHidden()
   // The toast comes with the server's answer, so the event is gone there too, not only optimistically.
-  await expect(page.getByText('Event deleted')).toBeVisible()
+  await expect(page.getByText('Only this event deleted.')).toBeVisible()
   await expect(block).toHaveCount(0)
 
   // Next week's event stays.

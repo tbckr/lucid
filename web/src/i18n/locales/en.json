@@ -120,6 +120,7 @@
     "created": "Event created",
     "saved": "Event saved",
     "deleted": "Event deleted",
+    "undoConflict": "Couldn't undo: the event was changed elsewhere in the meantime.",
     "dialogDescription": "Title, time, calendar and details of the event.",
     "title": "Title",
     "titlePlaceholder": "Add a title",
@@ -202,6 +203,17 @@
     "notMoved": "Not moved",
     "chooseScope": "Choose which events should move.",
     "chooseScopeChange": "Choose which events should change."
+  },
+  "scope": {
+    "toast": {
+      "thisMoved": "Only this event moved.",
+      "thisChanged": "Only this event changed.",
+      "thisDeleted": "Only this event deleted.",
+      "allMoved": "All events moved.",
+      "allChanged": "All events changed."
+    },
+    "undone": "Undone.",
+    "undoGone": "Nothing to undo anymore."
   },
   "tasks": {
     "title": "Tasks",
@@ -288,8 +300,6 @@
     "movedTo": "Moved to {{date}}. Then: {{next}}",
     "movedToLast": "Moved to {{date}}.",
     "seriesMoved": "Series moved. Next up: {{date}}",
-    "undone": "Undone.",
-    "undoGone": "Nothing to undo anymore.",
     "undoConflict": "Couldn't undo: the task was changed elsewhere in the meantime.",
     "undoneCopyKept": "Undone. The completed entry was changed in another app and stays.",
     "moveLimit": "Until {{date}}, then the next repeat is due.",

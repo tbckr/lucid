@@ -24,6 +24,7 @@ import { ScopeChoice, type Scope } from '@/components/events/ScopeChoice'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   MOVE_EVENT_KEY,
+  UNDO_EVENT_KEY,
   usePendingSeries,
   useMoveEvent,
   useMoveOccurrence,
@@ -300,8 +301,13 @@ export function CalendarDnd({
     if (el) setAnchor(el)
   }, [])
 
+  // An event of a series is busy while a move of it, or the undo of a change of its series, is on its way.
   const pending = useMutationState({
-    filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
+    filters: {
+      predicate: (m) =>
+        m.state.status === 'pending' &&
+        (m.options.mutationKey?.[0] === MOVE_EVENT_KEY[0] || m.options.mutationKey?.[0] === UNDO_EVENT_KEY[0]),
+    },
     select: (m) => (m.state.variables as MoveVars | undefined)?.event,
   })
   const pendingKeys = useMemo(
@@ -460,7 +466,7 @@ export function CalendarDnd({
   // a task's drop: the series' scope goes with the question.
   const chooseScope = (scope: Scope) => {
     if (!asking) return
-    const { event, start, end } = asking
+    const { event, start, end, change } = asking
     if (scope === 'this') {
       const key = event.key
       setHeld({ key, id: event.id, start, end, all: false })
@@ -468,10 +474,10 @@ export function CalendarDnd({
       const release = () => {
         setHeld((h) => (h?.key === key ? null : h))
       }
-      moveOccurrence.mutateAsync({ event, start, end }).then(release, release)
+      moveOccurrence.mutateAsync({ event, start, end, change }).then(release, release)
       moveOccurrence.reset()
     } else {
-      move.mutate({ event, start, end })
+      move.mutate({ event, start, end, change })
       move.reset()
     }
     cancelScope()
