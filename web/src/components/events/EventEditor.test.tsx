@@ -220,14 +220,15 @@ describe('EventEditor', () => {
     await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
     await user.click(screen.getByRole('option', { name: 'Every day' }))
     const all = within(dialog).getByText('Applies to every event in the series.')
-    expect(all).toHaveClass('text-muted-foreground')
+    // Muted, in the size and weight of the drag pill (spec §2).
+    expect(all).toHaveClass('text-xs', 'font-medium', 'text-muted-foreground')
     expect(Array.from(all.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(Array(5).fill('#3b82f6'))
 
     await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
     await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
     expect(within(dialog).queryByText('Applies to every event in the series.')).toBeNull()
     const removed = within(dialog).getByText('The series becomes this one event. All others are deleted.')
-    expect(removed).toHaveClass('text-muted-foreground')
+    expect(removed).toHaveClass('text-xs', 'font-medium', 'text-muted-foreground')
     expect(Array.from(removed.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(
       Array(5).fill('var(--destructive)'),
     )
