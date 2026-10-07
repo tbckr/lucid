@@ -1105,7 +1105,9 @@ changes without an undo; it can also drop a snapshot earlier, to keep at
 most 8 per session and 64 MiB in total. The UI offers the Undo for 8
 seconds, in the toast that says what the change did, and only for the latest
 change of a series: a change that starts while an earlier one's toast is
-shown, or before its answer arrived, takes that Undo away.
+shown, or before its answer arrived, takes that Undo away. After a split, a
+change of the new series takes the split's Undo away too, as the server
+would refuse it; a later change of the old series keeps its own Undo.
 
 ### Limits
 

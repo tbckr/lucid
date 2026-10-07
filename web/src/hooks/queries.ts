@@ -359,14 +359,50 @@ function seriesToastId(id: string): string {
   return `series:${id}`
 }
 
+/** The split of the old series `series` by its write `generation` (`startSeriesWrite`). */
+interface SplitOf {
+  series: string
+  generation: number
+}
+
+/**
+ * The split that made each new series, by the new series' ID (FR-17): the
+ * server refuses the Undo of a split once the new series changed, which the
+ * restored old series would otherwise list a second time.
+ */
+const splits = new WeakMap<QueryClient, Map<string, SplitOf>>()
+
+function splitsOf(qc: QueryClient): Map<string, SplitOf> {
+  let map = splits.get(qc)
+  if (!map) {
+    map = new Map()
+    splits.set(qc, map)
+  }
+  return map
+}
+
+/**
+ * Notes that the write `generation` of the series of `event` split it, as the
+ * answer's event is in a new series (FR-17), so a write of the new series
+ * takes the split's Undo away (`startSeriesWrite`).
+ */
+function noteSplit(qc: QueryClient, event: CalEvent, answer: Following, generation: number): void {
+  if (answer.event.id !== event.id) splitsOf(qc).set(answer.event.id, { series: event.id, generation })
+}
+
 /**
  * Notes that a write of the series or task `id` starts, in `onMutate`, and
  * returns its generation (FR-17). A toast of an earlier change still shown
  * stays, but loses its Undo in place: dismissed, sonner 2.0.8 would also
  * remove a toast of the same ID shown within its next two animation frames,
- * as this write's own toast is when the server answers fast.
+ * as this write's own toast is when the server answers fast. A write of the
+ * new series of a split counts as one of the old series too while the split
+ * is the old series' latest write, as it makes the split's Undo fail; a later
+ * change of the old series keeps its own Undo.
  */
 function startSeriesWrite(qc: QueryClient, id: string): number {
+  const split = splitsOf(qc).get(id)
+  if (split && isLatestWrite(qc, split.series, split.generation)) startSeriesWrite(qc, split.series)
   const map = seriesWritesOf(qc)
   const generation = (map.get(id) ?? 0) + 1
   map.set(id, generation)
@@ -377,9 +413,9 @@ function startSeriesWrite(qc: QueryClient, id: string): number {
   return generation
 }
 
-/** The generation of the latest write of the series or task `id` the client started (FR-17). */
-function latestSeriesWrite(qc: QueryClient, id: string): number {
-  return seriesWritesOf(qc).get(id) ?? 0
+/** Whether `generation` is the latest write of the series or task `id` the client started (FR-17). */
+function isLatestWrite(qc: QueryClient, id: string, generation: number): boolean {
+  return generation === (seriesWritesOf(qc).get(id) ?? 0)
 }
 
 /**
@@ -393,7 +429,7 @@ function latestUndoToken(
   generation: number,
   token: string | null | undefined,
 ): string | undefined {
-  return generation === latestSeriesWrite(qc, id) ? (token ?? undefined) : undefined
+  return isLatestWrite(qc, id, generation) ? (token ?? undefined) : undefined
 }
 
 /* ------------------------------------------------------------------------ */
@@ -470,8 +506,9 @@ export const UNDO_EVENT_KEY = ['undoEvent'] as const
  * and holds back the ones after it (NFR-26). `after` is the change's answer:
  * the series' ETag it gave, and the token. The restore's own ETag is noted
  * within the mutation, so the write queued behind it already uses it. The
- * undo of a split goes to the old series and takes the new one back too,
- * unless another app changed it since (`copyKept`).
+ * undo of a split goes to the old series and takes the new one back too; the
+ * server refuses it once the new series changed, and keeps the new series only
+ * when another app changed it while the undo ran (`copyKept`).
  */
 async function undoEventChange(
   qc: QueryClient,
@@ -491,7 +528,7 @@ async function undoEventChange(
   })
   try {
     const restored = await observer.mutate({ event })
-    // The new series of a split stays when another app changed it since; the old one is restored anyway.
+    // The new series of a split stays when another app changed it while the undo ran; the old one is restored anyway.
     if (restored.copyKept) {
       toast.warning(t('scope.undoneSeriesKept'))
     } else {
@@ -949,6 +986,7 @@ export function useMoveFollowing(series?: string) {
     mutationFn: ({ event, start, end }: MoveVars) => writeFollowing(qc, event, moveInput(event, start, end)),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (answer, { event, change }, ctx) => {
+      noteSplit(qc, event, answer, ctx.generation)
       const reach = splitReach(event, answer)
       const date = followingDay(event, prefs)
       eventToast(
@@ -986,6 +1024,7 @@ export function useUpdateFollowing(series?: string) {
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) => writeFollowing(qc, event, input),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (answer, { event, input }, ctx) => {
+      noteSplit(qc, event, answer, ctx.generation)
       const reach = splitReach(event, answer)
       const removed = removesRule(event, input)
       const date = followingDay(event, prefs)

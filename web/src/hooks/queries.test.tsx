@@ -1794,6 +1794,127 @@ describe('this and following events', () => {
     expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok' } })
   })
 
+  /** An event of the new series `e9` a split makes, Mon, Mar 24, the week after the one it starts at. */
+  const ofNew = apiEvent({
+    ...late,
+    ...to,
+    id: 'e9',
+    key: 'e9@2025-03-24T10:00:00Z',
+    uid: 'u9',
+    etag: '"n1"',
+    start: '2025-03-24T10:00:00Z',
+    end: '2025-03-24T11:00:00Z',
+    recurrenceId: '2025-03-24T10:00:00Z',
+  })
+  const ofNewMoved = { start: '2025-03-24T12:00:00Z', end: '2025-03-24T13:00:00Z' }
+
+  // FR-17: the server refuses the undo of a split once the new series changed, as it would list
+  // the events from the split on twice; a write of the new series takes the split's Undo away.
+  it.each([
+    {
+      write: 'a move',
+      message: 'Moved from Mon, Mar 17 on, as a series of its own.',
+      useSplit: () => {
+        const move = useMoveFollowing('e1')
+        return () => {
+          move.mutate({ event: toCalEvent(late), ...to })
+        }
+      },
+    },
+    {
+      write: 'the editor',
+      message: 'Changed from Mon, Mar 17 on, as a series of its own.',
+      useSplit: () => {
+        const update = useUpdateFollowing('e1')
+        return () => {
+          update.mutate({ event: toCalEvent(late), input: { ...input, rrule: 'FREQ=WEEKLY' } })
+        }
+      },
+    },
+  ])("takes the split's undo away once the new series changes: $write", async ({ message, useSplit }) => {
+    const success = vi.spyOn(toast, 'success')
+    let answerNew: (r: Response) => void = () => undefined
+    const { queryClient, wrap, writes } = setup(
+      split('"2"', 'tok'),
+      new Promise<Response>((resolve) => (answerNew = resolve)),
+    )
+    const { result } = renderHook(() => ({ split: useSplit(), ofNew: useMoveOccurrence('e9') }), {
+      wrapper: wrap,
+    })
+
+    act(() => {
+      result.current.split()
+    })
+    await waitFor(() => {
+      expect(seriesToastAction('e1')?.label).toBe('Undo')
+    })
+    expect(toastOf(success.mock.calls, message).action).toBe('Undo')
+
+    act(() => {
+      result.current.ofNew.mutate({ event: toCalEvent(ofNew), ...ofNewMoved })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    // While the write of the new series is on its way, the split's toast stays, without Undo.
+    const shown = toast.getToasts().find((x) => x.id === 'series:e1')
+    expect(shown && 'title' in shown ? shown.title : undefined).toBe(message)
+    expect(seriesToastAction('e1')).toBeUndefined()
+
+    answerNew(
+      jsonResponse(200, apiEvent({ ...ofNew, ...ofNewMoved, etag: '"n2"', modified: true, undoToken: 'tok9' })),
+    )
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    expect(seriesToastAction('e1')).toBeUndefined()
+    // The new series' own change keeps its Undo.
+    expect(seriesToastAction('e9')?.label).toBe('Undo')
+  })
+
+  it('keeps a later undo of the old series when the new series changes after it', async () => {
+    const earlier = { start: '2025-03-03T09:00:00Z', end: '2025-03-03T10:00:00Z' }
+    const { queryClient, wrap, writes } = setup(
+      split('"2"', 'tok'),
+      jsonResponse(200, apiEvent({ ...first, ...earlier, etag: '"3"', modified: true, undoToken: 'tok2' })),
+      jsonResponse(200, apiEvent({ ...ofNew, ...ofNewMoved, etag: '"n2"', modified: true })),
+      jsonResponse(200, { etag: '"4"' }),
+    )
+    const { result } = renderHook(
+      () => ({ split: useMoveFollowing('e1'), old: useMoveOccurrence('e1'), ofNew: useMoveOccurrence('e9') }),
+      { wrapper: wrap },
+    )
+
+    act(() => {
+      result.current.split.mutate({ event: toCalEvent(late), ...to })
+    })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    act(() => {
+      result.current.old.mutate({ event: toCalEvent(first), ...earlier })
+    })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    act(() => {
+      result.current.ofNew.mutate({ event: toCalEvent(ofNew), ...ofNewMoved })
+    })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    expect(writes()).toHaveLength(3)
+
+    expect(seriesToastAction('e1')?.label).toBe('Undo')
+    act(() => {
+      seriesToastAction('e1')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(4)
+    })
+    expect(writes()[3]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok2' } })
+  })
+
   it('reports a series that cannot be split', async () => {
     const error = vi.spyOn(toast, 'error')
     const { queryClient, wrap } = setup(
