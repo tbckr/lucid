@@ -486,9 +486,12 @@ func TestListTodosRecurring(t *testing.T) {
 		start, due             *time.Time
 		startAllDay, dueAllDay bool
 		next                   *domain.TodoDates
-		rrule                  string
-		fixedDays              bool
-		ruleUnsupported        bool
+		// rid is the RECURRENCE-ID of the current repeat, which an open
+		// series reports: never its moved dates, nil without one.
+		rid             *time.Time
+		rrule           string
+		fixedDays       bool
+		ruleUnsupported bool
 	}{
 		{
 			name: "rolling weekly",
@@ -497,6 +500,7 @@ func TestListTodosRecurring(t *testing.T) {
 			},
 			start: ptr(date(2025, 3, 10, 8, 0)), due: ptr(date(2025, 3, 10, 10, 0)),
 			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 17, 8, 0)), Due: ptr(date(2025, 3, 17, 10, 0))},
+			rid:   ptr(date(2025, 3, 10, 8, 0)),
 			rrule: "FREQ=WEEKLY",
 		},
 		{
@@ -504,6 +508,7 @@ func TestListTodosRecurring(t *testing.T) {
 			lines: []string{"DUE;VALUE=DATE:20250310", "RRULE:FREQ=DAILY"},
 			due:   ptr(date(2025, 3, 10, 0, 0)), dueAllDay: true,
 			next:  &domain.TodoDates{Due: ptr(date(2025, 3, 11, 0, 0)), DueAllDay: true},
+			rid:   ptr(date(2025, 3, 10, 0, 0)),
 			rrule: "FREQ=DAILY",
 		},
 		{
@@ -514,6 +519,7 @@ func TestListTodosRecurring(t *testing.T) {
 				Start: ptr(date(2025, 3, 13, 0, 0)), StartAllDay: true,
 				Due: ptr(date(2025, 3, 13, 0, 0)), DueAllDay: true,
 			},
+			rid:   ptr(date(2025, 3, 10, 0, 0)),
 			rrule: "FREQ=WEEKLY;BYDAY=MO,TH", fixedDays: true,
 		},
 		{
@@ -528,6 +534,7 @@ func TestListTodosRecurring(t *testing.T) {
 				Start: ptr(date(2025, 3, 13, 0, 0)), StartAllDay: true,
 				Due: ptr(date(2025, 3, 13, 0, 0)), DueAllDay: true,
 			},
+			rid:   ptr(date(2025, 3, 10, 0, 0)),
 			rrule: "FREQ=WEEKLY;BYDAY=MO,TH", fixedDays: true,
 		},
 		{
@@ -536,6 +543,7 @@ func TestListTodosRecurring(t *testing.T) {
 			lines: []string{"DTSTART:20250301T090000Z", "RRULE:FREQ=DAILY"},
 			start: ptr(date(2025, 3, 1, 9, 0)),
 			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 2, 9, 0))},
+			rid:   ptr(date(2025, 3, 1, 9, 0)),
 			rrule: "FREQ=DAILY",
 		},
 		{
@@ -547,6 +555,7 @@ func TestListTodosRecurring(t *testing.T) {
 			},
 			start: ptr(date(2025, 3, 12, 9, 0)),
 			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))},
+			rid:   ptr(date(2025, 3, 12, 9, 0)),
 			rrule: "FREQ=DAILY",
 		},
 		{
@@ -556,6 +565,7 @@ func TestListTodosRecurring(t *testing.T) {
 			overrides: [][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20250310T100000", "STATUS:COMPLETED"}},
 			start:     ptr(date(2025, 3, 11, 9, 0)),
 			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 12, 9, 0))},
+			rid:       ptr(date(2025, 3, 11, 9, 0)),
 			rrule:     "FREQ=DAILY",
 		},
 		{
@@ -564,6 +574,7 @@ func TestListTodosRecurring(t *testing.T) {
 			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250310T150000Z"}},
 			start:     ptr(date(2025, 3, 10, 15, 0)),
 			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 11, 9, 0))},
+			rid:       ptr(date(2025, 3, 10, 9, 0)),
 			rrule:     "FREQ=DAILY",
 		},
 		{
@@ -572,6 +583,7 @@ func TestListTodosRecurring(t *testing.T) {
 			overrides: [][]string{{"RECURRENCE-ID:20250311T090000Z", "STATUS:CANCELLED"}},
 			start:     ptr(date(2025, 3, 12, 9, 0)),
 			next:      &domain.TodoDates{Start: ptr(date(2025, 3, 13, 9, 0))},
+			rid:       ptr(date(2025, 3, 12, 9, 0)),
 			rrule:     "FREQ=DAILY",
 		},
 		{
@@ -579,13 +591,23 @@ func TestListTodosRecurring(t *testing.T) {
 			lines: withBase("X-KDE-LIBKCAL-DTRECURRENCE:20250314T090000Z"),
 			start: ptr(date(2025, 3, 14, 9, 0)),
 			next:  &domain.TodoDates{Start: ptr(date(2025, 3, 15, 9, 0))},
+			rid:   ptr(date(2025, 3, 14, 9, 0)),
 			rrule: "FREQ=DAILY",
 		},
 		{
 			name:  "count ends",
 			lines: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=1"},
 			start: ptr(date(2025, 3, 10, 9, 0)),
+			rid:   ptr(date(2025, 3, 10, 9, 0)),
 			rrule: "FREQ=DAILY;COUNT=1",
+		},
+		{
+			// Every repeat is done: there is no current one to name.
+			name:      "every repeat done",
+			lines:     []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;COUNT=1"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"}},
+			start:     ptr(date(2025, 3, 10, 9, 0)),
+			rrule:     "FREQ=DAILY;COUNT=1",
 		},
 		{
 			// Rolling cannot keep an RDATE off the rule (FR-17).
@@ -599,6 +621,7 @@ func TestListTodosRecurring(t *testing.T) {
 			name:  "empty rule",
 			lines: []string{"DTSTART:20250310T090000Z", "RRULE:"},
 			start: ptr(date(2025, 3, 10, 9, 0)),
+			rid:   ptr(date(2025, 3, 10, 9, 0)),
 		},
 		{
 			name:  "no occurrence left",
@@ -652,6 +675,9 @@ func TestListTodosRecurring(t *testing.T) {
 			}
 			if !sameNext(got.Next, tc.next) {
 				t.Errorf("next = %+v; want %+v", got.Next, tc.next)
+			}
+			if !sameTime(got.RecurrenceID, tc.rid) {
+				t.Errorf("recurrenceId = %v; want %v", got.RecurrenceID, tc.rid)
 			}
 		})
 	}

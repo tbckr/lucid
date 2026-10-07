@@ -36,6 +36,8 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodPut, path: todoRepeatPath, body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: todoRepeatPath, headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodPut, path: todoFollowingPath, body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodDelete, path: todoFollowingPath, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"x"}`},
 		{method: http.MethodPost, path: "/api/v1/events/e1/undo", body: `{"token":"x"}`},
 	} {
@@ -1102,6 +1104,179 @@ func TestTodoRepeatAnswers(t *testing.T) {
 		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + got.UndoToken + `"}`})
 		decode(t, w, http.StatusOK, nil)
 		if h.svc.gotSnap.ID != "t1" || h.svc.gotSnap.ETag != `"2"` {
+			t.Errorf("RestoreTodo got %+v", h.svc.gotSnap)
+		}
+	})
+}
+
+// todoFollowingPath names the repeat of the todo t1 on 10 March 2025, 08:00
+// UTC, for a write to it and the repeats after it.
+const todoFollowingPath = "/api/v1/todos/t1/following/2025-03-10T08:00:00Z"
+
+// TestTodoFollowingWrites checks the routes that change or end a task series
+// from one of its repeats on: the path values and the body reach the
+// service, and its errors answer as for the other todo writes, a series it
+// cannot split as 400 series_split_unsupported and a move the new series
+// cannot follow as 400 series_move_unsupported (FR-17).
+func TestTodoFollowingWrites(t *testing.T) {
+	t.Parallel()
+	ifMatch := map[string]string{"If-Match": `"t-etag"`}
+	wantRID := time.Date(2025, 3, 10, 8, 0, 0, 0, time.UTC)
+	put := func(path, body string, headers map[string]string) req {
+		return req{method: http.MethodPut, path: path, body: body, headers: headers}
+	}
+	del := func(path string, headers map[string]string) req {
+		return req{method: http.MethodDelete, path: path, headers: headers}
+	}
+	tests := []struct {
+		name   string
+		rq     req
+		svcErr error
+		status int
+		code   string
+		call   string
+	}{
+		{"put", put(todoFollowingPath, todoRepeatBody, ifMatch), nil, http.StatusOK, "", "UpdateTodoFollowing"},
+		{"put encoded", put("/api/v1/todos/t1/following/2025-03-10T08%3A00%3A00Z", todoRepeatBody, ifMatch), nil, http.StatusOK, "", "UpdateTodoFollowing"},
+		{"put bad recurrence id", put("/api/v1/todos/t1/following/x", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put fractional seconds", put("/api/v1/todos/t1/following/2025-03-10T08:00:00.5Z", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put no if-match", put(todoFollowingPath, todoRepeatBody, nil), nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+		{"put invalid body", put(todoFollowingPath, `{"title":""}`, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put long id", put("/api/v1/todos/"+strings.Repeat("t", 1100)+"/following/2025-03-10T08:00:00Z", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put a completing body", put(todoFollowingPath, todoRepeatBody, ifMatch), fmt.Errorf("%w: completes the repeat", domain.ErrInvalidInput), http.StatusBadRequest, codeInvalidInput, "UpdateTodoFollowing"},
+		{"put split unsupported", put(todoFollowingPath, todoRepeatBody, ifMatch), fmt.Errorf("%w: attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported, "UpdateTodoFollowing"},
+		{"put move unsupported", put(todoFollowingPath, todoRepeatBody, ifMatch), fmt.Errorf("%w: fixed days", domain.ErrSeriesMoveUnsupported), http.StatusBadRequest, codeSeriesMoveUnsupported, "UpdateTodoFollowing"},
+		{"put a stale repeat", put(todoFollowingPath, todoRepeatBody, ifMatch), domain.ErrConflict, http.StatusConflict, codeConflict, "UpdateTodoFollowing"},
+		{"put not found", put(todoFollowingPath, todoRepeatBody, ifMatch), domain.ErrNotFound, http.StatusNotFound, codeNotFound, "UpdateTodoFollowing"},
+		{"delete", del(todoFollowingPath, ifMatch), nil, http.StatusOK, "", "DeleteTodoFollowing"},
+		{"delete encoded", del("/api/v1/todos/t1/following/2025-03-10T08%3A00%3A00Z", ifMatch), nil, http.StatusOK, "", "DeleteTodoFollowing"},
+		{"delete bad recurrence id", del("/api/v1/todos/t1/following/x", ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"delete no if-match", del(todoFollowingPath, nil), nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+		{"delete long id", del("/api/v1/todos/"+strings.Repeat("t", 1100)+"/following/2025-03-10T08:00:00Z", ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"delete split unsupported", del(todoFollowingPath, ifMatch), fmt.Errorf("%w: attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported, "DeleteTodoFollowing"},
+		{"delete a stale repeat", del(todoFollowingPath, ifMatch), domain.ErrConflict, http.StatusConflict, codeConflict, "DeleteTodoFollowing"},
+		{"delete not found", del(todoFollowingPath, ifMatch), domain.ErrNotFound, http.StatusNotFound, codeNotFound, "DeleteTodoFollowing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.err = tt.svcErr
+			w := h.do(t, c, tt.rq)
+			if tt.code != "" {
+				expectError(t, w, tt.status, tt.code)
+			} else {
+				decode(t, w, tt.status, nil)
+			}
+			if got := strings.Join(h.svc.calls, ","); got != tt.call {
+				t.Fatalf("calls = %q, want %q", got, tt.call)
+			}
+			if tt.call != "" && (h.svc.gotID != "t1" || h.svc.gotETag != `"t-etag"` || !h.svc.gotRID.Equal(wantRID)) {
+				t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
+			}
+			if got := h.svc.gotTodo; tt.call == "UpdateTodoFollowing" && (got.Title != "Water plants" || got.Start == nil || got.RRule != "FREQ=DAILY") {
+				t.Errorf("got body %+v; want the request's, its rule included", got)
+			}
+		})
+	}
+}
+
+// TestTodoFollowingAnswers checks what changing or ending a task series from
+// one of its repeats on answers (FR-17, NFR-26): the change 200 with the new
+// series as todo, the old one as series, for the client's next write of it,
+// both with checklists as arrays, and the undo token where the service
+// hands out a snapshot; the end 200 with the old series and the undo token,
+// and 204 once the task itself is deleted. The token undoes the change at
+// the old series' undo route.
+func TestTodoFollowingAnswers(t *testing.T) {
+	t.Parallel()
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"8"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+	ifMatch := map[string]string{"If-Match": `"t-etag"`}
+	type answer struct {
+		Todo      domain.Todo `json:"todo"`
+		Series    domain.Todo `json:"series"`
+		UndoToken *string     `json:"undoToken"`
+	}
+	for _, withSnapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("change, snapshot %v", withSnapshot), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			c := h.login(t)
+			if withSnapshot {
+				h.svc.updateTodoFollowingSnapshot = snap
+			}
+			w := h.do(t, c, req{method: http.MethodPut, path: todoFollowingPath, body: todoRepeatBody, headers: ifMatch})
+			body := w.Body.String()
+			var got answer
+			decode(t, w, http.StatusOK, &got)
+			if got.Todo.ID != "t-new" || got.Todo.Title != "Water plants" || got.Todo.ETag != `"n"` ||
+				got.Series.ID != "t1" || got.Series.ETag != `"8"` {
+				t.Errorf("answer = %+v; want the new series t-new and the old series t1 with its etag", got)
+			}
+			if withSnapshot != (got.UndoToken != nil && len(*got.UndoToken) == 43) {
+				t.Errorf("undoToken = %v; want one: %v", got.UndoToken, withSnapshot)
+			}
+			if got.Todo.UndoToken != "" || got.Series.UndoToken != "" {
+				t.Errorf("todos' undoTokens = %q, %q; want it on the answer only", got.Todo.UndoToken, got.Series.UndoToken)
+			}
+			if n := strings.Count(body, `"checklist":[]`); n != 2 {
+				t.Errorf("%d empty checklist arrays; want 2: %s", n, body)
+			}
+		})
+		t.Run(fmt.Sprintf("end, snapshot %v", withSnapshot), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			c := h.login(t)
+			if withSnapshot {
+				h.svc.deleteTodoFollowingSnapshot = snap
+			}
+			w := h.do(t, c, req{method: http.MethodDelete, path: todoFollowingPath, headers: ifMatch})
+			body := w.Body.String()
+			var got domain.Todo
+			decode(t, w, http.StatusOK, &got)
+			if got.ID != "t1" || got.ETag != `"9"` || withSnapshot != (len(got.UndoToken) == 43) {
+				t.Errorf("answer = %+v; want the series t1 with its etag, and a token: %v", got, withSnapshot)
+			}
+			if n := strings.Count(body, `"checklist":[]`); n != 1 {
+				t.Errorf("%d empty checklist arrays; want 1: %s", n, body)
+			}
+		})
+	}
+
+	t.Run("end, the task deleted", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.todoFollowingDeleted = true
+		w := h.do(t, c, req{method: http.MethodDelete, path: todoFollowingPath, headers: ifMatch})
+		decode(t, w, http.StatusNoContent, nil)
+		if w.Body.Len() != 0 {
+			t.Errorf("body = %q; want empty", w.Body)
+		}
+	})
+
+	// The snapshot is the old series': its token undoes the split at the old
+	// series' route, not at the new one's.
+	t.Run("the token undoes the change at the old series' route", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.updateTodoFollowingSnapshot = snap
+		var got answer
+		decode(t, h.do(t, c, req{method: http.MethodPut, path: todoFollowingPath, body: todoRepeatBody, headers: ifMatch}),
+			http.StatusOK, &got)
+		if got.UndoToken == nil {
+			t.Fatal("no undoToken")
+		}
+		body := `{"token":"` + *got.UndoToken + `"}`
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t-new/undo", body: body})
+		expectError(t, w, http.StatusNotFound, codeNotFound)
+		if slices.Contains(h.svc.calls, "RestoreTodo") {
+			t.Errorf("calls = %v; want no RestoreTodo at the new series' route", h.svc.calls)
+		}
+		decode(t, h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: body}), http.StatusOK, nil)
+		if h.svc.gotSnap.ID != "t1" || h.svc.gotSnap.ETag != `"8"` {
 			t.Errorf("RestoreTodo got %+v", h.svc.gotSnap)
 		}
 	})

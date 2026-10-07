@@ -398,16 +398,25 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	bumpChangeProps(c, now)
 
 	o := calObject{path: objPath, cal: cal}
-	o.etag, err = s.putObject(ctx, objPath, cal, etag, false)
-	s.invalidate(calPath)
-	if err != nil && len(entries) > 0 {
-		err = s.settleWrite(ctx, objPath, etag, err)
-	}
-	if err != nil {
+	if o.etag, err = s.putAfterEntries(ctx, objPath, calPath, cal, etag, entries); err != nil {
 		return domain.Todo{}, nil, err
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
 	return t, s.snapshot(todoID, cur, raw, t, entries), nil
+}
+
+// putAfterEntries writes the series cal at objPath in calPath with If-Match
+// etag, after the entries entries a change created before it (FR-17, A-01):
+// with entries, a failure is settled, see settleWrite, and without, it is
+// returned as it is. It returns the series' new ETag, "" where the server
+// tells none or where settleWrite counts the failed write as applied.
+func (s *service) putAfterEntries(ctx context.Context, objPath, calPath string, cal *ical.Calendar, etag string, entries []calObject) (string, error) {
+	next, err := s.putObject(ctx, objPath, cal, etag, false)
+	s.invalidate(calPath)
+	if err != nil && len(entries) > 0 {
+		err = s.settleWrite(ctx, objPath, etag, err)
+	}
+	return next, err
 }
 
 // todoEdit is an update of a todo as UpdateTodo makes it, decided on the todo
@@ -775,20 +784,28 @@ func (s *service) splitOffCurrent(cal *ical.Calendar, c *ical.Component, series 
 		return nil, nil, err
 	}
 	if completed {
-		rolled := in
-		rolled.Status = domain.TodoNeedsAction
-		rolled.Checklist = make([]domain.ChecklistItem, len(in.Checklist))
-		for i, it := range in.Checklist {
-			it.Done = false
-			rolled.Checklist[i] = it
-		}
-		applyTodoFields(c, rolled, now)
+		applyTodoFields(c, rolledInput(in), now)
 		c.Props.Del(ical.PropPercentComplete)
 	} else {
 		reopen(c)
 	}
 	bumpChangeProps(c, now)
 	return cc, copyCal, nil
+}
+
+// rolledInput returns in as the fields of a series that rolls on to its
+// next occurrence take it (FR-17): open (STATUS:NEEDS-ACTION), with in's
+// checklist unchecked, as its progress belongs to the occurrence the series
+// rolled past.
+func rolledInput(in domain.TodoInput) domain.TodoInput {
+	in.Status = domain.TodoNeedsAction
+	list := make([]domain.ChecklistItem, len(in.Checklist))
+	for i, it := range in.Checklist {
+		it.Done = false
+		list[i] = it
+	}
+	in.Checklist = list
+	return in
 }
 
 // markOpen sets STATUS:NEEDS-ACTION and removes COMPLETED and
@@ -832,19 +849,12 @@ func reopen(c *ical.Component) {
 // after the server stored it, see removeIfStored.
 func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal *ical.Calendar, series *todoSeries, drop func(rid dateValue) bool, now time.Time) ([]calObject, error) {
 	var entries []calObject
-	for _, o := range series.overrides {
-		rid, err := parseDateProp(o.c.Props.Get(ical.PropRecurrenceID))
-		if err != nil || !drop(rid) {
-			continue
-		}
-		occ, ok := series.overrideOcc(o)
-		if !ok || !occ.done {
-			continue
-		}
+	for _, occ := range series.completions(drop) {
 		uid := newUID()
 		c := cloneOccurrence(series, occ, uid, now, false)
 		markCompleted(c, now)
 		entry := calObject{path: objectPath(calPath, uid+".ics"), cal: entryCalendar(cal, c)}
+		var err error
 		if entry.etag, err = s.putObject(ctx, entry.path, entry.cal, "", true); err != nil {
 			if !writeRefused(err) {
 				s.removeIfStored(ctx, calPath, entry.path)
@@ -855,6 +865,25 @@ func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal 
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// completions returns the occurrences of s that another app completed by an
+// override whose RECURRENCE-ID drop reports, the ones convertDoneOverrides
+// turns into entries, in RECURRENCE-ID order (FR-17, A-18). An override an
+// EXDATE excludes is none, nor is one of the other value type behind an
+// override of the same repeat, see newTodoSeries.
+func (s *todoSeries) completions(drop func(rid dateValue) bool) []todoOcc {
+	var out []todoOcc
+	for _, o := range s.overrides {
+		rid, err := parseDateProp(o.c.Props.Get(ical.PropRecurrenceID))
+		if err != nil || !drop(rid) {
+			continue
+		}
+		if occ, ok := s.overrideOcc(o); ok && occ.done {
+			out = append(out, occ)
+		}
+	}
+	return out
 }
 
 // propExRule is RFC 2445's EXRULE, which RFC 5545 deprecates but which is a
@@ -893,13 +922,7 @@ func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time, keep
 		c.Props.Del(name)
 	}
 	// The series' subtasks belong to the series, not to one done occurrence.
-	if rel := slices.DeleteFunc(c.Props[ical.PropRelatedTo], func(p ical.Prop) bool {
-		return strings.EqualFold(p.Params.Get(ical.ParamRelationshipType), "CHILD")
-	}); len(rel) > 0 {
-		c.Props[ical.PropRelatedTo] = rel
-	} else {
-		c.Props.Del(ical.PropRelatedTo)
-	}
+	dropChildLinks(c)
 	maps.Copy(c.Props, newComponent(ical.CompToDo, uid, now).Props)
 	s.setEntryDates(c, occ)
 	if keepAlarms {
@@ -915,6 +938,19 @@ func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time, keep
 		}
 	}
 	return c
+}
+
+// dropChildLinks removes the links of c, a clone of a series, to the
+// series' subtasks (RELATED-TO;RELTYPE=CHILD), which stay with the series it
+// was cloned from, and keeps its other relations (FR-17).
+func dropChildLinks(c *ical.Component) {
+	if rel := slices.DeleteFunc(c.Props[ical.PropRelatedTo], func(p ical.Prop) bool {
+		return strings.EqualFold(p.Params.Get(ical.ParamRelationshipType), "CHILD")
+	}); len(rel) > 0 {
+		c.Props[ical.PropRelatedTo] = rel
+	} else {
+		c.Props.Del(ical.PropRelatedTo)
+	}
 }
 
 // cloneProps returns a copy of props that shares nothing with them.

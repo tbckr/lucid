@@ -446,7 +446,8 @@ and the token is kept. A refusal (`4xx`) is answered as above.
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
   "status": "NEEDS-ACTION", "completed": null,
   "rrule": "FREQ=WEEKLY", "recurring": true, "fixedDays": false, "ruleUnsupported": false,
-  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true } } ] }
+  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true },
+  "recurrenceId": "2025-01-07T00:00:00Z" } ] }
 ```
 
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
@@ -454,9 +455,10 @@ and the token is kept. A refusal (`4xx`) is answered as above.
 
 `undoToken` and `copyKept` are response-only fields, never part of `TodoInput`
 and never seen here: `undoToken` appears on the responses of the writes below
-(`PUT /todos/{todoId}`, and detaching or skipping a repeat) when the change
-can be undone, and `copyKept` on the undo endpoint's response when the
-completed copy it had created could not be removed.
+(`PUT /todos/{todoId}`, detaching or skipping a repeat, and changing or ending
+a series from a repeat on) when the change can be undone, and `copyKept` on
+the undo endpoint's response when the completed copy it had created could not
+be removed.
 
 `start` is the todo's `DTSTART`. A todo with `DTSTART` and `DURATION` but no
 `DUE` reports `start + duration` as `due`. When both `start` and `due` are
@@ -467,8 +469,9 @@ completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 
-`rrule`, `recurring`, `fixedDays`, `ruleUnsupported` and `next` describe a
-recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
+`rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and
+`recurrenceId` describe a recurring series (VTODO with `RRULE` or `RDATE`,
+FR-17):
 
 - `rrule` is the stored `RRULE` (RFC 5545), empty for a non-recurring todo.
 - `recurring` is `true` for any such series, evaluable or not.
@@ -485,6 +488,13 @@ recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   series is not recurring, or `ruleUnsupported`). Its value types are its own:
   an override can change `start`/`due` between a date and a time independently
   of the current occurrence's or the master's.
+- `recurrenceId` is the `RECURRENCE-ID` of the current occurrence of an open
+  series (RFC 3339, UTC), the `recurrenceId` it has in
+  `GET .../todos/occurrences`: the writes to one repeat below name it so.
+  It is the occurrence's original start, not the dates an override moved it
+  to, and is omitted for a todo that does not recur, a completed or
+  cancelled series, a `ruleUnsupported` one, and one without an open
+  occurrence left.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
@@ -729,6 +739,139 @@ the task instead. Errors otherwise as for the `PUT` above, except that a
 resource with attendees is skipped, without an `undoToken`, as nothing new is
 written for it.
 
+### `PUT /api/v1/todos/{todoId}/following/{recurrenceId}` (header `If-Match`) → `200` `{todo, series, undoToken}`
+
+Changes this repeat of a recurring todo and the following ones as a series of
+their own ("This and following"), as for events (see
+`PUT /events/{eventId}/following/{recurrenceId}`). The series ends before
+`recurrenceId`, as the `DELETE` below ends it, and a new series, a todo with
+an `id` and `uid` of its own, goes on from it, changed by the body.
+`recurrenceId` is the repeat's `recurrenceId` from `GET .../todos/occurrences`
+(or the todo's own `recurrenceId` for its current repeat): RFC 3339, UTC,
+whole seconds, URL-encoded.
+
+The new series is a copy of the series with all its properties, alarms
+included, and its `VTIMEZONE`s, with a new `uid`, `SEQUENCE:0`, and `DTSTART`
+and `DUE` at the repeat's place in the rule, in the form they are written in
+(a series without `start` gets one equal to its `due`, as on a completion).
+Its rule's `COUNT` is lowered by the repeats before it; an `UNTIL` stays. The
+`EXDATE`s and the overrides from `recurrenceId` on go to it, by the
+`RECURRENCE-ID` of an override, never by its own dates, and leave the series.
+It is open (`NEEDS-ACTION`, without `COMPLETED` or `PERCENT-COMPLETE`), its
+checklist unchecked: the series' progress belongs to its current repeat.
+It drops `X-LUCID-DETACHED-FROM`, KDE's pending occurrence and the links to
+the series' subtasks (`RELATED-TO;RELTYPE=CHILD`), which stay with the series;
+other relations stay. Neither series refers to the other.
+[RECURRING-TASKS.md](RECURRING-TASKS.md#writing) has the details.
+
+Body: `TodoInput`, as for `PUT /todos/{todoId}`, whose status must leave the
+repeat open (`NEEDS-ACTION`, `IN-PROCESS`, or absent): `COMPLETED` or
+`CANCELLED` is `400 invalid_input`, before anything is read. The body changes
+the new series as `PUT /todos/{todoId}` changes a series from its current
+repeat, which the repeat is in the new series: new dates move it, the rule
+following as far as it can (see "Moving the series" there), and the fields
+replace its own. Its status and its checklist's state are those of a series
+that rolls on, though: `NEEDS-ACTION`, every item unchecked, whatever the body
+says. `start` is handled as there: a body without it, or without any date,
+takes the repeat's `start`. `rrule` is the new series' rule: absent, or sent
+as the series has it (`rrule` of the todo, compared case-insensitively), the
+new series keeps the rule it inherits, with its lowered `COUNT`, so a move
+does not count as a new rule; `""` makes the new series a single todo at the
+body's dates; any other rule is the new series' own, from the repeat on, which
+drops the overrides it took along.
+
+Completions another client recorded from `recurrenceId` on, overrides with
+`STATUS:COMPLETED`, become completed todos of their own first, as when a
+changed rule drops them (see "Completions from other clients" under
+`PUT /todos/{todoId}`), and leave both series: the new series excludes such a
+repeat of its rule with an `EXDATE`, so that it shows once, done, as its own
+todo, and not open again. A change that creates any returns no `undoToken`.
+
+At the series' **current repeat** nothing comes before it: the request is
+`PUT /todos/{todoId}` with the body, also at its last repeat, no new series is
+created, and both `todo` and `series` are the series as written.
+
+Response `200`:
+
+```json
+{ "todo": { "id": "...", "etag": "\"abc\"", "recurrenceId": "...", "...": "..." },
+  "series": { "id": "...", "etag": "\"def\"", "...": "..." }, "undoToken": "..." }
+```
+
+- `todo`: the new series, as the todo list shows it, with its `id` and `etag`.
+- `series`: the series as written, ending before `recurrenceId`, with its new
+  `etag` to send with its next write, `""` when the CalDAV server tells none.
+- `undoToken`: as for `PUT /todos/{todoId}`; it undoes the change at the
+  series' route, `POST /todos/{todoId}/undo` with the series' `id`. The undo
+  writes the series back as it was and deletes the new series; once the new
+  series has changed, it is refused and writes nothing (see the undo below).
+  There is none unless the CalDAV server tells the new `etag` of both series,
+  as for events.
+
+The completed todos of other clients' completions are written first, then
+the new series (`If-None-Match: *`), then the series (`If-Match`). The writes
+fail as for events: if the new series cannot be written, the series is not
+written; if the series cannot be written, the new series is deleted again
+where that write is known not to have landed, the server refused it or the
+series still has its ETag, and so are the completed todos. Where the series'
+ETag changed, the change counts as saved: `200` with `series.etag` `""` and
+no `undoToken`. Where it cannot be read, the new series and the completed
+todos stay, and the error is answered.
+
+Errors, with nothing written:
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds; the body is invalid, or completes or cancels the repeat.
+- `400 series_split_unsupported`: as for the `DELETE` below.
+- `400 series_move_unsupported`: the new series can't follow the move, as for
+  `PUT /todos/{todoId}`.
+- `403 read_only`, `404 not_found`, `409 conflict`, `428
+  precondition_required`: as for `PUT /todos/{todoId}/occurrences/…` above;
+  a `recurrenceId` that is no open repeat of the series any more, as in a view
+  not reloaded since, is `409`.
+
+### `DELETE /api/v1/todos/{todoId}/following/{recurrenceId}` (header `If-Match`) → `200` `Todo`
+
+Ends the series of a recurring todo before this repeat ("This and following",
+as for events): the rule gets an `UNTIL` just before `recurrenceId` (the day
+before for a date, one second before it otherwise, in UTC unless floating; a
+`COUNT` of the repeats before it in a time zone the backend cannot resolve),
+and the `EXDATE`s and the overrides from `recurrenceId` on are removed, by the
+`RECURRENCE-ID` of an override, never by its own dates. Earlier repeats stay
+as they are, the current one among them, so the series always keeps an open
+repeat. Completions another client recorded from `recurrenceId` on become
+completed todos of their own first, as for the `PUT` above, and then there is
+no `undoToken`; they are deleted again if the series cannot be written, as
+there. `recurrenceId` as for the `PUT` above.
+
+`200` with the series as written (new `etag`, `""` when the CalDAV server
+tells none) and an `undoToken` if the change can be undone, as for
+`PUT /todos/{todoId}`.
+
+At the series' **current repeat** nothing comes before it: the todo is
+deleted, as by `DELETE /api/v1/todos/{todoId}`, also at its last repeat, and
+the answer is `204` without a body or an `undoToken`.
+
+Errors, with nothing written or deleted:
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds.
+- `400 series_split_unsupported`, where the series cannot be split. The first
+  four hold at its current repeat too, which is not deleted then:
+  - some `VTODO` of the resource has an `ORGANIZER` or an `ATTENDEE`
+    (`hasAttendees`), as a server that schedules implicitly would tell them of
+    a series that ends and of another with a `uid` of its own;
+  - the series has an `EXRULE`, which the backend does not read and a new
+    series would count from its own start;
+  - the series has more than one `RRULE`: the backend reads and ends only the
+    first;
+  - its rule can't be evaluated by the backend (`ruleUnsupported`, any
+    `RDATE` included);
+  - its rule does not reach `recurrenceId` within the backend's iteration cap;
+  - `recurrenceId` is a repeat off the rule, an override whose
+    `RECURRENCE-ID` lies on none of the rule's occurrences, from which no new
+    series can recur.
+- `403 read_only`, `404 not_found`, `409 conflict`, `428
+  precondition_required`: as for the `PUT` above.
+
 ### `POST /api/v1/todos/{todoId}/undo` → `200` `Todo`
 
 Body: `{ "token": "..." }`, strictly decoded; no `If-Match` (the token itself,
@@ -738,10 +881,15 @@ Undoes the change that returned `undoToken`. Response `200` with the restored
 `Todo` (new `etag`, no `completedCopy`); `copyKept: true` when the completed
 copy the change had created could not be removed and still exists.
 
-The undo of a detach also deletes the detached todo. If that todo changed
-since, in Lucid or in another client, the undo is refused with `409` and
-writes nothing: the series restored next to it would show that repeat twice,
-and deleting it would lose the change.
+The undo of a detach also deletes the detached todo, and the undo of a change
+of a repeat and the following ones (`PUT …/following/…`) the new series, each
+with `If-Match` of the ETag the change gave it. It reads that ETag first: if
+the todo changed since, in Lucid or in another client, or its ETag is unknown
+or weak, the undo is refused with `409` and writes nothing, as the series
+restored next to it would show that repeat, or every repeat from
+`recurrenceId` on, twice, and deleting it would lose the change. If it was
+deleted since, the series is restored and there is nothing to delete. A
+completed copy is a record of its own instead: it may stay (`copyKept`).
 
 If the write that restores the series fails without the server's refusal (a
 `5xx`, no answer), the undo reads the series back, as the undo of an event
@@ -756,7 +904,7 @@ In any other case the answer is `502`, the copy stays, and the token is kept.
 | 403    | `csrf_invalid`   | Missing/wrong CSRF token                                                    |
 | 403    | `read_only`      | Calendar is read-only                                                       |
 | 404    | `not_found`      | Token unknown, expired, already used, or belongs to another todo ("nothing to undo") |
-| 409    | `conflict`       | Todo changed or was deleted since (`If-Match` would have failed), or the todo a detach made changed since; nothing is written |
+| 409    | `conflict`       | Todo changed or was deleted since (`If-Match` would have failed), or the todo a detach made or the new series of a split changed since; nothing is written |
 | 429    | `rate_limited`   | Too many requests                                                           |
 | 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
 

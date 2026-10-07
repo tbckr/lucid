@@ -974,14 +974,96 @@ would leave a series without one; the user deletes the task instead. A
 series with attendees is skipped all the same, since nothing new is written
 for it, but gets no undo (see below).
 
-Both name the occurrence by its `RECURRENCE-ID`, as the calendar shows it,
-and act only on the current one. A later one is refused, as the rolling
-model has no place for it (see
+Both name the occurrence by its `RECURRENCE-ID`, as the calendar shows it
+(the task list by the series' `recurrenceId`), and act only on the current
+one. A later one is refused, as the rolling model has no place for it (see
 [Moving one occurrence](#moving-one-occurrence)). One that is no open
 occurrence any more, done, rolled past, excluded or cancelled since, as from
 a view not reloaded since another client changed the series, is answered as
 a conflict, as for events: the user sees the series as it is now and decides
 again.
+
+**This and following repeats** change a later occurrence R and the ones
+after it as a series of their own. As for events (see
+[RECURRING-EVENTS.md](RECURRING-EVENTS.md#this-and-following-events)),
+Lucid splits the series at R, by `RECURRENCE-ID`, and writes no
+`RANGE=THISANDFUTURE`:
+
+1. The old series ends just before R, as when ending the series (below).
+2. A new series goes on from R, a resource of its own with a new `UID`: a
+   copy of the master with its properties and alarms, and of the
+   `VTIMEZONE`s, with `SEQUENCE:0` and a new `DTSTAMP`, `CREATED` and
+   `LAST-MODIFIED`. Its `DTSTART` and `DUE` lie at R's place in the rule, in
+   the form they are written in; a series anchored on `DUE` gets a `DTSTART`
+   equal to it, as on a roll. A `COUNT` is lowered by the occurrences before
+   R, counted as RFC 5545 counts them, so that both series together have as
+   many as the one had; an `UNTIL` stays. The `EXDATE`s and the overrides
+   from R on go along, by their `RECURRENCE-ID`, never by an override's own
+   dates (one of the other value type by its date in the series' zone, see
+   Reading), and the overrides take the new `UID`. The new series is open
+   (`STATUS:NEEDS-ACTION`, without `COMPLETED` or `PERCENT-COMPLETE`), its
+   checklist unchecked: the progress belongs to the old series' current
+   occurrence. KDE's pending occurrence, `X-LUCID-DETACHED-FROM` and the
+   links to the series' subtasks (`RELATED-TO;RELTYPE=CHILD`) stay with the
+   old series; other relations come along. Neither series refers to the
+   other.
+3. The change applies to the new series as a change of the series applies
+   from its current occurrence, which R is there: new dates move it as
+   under Moving below, as far as its rule can follow, and a move it can't
+   follow is refused before anything is written; the fields replace its
+   own, but its status and its checklist's state are those of a series that
+   rolls on: open, every item unchecked. A request without a rule, or with
+   the rule the series has, compared case-insensitively, keeps the rule the
+   new series inherited, with its lowered `COUNT`, so that a move doesn't
+   count as a new rule; any other rule is the new series' own from R on,
+   which drops the overrides it took along; an empty rule makes it a single
+   task at the dates entered.
+
+At the current occurrence, the last one too, nothing comes before it: "this
+and following" is all of them, the change of the series itself. R must be an
+open occurrence of the rule: a later one off the rule is refused with
+`series_split_unsupported`, as no series can recur from it without moving its
+rule, and so is a series Lucid cannot split, before anything is written, as
+for events, also at the current occurrence: one with an `ORGANIZER` or an
+`ATTENDEE` on any `VTODO`, as a server that schedules implicitly would tell
+them of a series that ends and of another with a new `UID`; one with an
+`EXRULE`, which Lucid doesn't read and a new series would count from its own
+start; one with more than one `RRULE`, of which Lucid reads and ends only the
+first; and one whose rule Lucid can't evaluate, or not as far as R. A stale R
+is a conflict, as above.
+
+Completions other apps recorded from R on would keep their place in neither
+series: the change could drop or move them in the new one, and the old one
+ends before them. So they become completed tasks of their own first, as for a
+rule change (see below), and leave both series; the new series excludes such
+an occurrence of its rule with an `EXDATE`, so that it shows once, done, as its
+task, and does not come back open. The writes go in that order: those tasks,
+the new series (`If-None-Match: *`), and the old series (`If-Match`). They fail
+as for events: if the new series can't be written, the old one is not
+written either; if the old one can't be, the new series and those tasks go
+again where Lucid can tell that the write did not land, and stay, with the
+error reported, where it can't.
+
+**Ending the series** before a later occurrence R ends its rule with an
+`UNTIL` just before R, in the form RFC 5545 wants with `DTSTART`: the day
+before R for a date, R − 1 s in UTC for a date-time with a `TZID` or in UTC,
+and R − 1 s floating for a floating one. It replaces a `COUNT`, or an `UNTIL`,
+which can only lie at R or later. In a `TZID` Lucid cannot resolve, that
+`UNTIL` would be off by the zone's offset, so the rule ends with a `COUNT` of
+the occurrences before R instead. The `EXDATE`s and the overrides from R on
+go, by their `RECURRENCE-ID`: an occurrence before R that an override moved
+past R stays. Other apps' completions from R on become tasks of their own
+first, as above. It is one write of the series, and the series keeps its
+current occurrence, which lies before R, open. At the current occurrence,
+the last one too, nothing comes before it: the task is deleted. The
+refusals are those of a change from R on, but for the move.
+
+**`X-LUCID-DETACHED-FROM`** is Lucid's own property: only a detach writes
+it, on the detached task, with the series' `UID`, and Lucid reports it as
+`detachedFrom`. Every other write keeps it, but for two: a rule set on a task
+that carries it removes it, as the task is then a series of its own, and the
+new series of a split doesn't take it from the series it goes on from. Other
+clients don't read it.
 
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
@@ -1069,17 +1151,21 @@ roll, a move's shifted references and `UNTIL`, or a rule change's dropped
 overrides and `EXDATE`s. It also removes the completed copy that write
 created, unless another client has since changed it, when the copy stays
 and the response reports `copyKept: true`. A completed copy is a record of
-its own and may stay; a detached task may not. The series restored next to
-it would show that occurrence twice, open in both, and deleting it would
-lose the change. So the undo of a detach is refused (`409`) when the
-detached task changed since, in Lucid or another app, before anything is
-written. A detach whose server tells the detached task's ETag neither on its
-create nor when read back hands out no undo at all: the undo could never tell
-that task unchanged. A rule change or removal that
-converted other clients' completions into entries of their own (see below)
-returns no `undoToken` to begin with, so those entries are never undone by
-it. So does a write to a resource that has an `ORGANIZER` or an `ATTENDEE` on
-its master or any override: the server may have sent them the write with the
+its own and may stay; a detached task may not, and neither may the new
+series of a split, which the undo of "this and following" deletes. The
+series restored next to it would show that occurrence twice, open in both,
+or every occurrence from the split on, and deleting it would lose the
+change. So such an undo is refused (`409`) when the detached task or the new
+series changed since, in Lucid or another app, or its ETag is unknown or
+weak, before anything is written; one deleted since leaves nothing to
+delete. A detach or a split whose server tells the new resource's ETag
+neither on its create nor when read back hands out no undo at all: the undo
+could never tell that resource unchanged. A rule change or removal, a split
+or an end of the series that converted other clients' completions into
+entries of their own (see below) returns no `undoToken` to begin with, so
+those entries are never undone by it. So does a write to a resource that has
+an `ORGANIZER` or an `ATTENDEE` on its master or any override: the server
+may have sent them the write with the
 `SEQUENCE` it carries, and a restore would write an older one back (RFC 5545
 §3.8.7.4). Undo itself fails cleanly instead of writing anything partial:
 the todo changed since the write consumes the snapshot (`409`); a token
@@ -1120,7 +1206,8 @@ keeps the properties and components Lucid does not know.
 ### Limits
 
 - Only the current occurrence can be completed, detached or skipped, so
-  occurrences are completed in order. Later ones are a preview.
+  occurrences are completed in order. Later ones are a preview: from one of
+  them on, the series can only be changed or ended ("this and following").
 - No occurrence moves on its own within the series: moving the current one,
   one off the rule too, moves the series from it on, and only detaching it
   moves it alone, as a task of its own. With an interval rule the later
@@ -1184,8 +1271,9 @@ keeps the properties and components Lucid does not know.
   Reminders, then keeps showing the completed occurrence's date as due
   until a later completion rolls the master past it.
 - Converting other clients' completions into entries of their own, on a
-  rule change or removal, creates them one by one; if the master write then
-  fails, cleanup deletes the entries again, bounded by a fixed time budget.
+  rule change or removal, a split or an end of the series, creates them one
+  by one; if the master write then fails, cleanup deletes the entries again,
+  bounded by a fixed time budget.
   With hundreds of completions that budget can run out before all are
   removed, leaving some behind; retrying the same change converts those
   completions again, so the series ends up with duplicate entries for them.

@@ -475,7 +475,9 @@ func (s *todoSeries) reported(status string) (occ todoOcc, last bool) {
 // differs from the master's, and the current and next occurrence each keep
 // their own rather than the master's. A completed or cancelled master, a
 // rule Lucid cannot evaluate and a series without any occurrence left keep
-// the master's dates.
+// the master's dates. An open current occurrence also gives its
+// RECURRENCE-ID, by which a client names it: the task list shows no
+// occurrences.
 func (s *todoSeries) setSeries(t *domain.Todo) {
 	t.RRule, t.Recurring, t.FixedDays = s.rrule, true, s.fixedDays
 	if t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
@@ -491,6 +493,10 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 	}
 	t.Start, t.Due = utcPtr(cur.start), utcPtr(cur.due)
 	t.StartAllDay, t.DueAllDay = cur.startAllDay, cur.dueAllDay
+	if !cur.done {
+		// The repeat the writes to one repeat name, as the listing does.
+		t.RecurrenceID = utcPtr(&cur.rid)
+	}
 	if next != nil {
 		t.Next = &domain.TodoDates{
 			Start: utcPtr(next.start), StartAllDay: next.startAllDay,

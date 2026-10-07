@@ -546,6 +546,89 @@ func (s *Server) handleSkipTodoOccurrence(w http.ResponseWriter, r *http.Request
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
 }
 
+// todoFollowingResponse answers a change of a repeat of a task series and
+// the following ones (FR-17): the new series, the old series as written,
+// whose new ETag the client's next write of it needs (NFR-26), and the token
+// that undoes the split, at the old series' undo route.
+type todoFollowingResponse struct {
+	Todo      domain.Todo `json:"todo"`
+	Series    domain.Todo `json:"series"`
+	UndoToken string      `json:"undoToken,omitempty"`
+}
+
+// handleUpdateTodoFollowing changes a repeat of a task series and the
+// following ones as a series of their own ("this and following"): the
+// series ends before it, and a new one goes on from it with the change
+// (FR-17). It answers 200 with the new series as todo, the old one as
+// series, and the undo token if there is one; at the series' current repeat
+// that is all of it, and both are the series as written.
+func (s *Server) handleUpdateTodoFollowing(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "todoId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathRecurrenceID(w, r)
+	if !ok {
+		return
+	}
+	var in domain.TodoInput
+	if !s.decodeValid(w, r, &in) {
+		return
+	}
+	res, snap, err := svc.UpdateTodoFollowing(r.Context(), id, etag, rid, in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	middleware.WriteJSON(w, http.StatusOK, todoFollowingResponse{
+		Todo: normalizeTodo(res.Todo), Series: normalizeTodo(res.Series), UndoToken: s.storeUndo(r, snap),
+	})
+}
+
+// handleDeleteTodoFollowing ends a task series before one of its repeats
+// ("this and following"): the rule ends just before it, and the later
+// exceptions and overrides go (FR-17). It answers 200 with the series, its
+// new ETag for the client's next write of it (NFR-26), and the undo token if
+// there is one, and 204 once the task itself is deleted, as it is at the
+// series' current repeat, where nothing comes before it.
+func (s *Server) handleDeleteTodoFollowing(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "todoId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathRecurrenceID(w, r)
+	if !ok {
+		return
+	}
+	todo, snap, err := svc.DeleteTodoFollowing(r.Context(), id, etag, rid)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if todo.ID == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	todo.UndoToken = s.storeUndo(r, snap)
+	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
+}
+
 // storeUndo keeps snap in the undo store for the caller's session and returns
 // the token that undoes it (FR-17). It returns "" when snap is nil, when undo
 // is off, when the request has no session cookie, or when the store refuses

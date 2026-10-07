@@ -125,6 +125,8 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/v1/todos/{todoId}", s.handleDeleteTodo)
 	mux.HandleFunc("PUT /api/v1/todos/{todoId}/occurrences/{recurrenceId}", s.handleDetachTodoOccurrence)
 	mux.HandleFunc("DELETE /api/v1/todos/{todoId}/occurrences/{recurrenceId}", s.handleSkipTodoOccurrence)
+	mux.HandleFunc("PUT /api/v1/todos/{todoId}/following/{recurrenceId}", s.handleUpdateTodoFollowing)
+	mux.HandleFunc("DELETE /api/v1/todos/{todoId}/following/{recurrenceId}", s.handleDeleteTodoFollowing)
 	mux.HandleFunc("POST /api/v1/todos/{todoId}/undo", s.handleUndoTodo)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "no such API endpoint")

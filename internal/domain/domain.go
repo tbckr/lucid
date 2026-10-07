@@ -40,9 +40,10 @@ var (
 	// or walk to the occurrence, the occurrence is at or before DTSTART
 	// without being the first, or a new series of a single event would lose
 	// an event the series shows after it. Nothing is written; the whole
-	// series or only the event can change instead. A task series with an
-	// ORGANIZER or an ATTENDEE refuses to have a repeat detached ("only this
-	// one") alike (FR-17).
+	// series or only the event can change instead. A task series refuses to
+	// be split at a repeat ("this and following") alike, and at a repeat off
+	// its rule; with an ORGANIZER or an ATTENDEE, it also refuses to have a
+	// repeat detached ("only this one") (FR-17).
 	ErrSeriesSplitUnsupported = errors.New("series split unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")
@@ -228,14 +229,18 @@ type Todo struct {
 
 	// RRule, Recurring, FixedDays and RuleUnsupported describe a recurring
 	// series (FR-17). Next is the earliest open occurrence after the current
-	// one, or nil if this is the last. CompletedCopy is the just-completed
-	// occurrence, returned only by the PUT that completes it, so the client
-	// can show it alongside the advanced series without a refetch.
+	// one, or nil if this is the last. RecurrenceID is the RECURRENCE-ID of
+	// the current occurrence of an open series, as TodoOccurrence reports
+	// it, by which the writes to one occurrence name it; nil without one.
+	// CompletedCopy is the just-completed occurrence, returned only by the
+	// PUT that completes it, so the client can show it alongside the
+	// advanced series without a refetch.
 	RRule           string     `json:"rrule"`
 	Recurring       bool       `json:"recurring"`
 	FixedDays       bool       `json:"fixedDays"`
 	RuleUnsupported bool       `json:"ruleUnsupported"`
 	Next            *TodoDates `json:"next"`
+	RecurrenceID    *time.Time `json:"recurrenceId,omitempty"`
 	CompletedCopy   *Todo      `json:"completedCopy,omitempty"`
 	// HasAttendees reports that a VTODO of the resource, the series or one of
 	// its overrides, has an ORGANIZER or an ATTENDEE: a server that schedules
@@ -454,6 +459,14 @@ type FollowingResult struct {
 	ETag  string // the old series' new ETag, "" when the server tells none
 }
 
+// TodoFollowing answers a change of a repeat of a task series and the
+// following ones ("this and following", FR-17), see
+// CalendarService.UpdateTodoFollowing.
+type TodoFollowing struct {
+	Todo   Todo // the new series, from the changed repeat on, as written
+	Series Todo // the old series as written, with its new ETag (NFR-26)
+}
+
 // CalendarService is bound to one account. Implementations must be safe for
 // concurrent use.
 type CalendarService interface {
@@ -576,6 +589,46 @@ type CalendarService interface {
 	// deleted instead), and the rest is refused as by DetachTodoOccurrence,
 	// except that an ORGANIZER or an ATTENDEE is none (FR-17).
 	SkipTodoOccurrence(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
+	// UpdateTodoFollowing changes the repeat at recurrenceID of the recurring
+	// todo todoID and the following ones ("this and following") as a series
+	// of their own: the series ends before the repeat, as by
+	// DeleteTodoFollowing, and a new series, a resource with a UID of its
+	// own, goes on from it, changed by in as UpdateTodo changes a series
+	// from its current repeat, open, its checklist unchecked. in.RRule is
+	// the new series' rule, except that the series' own rule, sent as
+	// stored or left out, keeps the rule the new series inherits, with its
+	// COUNT lowered by the repeats before it; "" makes the new series a
+	// single todo. Completions other apps recorded from the repeat on become
+	// todos of their own first, and leave both series. It returns the new
+	// series as Todo and the old one as Series, and the snapshot RestoreTodo
+	// undoes the change with, which also deletes the new series (nil when
+	// either new ETag is unknown, when completions became todos, or when
+	// the resource has an ORGANIZER or an ATTENDEE, which a later repeat
+	// refuses anyway). At the series' current repeat, the last one too, it
+	// is UpdateTodo with in, both Todo and Series the series as written.
+	// A status of in that completes or cancels the repeat is
+	// ErrInvalidInput; a series it cannot split, see DeleteTodoFollowing, is
+	// ErrSeriesSplitUnsupported; a move the new series cannot follow is
+	// ErrSeriesMoveUnsupported; a recurrenceID that is no open repeat of the
+	// series any more, as in a view not reloaded since, is ErrConflict.
+	// Nothing is written then. etag must match (If-Match), otherwise
+	// ErrConflict (FR-17).
+	UpdateTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time, in TodoInput) (TodoFollowing, *Snapshot, error)
+	// DeleteTodoFollowing ends the recurring todo todoID before its repeat at
+	// recurrenceID ("this and following"): its rule ends just before the
+	// repeat, and its exceptions and overrides from there on go, other
+	// apps' completions among them becoming todos of their own first. It
+	// returns the series as written and the snapshot RestoreTodo undoes the
+	// change with, as UpdateTodo does. At the series' current repeat, the
+	// last one too, nothing comes before it: the resource is deleted, and
+	// it returns a zero Todo and no snapshot. A resource with an ORGANIZER
+	// or an ATTENDEE, an EXRULE or more than one RRULE, a rule Lucid cannot
+	// evaluate or walk to recurrenceID, and a repeat off the rule are
+	// ErrSeriesSplitUnsupported, at the current repeat too; a recurrenceID
+	// that is no open repeat of the series any more is ErrConflict. Nothing
+	// is written or deleted then. etag must match (If-Match), otherwise
+	// ErrConflict (FR-17).
+	DeleteTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
 }
 
 // Provider connects users to their CalDAV server.

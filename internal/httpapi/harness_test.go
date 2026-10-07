@@ -73,6 +73,13 @@ type fakeService struct {
 	// detachTodoSnapshot and skipTodoSnapshot are returned as the snapshot
 	// of DetachTodoOccurrence and SkipTodoOccurrence, if set.
 	detachTodoSnapshot, skipTodoSnapshot *domain.Snapshot
+	// updateTodoFollowingSnapshot and deleteTodoFollowingSnapshot are
+	// returned as the snapshot of UpdateTodoFollowing and
+	// DeleteTodoFollowing, if set.
+	updateTodoFollowingSnapshot, deleteTodoFollowingSnapshot *domain.Snapshot
+	// todoFollowingDeleted makes DeleteTodoFollowing answer as for a
+	// resource it deleted: a zero Todo.
+	todoFollowingDeleted bool
 
 	calls    []string
 	gotCal   string
@@ -285,6 +292,38 @@ func (f *fakeService) SkipTodoOccurrence(_ context.Context, id, etag string, rid
 		return domain.Todo{}, nil, err
 	}
 	return domain.Todo{ID: id, Title: "Series", ETag: `"7"`, Recurring: true}, snap, nil
+}
+
+// UpdateTodoFollowing answers with the new series "t-new", which has the
+// input's title, and the old series as written.
+func (f *fakeService) UpdateTodoFollowing(_ context.Context, id, etag string, rid time.Time, in domain.TodoInput) (domain.TodoFollowing, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID, f.gotTodo = id, etag, rid, in
+	snap := f.updateTodoFollowingSnapshot
+	f.mu.Unlock()
+	if err := f.record("UpdateTodoFollowing"); err != nil {
+		return domain.TodoFollowing{}, nil, err
+	}
+	return domain.TodoFollowing{
+		Todo:   domain.Todo{ID: "t-new", Title: in.Title, ETag: `"n"`, Recurring: true},
+		Series: domain.Todo{ID: id, Title: "Series", ETag: `"8"`, Recurring: true},
+	}, snap, nil
+}
+
+// DeleteTodoFollowing answers with the series as written, or with a zero
+// Todo where todoFollowingDeleted is set.
+func (f *fakeService) DeleteTodoFollowing(_ context.Context, id, etag string, rid time.Time) (domain.Todo, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID = id, etag, rid
+	snap, deleted := f.deleteTodoFollowingSnapshot, f.todoFollowingDeleted
+	f.mu.Unlock()
+	if err := f.record("DeleteTodoFollowing"); err != nil {
+		return domain.Todo{}, nil, err
+	}
+	if deleted {
+		return domain.Todo{}, nil, nil
+	}
+	return domain.Todo{ID: id, Title: "Series", ETag: `"9"`, Recurring: true}, snap, nil
 }
 
 type syncBuffer struct {
