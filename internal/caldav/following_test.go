@@ -1948,11 +1948,12 @@ func TestUpdateFollowingNotFound(t *testing.T) {
 
 // TestUpdateEventFromEventSeriesLeft checks that "all events" from an event
 // the series no longer shows, neither an event of its rule nor an override,
-// is ErrNotFound, with nothing written (FR-17, NFR-26): sent from a view not
+// is ErrConflict, with nothing written (FR-17, NFR-26): sent from a view not
 // reloaded since the series ended or split before that event, with the ETag
 // the end or split gave, as a write queued behind the client's own change
 // sends it, it would write the series' old rule back, bringing deleted events
-// back or showing those of the new series twice.
+// back or showing those of the new series twice. The series changed since
+// the view was loaded, as a conflict says, and the client reloads it.
 func TestUpdateEventFromEventSeriesLeft(t *testing.T) {
 	t.Parallel()
 	rid := date(2025, 3, 24, 8, 0)
@@ -2010,7 +2011,7 @@ func TestUpdateEventFromEventSeriesLeft(t *testing.T) {
 			in.InstanceStart = &tt.from
 			laterBy(time.Hour)(&in)
 			_, snap, err := e.svc.UpdateEvent(t.Context(), id, next, in)
-			mustErr(t, err, domain.ErrNotFound)
+			mustErr(t, err, domain.ErrConflict)
 			if snap != nil {
 				t.Error("returned a snapshot with an error")
 			}

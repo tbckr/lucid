@@ -1014,8 +1014,9 @@ as entered (`UpdateFollowing`).
   read with, not the one the end gave, so the server refuses it as a
   conflict and the calendar reloads. The server answers "All events" from
   an event the series no longer shows, neither an event of its rule nor
-  one with an override, with `404 not_found` (`UpdateEvent`), and writes
-  nothing.
+  one with an override, with `409 conflict` (`UpdateEvent`), and writes
+  nothing: the series changed since the view was loaded, and the calendar
+  reloads.
 - **The write order** (`writeCreatedThenMaster` in
   `internal/caldav/writes.go`, which the completion of a repeating task
   shares): the new series is created first, with `If-None-Match: *`, and

@@ -462,7 +462,7 @@ type CalendarService interface {
 	// ErrConflict. An in.InstanceStart that is no longer an occurrence of the
 	// series, neither an event of its rule nor one with an override, as in a
 	// view not reloaded since the series ended or split before it, is
-	// ErrNotFound, and nothing is written (FR-17, NFR-26). The change of a
+	// ErrConflict too, and nothing is written (FR-17, NFR-26). The change of a
 	// series that was recurring before it, including one that removes the
 	// rule, returns the snapshot that RestoreEvent undoes it with. A single
 	// event, a series with an ORGANIZER or an ATTENDEE, and a change whose

@@ -469,7 +469,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 
 // UpdateEvent implements domain.CalendarService. Unknown properties and
 // components (alarms, attendees, X- properties) are preserved. "All events"
-// from an instanceStart the series no longer shows is ErrNotFound, with
+// from an instanceStart the series no longer shows is ErrConflict, with
 // nothing written (see checkShown). The change of a series that was
 // recurring before it, also one that removes the rule, returns the snapshot
 // RestoreEvent undoes it with, see eventSnapshot (FR-17).
@@ -539,8 +539,10 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 // Sent from a view not reloaded since the series ended or split before it,
 // with the ETag that change gave, the edit would write the view's old rule
 // back, bringing deleted events back or showing those of a new series
-// twice; ErrNotFound reloads the view instead. A single event, and a series
-// whose timing Lucid cannot read, applySeriesEdit edits as entered.
+// twice. The series changed since the view was loaded, so it is
+// ErrConflict, which reloads the view, as an ETag that no longer matches
+// does. A single event, and a series whose timing Lucid cannot read,
+// applySeriesEdit edits as entered.
 func checkShown(cal *ical.Calendar, master *ical.Component, instanceStart *time.Time) error {
 	if instanceStart == nil || !isRecurring(master) {
 		return nil
@@ -548,7 +550,7 @@ func checkShown(cal *ical.Calendar, master *ical.Component, instanceStart *time.
 	tm, tmErr := parseTiming(master)
 	rid := instanceStart.UTC()
 	if tmErr == nil && findOverride(cal, master, rid) == nil && !isInstance(master, tm, rid) {
-		return fmt.Errorf("%w: not an occurrence of the series", domain.ErrNotFound)
+		return fmt.Errorf("%w: not an occurrence of the series", domain.ErrConflict)
 	}
 	return nil
 }
