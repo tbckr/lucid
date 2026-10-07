@@ -371,7 +371,7 @@ function startSeriesWrite(qc: QueryClient, id: string): number {
   map.set(id, generation)
   const toastId = seriesToastId(id)
   const shown = toast.getToasts().find((x) => x.id === toastId)
-  // Merged into the toast shown, which keeps its icon and how long it stays.
+  // Merged into the toast shown, which keeps its icon and duration; sonner 2.0.8 starts its countdown over.
   if (shown && 'title' in shown) toast.success(shown.title, { id: toastId, action: undefined })
   return generation
 }
@@ -469,7 +469,8 @@ async function undoEventChange(
 
 /**
  * Says what a change of a series did, with an Undo while the answer carries a
- * token (FR-17). `after` is the server's answer to this change: a token on
+ * token (FR-17). `after` is this change's ETag and undo token, the token
+ * already dropped by `latestUndoToken` once a later write started; a token on
  * `event`, or one cached with it, is from an earlier answer and never offered.
  * The ID is the series', so a later change replaces this toast and its Undo.
  * Its icon shows the events the change reached, `look.reach`, in the
