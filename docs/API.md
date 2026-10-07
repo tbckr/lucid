@@ -415,6 +415,13 @@ series between that read and its delete leaves it next to the restored
 series, and the answer has `copyKept: true`. No other change of an event
 creates a resource, so it is omitted there.
 
+If the write that restores the series fails without the server's refusal (a
+`5xx`, no answer), the undo reads the series' ETag. Changed since: the restore
+counts as applied, and the undo answers `200` without `etag` and removes the
+new series as above. Unchanged: nothing is removed, and the answer is the
+error. Unreadable: the restore may have been applied, so the new series
+stays, and the answer is `502`.
+
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|
 | 400    | `invalid_input`  | Malformed body or token                                                     |
@@ -643,6 +650,13 @@ single-use and short-lived, is the concurrency control).
 Undoes the change that returned `undoToken`. Response `200` with the restored
 `Todo` (new `etag`, no `completedCopy`); `copyKept: true` when the completed
 copy the change had created could not be removed and still exists.
+
+If the write that restores the series fails without the server's refusal (a
+`5xx`, no answer), the undo reads the series' ETag as the undo of an event
+does: if it changed since, the restore counts as applied, and the answer is
+`200` without `etag`, with the completed copy removed; if it did not, or it
+cannot be read, the copy stays and the answer is the error, a `502` that keeps
+the token.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|

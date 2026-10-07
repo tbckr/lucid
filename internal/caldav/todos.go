@@ -471,7 +471,8 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 
 // snapshot returns what undoes a change of the todo todoID, read as cur from
 // raw, that left t (FR-17): raw itself, the ETag the change gave it and the
-// completed copy the change left. Only the change of a recurring todo gets
+// completed copy the change left, which may stay when it changed since (see
+// domain.CreatedRef.MayStay). Only the change of a recurring todo gets
 // one, and only when its new ETag is known: without it, an undo could not
 // tell another client's change from its own. A change that turned completed
 // overrides into the entries entries gets none: restoring raw would bring
@@ -483,7 +484,7 @@ func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.
 	}
 	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
 	if c := t.CompletedCopy; c != nil {
-		snap.Created = []domain.CreatedRef{{ID: c.ID, ETag: c.ETag}}
+		snap.Created = []domain.CreatedRef{{ID: c.ID, ETag: c.ETag, MayStay: true}}
 	}
 	return snap
 }
@@ -656,7 +657,9 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 // markCompleted). It takes nothing of the request, which edits the series,
 // not a past completion. An override that an EXDATE excludes is no done
 // occurrence and records no completion. Each entry is created with
-// If-None-Match; if one cannot be, those created before go again.
+// If-None-Match; if one cannot be, those created before go again, and so does
+// that one if its create failed without the server's refusal, which can come
+// after the server stored it, see removeIfStored.
 func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal *ical.Calendar, series *todoSeries, drop func(rid dateValue) bool, now time.Time) ([]calObject, error) {
 	var entries []calObject
 	for _, o := range series.overrides {
@@ -673,6 +676,9 @@ func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal 
 		markCompleted(c, now)
 		entry := calObject{path: objectPath(calPath, uid+".ics"), cal: entryCalendar(cal, c)}
 		if entry.etag, err = s.putObject(ctx, entry.path, entry.cal, "", true); err != nil {
+			if !writeRefused(err) {
+				s.removeIfStored(ctx, calPath, entry.path)
+			}
 			s.removeEntries(ctx, calPath, entries)
 			return nil, err
 		}

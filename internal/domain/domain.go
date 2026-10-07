@@ -420,7 +420,16 @@ const (
 )
 
 // CreatedRef is a resource a write created, removed again by its undo.
-type CreatedRef struct{ ID, ETag string }
+type CreatedRef struct {
+	ID, ETag string
+	// MayStay says that the undo may leave the resource where it is, reported
+	// as kept, when it changed since the write: a completed copy, a record of
+	// the completion that stands on its own. Any other resource may not stay:
+	// the new series of a split, or the task a detach made, next to the series
+	// restored would show its repeats twice. The undo is refused then, with
+	// nothing written (FR-17).
+	MayStay bool
+}
 
 // Snapshot captures a resource, a todo's or an event's, exactly as it was
 // before a write, so that write can be undone (FR-17). It is kept in the undo

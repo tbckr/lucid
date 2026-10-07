@@ -143,8 +143,11 @@ var errWriteUnverified = errors.New("the write could not be verified")
 //
 // A change that wrote nothing before has nothing to decide on and returns
 // its error as it is: a changed ETag can as well be another client's write
-// while its own was lost. The verification runs on after the request is
-// cancelled, like the compensation it decides on.
+// while its own was lost. The restore of a series (see restoreResource) uses
+// it the other way round: it removes what the change created only once its
+// write is through, so nil removes it, and any error keeps it. The
+// verification runs on after the request is cancelled, like the compensation
+// it decides on.
 func (s *service) settleWrite(ctx context.Context, objPath, etag string, err error) error {
 	if writeRefused(err) {
 		return err
@@ -170,14 +173,32 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 // restore except building the answer from the restored object o, whose main
 // component is c, of kind comp (ical.CompToDo or ical.CompEvent). calPath is
 // the path of its calendar, and createdKept reports that a resource the
-// change created stays.
+// change created stays. o.etag is "" where the server tells no ETag, or where
+// the write failed ambiguously and went through all the same, see below.
 //
 // kind is the kind of resource the caller restores. A snapshot of another
 // kind, of another account or without an ETag is no snapshot of it
-// (ErrNotFound), and nothing is written. An event's restore checks first
-// that what the change created is unchanged or gone, see unchangedCreated:
-// a task's completed copy may stay next to the restored series, a new
-// series of a split may not.
+// (ErrNotFound), and nothing is written. The restore checks first that each
+// resource the change created that may not stay is unchanged or gone, see
+// unchangedCreated: a task's completed copy may stay next to the restored
+// series (domain.CreatedRef.MayStay), a new series of a split or a detached
+// task may not, whatever the kind.
+//
+// The restore's PUT can fail without the server's refusal, as behind a
+// reverse proxy whose read timeout fired after the server committed. What the
+// change created goes only if the restore was applied, so settleWrite decides
+// on the series' ETag, as for the master write of a change that wrote before
+// it:
+//   - applied (the ETag is no longer the snapshot's): the restore succeeded,
+//     with o.etag unknown, and what the change created goes as usual;
+//   - not applied, or refused: the error, and nothing is removed;
+//   - not verifiable (errWriteUnverified): the error, and nothing is removed,
+//     as the restore may have been applied. It is an ErrUpstream, so the undo
+//     token stays.
+//
+// Without that, a retry would be refused for the series' If-Match, and the
+// series would stand restored next to what the change created, every repeat
+// of a split twice.
 func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kind domain.SnapshotKind, comp string) (o calObject, c *ical.Component, calPath string, createdKept bool, err error) {
 	if s.err != nil {
 		return calObject{}, nil, "", false, s.err
@@ -215,33 +236,40 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 	// Also on a refusal: a change of what the change created may not be in
 	// the cache yet.
 	defer s.invalidate(calPath)
-	created := snap.Created
-	if kind == domain.SnapshotEvent {
-		if created, err = s.unchangedCreated(ctx, created); err != nil {
-			return calObject{}, nil, "", false, err
-		}
+	created, err := s.unchangedCreated(ctx, snap.Created)
+	if err != nil {
+		return calObject{}, nil, "", false, err
 	}
 	o = calObject{path: objPath, cal: cal}
 	if o.etag, err = s.putBytes(ctx, objPath, snap.Data, snap.ETag, false); err != nil {
-		return calObject{}, nil, "", false, err
+		// Applied all the same, if it says so: o.etag stays "", as the
+		// server's answer with the new one was lost.
+		if err := s.settleWrite(ctx, objPath, snap.ETag, err); err != nil {
+			return calObject{}, nil, "", false, err
+		}
 	}
 	return o, c, calPath, s.removeCreated(ctx, created), nil
 }
 
-// unchangedCreated checks, before an event's restore writes anything, that
-// each resource refs a change created, the new series N of a split, still
-// has the ETag of its ref, and returns the refs of those still there (FR-17).
-// One gone since leaves nothing to delete. One changed since, in Lucid or in
-// another app, refuses the restore (ErrConflict): written back next to it,
-// the series S would show every event from the split on twice, and deleting
-// it would lose that change. So does one whose ETag is unknown or weak, which
-// cannot be told from one changed since. A read that fails otherwise is
-// returned as it is, an ErrUpstream after which the undo can be tried again.
-// Only a change between this check and the delete leaves N next to S
-// restored, see removeCreated.
+// unchangedCreated checks, before a restore writes anything, that each
+// resource refs a change created that may not stay (domain.CreatedRef.MayStay),
+// the new series N of a split or a detached task, still has the ETag of its
+// ref, and returns the refs of those still there, and those that may stay
+// (FR-17). One gone since leaves nothing to delete. One changed since, in
+// Lucid or in another app, refuses the restore (ErrConflict): written back
+// next to it, the series S would show every repeat from the split on twice,
+// and deleting it would lose that change. So does one whose ETag is unknown
+// or weak, which cannot be told from one changed since. A read that fails
+// otherwise is returned as it is, an ErrUpstream after which the undo can be
+// tried again. Only a change between this check and the delete leaves N next
+// to S restored, see removeCreated.
 func (s *service) unchangedCreated(ctx context.Context, refs []domain.CreatedRef) ([]domain.CreatedRef, error) {
 	var there []domain.CreatedRef
 	for _, ref := range refs {
+		if ref.MayStay {
+			there = append(there, ref)
+			continue
+		}
 		objPath, _, err := decodeObjectID(s.homePath, ref.ID)
 		if err != nil {
 			return nil, err

@@ -1317,7 +1317,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		if c == nil || !sameTime(c.Start, ptr(date(2025, 3, 10, 15, 0))) {
 			t.Fatalf("completed copy = %+v; want one at 2025-03-10T15:00Z", c)
 		}
-		if snap == nil || !reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: c.ID, ETag: c.ETag}}) || snap.ETag != got.ETag {
+		if snap == nil || !reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: c.ID, ETag: c.ETag, MayStay: true}}) || snap.ETag != got.ETag {
 			t.Errorf("snapshot = %+v; want one with the copy %s (%s)", snap, c.ID, c.ETag)
 		}
 		if !sameTime(got.Start, ptr(date(2025, 3, 11, 9, 0))) ||
@@ -3644,30 +3644,31 @@ func TestRestoreTodo(t *testing.T) {
 	}
 }
 
+// completeSeeded completes the occurrence of a seeded weekly series and
+// returns the series' ID, its seeded resource, the change and its snapshot.
+func completeSeeded(t *testing.T, e *env) (id, seeded string, done domain.Todo, snap domain.Snapshot) {
+	t.Helper()
+	id = seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+	seeded = storedObject(t, e, id)
+	f := listedTodo(t, e, id)
+	done, s, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+	mustNoErr(t, err)
+	if done.CompletedCopy == nil || s == nil {
+		t.Fatalf("completion = %+v, snapshot %+v; want a copy and a snapshot", done, s)
+	}
+	return id, seeded, done, *s
+}
+
 // An undo writes nothing over a later change of the series, keeps a
 // completed copy changed since, and only restores for the account that made
 // the change; a change without a known ETag cannot be undone (FR-17).
 func TestRestoreTodoFailures(t *testing.T) {
 	t.Parallel()
-	// complete completes the occurrence of a seeded weekly series and returns
-	// the series' ID, its seeded resource, the change and its snapshot.
-	complete := func(t *testing.T, e *env) (id, seeded string, done domain.Todo, snap domain.Snapshot) {
-		t.Helper()
-		id = seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
-		seeded = storedObject(t, e, id)
-		f := listedTodo(t, e, id)
-		done, s, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
-		mustNoErr(t, err)
-		if done.CompletedCopy == nil || s == nil {
-			t.Fatalf("completion = %+v, snapshot %+v; want a copy and a snapshot", done, s)
-		}
-		return id, seeded, done, *s
-	}
 
 	t.Run("the series changed since", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id, _, _, snap := complete(t, e)
+		id, _, _, snap := completeSeeded(t, e)
 		other := strings.Replace(storedObject(t, e, id), "SUMMARY:Series", "SUMMARY:Other", 1)
 		if _, err := e.mock.PutObject(e.paths["tasks"], "r.ics", other); err != nil {
 			t.Fatalf("PutObject: %v", err)
@@ -3686,7 +3687,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		ctx := t.Context()
-		id, seeded, done, snap := complete(t, e)
+		id, seeded, done, snap := completeSeeded(t, e)
 		mustNoErr(t, e.svc.DeleteTodo(ctx, done.CompletedCopy.ID, done.CompletedCopy.ETag))
 		got, err := e.svc.RestoreTodo(ctx, snap)
 		mustNoErr(t, err)
@@ -3705,7 +3706,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		ctx := t.Context()
-		id, seeded, done, snap := complete(t, e)
+		id, seeded, done, snap := completeSeeded(t, e)
 		in := editInput(done.CompletedCopy)
 		in.Title = "Changed"
 		_, _, err := e.svc.UpdateTodo(ctx, done.CompletedCopy.ID, done.CompletedCopy.ETag, in)
@@ -3735,7 +3736,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 		done, snap, err := e.svc.UpdateTodo(ctx, id, f.ETag, completeInput(&f))
 		mustNoErr(t, err)
 		if done.CompletedCopy == nil || done.CompletedCopy.ETag != "" || snap == nil ||
-			!reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: done.CompletedCopy.ID}}) {
+			!reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: done.CompletedCopy.ID, MayStay: true}}) {
 			t.Fatalf("completion = %+v, snapshot %+v; want a copy without ETag and a snapshot", done, snap)
 		}
 		copyPath, _, err := decodeObjectID(e.mock.HomePath(), done.CompletedCopy.ID)
@@ -3764,7 +3765,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 	t.Run("another account", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		_, _, _, snap := complete(t, e)
+		_, _, _, snap := completeSeeded(t, e)
 		acct := e.acct
 		acct.Username = "other"
 		e.mock.ResetCounts()
@@ -3780,7 +3781,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 	t.Run("a snapshot of an event is no todo's", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id, _, _, snap := complete(t, e)
+		id, _, _, snap := completeSeeded(t, e)
 		completed := storedObject(t, e, id)
 		snap.Kind = domain.SnapshotEvent
 		e.mock.ResetCounts()
@@ -3799,7 +3800,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 	t.Run("no etag refused", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id, _, _, snap := complete(t, e)
+		id, _, _, snap := completeSeeded(t, e)
 		rolled := storedObject(t, e, id)
 		snap.ETag = ""
 		e.mock.ResetCounts()
@@ -3855,6 +3856,81 @@ func TestRestoreTodoFailures(t *testing.T) {
 			}
 			if _, _, err := e.svc.UpdateTodo(t.Context(), id, next.ETag, editInput(&next)); err != nil {
 				t.Errorf("next UpdateTodo failed: %v", err)
+			}
+		})
+	}
+}
+
+// The restore of a snapshot checks every resource the change created that may
+// not stay, whatever the kind of the snapshot: one changed since, in Lucid or
+// in another app, would stand next to the series restored, which would show
+// its repeats twice, so the undo is refused and writes nothing. A completed
+// copy may stay: it is a record of the completion and keeps standing, reported
+// as kept (FR-17).
+func TestRestoreRefusesChangedRefsOfAnyKind(t *testing.T) {
+	t.Parallel()
+	changeCopy := func(t *testing.T, e *env, done domain.Todo) {
+		t.Helper()
+		in := editInput(done.CompletedCopy)
+		in.Title = "Changed"
+		_, _, err := e.svc.UpdateTodo(t.Context(), done.CompletedCopy.ID, done.CompletedCopy.ETag, in)
+		mustNoErr(t, err)
+	}
+	deleteCopy := func(t *testing.T, e *env, done domain.Todo) {
+		t.Helper()
+		mustNoErr(t, e.svc.DeleteTodo(t.Context(), done.CompletedCopy.ID, done.CompletedCopy.ETag))
+	}
+	for _, tc := range []struct {
+		name     string
+		mayStay  bool
+		since    func(t *testing.T, e *env, done domain.Todo) // what happens to the copy before the undo; nil: nothing
+		conflict bool                                         // the undo is refused
+		kept     bool                                         // the undo leaves the copy
+	}{
+		{name: "a copy that may stay, changed since", mayStay: true, since: changeCopy, kept: true},
+		{name: "a copy that may not stay, unchanged"},
+		{name: "a copy that may not stay, changed since", since: changeCopy, conflict: true},
+		{name: "a copy that may not stay, gone", since: deleteCopy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id, seeded, done, snap := completeSeeded(t, e)
+			if len(snap.Created) != 1 || !snap.Created[0].MayStay {
+				t.Fatalf("snapshot of a completion = %+v; want its copy to be one that may stay", snap)
+			}
+			snap.Created[0].MayStay = tc.mayStay
+			rolled := storedObject(t, e, id)
+			if tc.since != nil {
+				tc.since(t, e, done)
+			}
+			e.mock.ResetCounts()
+
+			got, err := e.svc.RestoreTodo(t.Context(), snap)
+			if tc.conflict {
+				mustErr(t, err, domain.ErrConflict)
+				if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+					t.Errorf("%d writes; want none", n)
+				}
+				if stored := storedObject(t, e, id); stored != rolled {
+					t.Errorf("series:\n%s\nwant it as the change left it:\n%s", stored, rolled)
+				}
+				checkStored(t, "copy", storedObject(t, e, done.CompletedCopy.ID), []string{"SUMMARY:Changed"}, nil)
+				return
+			}
+			mustNoErr(t, err)
+			if got.CopyKept != tc.kept {
+				t.Errorf("restored todo = %+v; want the copy kept: %v", got, tc.kept)
+			}
+			if stored := storedObject(t, e, id); stored != seeded {
+				t.Errorf("restored resource:\n%s\nwant the seeded one:\n%s", stored, seeded)
+			}
+			wantObjects := 1
+			if tc.kept {
+				wantObjects = 2
+			}
+			if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != wantObjects {
+				t.Errorf("objects = %v; want %d", paths, wantObjects)
 			}
 		})
 	}
@@ -4117,6 +4193,50 @@ func TestCompleteRemovesCopyOfFailedCreate(t *testing.T) {
 			answerCreate(e.mock, mustDecode(t, e, id), createAnswer{status: http.StatusBadGateway, stored: tc.stored}, &toMaster)
 			e.mock.ResetCounts()
 			_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+			mustErr(t, err, domain.ErrUpstream)
+			if n := toMaster.Load(); n != 0 || snap != nil {
+				t.Errorf("%d PUTs of the series and a snapshot: %v; want neither", n, snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.deletes {
+				t.Errorf("DELETE count = %d; want %d", n, tc.deletes)
+			}
+			if after := storedObject(t, e, id); after != before {
+				t.Errorf("series = %q; want it unchanged: %q", after, before)
+			}
+		})
+	}
+}
+
+// An entry of another app's completion whose create failed without the
+// server's refusal, as behind a reverse proxy whose read timeout fired after
+// the server stored it, is removed again, and the series stays as it was: the
+// completion would stand twice, as the entry and as the override a retry
+// converts again. An entry the server did not store leaves nothing to remove
+// (FR-17, A-01, A-18).
+func TestConvertDoneOverridesRemovesStoredEntryOfFailedCreate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		stored  bool
+		deletes int
+	}{
+		{"stored", true, 1},
+		{"not stored", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+				[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"})
+			before := storedObject(t, e, id)
+			f := listedTodo(t, e, id)
+			var toMaster atomic.Int32
+			answerCreate(e.mock, mustDecode(t, e, id), createAnswer{status: http.StatusBadGateway, stored: tc.stored}, &toMaster)
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
 			mustErr(t, err, domain.ErrUpstream)
 			if n := toMaster.Load(); n != 0 || snap != nil {
 				t.Errorf("%d PUTs of the series and a snapshot: %v; want neither", n, snap != nil)
