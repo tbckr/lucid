@@ -95,8 +95,9 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
   * *Implementation:* Backend expands RRULEs for the requested view range. Recurring tasks (VTODO) are expanded like events; see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md). Single-occurrence overrides and series moves for events are documented in [docs/RECURRING-EVENTS.md](RECURRING-EVENTS.md).
   * **Only this event:** a single occurrence can be changed or deleted independently of the series, via an RFC 5545 override (an EXDATE on delete).
   * **All events:** a change to the series shifts by the distance from the edited occurrence's shown start and carries along only the fields that changed.
+  * **Ask only with a choice:** a change with one possible scope is not asked about; the dragged event or the editor says beforehand which events it reaches.
   * Events changed individually by an override are marked (`modified`).
-  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change.
+  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change, unless the series has attendees.
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**

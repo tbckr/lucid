@@ -702,6 +702,18 @@ is in [API.md](API.md#events); the implementation is
 **Decision: write RFC 5545 overrides and `EXDATE`s**, the shape every
 surveyed client and server round-trips (see [Summary](#summary)).
 
+**Lucid asks only when there is a choice** (`scopeOptions` in
+`web/src/lib/scope.ts`). Deleting an event of a series always asks, since
+both answers are possible. A save that changes or removes the rule, or
+turns the series all-day or timed, can only apply to "All events", and a
+move the series can't follow only to "Only this event" (see "Which moves
+are refused" below); neither asks. Instead, the editor's footer or a pill
+under the dragged event says beforehand which events the change reaches,
+for example "Applies to every event in the series.", or "The series
+becomes this one event. All others are deleted." when the rule is removed.
+The question, these hints and the toast after the change show that reach
+as five dots, the middle one the edited event.
+
 ### "Only this event"
 
 - The override is a **full copy** of the series (all properties and
@@ -828,9 +840,16 @@ surveyed client and server round-trips (see [Summary](#summary)).
   `BYSETPOS`, `BYMONTH`, `BYYEARDAY`, `BYWEEKNO`, or a weekly rule with more
   `BY` parts) allows only a same-day move, and no clock change at all if
   the rule fixes the hour, minute or second itself. The server answers
-  `400 series_move_unsupported` when `seriesShift` says no; the frontend
-  does not offer "All events" in that case at all (`allowAll`), so the
-  server check is the safety net, not the primary guard.
+  `400 series_move_unsupported` when `seriesShift` says no, but the
+  frontend doesn't send such a move: there "Only this event" is the one
+  option left, so a drop or a save moves only that event without
+  asking. Before it does, the pill under the dragged event, the editor's
+  footer and the drag announcements say why, from `moveAllRefusal`
+  (`web/src/lib/seriesShift.ts`): "Only this event. The series keeps its
+  times." when the rule fixes the clock (`BYHOUR`, `BYMINUTE` or
+  `BYSECOND`) and the move changes it, and "Only this event. The series
+  stays on its days." otherwise. The server check is the safety net, not
+  the primary guard.
 - **A `MONTHLY` or `YEARLY` rule without `BY` parts** is refused too, with
   the same `400 series_move_unsupported` and nothing written, where months
   and days can't keep every value on its day (see Limits). The server
@@ -899,7 +918,9 @@ carries that ETag. The store keeps a snapshot for 2 minutes and refuses one
 over 1 MiB, so a series with years of overrides changes without an undo; it
 can also drop a snapshot earlier, to keep at most 8 per session and 64 MiB
 in total. The UI offers the Undo for 8 seconds, in the toast that says what
-the change did.
+the change did, and only for the latest change of a series: a change that
+starts while an earlier one's toast is shown, or before its answer arrived,
+takes that Undo away.
 
 ### Limits
 
