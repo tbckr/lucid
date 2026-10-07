@@ -470,7 +470,9 @@ func TestSplitAcrossDST(t *testing.T) {
 // RECURRENCE-ID or value, in whatever form it is written, never by an
 // override's own date: the override of March 17, moved past R, stays in S
 // and is shown once; the one at R goes to N with N's UID. A PERIOD goes by
-// its start, and a property Lucid cannot read stays in S as it is.
+// its start. An RDATE property Lucid cannot read stays in S as it is, as in
+// both it would add its events twice; an EXDATE one goes to both, as another
+// client may read it, and it excludes nothing outside a series' range.
 func TestSplitPartitionsByRecurrenceID(t *testing.T) {
 	t.Parallel()
 	raw := seriesICS(
@@ -478,6 +480,7 @@ func TestSplitPartitionsByRecurrenceID(t *testing.T) {
 			"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY",
 			"EXDATE:20250310T090000Z,20250331T090000Z",
 			"EXDATE;TZID=Europe/Berlin:20250407T110000,", // April 7, 09:00 UTC
+			"EXDATE:20250421T090000Z,never",              // Lucid reads neither value
 			"RDATE;VALUE=PERIOD:20250312T090000Z/PT2H,20250326T090000Z/20250326T100000Z",
 			"RDATE:20250402T090000Z,someday", // Lucid reads neither value
 		},
@@ -499,10 +502,16 @@ func TestSplitPartitionsByRecurrenceID(t *testing.T) {
 		what      string
 		got, want []string
 	}{
-		{"S's EXDATEs", propLines(sm, ical.PropExceptionDates), []string{"EXDATE:20250310T090000Z"}},
+		{
+			"S's EXDATEs", propLines(sm, ical.PropExceptionDates),
+			[]string{"EXDATE:20250310T090000Z", "EXDATE:20250421T090000Z,never"},
+		},
 		{
 			"N's EXDATEs", propLines(nm, ical.PropExceptionDates),
-			[]string{"EXDATE:20250331T090000Z", "EXDATE;TZID=Europe/Berlin:20250407T110000"},
+			[]string{
+				"EXDATE:20250331T090000Z", "EXDATE;TZID=Europe/Berlin:20250407T110000",
+				"EXDATE:20250421T090000Z,never",
+			},
 		},
 		{
 			"S's RDATEs", propLines(sm, ical.PropRecurrenceDates),

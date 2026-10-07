@@ -1121,9 +1121,12 @@ would refuse it; a later change of the old series keeps its own Undo.
   duplicate the user can see and delete: where the server stored it only
   after Lucid checked, where its ETag can't be read or is weak, and where
   the old series' write can't be verified.
-- An `EXDATE` or `RDATE` property with a value Lucid can't read stays with
-  the old series as it is. A client that reads it then shows, in the new
-  series, an event that such an `EXDATE` deleted.
+- Lucid ignores an `EXDATE` or `RDATE` property with a value it can't read,
+  so it can't tell on which side of R its dates are. Such an `EXDATE` goes
+  to both series as it is: outside a series' range it excludes nothing.
+  Such an `RDATE` stays with the old series as it is, as in both it would
+  add its events twice; a client that reads it then shows those events in
+  the old series, from R on as well, without the split's change.
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.

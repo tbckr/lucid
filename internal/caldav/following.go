@@ -131,7 +131,8 @@ func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, 
 //     rule that already ends before rid, by its COUNT or UNTIL, stays as it
 //     is.
 //   - EXDATE and RDATE values from rid on go, compared as instants, and a
-//     property left without values goes too (see keepDates).
+//     property left without values goes too; one Lucid cannot read stays
+//     (see keepDates).
 //   - The overrides whose RECURRENCE-ID is rid or later go, by that instant,
 //     whatever their own DTSTART: an occurrence before rid moved past it
 //     stays.
@@ -159,8 +160,8 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 		p.Value = rule
 	}
 	earlier := func(t time.Time) bool { return t.Before(rid) }
-	keepDates(master, ical.PropExceptionDates, earlier)
-	keepDates(master, ical.PropRecurrenceDates, earlier)
+	keepDates(master, ical.PropExceptionDates, earlier, true)
+	keepDates(master, ical.PropRecurrenceDates, earlier, true)
 	dropOverrides(cal, master, func(r dateValue) bool { return !r.t.Before(rid) })
 	return nil
 }
@@ -183,7 +184,9 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 //     N together have as many as the series had; an UNTIL stays.
 //   - EXDATE and RDATE values from rid on, and the overrides whose
 //     RECURRENCE-ID is rid or later, by that instant, come along. The
-//     overrides take N's UID.
+//     overrides take N's UID. An EXDATE property Lucid cannot read comes
+//     along too, while it stays in S as well; an RDATE one stays in S only
+//     (see keepDates).
 //
 // An rid that is no occurrence of the rule, an RDATE (or an override off
 // the rule), stays one of N, which starts at the rule's first occurrence
@@ -229,15 +232,15 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	}
 	maps.Copy(nm.Props, newComponent(master.Name, uid, now).Props)
 	later := func(t time.Time) bool { return !t.Before(rid) }
-	keepDates(nm, ical.PropExceptionDates, later)
-	keepDates(nm, ical.PropRecurrenceDates, later)
+	keepDates(nm, ical.PropExceptionDates, later, true)
+	keepDates(nm, ical.PropRecurrenceDates, later, false)
 
 	offRule := start.IsZero()
 	if offRule {
 		start = rid
 		nm.Props.Del(ical.PropRecurrenceRule)
 		// DTSTART is rid now.
-		keepDates(nm, ical.PropRecurrenceDates, func(t time.Time) bool { return t.After(rid) })
+		keepDates(nm, ical.PropRecurrenceDates, func(t time.Time) bool { return t.After(rid) }, false)
 	}
 	if p := nm.Props.Get(ical.PropRecurrenceRule); p != nil {
 		p.Value = lowerCount(rruleString(nm), before)
@@ -353,14 +356,16 @@ func withCount(rule string, n int) string {
 // keepDates keeps those values of the EXDATE or RDATE properties name of c
 // whose instant keep reports, each as it is written, a PERIOD by its start,
 // and removes a property left without values (FR-17). A property with a
-// value Lucid cannot read, of which it reads none (see parseDateList), counts
-// as the zero time, before every occurrence: it stays as it is in the series
-// it is in, and does not go to a new one.
-func keepDates(c *ical.Component, name string, keep func(time.Time) bool) {
+// value Lucid cannot read, of which it reads none (see parseDateList), stays
+// as it is where unreadable is set, and goes otherwise. A split keeps such an
+// EXDATE in both series: another client may read it, and in a series whose
+// range does not reach its dates it excludes nothing. Such an RDATE stays in
+// the series it is in only, as in both it would add its events twice.
+func keepDates(c *ical.Component, name string, keep func(time.Time) bool, unreadable bool) {
 	var props []ical.Prop
 	for _, p := range c.Props[name] {
 		if _, err := parseDateList(&p); err != nil {
-			if keep(time.Time{}) {
+			if unreadable {
 				props = append(props, p)
 			}
 			continue
