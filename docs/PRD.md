@@ -98,7 +98,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
   * **This and following events:** a change, move or delete can reach an occurrence and the later ones: the series ends before it, and a change goes on from it as a series of its own, with a new UID (a split, never `RANGE=THISANDFUTURE`). Not offered at the series' first event, where it would be all events, nor for a series with attendees.
   * **Ask only with a choice:** a change with one possible scope is not asked about; the dragged event or the editor says beforehand which events it reaches.
   * Events changed individually by an override are marked (`modified`).
-  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change, unless the series has attendees. Undoing a split also removes the new series, unless another app changed it since.
+  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change, unless the series has attendees. Undoing a split also removes the new series; if the new series changed since, the undo is refused and nothing is written.
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**
