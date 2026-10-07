@@ -1890,7 +1890,8 @@ func TestUpdateFollowingKeepsCountBoundary(t *testing.T) {
 // unknown and no snapshot, where S's ETag changed; and N stays, logged, with
 // the error where S's ETag cannot be read. When N cannot be created, S is not
 // written at all, and an N the server stored all the same goes again (see
-// writeCreatedThenMaster).
+// writeCreatedThenMaster). A split whose N's ETag is unknown is saved without
+// a snapshot.
 func TestUpdateFollowingWriteFailures(t *testing.T) {
 	t.Parallel()
 	rid := date(2025, 3, 24, 8, 0)
@@ -1966,6 +1967,28 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 		if res.ETag != "" || snap != nil || res.Event.ID != nid || res.Event.ETag == "" {
 			t.Errorf("answered %+v and a snapshot: %v; want the event in N with N's ETag, S's unknown, no snapshot",
 				res, snap != nil)
+		}
+	})
+
+	// N's ETag unknown: an undo could not delete N, which would stand next to
+	// S restored, so there is none; the split is saved all the same.
+	t.Run("N's ETag unknown", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "work", "series.ics", weeklyStandup()...)
+		ev := shownEvent(t, e, "work", rid)
+		var toS atomic.Int32
+		answerCreate(e.mock, mustDecode(t, e, id), createAnswer{noETag: true, propfind: http.StatusInternalServerError}, &toS)
+		in := eventInputOf(ev)
+		laterBy(time.Hour)(&in)
+		res, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+		mustNoErr(t, err)
+		nid, _ := newSeriesIn(t, e, id)
+		if snap != nil || res.Event.ID != nid || res.Event.ETag != "" {
+			t.Errorf("answered %+v and a snapshot: %v; want the event in N, N's ETag unknown, no snapshot", res, snap != nil)
+		}
+		if want := storedETag(t, e, mustDecode(t, e, id)); res.ETag != want {
+			t.Errorf("ETag = %q; want S's stored %q", res.ETag, want)
 		}
 	})
 

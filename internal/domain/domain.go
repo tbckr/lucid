@@ -508,16 +508,15 @@ type CalendarService interface {
 	// recurrenceID. in.InstanceStart is ignored, and in.RRule is the new
 	// series' rule, except that the series' own rule as stored, sent
 	// unchanged, keeps the rule the new series inherits, with its COUNT
-	// lowered by the events before it. At the
-	// series' first event that is all events: UpdateEvent with in.InstanceStart
-	// at recurrenceID. It returns the edited occurrence, in the new series
-	// (in the series itself at its first event), the series' new ETag, "" when
-	// the server tells none, and the snapshot RestoreEvent undoes the change
-	// with, which also deletes the new series: nil when the series' new ETag
-	// is unknown. A series DeleteFollowing refuses is refused alike, and a
-	// move the new series cannot follow is ErrSeriesMoveUnsupported; nothing
-	// is written then. etag must match (If-Match), otherwise ErrConflict
-	// (FR-17).
+	// lowered by the events before it. At the series' first event that is all
+	// events: UpdateEvent with in.InstanceStart at recurrenceID. It returns
+	// the edited occurrence, in the new series (in the series itself at its
+	// first event), the series' new ETag, "" when the server tells none, and
+	// the snapshot RestoreEvent undoes the change with, which also deletes the
+	// new series: nil when the new ETag of either series is unknown. A series
+	// DeleteFollowing refuses is refused alike, and a move the new series
+	// cannot follow is ErrSeriesMoveUnsupported; nothing is written then.
+	// etag must match (If-Match), otherwise ErrConflict (FR-17).
 	UpdateFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time, in EventInput) (FollowingResult, *Snapshot, error)
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)

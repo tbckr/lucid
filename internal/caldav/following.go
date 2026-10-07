@@ -466,7 +466,8 @@ func (s *service) DeleteFollowing(ctx context.Context, eventID, etag string, rec
 // returns the edited event in N, as ListEvents shows it, S's new ETag, so the
 // client's next write of S does not conflict with this one (NFR-26), and the
 // snapshot RestoreEvent undoes the split with: S as read, and N as the
-// resource the change created, which the undo deletes.
+// resource the change created, which the undo deletes. There is none when
+// the ETag of S or N is unknown.
 func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time, in domain.EventInput) (domain.FollowingResult, *domain.Snapshot, error) {
 	if s.err != nil {
 		return domain.FollowingResult{}, nil, s.err
@@ -535,8 +536,15 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 		return domain.FollowingResult{}, nil, err
 	}
 	ev.ETag = created.etag
-	// The series has no attendees, or loadFollowing had refused it.
-	snap := s.eventSnapshot(eventID, fs.raw, next, false)
+	// An undo needs both ETags: without S's it could not tell its own change
+	// from another client's (see eventSnapshot), and without N's it could not
+	// delete N, which would then stand next to S restored, every event from
+	// R on twice. The series has no attendees, or loadFollowing had refused
+	// it.
+	var snap *domain.Snapshot
+	if created.etag != "" {
+		snap = s.eventSnapshot(eventID, fs.raw, next, false)
+	}
 	if snap != nil {
 		snap.Created = []domain.CreatedRef{{ID: encodeID(created.path), ETag: created.etag}}
 	}

@@ -297,7 +297,10 @@ Response `200`:
   CalDAV server tells none. At the first event it is `event.etag`.
 - `undoToken`: as for `PUT /events/{id}` above. The undo writes the series
   back as it was and deletes the new series, unless that changed since (see
-  the undo below). There is none when the series' new `etag` is unknown.
+  the undo below). There is none when the CalDAV server tells the new `etag`
+  of either series not: an undo could not tell its own change from another
+  client's, or could not delete the new series, which would then stand next
+  to the restored series with every event from `recurrenceId` on twice.
 
 The new series is written first, with `If-None-Match: *`, and then the
 series, with `If-Match`. If the new series' write fails without the server
@@ -376,9 +379,8 @@ it. Response `200`:
 `etag` is the resource's new ETag, for the client's next write of the series.
 The undo of "this and following events" (`PUT …/following/…`) also deletes
 the new series, with `If-Match` of the ETag the split gave it; if another app
-changed it since, or its ETag was unknown, it stays, and the answer has
-`copyKept: true`. No other change of an event creates a resource, so it is
-omitted there.
+changed it since, it stays, and the answer has `copyKept: true`. No other
+change of an event creates a resource, so it is omitted there.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|
