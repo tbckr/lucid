@@ -504,65 +504,10 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 
 	// Judged before the change, which may remove the rule.
 	wasRecurring, attendees := isRecurring(master), hasAttendees(cal)
-	start, end := in.Start, in.End
-	var instance, moved *time.Time
-	oldTm, tmErr := parseTiming(master)
-	tz := in.Timezone
-	if tmErr == nil {
-		tz = cmp.Or(tz, oldTm.start.tzid)
-	}
 	now := s.p.now().UTC()
-	series := in.InstanceStart != nil && isRecurring(master) && tmErr == nil
-	switch {
-	case series && rr == rruleString(master) && in.AllDay == oldTm.start.allDay:
-		// "All events" with the rule and all-day flag as they are (spec
-		// section 3, FR-17).
-		rid, err := moveSeries(cal, master, oldTm, in, now)
-		if err != nil {
-			return domain.Event{}, nil, err
-		}
-		instance, moved = &in.Start, &rid
-	case series && rr != "":
-		// A changed rule or all-day flag applies to the whole series as
-		// entered: move it as the edited event moved from where it was
-		// shown (see wallShift), and take the new duration (spec section 3
-		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
-		// instead (see toggledStart); the references keep their value type
-		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A move
-		// the series cannot follow is refused as in moveSeries, judged on
-		// DTSTART and the references, since the rule is the one entered, and
-		// nothing is written. Of title, description and location only what
-		// changed from the event as shown goes into the series, see
-		// applyChangedEventFields.
-		rid := *in.InstanceStart
-		ov, shown := shownOccurrence(cal, master, oldTm, rid)
-		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
-		if err != nil {
-			return domain.Event{}, nil, err
-		}
-		if in.AllDay == oldTm.start.allDay {
-			start = mv.shift(dateValue{t: oldTm.start.t})
-		} else {
-			start, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start.t, in, tz)
-			if err != nil {
-				return domain.Event{}, nil, err
-			}
-		}
-		shiftRecurrenceRefs(cal, master, mv.shift)
-		if mv.lost {
-			return domain.Event{}, nil, errMoveOffMonth
-		}
-		end = start.Add(in.End.Sub(in.Start))
-		instance = &in.Start
-		applyEventSchedule(cal, master, in, rr, start, end, tz)
-		if applyChangedEventFields(master, ov, in) {
-			bumpChangeProps(ov, now)
-		}
-	default:
-		if rr == "" {
-			removeRecurrence(cal, master)
-		}
-		applyEventFields(cal, master, in, rr, start, end, tz)
+	instance, moved, err := applySeriesEdit(cal, master, in, rr, now)
+	if err != nil {
+		return domain.Event{}, nil, err
 	}
 	bumpChangeProps(master, now)
 	masterFirst(cal, master)
@@ -588,6 +533,84 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		return domain.Event{}, nil, err
 	}
 	return ev, snap, nil
+}
+
+// applySeriesEdit applies the change in, whose normalized rule is rr, to the
+// event master in cal, in memory, as UpdateEvent saves it (FR-17), and
+// returns where the edited event is then:
+//   - "all events" from the occurrence in.InstanceStart of a series whose
+//     rule and all-day flag stay as they are: the series moves as moveSeries
+//     moves it, instance is in.Start and moved the occurrence's recurrence ID
+//     after the move;
+//   - from such an occurrence with a changed rule or all-day flag: the series
+//     moves as the edited event moved and takes the rule rr, and instance is
+//     in.Start;
+//   - otherwise, for a single event and a series whose rule goes (rr == ""):
+//     the fields and dates of in, as entered, and both are nil.
+//
+// A move the series cannot follow is domain.ErrSeriesMoveUnsupported, see
+// moveSeries, and cal may be changed in part then: the caller writes nothing.
+// It neither bumps master nor puts it first: the caller does.
+func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.EventInput, rr string, now time.Time) (instance, moved *time.Time, err error) {
+	start, end := in.Start, in.End
+	oldTm, tmErr := parseTiming(master)
+	tz := in.Timezone
+	if tmErr == nil {
+		tz = cmp.Or(tz, oldTm.start.tzid)
+	}
+	series := in.InstanceStart != nil && isRecurring(master) && tmErr == nil
+	switch {
+	case series && rr == rruleString(master) && in.AllDay == oldTm.start.allDay:
+		// "All events" with the rule and all-day flag as they are (spec
+		// section 3, FR-17).
+		rid, err := moveSeries(cal, master, oldTm, in, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		instance, moved = &in.Start, &rid
+	case series && rr != "":
+		// A changed rule or all-day flag applies to the whole series as
+		// entered: move it as the edited event moved from where it was
+		// shown (see wallShift), and take the new duration (spec section 3
+		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
+		// instead (see toggledStart); the references keep their value type
+		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A move
+		// the series cannot follow is refused as in moveSeries, judged on
+		// DTSTART and the references, since the rule is the one entered, and
+		// nothing is written. Of title, description and location only what
+		// changed from the event as shown goes into the series, see
+		// applyChangedEventFields.
+		rid := *in.InstanceStart
+		ov, shown := shownOccurrence(cal, master, oldTm, rid)
+		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
+		if err != nil {
+			return nil, nil, err
+		}
+		if in.AllDay == oldTm.start.allDay {
+			start = mv.shift(dateValue{t: oldTm.start.t})
+		} else {
+			start, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start.t, in, tz)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		shiftRecurrenceRefs(cal, master, mv.shift)
+		if mv.lost {
+			return nil, nil, errMoveOffMonth
+		}
+		end = start.Add(in.End.Sub(in.Start))
+		instance = &in.Start
+		applyEventSchedule(cal, master, in, rr, start, end, tz)
+		if applyChangedEventFields(master, ov, in) {
+			bumpChangeProps(ov, now)
+		}
+	default:
+		if rr == "" {
+			removeRecurrence(cal, master)
+		}
+		applyEventFields(cal, master, in, rr, start, end, tz)
+	}
+	return instance, moved, nil
 }
 
 // shownOccurrence returns the override of the series master at the
