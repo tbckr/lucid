@@ -717,6 +717,56 @@ func TestUpdateTodoCompletedCopy(t *testing.T) {
 	}
 }
 
+// A task reports whether it has attendees and the series it was detached
+// from, and the detach answer carries the detached copy; the checklists of the
+// task and the copy must encode as [] rather than null (FR-17).
+func TestTodoOriginFieldsAndDetachedCopy(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	c := h.login(t)
+	h.svc.todos = []domain.Todo{{ID: "t1", Title: "Water plants"}}
+	h.svc.updateTodoResult = &domain.Todo{
+		ID:           "t1",
+		Title:        "Water plants",
+		Recurring:    true,
+		RRule:        "FREQ=WEEKLY",
+		HasAttendees: true,
+		DetachedFrom: "series-uid",
+		DetachedCopy: &domain.Todo{ID: "t1-copy", Title: "Water plants", DetachedFrom: "series-uid"},
+	}
+	w := h.do(t, c, req{
+		method:  http.MethodPut,
+		path:    "/api/v1/todos/t1",
+		body:    `{"title":"Water plants"}`,
+		headers: map[string]string{"If-Match": `"t-etag"`},
+	})
+	decode(t, w, http.StatusOK, nil)
+	body := w.Body.String()
+	for _, want := range []string{`"hasAttendees":true`, `"detachedFrom":"series-uid"`, `"detachedCopy":{`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response lacks %s: %s", want, body)
+		}
+	}
+	if strings.Count(body, `"checklist":[]`) != 2 {
+		t.Errorf("master and detached copy both need an empty checklist array: %s", body)
+	}
+
+	// Plain tasks do not carry the fields at all.
+	h.svc.updateTodoResult = &domain.Todo{ID: "t1", Title: "Water plants"}
+	w = h.do(t, c, req{
+		method:  http.MethodPut,
+		path:    "/api/v1/todos/t1",
+		body:    `{"title":"Water plants"}`,
+		headers: map[string]string{"If-Match": `"t-etag"`},
+	})
+	decode(t, w, http.StatusOK, nil)
+	for _, bad := range []string{"hasAttendees", "detachedFrom", "detachedCopy"} {
+		if strings.Contains(w.Body.String(), bad) {
+			t.Errorf("response contains %s: %s", bad, w.Body.String())
+		}
+	}
+}
+
 // withUndo gives a harness an undo store, the way cmd/lucid/main.go does.
 func withUndo(o *Options) { o.Undo = undo.New(undo.Options{}) }
 

@@ -238,6 +238,18 @@ type Todo struct {
 	Next            *TodoDates  `json:"next"`
 	MoveWindow      *MoveWindow `json:"moveWindow"`
 	CompletedCopy   *Todo       `json:"completedCopy,omitempty"`
+	// HasAttendees reports that a VTODO of the resource, the series or one of
+	// its overrides, has an ORGANIZER or an ATTENDEE: a server that schedules
+	// implicitly may have told others of a change, so Lucid hands out no undo
+	// for it (RFC 5545 section 3.8.7.4). DetachedFrom is the UID of the series
+	// the todo was detached from, as the property X-LUCID-DETACHED-FROM
+	// stores it; setting a rule on the todo drops it, as the todo becomes a
+	// series of its own. DetachedCopy is the repeat a detach just turned into
+	// a todo of its own, returned only by the request that detaches it, like
+	// CompletedCopy (FR-17).
+	HasAttendees bool   `json:"hasAttendees,omitempty"`
+	DetachedFrom string `json:"detachedFrom,omitempty"`
+	DetachedCopy *Todo  `json:"detachedCopy,omitempty"`
 	// UndoToken undoes the change whose response carries it. CopyKept, in
 	// the response of an undo, reports that the completed copy the change
 	// left stays, because another client changed it (FR-17).

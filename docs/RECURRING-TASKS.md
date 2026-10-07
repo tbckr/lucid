@@ -978,7 +978,10 @@ created, unless another client has since changed it, when the copy stays
 and the response reports `copyKept: true`. A rule change or removal that
 converted other clients' completions into entries of their own (see below)
 returns no `undoToken` to begin with, so those entries are never undone by
-it. Undo itself fails cleanly instead of writing anything partial:
+it. So does a write to a resource that has an `ORGANIZER` or an `ATTENDEE` on
+its master or any override: the server may have sent them the write with the
+`SEQUENCE` it carries, and a restore would write an older one back (RFC 5545
+§3.8.7.4). Undo itself fails cleanly instead of writing anything partial:
 the todo changed since the write consumes the snapshot (`409`); a token
 that is unknown, expired, already used, or belongs to another todo has no
 snapshot to consume either (`404`, "nothing to undo"); only an unreachable

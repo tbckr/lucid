@@ -167,7 +167,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 	if master == nil {
 		// Only overridden instances (e.g. a single invitation): show them as-is.
 		var out []domain.Event
-		attendees := hasAttendees(o.cal)
+		attendees := hasAttendees(o.cal, ical.CompEvent)
 		for _, c := range orphans {
 			tm, err := parseTiming(c)
 			if err != nil {
@@ -192,7 +192,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 	}
 	base := baseEvent(o, calendarID, master)
 	// Judged on the whole resource, once, for each of its events (FR-17).
-	base.HasAttendees = hasAttendees(o.cal)
+	base.HasAttendees = hasAttendees(o.cal, ical.CompEvent)
 	if !isRecurring(master) {
 		ev := at(base, tm, tm.start.t)
 		if overlaps(ev, from, to) {
@@ -507,7 +507,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	}
 
 	// Judged before the change, which may remove the rule.
-	wasRecurring, attendees := isRecurring(master), hasAttendees(cal)
+	wasRecurring, attendees := isRecurring(master), hasAttendees(cal, ical.CompEvent)
 	now := s.p.now().UTC()
 	instance, moved, err := applySeriesEdit(cal, master, in, rr, now)
 	if err != nil {
@@ -571,7 +571,7 @@ func editedEvent(o calObject, calendarID string, master *ical.Component, instanc
 		return domain.Event{}, err
 	}
 	// As expandObject sets them; eventAt parsed the timing already.
-	ev.HasAttendees = hasAttendees(o.cal)
+	ev.HasAttendees = hasAttendees(o.cal, ical.CompEvent)
 	if tm, err := parseTiming(master); err == nil && ev.RecurrenceID != nil {
 		ev.First = ev.RecurrenceID.Equal(firstOccurrence(o.cal, master, tm))
 	}

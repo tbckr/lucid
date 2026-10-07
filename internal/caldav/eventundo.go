@@ -32,12 +32,13 @@ func (s *service) eventSnapshot(eventID string, raw []byte, newETag string, atte
 	return &domain.Snapshot{Kind: domain.SnapshotEvent, ID: eventID, ETag: newETag, Data: raw, Account: s.identity()}
 }
 
-// hasAttendees reports whether any event of cal, the series or one of its
-// overrides, has an ORGANIZER or an ATTENDEE, that is, whether a server that
-// schedules implicitly may have told others of a change (FR-17).
-func hasAttendees(cal *ical.Calendar) bool {
+// hasAttendees reports whether any component of cal named name (ical.CompEvent
+// or ical.CompToDo), the series or one of its overrides, has an ORGANIZER or an
+// ATTENDEE, that is, whether a server that schedules implicitly may have told
+// others of a change (FR-17).
+func hasAttendees(cal *ical.Calendar, name string) bool {
 	return slices.ContainsFunc(cal.Children, func(c *ical.Component) bool {
-		return c.Name == ical.CompEvent &&
+		return c.Name == name &&
 			(c.Props.Get(ical.PropOrganizer) != nil || c.Props.Get(ical.PropAttendee) != nil)
 	})
 }

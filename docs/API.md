@@ -517,6 +517,21 @@ For an open recurring todo, `start` and `due` are not the series' stored
 that is still open (`NEEDS-ACTION`/`IN-PROCESS`). Completing or moving the
 todo (see `PUT` below) changes which occurrence that is.
 
+`hasAttendees`, `detachedFrom` and `detachedCopy` are omitted (`false`, empty,
+absent) unless they apply:
+
+- `hasAttendees` is `true` when any `VTODO` of the todo's resource, the series
+  or an override, has an `ORGANIZER` or an `ATTENDEE`; a server that schedules
+  implicitly may then have told others of a change. A change of such a resource
+  succeeds without an `undoToken` (see `PUT` below), as an event's does.
+- `detachedFrom` is the `UID` of the series the todo was detached from, as the
+  property `X-LUCID-DETACHED-FROM` stores it. Every write but one keeps it;
+  giving the todo an `rrule` drops it, as the todo is then a series of its own.
+- `detachedCopy` is the repeat just detached from a series as a todo of its
+  own (a `Todo`, with `detachedFrom`), returned only by the request that
+  detaches it, like `completedCopy` by the one that completes it; never in a
+  list.
+
 ### `GET /api/v1/calendars/{calendarId}/todos/occurrences?start=<RFC3339>&end=<RFC3339>`
 
 Returns the occurrences of open, evaluable recurring todos (`recurring: true`,
@@ -642,7 +657,11 @@ Undo is its own endpoint (`POST /api/v1/todos/{todoId}/undo`, below) rather
 than another `PUT`: it restores the todo's resource exactly as the change
 that returned `undoToken` had read it, instead of replaying that edit in
 reverse. It also removes the completed copy that change left, if any, unless
-another client has since changed it (`copyKept: true`).
+another client has since changed it (`copyKept: true`). A change of a todo
+whose resource has attendees (`hasAttendees`, wherever in the series they
+are, also in an override the change drops) succeeds without an `undoToken`:
+the server may have sent them the change with the `SEQUENCE` it carries, and a
+restore would write an older one back (RFC 5545 section 3.8.7.4).
 
 ### `POST /api/v1/todos/{todoId}/undo` → `200` `Todo`
 

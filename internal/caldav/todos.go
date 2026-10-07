@@ -44,18 +44,22 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 }
 
 // todoFromObject converts the todo c of o into a Todo. A recurring todo
-// reports its current and next occurrence (FR-16, FR-17).
+// reports its current and next occurrence; any todo of the resource, c or one
+// of its overrides, with an ORGANIZER or an ATTENDEE makes it report
+// attendees (FR-16, FR-17).
 func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.Todo {
 	desc, checklist := splitChecklist(text(c.Props, ical.PropDescription))
 	t := domain.Todo{
-		ID:          encodeID(o.path),
-		CalendarID:  calendarID,
-		UID:         text(c.Props, ical.PropUID),
-		ETag:        o.etag,
-		Title:       text(c.Props, ical.PropSummary),
-		Description: desc,
-		Checklist:   checklist,
-		Status:      strings.ToUpper(cmp.Or(text(c.Props, ical.PropStatus), domain.TodoNeedsAction)),
+		ID:           encodeID(o.path),
+		CalendarID:   calendarID,
+		UID:          text(c.Props, ical.PropUID),
+		ETag:         o.etag,
+		Title:        text(c.Props, ical.PropSummary),
+		Description:  desc,
+		Checklist:    checklist,
+		Status:       strings.ToUpper(cmp.Or(text(c.Props, ical.PropStatus), domain.TodoNeedsAction)),
+		HasAttendees: hasAttendees(o.cal, ical.CompToDo),
+		DetachedFrom: text(c.Props, propDetachedFrom),
 	}
 	start, startErr := parseDateProp(c.Props.Get(ical.PropDateTimeStart))
 	if startErr == nil {
@@ -476,10 +480,14 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 // one, and only when its new ETag is known: without it, an undo could not
 // tell another client's change from its own. A change that turned completed
 // overrides into the entries entries gets none: restoring raw would bring
-// the overrides back next to their entries (A-18). The undo store stamps
+// the overrides back next to their entries (A-18). There is none either if
+// the resource as read has attendees (cur.HasAttendees, also in an override
+// the change dropped): the server may have sent them the change with the
+// SEQUENCE it carries, and a restore would write an older one back (RFC 5545
+// section 3.8.7.4), as for events (see eventSnapshot). The undo store stamps
 // when it took the snapshot in, by its own clock.
 func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.Snapshot {
-	if !cur.Recurring || t.ETag == "" || len(entries) > 0 {
+	if !cur.Recurring || cur.HasAttendees || t.ETag == "" || len(entries) > 0 {
 		return nil
 	}
 	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
@@ -553,7 +561,9 @@ func newTodoRule(in domain.TodoInput) (string, error) {
 // exclude the new rule's instances on the old rule's dates (A-17); completed
 // overrides before it stay as history, and with an UNTIL they take the
 // value type of in's dates when it changes (see retypeRefs). A todo that
-// did not recur yet takes the zone of in for timed dates without a TZID.
+// did not recur yet takes the zone of in for timed dates without a TZID. A
+// todo detached from another series (see propDetachedFrom) loses that origin:
+// with a rule it is a series of its own.
 func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todoOcc, rr string, in domain.TodoInput) {
 	if s != nil {
 		dropOverrides(cal, c, s.refsFrom(from.rid))
@@ -563,6 +573,9 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	writeSeriesDates(cal, c, in, s != nil)
 	c.Props.Del(propKDEPending)
+	// With a rule the todo is a series of its own, no longer the copy of a
+	// repeat of another one.
+	c.Props.Del(propDetachedFrom)
 	if to, err := parseDateProp(c.Props.Get(ical.PropDateTimeStart)); s != nil && err == nil {
 		s.retypeRefs(cal, to)
 	}

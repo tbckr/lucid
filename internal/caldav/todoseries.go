@@ -21,6 +21,11 @@ import (
 // series whose DTSTART stays at the first occurrence.
 const propKDEPending = "X-KDE-LIBKCAL-DTRECURRENCE"
 
+// propDetachedFrom is the property of a todo that was detached from a series:
+// the UID of that series. Lucid writes it only when it detaches a repeat, and
+// drops it when the todo gets a rule of its own (FR-17).
+const propDetachedFrom = "X-LUCID-DETACHED-FROM"
+
 var (
 	errNoAnchor = errors.New("recurring todo without DTSTART or DUE")
 	// errRDate makes a series with RDATE unsupported: rolling it forward

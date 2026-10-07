@@ -426,7 +426,7 @@ func (s *service) loadFollowing(ctx context.Context, eventID, etag string, recur
 	if ov := recurrenceOverrides(ls.cal, ls.master)[rid]; exceptionDates(ls.master)[rid] || (ov != nil && isCancelled(ov)) {
 		return followingSeries{}, fmt.Errorf("%w: not an event of the series", domain.ErrNotFound)
 	}
-	if hasAttendees(ls.cal) {
+	if hasAttendees(ls.cal, ical.CompEvent) {
 		return followingSeries{}, fmt.Errorf("%w: the series has attendees", domain.ErrSeriesSplitUnsupported)
 	}
 	if ls.master.Props.Get(propExRule) != nil {

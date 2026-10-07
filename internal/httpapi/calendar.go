@@ -633,7 +633,8 @@ func (s *Server) decodeValid(w http.ResponseWriter, r *http.Request, v validator
 }
 
 // normalizeTodo makes sure the checklist is encoded as [] rather than null,
-// for the todo itself and, if present, its CompletedCopy (FR-17).
+// for the todo itself and, if present, its CompletedCopy and DetachedCopy
+// (FR-17).
 func normalizeTodo(t domain.Todo) domain.Todo {
 	if t.Checklist == nil {
 		t.Checklist = []domain.ChecklistItem{}
@@ -641,6 +642,10 @@ func normalizeTodo(t domain.Todo) domain.Todo {
 	if t.CompletedCopy != nil {
 		copyTodo := normalizeTodo(*t.CompletedCopy)
 		t.CompletedCopy = &copyTodo
+	}
+	if t.DetachedCopy != nil {
+		copyTodo := normalizeTodo(*t.DetachedCopy)
+		t.DetachedCopy = &copyTodo
 	}
 	return t
 }

@@ -3644,6 +3644,160 @@ func TestRestoreTodo(t *testing.T) {
 	}
 }
 
+// A task reports whether the resource has an organizer or attendees, in its
+// master or in an override, and the series it was detached from; a rule set
+// on a task that carries that origin makes it a series of its own and drops
+// it (FR-17).
+func TestTodoReportsAttendeesAndOrigin(t *testing.T) {
+	t.Parallel()
+	weekly := []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}
+	t.Run("attendees", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name      string
+			master    []string
+			overrides [][]string
+			want      bool
+		}{
+			{"a series without", weekly, nil, false},
+			{"organizer of the master", append([]string{"ORGANIZER:mailto:me@example.com"}, weekly...), nil, true},
+			{"attendee of the master", append([]string{"ATTENDEE:mailto:you@example.com"}, weekly...), nil, true},
+			{
+				"attendee of an override", weekly,
+				[][]string{{"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z", "ATTENDEE:mailto:you@example.com"}},
+				true,
+			},
+			{
+				"organizer of an override", weekly,
+				[][]string{{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED", "ORGANIZER:mailto:me@example.com"}},
+				true,
+			},
+			{"a task without", []string{"DTSTART:20250310T090000Z"}, nil, false},
+			{"a task with an attendee", []string{"DTSTART:20250310T090000Z", "ATTENDEE:mailto:you@example.com"}, nil, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, caldavtest.Options{})
+				id := seedSeries(t, e, tc.master, tc.overrides...)
+				if got := listedTodo(t, e, id).HasAttendees; got != tc.want {
+					t.Errorf("HasAttendees = %v; want %v", got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("origin", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		plain := seedSeries(t, e, []string{"DTSTART:20250310T090000Z"})
+		detached := e.put(t, "tasks", "d.ics", "BEGIN:VTODO", "UID:d", "DTSTAMP:20240101T000000Z", "SUMMARY:Copy",
+			"DTSTART:20250310T090000Z", "X-LUCID-DETACHED-FROM:abc", "END:VTODO")
+		if got := listedTodo(t, e, plain).DetachedFrom; got != "" {
+			t.Errorf("DetachedFrom = %q; want none", got)
+		}
+		if got := listedTodo(t, e, detached).DetachedFrom; got != "abc" {
+			t.Errorf("DetachedFrom = %q; want abc", got)
+		}
+	})
+
+	// A task keeps its origin through every write but a rule: only then it is
+	// no longer the copy of a repeat but a series of its own.
+	t.Run("a write keeps the origin", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "tasks", "d.ics", "BEGIN:VTODO", "UID:d", "DTSTAMP:20240101T000000Z", "SUMMARY:Copy",
+			"DTSTART:20250310T090000Z", "X-LUCID-DETACHED-FROM:abc", "END:VTODO")
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Title = "Renamed"
+		got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		if got.Title != "Renamed" || got.DetachedFrom != "abc" {
+			t.Errorf("updated task = %+v; want it renamed and still detached from abc", got)
+		}
+		checkStored(t, "task", storedObject(t, e, id), []string{"X-LUCID-DETACHED-FROM:abc"}, nil)
+	})
+
+	for _, tc := range []struct {
+		name   string
+		master []string
+		rule   string
+	}{
+		{"a rule set on a task drops the origin", []string{"DTSTART:20250310T090000Z"}, "FREQ=WEEKLY"},
+		{"a rule changed on a series drops the origin", []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"}, "FREQ=WEEKLY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, append([]string{"X-LUCID-DETACHED-FROM:abc"}, tc.master...))
+			f := listedTodo(t, e, id)
+			if f.DetachedFrom != "abc" {
+				t.Fatalf("listed task = %+v; want it detached from abc", f)
+			}
+			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), tc.rule))
+			mustNoErr(t, err)
+			if got.DetachedFrom != "" || got.RRule != tc.rule {
+				t.Errorf("updated task = %+v; want rule %s and no origin", got, tc.rule)
+			}
+			checkStored(t, "task", storedObject(t, e, id), []string{"RRULE:" + tc.rule}, []string{"X-LUCID-DETACHED-FROM"})
+			if got := listedTodo(t, e, id).DetachedFrom; got != "" {
+				t.Errorf("listed DetachedFrom = %q; want none", got)
+			}
+		})
+	}
+}
+
+// The undo of a change restores the resource as it was, with a SEQUENCE
+// lower than the one a server may already have sent to the attendees, so a
+// resource with an organizer or attendees gets none, wherever they are, also
+// in an override the change drops (RFC 5545 section 3.8.7.4; FR-17).
+func TestNoTodoUndoWithAttendees(t *testing.T) {
+	t.Parallel()
+	weekly := []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}
+	override := func(extra ...string) [][]string {
+		return [][]string{append([]string{"RECURRENCE-ID:20250317T090000Z", "DTSTART:20250318T090000Z"}, extra...)}
+	}
+	moveByDay := func(f *domain.Todo) domain.TodoInput {
+		in := editInput(f)
+		in.Start = ptr(f.Start.Add(24 * time.Hour))
+		return in
+	}
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		input     func(f *domain.Todo) domain.TodoInput
+		copy      bool // the change leaves a completed copy
+		want      bool // an undo
+	}{
+		{"move, without attendees", weekly, nil, moveByDay, false, true},
+		{"move, organizer", append([]string{"ORGANIZER:mailto:me@example.com"}, weekly...), nil, moveByDay, false, false},
+		{"move, attendee", append([]string{"ATTENDEE:mailto:you@example.com"}, weekly...), nil, moveByDay, false, false},
+		{"move, attendee of an override", weekly, override("ATTENDEE:mailto:you@example.com"), moveByDay, false, false},
+		{"completion, without attendees", weekly, nil, completeInput, true, true},
+		{"completion, organizer", append([]string{"ORGANIZER:mailto:me@example.com"}, weekly...), nil, completeInput, true, false},
+		{
+			"rule change dropping the override with attendees", weekly, override("ATTENDEE:mailto:you@example.com"),
+			func(f *domain.Todo) domain.TodoInput { return withRule(editInput(f), "FREQ=DAILY") }, false, false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			f := listedTodo(t, e, id)
+			changed, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, tc.input(&f))
+			mustNoErr(t, err)
+			if (changed.CompletedCopy != nil) != tc.copy {
+				t.Fatalf("changed series = %+v; want a completed copy: %v", changed, tc.copy)
+			}
+			if (snap != nil) != tc.want {
+				t.Errorf("got a snapshot: %v; want one: %v", snap != nil, tc.want)
+			}
+		})
+	}
+}
+
 // completeSeeded completes the occurrence of a seeded weekly series and
 // returns the series' ID, its seeded resource, the change and its snapshot.
 func completeSeeded(t *testing.T, e *env) (id, seeded string, done domain.Todo, snap domain.Snapshot) {
