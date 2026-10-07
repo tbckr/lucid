@@ -1091,16 +1091,21 @@ the undo is refused (`409`) and nothing is written. The one exception is a
 write that lands in the single round trip in which Lucid reads back an ETag
 the server did not send with its answer to the change: the snapshot then
 carries that ETag. The undo of a split restores the old series this way and
-then deletes the new one, with `If-Match` of the ETag the split gave it. If
-another app has changed the new series since, it stays, and the answer says
-so (`copyKept`), as does the toast: "Undone. The new series was changed in
-another app and stays." The store keeps a snapshot for 2 minutes and refuses one
-over 1 MiB, so a series with years of overrides changes without an undo; it
-can also drop a snapshot earlier, to keep at most 8 per session and 64 MiB
-in total. The UI offers the Undo for 8 seconds, in the toast that says what
-the change did, and only for the latest change of a series: a change that
-starts while an earlier one's toast is shown, or before its answer arrived,
-takes that Undo away.
+then deletes the new one, with `If-Match` of the ETag the split gave it.
+Before it writes anything, it reads the new series' ETag: if the new series
+has changed since, in Lucid or in another app, or its ETag is unknown or
+weak, the undo is refused (`409`) and nothing is written, as the restored
+series would list every event from R on a second time next to it. A new
+series deleted since leaves nothing to delete. Only a change of the new
+series between that read and the delete keeps it next to the restored one;
+the answer says so (`copyKept`), as does the toast: "Undone. The new series
+was changed in another app and stays." The store keeps a snapshot for 2
+minutes and refuses one over 1 MiB, so a series with years of overrides
+changes without an undo; it can also drop a snapshot earlier, to keep at
+most 8 per session and 64 MiB in total. The UI offers the Undo for 8
+seconds, in the toast that says what the change did, and only for the latest
+change of a series: a change that starts while an earlier one's toast is
+shown, or before its answer arrived, takes that Undo away.
 
 ### Limits
 

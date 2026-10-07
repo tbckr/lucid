@@ -2,6 +2,8 @@ package caldav
 
 import (
 	"context"
+	"html"
+	"io"
 	"net/http"
 	"path"
 	"slices"
@@ -182,9 +184,12 @@ func TestRestoreEvent(t *testing.T) {
 
 // TestRestoreSplit undoes "this and following events" (FR-17; spec section
 // 6): the series S is written back as the split read it, and the new series
-// N goes, as it has the ETag the split gave it. If another app changed N
-// since, N stays, and the restore reports it (Review Focus 4): deleting it
-// would lose that change.
+// N goes, as it has the ETag the split gave it. If N changed since, in Lucid
+// or in another app, the undo is refused and nothing is written: S restored
+// next to N would show every event from R on twice, and deleting N would
+// lose that change. N gone since leaves nothing to delete. Only N changed
+// between that check and its delete stays next to S restored, reported
+// (Review Focus 4).
 func TestRestoreSplit(t *testing.T) {
 	t.Parallel()
 	// split moves the fourth event of the weekly standup and the following
@@ -203,6 +208,49 @@ func TestRestoreSplit(t *testing.T) {
 			t.Fatal("UpdateFollowing returned no snapshot")
 		}
 		return id, seeded, mustDecode(t, e, res.Event.ID), *s
+	}
+	// refused asserts that RestoreEvent refuses snap with want, writing
+	// nothing: S stays as the split left it, and N as it is now.
+	refused := func(t *testing.T, e *env, id, nPath string, snap domain.Snapshot, want error) {
+		t.Helper()
+		s := storedObject(t, e, id)
+		n, ok := e.mock.Object(nPath)
+		if !ok {
+			t.Fatalf("no new series at %s", nPath)
+		}
+		e.mock.ResetCounts()
+		res, err := e.svc.RestoreEvent(t.Context(), snap)
+		mustErr(t, err, want)
+		if res != (domain.EventRestore{}) {
+			t.Errorf("restore = %+v; want nothing with an error", res)
+		}
+		if writes := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); writes != 0 {
+			t.Errorf("%d writes; want none", writes)
+		}
+		if got := storedObject(t, e, id); got != s {
+			t.Errorf("series:\n%s\nwant it as the split left it:\n%s", got, s)
+		}
+		if got, _ := e.mock.Object(nPath); got != n {
+			t.Errorf("new series:\n%s\nwant it unchanged:\n%s", got, n)
+		}
+	}
+	// answerPropfind makes the mock answer a PROPFIND of objPath with the
+	// multistatus of getetag, a property element, or with status, if set.
+	answerPropfind := func(e *env, objPath string, status int, getetag string) {
+		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method != "PROPFIND" || r.URL.Path != objPath {
+				return false
+			}
+			if status != 0 {
+				w.WriteHeader(status)
+				return true
+			}
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<d:multistatus xmlns:d="DAV:"><d:response><d:href>`+objPath+`</d:href>`+
+				`<d:propstat><d:prop>`+getetag+`</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>`+
+				`</d:response></d:multistatus>`)
+			return true
+		})
 	}
 
 	t.Run("the new series as the split left it", func(t *testing.T) {
@@ -232,10 +280,10 @@ func TestRestoreSplit(t *testing.T) {
 		}
 	})
 
-	t.Run("the new series changed since", func(t *testing.T) {
+	t.Run("the new series changed in another app", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		id, seeded, nPath, snap := split(t, e)
+		id, _, nPath, snap := split(t, e)
 		n, ok := e.mock.Object(nPath)
 		if !ok {
 			t.Fatalf("no new series at %s", nPath)
@@ -244,6 +292,94 @@ func TestRestoreSplit(t *testing.T) {
 		if _, err := e.mock.PutObject(e.paths["work"], path.Base(nPath), changed); err != nil {
 			t.Fatalf("PutObject: %v", err)
 		}
+		refused(t, e, id, nPath, snap, domain.ErrConflict)
+	})
+
+	t.Run("the new series changed in Lucid", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, nPath, snap := split(t, e)
+		// The second event of N, March 31, 10:00 in Berlin summer time.
+		ev := shownEvent(t, e, "work", date(2025, 3, 31, 8, 0))
+		if ev.ID != encodeID(nPath) {
+			t.Fatalf("event = %+v; want one of the new series", ev)
+		}
+		_, _, err := e.svc.UpdateOccurrence(t.Context(), ev.ID, ev.ETag, *ev.RecurrenceID, occurrenceInputOf(ev, time.Hour))
+		mustNoErr(t, err)
+		refused(t, e, id, nPath, snap, domain.ErrConflict)
+	})
+
+	// Read without an ETag, or with a weak one, N cannot be told from one
+	// changed since.
+	t.Run("the new series' ETag unknown", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, nPath, snap := split(t, e)
+		answerPropfind(e, nPath, 0, "")
+		refused(t, e, id, nPath, snap, domain.ErrConflict)
+	})
+
+	t.Run("the new series' ETag weak", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, nPath, snap := split(t, e)
+		// The split's own ETag, but weak: If-Match compares strongly.
+		answerPropfind(e, nPath, 0, "<d:getetag>W/"+html.EscapeString(snap.Created[0].ETag)+"</d:getetag>")
+		refused(t, e, id, nPath, snap, domain.ErrConflict)
+	})
+
+	// The undo can be tried again: see settleUndo.
+	t.Run("the new series cannot be read", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, nPath, snap := split(t, e)
+		answerPropfind(e, nPath, http.StatusInternalServerError, "")
+		refused(t, e, id, nPath, snap, domain.ErrUpstream)
+	})
+
+	t.Run("the new series deleted since", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, seeded, nPath, snap := split(t, e)
+		mustNoErr(t, e.svc.DeleteEvent(t.Context(), encodeID(nPath), storedETag(t, e, nPath)))
+		e.mock.ResetCounts()
+
+		res, err := e.svc.RestoreEvent(t.Context(), snap)
+		mustNoErr(t, err)
+		if res.ETag == "" || res.CopyKept {
+			t.Errorf("restore = %+v; want the new ETag and nothing kept", res)
+		}
+		if got := storedObject(t, e, id); got != seeded {
+			t.Errorf("restored series:\n%s\nwant the seeded one:\n%s", got, seeded)
+		}
+		if paths := e.mock.ObjectPaths(e.paths["work"]); !slices.Equal(paths, []string{mustDecode(t, e, id)}) {
+			t.Errorf("objects = %v; want the series only", paths)
+		}
+		if puts, deletes := e.mock.Count(http.MethodPut), e.mock.Count(http.MethodDelete); puts != 1 || deletes != 0 {
+			t.Errorf("%d PUTs and %d DELETEs; want S's PUT only", puts, deletes)
+		}
+	})
+
+	// Changed after the check, as the restore writes S, N stays: deleting it
+	// would lose that change.
+	t.Run("the new series changed after the check", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, seeded, nPath, snap := split(t, e)
+		n, ok := e.mock.Object(nPath)
+		if !ok {
+			t.Fatalf("no new series at %s", nPath)
+		}
+		changed := strings.Replace(n, "SUMMARY:Standup", "SUMMARY:Retro", 1)
+		sPath := mustDecode(t, e, id)
+		e.mock.SetHook(func(_ http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut && r.URL.Path == sPath {
+				if _, err := e.mock.PutObject(e.paths["work"], path.Base(nPath), changed); err != nil {
+					t.Errorf("PutObject: %v", err)
+				}
+			}
+			return false
+		})
 
 		res, err := e.svc.RestoreEvent(t.Context(), snap)
 		mustNoErr(t, err)

@@ -174,7 +174,10 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 //
 // kind is the kind of resource the caller restores. A snapshot of another
 // kind, of another account or without an ETag is no snapshot of it
-// (ErrNotFound), and nothing is written.
+// (ErrNotFound), and nothing is written. An event's restore checks first
+// that what the change created is unchanged or gone, see unchangedCreated:
+// a task's completed copy may stay next to the restored series, a new
+// series of a split may not.
 func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kind domain.SnapshotKind, comp string) (o calObject, c *ical.Component, calPath string, createdKept bool, err error) {
 	if s.err != nil {
 		return calObject{}, nil, "", false, s.err
@@ -209,12 +212,52 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 		return calObject{}, nil, "", false, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 
+	// Also on a refusal: a change of what the change created may not be in
+	// the cache yet.
 	defer s.invalidate(calPath)
+	created := snap.Created
+	if kind == domain.SnapshotEvent {
+		if created, err = s.unchangedCreated(ctx, created); err != nil {
+			return calObject{}, nil, "", false, err
+		}
+	}
 	o = calObject{path: objPath, cal: cal}
 	if o.etag, err = s.putBytes(ctx, objPath, snap.Data, snap.ETag, false); err != nil {
 		return calObject{}, nil, "", false, err
 	}
-	return o, c, calPath, s.removeCreated(ctx, snap.Created), nil
+	return o, c, calPath, s.removeCreated(ctx, created), nil
+}
+
+// unchangedCreated checks, before an event's restore writes anything, that
+// each resource refs a change created, the new series N of a split, still
+// has the ETag of its ref, and returns the refs of those still there (FR-17).
+// One gone since leaves nothing to delete. One changed since, in Lucid or in
+// another app, refuses the restore (ErrConflict): written back next to it,
+// the series S would show every event from the split on twice, and deleting
+// it would lose that change. So does one whose ETag is unknown or weak, which
+// cannot be told from one changed since. A read that fails otherwise is
+// returned as it is, an ErrUpstream after which the undo can be tried again.
+// Only a change between this check and the delete leaves N next to S
+// restored, see removeCreated.
+func (s *service) unchangedCreated(ctx context.Context, refs []domain.CreatedRef) ([]domain.CreatedRef, error) {
+	var there []domain.CreatedRef
+	for _, ref := range refs {
+		objPath, _, err := decodeObjectID(s.homePath, ref.ID)
+		if err != nil {
+			return nil, err
+		}
+		etag, err := s.objectETag(ctx, objPath)
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, err
+		case etag == "" || strings.HasPrefix(etag, "W/") || etag != ref.ETag:
+			return nil, fmt.Errorf("%w: a resource the change created changed since", domain.ErrConflict)
+		}
+		there = append(there, ref)
+	}
+	return there, nil
 }
 
 // removeCreated deletes the resources refs a change created, each unless it

@@ -438,7 +438,7 @@ type Snapshot struct {
 // EventRestore answers an undo of a change to an event series (FR-17).
 type EventRestore struct {
 	ETag     string `json:"etag,omitempty"`     // the series' ETag after the restore, if the server tells it
-	CopyKept bool   `json:"copyKept,omitempty"` // a resource the change created stays, as it changed since
+	CopyKept bool   `json:"copyKept,omitempty"` // a resource the change created stays, as it changed during the restore
 }
 
 // FollowingResult answers a change of an occurrence of a series and the
@@ -478,9 +478,12 @@ type CalendarService interface {
 	UpdateOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time, in OccurrenceInput) (Event, *Snapshot, error)
 	// RestoreEvent undoes a change of an event series by writing back the
 	// resource as the change read it, unless the series changed since
-	// (ErrConflict), and removes what the change created, unless that
-	// changed since: then it stays, and the answer reports CopyKept
-	// (FR-17).
+	// (ErrConflict), and removes what the change created, the new series of
+	// a split. Should that have changed since, or have an ETag unknown or
+	// weak, nothing is written (ErrConflict): restored next to it, the
+	// series would show its events twice. One gone since leaves nothing to
+	// remove. Only one that changes between that check and its removal
+	// stays, and the answer reports CopyKept (FR-17).
 	RestoreEvent(ctx context.Context, snap Snapshot) (EventRestore, error)
 	DeleteEvent(ctx context.Context, eventID, etag string) error
 	// DeleteOccurrence excludes only the occurrence at recurrenceID of a

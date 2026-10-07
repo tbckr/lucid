@@ -304,12 +304,13 @@ Response `200`:
 - `etag`: the series' new ETag, to send with its next write, `""` when the
   CalDAV server tells none. At the first event it is `event.etag`.
 - `undoToken`: as for `PUT /events/{id}` above. The undo writes the series
-  back as it was and deletes the new series, unless that changed since (see
-  the undo below). There is none unless the CalDAV server tells the new
-  `etag` of both series: without the series', an undo could not tell its own
-  change from another client's, and without the new series', it could not
-  delete the new series, which would then stand next to the restored series
-  with every event from `recurrenceId` on twice.
+  back as it was and deletes the new series; once the new series has
+  changed, it is refused and writes nothing (see the undo below). There is
+  none unless the CalDAV server tells the new `etag` of both series: without
+  the series', an undo could not tell its own change from another client's,
+  and without the new series', it could not delete the new series, which
+  would then stand next to the restored series with every event from
+  `recurrenceId` on twice.
 
 The new series is written first, with `If-None-Match: *`, and then the
 series, with `If-Match`. If the new series' write fails, the series is not
@@ -400,9 +401,15 @@ it. Response `200`:
 
 `etag` is the resource's new ETag, for the client's next write of the series.
 The undo of "this and following events" (`PUT …/following/…`) also deletes
-the new series, with `If-Match` of the ETag the split gave it; if another app
-changed it since, it stays, and the answer has `copyKept: true`. No other
-change of an event creates a resource, so it is omitted there.
+the new series, with `If-Match` of the ETag the split gave it. It reads the
+new series' ETag first: if the new series changed since, in Lucid or in
+another app, or its ETag is unknown or weak, the undo answers `409 conflict`
+and writes nothing, as the restored series would list every event from
+`recurrenceId` on a second time next to it; if it was deleted since, the
+series is restored and there is nothing to delete. Only a change of the new
+series between that read and its delete leaves it next to the restored
+series, and the answer has `copyKept: true`. No other change of an event
+creates a resource, so it is omitted there.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|
@@ -411,9 +418,9 @@ change of an event creates a resource, so it is omitted there.
 | 403    | `csrf_invalid`   | Missing/wrong CSRF token                                                    |
 | 403    | `read_only`      | Calendar is read-only                                                       |
 | 404    | `not_found`      | Token unknown, expired, already used, or belongs to another event or to a todo ("nothing to undo") |
-| 409    | `conflict`       | The series changed or was deleted since (`If-Match` would have failed); the token is used up |
+| 409    | `conflict`       | The series changed or was deleted since (`If-Match` would have failed), or, for a split, the new series changed since or its ETag is unknown or weak; nothing is written, and the token is used up |
 | 429    | `rate_limited`   | Too many requests                                                           |
-| 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
+| 502    | `upstream_error` | CalDAV server error/unreachable, also when the new series of a split cannot be read; the snapshot is kept so the client can retry |
 
 ## Todos
 

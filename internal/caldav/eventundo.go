@@ -44,7 +44,9 @@ func hasAttendees(cal *ical.Calendar) bool {
 
 // RestoreEvent implements domain.CalendarService. It writes the resource of
 // snap back as it is, if it still has the ETag the change gave it, and then
-// removes what the change created, see restoreResource (FR-17).
+// removes what the change created, see restoreResource (FR-17). The new
+// series of a split that changed since refuses the restore with nothing
+// written, see unchangedCreated.
 func (s *service) RestoreEvent(ctx context.Context, snap domain.Snapshot) (domain.EventRestore, error) {
 	o, _, _, createdKept, err := s.restoreResource(ctx, snap, domain.SnapshotEvent, ical.CompEvent)
 	if err != nil {
