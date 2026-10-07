@@ -284,12 +284,12 @@ func propLine(c *ical.Component, name string) string {
 	return ""
 }
 
-// overridesIn returns the overrides in cal, each as its UID, RECURRENCE-ID
-// and title.
+// overridesIn returns the overrides in cal, of an event or a task series,
+// each as its UID, RECURRENCE-ID and title.
 func overridesIn(cal *ical.Calendar) []string {
 	var out []string
 	for _, c := range cal.Children {
-		if c.Name == ical.CompEvent && c.Props.Get(ical.PropRecurrenceID) != nil {
+		if (c.Name == ical.CompEvent || c.Name == ical.CompToDo) && c.Props.Get(ical.PropRecurrenceID) != nil {
 			out = append(out, text(c.Props, ical.PropUID)+" "+propLine(c, ical.PropRecurrenceID)+" "+
 				text(c.Props, ical.PropSummary))
 		}

@@ -896,7 +896,7 @@ func notBefore(d, to dateValue) bool {
 
 // dropExdates removes the EXDATE values of master that drop reports, as
 // written, and an EXDATE property it leaves without values; a value Lucid
-// cannot read stays (FR-17).
+// cannot read stays, but an empty one, which is none, goes (FR-17).
 func dropExdates(master *ical.Component, drop func(dateValue) bool) {
 	props := master.Props[ical.PropExceptionDates]
 	if len(props) == 0 {
@@ -907,6 +907,9 @@ func dropExdates(master *ical.Component, drop func(dateValue) bool) {
 		var vals []string
 		for v := range strings.SplitSeq(p.Value, ",") {
 			at, _, _ := strings.Cut(strings.TrimSpace(v), "/")
+			if at == "" {
+				continue
+			}
 			if d, err := parseDateValue(at, p.Params); err == nil && drop(d) {
 				continue
 			}

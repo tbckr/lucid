@@ -169,7 +169,7 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 // splitOff returns the new series N that goes on from the occurrence rid of
 // the series master in cal, whose timing is tm, as the calendar of a
 // resource of its own (FR-17; spec section 4 "Teilen" step 2). cal stays as
-// it is: N is a deep copy, which a caller can change freely.
+// it is: N is a deep copy, see copySeries, which a caller can change freely.
 //   - The VTIMEZONEs and the other components that are no VEVENT, and the
 //     calendar's own properties, are copied as they are.
 //   - The master is copied with all its properties and components, with the
@@ -209,30 +209,8 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	if err != nil {
 		return nil, err
 	}
-	n := &ical.Calendar{Component: ical.NewComponent(cal.Name)}
-	for name, props := range cal.Props {
-		n.Props[name] = cloneProps(props)
-	}
-	var nm *ical.Component
-	for _, c := range cal.Children {
-		switch {
-		case c == master:
-			nm = copyComponent(c)
-			n.Children = append(n.Children, nm)
-		case c.Name != master.Name:
-			n.Children = append(n.Children, copyComponent(c))
-		default:
-			// By the instant of the RECURRENCE-ID, never the override's own
-			// date. An event without one Lucid can read stays with the series.
-			r, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID))
-			if err == nil && !r.t.Before(rid) {
-				o := copyComponent(c)
-				o.Props.SetText(ical.PropUID, uid)
-				n.Children = append(n.Children, o)
-			}
-		}
-	}
-	maps.Copy(nm.Props, newComponent(master.Name, uid, now).Props)
+	// By the instant of the RECURRENCE-ID, never the override's own date.
+	n, nm := copySeries(cal, master, uid, now, func(r dateValue) bool { return !r.t.Before(rid) })
 	later := func(t time.Time) bool { return !t.Before(rid) }
 	keepDates(nm, ical.PropExceptionDates, later, true)
 	keepDates(nm, ical.PropRecurrenceDates, later, false)
@@ -263,6 +241,44 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	}
 	masterFirst(n, nm)
 	return n, nil
+}
+
+// copySeries returns a deep copy of cal for the new series of a split of the
+// series master in cal, and master's copy in it, which a caller can change
+// freely (FR-17):
+//   - the calendar's own properties, its VTIMEZONEs and its other components
+//     of another type than master's, as they are;
+//   - master with all its properties and components, with the UID uid,
+//     SEQUENCE:0 and DTSTAMP, CREATED and LAST-MODIFIED at now;
+//   - the overrides whose RECURRENCE-ID keep reports, with the UID uid. One
+//     without a RECURRENCE-ID Lucid can read stays with the series.
+//
+// The components keep their order: the caller puts the master first (see
+// masterFirst).
+func copySeries(cal *ical.Calendar, master *ical.Component, uid string, now time.Time, keep func(rid dateValue) bool) (*ical.Calendar, *ical.Component) {
+	n := &ical.Calendar{Component: ical.NewComponent(cal.Name)}
+	for name, props := range cal.Props {
+		n.Props[name] = cloneProps(props)
+	}
+	var nm *ical.Component
+	for _, c := range cal.Children {
+		switch {
+		case c == master:
+			nm = copyComponent(c)
+			n.Children = append(n.Children, nm)
+		case c.Name != master.Name:
+			n.Children = append(n.Children, copyComponent(c))
+		default:
+			r, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID))
+			if err == nil && keep(r) {
+				o := copyComponent(c)
+				o.Props.SetText(ical.PropUID, uid)
+				n.Children = append(n.Children, o)
+			}
+		}
+	}
+	maps.Copy(nm.Props, newComponent(master.Name, uid, now).Props)
+	return n, nm
 }
 
 // errSplitLosesEvent refuses a split whose new series would be a single
