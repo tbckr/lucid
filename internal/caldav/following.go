@@ -7,7 +7,6 @@ package caldav
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -462,9 +461,9 @@ func (s *service) DeleteFollowing(ctx context.Context, eventID, etag string, rec
 // Nothing is written for a change it refuses: a series loadFollowing
 // refuses, a split it cannot compute (ErrSeriesSplitUnsupported) and a move
 // N cannot follow (ErrSeriesMoveUnsupported). Then it writes N, with
-// If-None-Match, and S, with If-Match etag; if S's write fails, N goes again
-// where S's is known not to have landed, see settleWrite (A-01). It returns
-// the edited event in N, as ListEvents shows it, S's new ETag, so the
+// If-None-Match, and S, with If-Match etag; if either write fails, N goes
+// again as far as Lucid can tell, see writeCreatedThenMaster (A-01). It
+// returns the edited event in N, as ListEvents shows it, S's new ETag, so the
 // client's next write of S does not conflict with this one (NFR-26), and the
 // snapshot RestoreEvent undoes the split with: S as read, and N as the
 // resource the change created, which the undo deletes.
@@ -531,18 +530,8 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 	}
 
 	defer s.invalidate(fs.calPath)
-	if created.etag, err = s.putObject(ctx, created.path, n, "", true); err != nil {
-		return domain.FollowingResult{}, nil, err
-	}
-	next, err := s.putObject(ctx, fs.objPath, cal, etag, false)
+	next, err := s.writeCreatedThenMaster(ctx, fs.calPath, &created, fs.objPath, cal, etag)
 	if err != nil {
-		// nil: saved all the same, with S's new ETag unknown.
-		err = s.settleWrite(ctx, fs.objPath, etag, err)
-	}
-	if err != nil {
-		if !errors.Is(err, errWriteUnverified) {
-			s.removeEntries(ctx, fs.calPath, []calObject{created})
-		}
 		return domain.FollowingResult{}, nil, err
 	}
 	ev.ETag = created.etag

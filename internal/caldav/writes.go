@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-ical"
@@ -44,6 +45,67 @@ func (s *service) removeEntries(ctx context.Context, calPath string, entries []c
 			s.p.log.WarnContext(ctx, "could not remove an entry a change created", "path", o.path, "error", err)
 		}
 	}
+}
+
+// writeCreatedThenMaster writes the resource created, which a change creates
+// with a new UID, with If-None-Match, and then the master cal at objPath with
+// If-Match etag: the completed copy of a task and its rolled series, or the
+// new series of a split and the series that ends before it (FR-17, A-01). It
+// sets created.etag and returns the master's new ETag, "" where the server
+// tells none or where settleWrite counts a failed write as applied. On an
+// error, what the change wrote goes again as far as Lucid can tell:
+//   - The create fails: the master is not written. A failure that is no
+//     refusal can come after the server stored the resource, as behind a
+//     reverse proxy whose read timeout fired; it goes again then, see
+//     removeIfStored. Left, it would stand next to an unchanged master, and
+//     a retry would add another.
+//   - The master's write fails: settleWrite decides, and created goes again
+//     unless the write may have been applied (errWriteUnverified), see
+//     removeEntries.
+func (s *service) writeCreatedThenMaster(ctx context.Context, calPath string, created *calObject, objPath string, cal *ical.Calendar, etag string) (string, error) {
+	var err error
+	if created.etag, err = s.putObject(ctx, created.path, created.cal, "", true); err != nil {
+		if !writeRefused(err) {
+			s.removeIfStored(ctx, calPath, created.path)
+		}
+		return "", err
+	}
+	next, err := s.putObject(ctx, objPath, cal, etag, false)
+	if err != nil {
+		err = s.settleWrite(ctx, objPath, etag, err)
+	}
+	if err != nil {
+		if !errors.Is(err, errWriteUnverified) {
+			s.removeEntries(ctx, calPath, []calObject{*created})
+		}
+		return "", err
+	}
+	return next, nil
+}
+
+// removeIfStored deletes the resource at path in calPath, whose create failed
+// without the server's refusal, if the server stored it all the same (FR-17,
+// A-01). Its UID is new, so no other client knows of it, and the delete takes
+// the ETag it has now, read first. One whose ETag is unknown or weak stays,
+// logged, as removeEntries keeps it, and so does one whose ETag cannot be
+// read. It runs on after the request is cancelled, which may be what failed
+// the create.
+func (s *service) removeIfStored(ctx context.Context, calPath, path string) {
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+	defer cancel()
+	etag, err := s.objectETag(vctx, path)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		return // not stored
+	case err != nil:
+		// Paths and errors only, never calendar content.
+		s.p.log.WarnContext(ctx, "could not tell whether the server stored a resource whose create failed",
+			"path", path, "error", err)
+		return
+	case strings.HasPrefix(etag, "W/"):
+		etag = "" // If-Match compares strongly: as unknown
+	}
+	s.removeEntries(ctx, calPath, []calObject{{path: path, etag: etag}})
 }
 
 // errWriteUnverified marks the error of a master PUT that failed without the

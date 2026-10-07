@@ -300,11 +300,14 @@ Response `200`:
   the undo below). There is none when the series' new `etag` is unknown.
 
 The new series is written first, with `If-None-Match: *`, and then the
-series, with `If-Match`. If the series' write fails, the new series is
-deleted again where that write is known not to have landed: the server
-refused it, or the series still has its ETag. Where its ETag changed, the
-split counts as saved: `200` with `etag` `""` and no `undoToken`. Where the
-ETag cannot be read, the new series stays and the error is answered.
+series, with `If-Match`. If the new series' write fails without the server
+refusing it (a timeout, a `5xx` of a proxy), the server may have stored it
+all the same: it is deleted again if it is there, and the series is not
+written. If the series' write fails, the new series is deleted again where
+that write is known not to have landed: the server refused it, or the series
+still has its ETag. Where its ETag changed, the split counts as saved: `200`
+with `etag` `""` and no `undoToken`. Where the ETag cannot be read, the new
+series stays and the error is answered.
 
 Errors, with nothing written:
 - `400 invalid_input`: as for `PUT …/occurrences/…` above, and an invalid

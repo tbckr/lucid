@@ -1,11 +1,76 @@
 package caldav
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
 	"github.com/tbckr/lucid/internal/domain"
 )
+
+// createAnswer is how answerCreate makes the mock answer the PUT that creates
+// a resource (If-None-Match: *), and a PROPFIND of the resource it created.
+type createAnswer struct {
+	status int  // the PUT's answer in place of the mock's; 0: the mock's
+	stored bool // with status: the mock stores the resource first, as a server behind a reverse proxy whose read timeout fires after it committed
+	noETag bool // without status: the mock's answer without an ETag
+	// propfind is the status a PROPFIND of the created resource fails with;
+	// 0: the mock answers it.
+	propfind int
+	weakETag bool // a PROPFIND of the created resource tells a weak ETag
+}
+
+// answerCreate makes mock answer as a says, and counts in toMaster the PUTs
+// of the resource masterPath.
+func answerCreate(mock *caldavtest.Server, masterPath string, a createAnswer, toMaster *atomic.Int32) {
+	var inner atomic.Bool // the hook passes requests on to mock, which calls it again
+	var created sync.Map  // the paths of the PUTs that created a resource
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if inner.Load() {
+			return false
+		}
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == masterPath:
+			toMaster.Add(1)
+		case r.Method == http.MethodPut && r.Header.Get("If-None-Match") == "*":
+			created.Store(r.URL.Path, true)
+			inner.Store(true)
+			defer inner.Store(false)
+			switch {
+			case a.status != 0 && a.stored:
+				mock.ServeHTTP(httptest.NewRecorder(), r)
+				w.WriteHeader(a.status)
+			case a.status != 0:
+				w.WriteHeader(a.status)
+			case a.noETag:
+				mock.ServeHTTP(withoutETag{w}, r)
+			default:
+				mock.ServeHTTP(w, r)
+			}
+			return true
+		case r.Method == "PROPFIND":
+			if _, ok := created.Load(r.URL.Path); !ok {
+				return false
+			}
+			switch {
+			case a.propfind != 0:
+				w.WriteHeader(a.propfind)
+				return true
+			case a.weakETag:
+				w.WriteHeader(http.StatusMultiStatus)
+				_, _ = io.WriteString(w, `<d:multistatus xmlns:d="DAV:"><d:response><d:href>`+r.URL.Path+`</d:href>`+
+					`<d:propstat><d:prop><d:getetag>W/&quot;weak&quot;</d:getetag></d:prop>`+
+					`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
+				return true
+			}
+		}
+		return false
+	})
+}
 
 // removeCreated deletes every resource of a change that still has the ETag
 // the change left, and reports that one stays when any is kept (FR-17).

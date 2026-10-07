@@ -1,7 +1,9 @@
 package caldav
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"slices"
@@ -1881,32 +1883,14 @@ func TestUpdateFollowingKeepsCountBoundary(t *testing.T) {
 	}
 }
 
-// answerCreateWith makes mock answer every PUT that creates a resource
-// (If-None-Match: *) with status, and counts in toS the PUTs of the resource
-// sPath.
-func answerCreateWith(mock *caldavtest.Server, sPath string, status int, toS *atomic.Int32) {
-	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method != http.MethodPut {
-			return false
-		}
-		if r.URL.Path == sPath {
-			toS.Add(1)
-		}
-		if r.Header.Get("If-None-Match") != "*" {
-			return false
-		}
-		w.WriteHeader(status)
-		return true
-	})
-}
-
 // TestUpdateFollowingWriteFailures checks the two writes of a split when the
 // second one, S's, fails (FR-17, A-01; spec section 4 "Teilen" step 5): N is
 // deleted again where S's write is known not to have landed, by the server's
 // refusal or by S's unchanged ETag; the split counts as saved, with S's ETag
 // unknown and no snapshot, where S's ETag changed; and N stays, logged, with
 // the error where S's ETag cannot be read. When N cannot be created, S is not
-// written at all.
+// written at all, and an N the server stored all the same goes again (see
+// writeCreatedThenMaster).
 func TestUpdateFollowingWriteFailures(t *testing.T) {
 	t.Parallel()
 	rid := date(2025, 3, 24, 8, 0)
@@ -1986,32 +1970,64 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		status int
-		want   error
+		name        string
+		answer      createAnswer
+		want        error
+		wantObjects int
+		wantDeletes int
+		wantLog     string
 	}{
-		{http.StatusPreconditionFailed, domain.ErrConflict},
-		{http.StatusBadGateway, domain.ErrUpstream},
+		{"creating N refused", createAnswer{status: http.StatusPreconditionFailed}, domain.ErrConflict, 1, 0, ""},
+		// The server's refusal: what is at N's path is not the split's, and
+		// stays.
+		{
+			"creating N refused, a resource there",
+			createAnswer{status: http.StatusPreconditionFailed, stored: true},
+			domain.ErrConflict, 2, 0, "",
+		},
+		{"creating N fails, N not stored", createAnswer{status: http.StatusBadGateway}, domain.ErrUpstream, 1, 0, ""},
+		{"creating N fails, N stored", createAnswer{status: http.StatusBadGateway, stored: true}, domain.ErrUpstream, 1, 1, ""},
+		// Kept, logged: a delete needs N's ETag (see removeEntries).
+		{
+			"creating N fails, N stored, its ETag unreadable",
+			createAnswer{status: http.StatusBadGateway, stored: true, propfind: http.StatusInternalServerError},
+			domain.ErrUpstream, 2, 0, "could not tell whether the server stored a resource whose create failed",
+		},
+		{
+			"creating N fails, N stored, its ETag weak",
+			createAnswer{status: http.StatusBadGateway, stored: true, weakETag: true},
+			domain.ErrUpstream, 2, 0, "keeping an entry a change created whose etag is unknown",
+		},
 	} {
-		t.Run("creating N fails with "+http.StatusText(tc.status), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
+			var logs bytes.Buffer
+			e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
 			id := e.put(t, "work", "series.ics", weeklyStandup()...)
 			seeded := storedObject(t, e, id)
 			ev := shownEvent(t, e, "work", rid)
 			var toS atomic.Int32
-			answerCreateWith(e.mock, mustDecode(t, e, id), tc.status, &toS)
+			answerCreate(e.mock, mustDecode(t, e, id), tc.answer, &toS)
 			in := eventInputOf(ev)
 			laterBy(time.Hour)(&in)
+			e.mock.ResetCounts()
 			_, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
 			mustErr(t, err, tc.want)
 			if n := toS.Load(); n != 0 || snap != nil {
 				t.Errorf("%d PUTs of S and a snapshot: %v; want neither", n, snap != nil)
 			}
-			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 1 {
-				t.Errorf("objects = %v; want the series only", paths)
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != tc.wantObjects {
+				t.Errorf("objects = %v; want %d", paths, tc.wantObjects)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.wantDeletes {
+				t.Errorf("%d DELETEs; want %d", n, tc.wantDeletes)
 			}
 			if now := storedObject(t, e, id); now != seeded {
 				t.Errorf("S = %q; want it unchanged: %q", now, seeded)
+			}
+			if tc.wantLog != "" {
+				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.paths["work"]}, []string{"Standup"})
 			}
 		})
 	}

@@ -4091,6 +4091,49 @@ func TestCompensateOnlyWhenWriteRefused(t *testing.T) {
 	}
 }
 
+// A completion whose copy the server stored although its create failed
+// without the server's refusal, as behind a reverse proxy whose read timeout
+// fired, removes the copy again, and the series stays as it was: no copy
+// stands next to an occurrence that is still open, and a retry adds no second
+// one. A copy the server did not store leaves nothing to remove (FR-17,
+// A-01).
+func TestCompleteRemovesCopyOfFailedCreate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		stored  bool
+		deletes int
+	}{
+		{"stored", true, 1},
+		{"not stored", false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+			before := storedObject(t, e, id)
+			f := listedTodo(t, e, id)
+			var toMaster atomic.Int32
+			answerCreate(e.mock, mustDecode(t, e, id), createAnswer{status: http.StatusBadGateway, stored: tc.stored}, &toMaster)
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+			mustErr(t, err, domain.ErrUpstream)
+			if n := toMaster.Load(); n != 0 || snap != nil {
+				t.Errorf("%d PUTs of the series and a snapshot: %v; want neither", n, snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.deletes {
+				t.Errorf("DELETE count = %d; want %d", n, tc.deletes)
+			}
+			if after := storedObject(t, e, id); after != before {
+				t.Errorf("series = %q; want it unchanged: %q", after, before)
+			}
+		})
+	}
+}
+
 // A change that wrote nothing before its master write has nothing to
 // compensate, so an ambiguous failure of that write is its error, also when
 // the master's ETag changed meanwhile: that can be another client's write,

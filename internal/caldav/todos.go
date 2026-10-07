@@ -576,8 +576,9 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 //     client sent other dates than it was given;
 //  2. the master rolls to the next occurrence with in's fields, an open
 //     checklist and STATUS:NEEDS-ACTION;
-//  3. if the master is known not to have been written, the copy is removed
-//     again (see settleWrite).
+//  3. if the master is known not to have been written, or the copy's create
+//     failed after the server may have stored it, the copy is removed again
+//     (see writeCreatedThenMaster).
 //
 // The master rolls only onto an instance of the rule (see roll), also from
 // an occurrence off the rule (see todoOcc.offGrid), whose override goes
@@ -635,17 +636,8 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 
 	defer s.invalidate(calPath)
 	copyObj := calObject{path: objectPath(calPath, uid+".ics"), cal: copyCal}
-	if copyObj.etag, err = s.putObject(ctx, copyObj.path, copyCal, "", true); err != nil {
-		return domain.Todo{}, err
-	}
 	o := calObject{path: objPath, cal: cal}
-	if o.etag, err = s.putObject(ctx, objPath, cal, etag, false); err != nil {
-		err = s.settleWrite(ctx, objPath, etag, err)
-	}
-	if err != nil {
-		if !errors.Is(err, errWriteUnverified) {
-			s.removeEntries(ctx, calPath, []calObject{copyObj})
-		}
+	if o.etag, err = s.writeCreatedThenMaster(ctx, calPath, &copyObj, objPath, cal, etag); err != nil {
 		return domain.Todo{}, err
 	}
 	copyTodo := todoFromObject(copyObj, calendarID, cc)
