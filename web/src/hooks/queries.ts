@@ -22,6 +22,7 @@ import {
   type CorruptedItem,
   type EventInput,
   type EventRestore,
+  type Following,
   type OccurrenceInput,
   type RestoredTodo,
   type Todo,
@@ -433,7 +434,9 @@ export const UNDO_EVENT_KEY = ['undoEvent'] as const
  * series shows busy meanwhile, and the undo waits for the writes ahead of it
  * and holds back the ones after it (NFR-26). `after` is the change's answer:
  * the series' ETag it gave, and the token. The restore's own ETag is noted
- * within the mutation, so the write queued behind it already uses it.
+ * within the mutation, so the write queued behind it already uses it. The
+ * undo of a split goes to the old series and takes the new one back too,
+ * unless another app changed it since (`copyKept`).
  */
 async function undoEventChange(
   qc: QueryClient,
@@ -452,8 +455,13 @@ async function undoEventChange(
     },
   })
   try {
-    await observer.mutate({ event })
-    toast.success(t('scope.undone'))
+    const restored = await observer.mutate({ event })
+    // The new series of a split stays when another app changed it since; the old one is restored anyway.
+    if (restored.copyKept) {
+      toast.warning(t('scope.undoneSeriesKept'))
+    } else {
+      toast.success(t('scope.undone'))
+    }
   } catch (err) {
     if (isApiError(err, 'not_found')) {
       toast.error(t('scope.undoGone'))
@@ -522,6 +530,16 @@ export function useCreateEvent() {
   })
 }
 
+/**
+ * Whether saving `input` makes the series of `event` this one event, deleting
+ * the others, as the server decides (FR-17): saved without a rule, one that
+ * had a rule, or whose all-day flag changed. A series of dates alone (RDATE)
+ * saved as it was keeps them.
+ */
+function removesRule(event: CalEvent, input: EventInput): boolean {
+  return !input.rrule && (event.rrule !== '' || input.allDay !== event.allDay)
+}
+
 /** Saves an event; with the `id` of its series, after the series' other writes (`seriesScope`). */
 export function useUpdateEvent(series?: string) {
   const qc = useQueryClient()
@@ -543,10 +561,8 @@ export function useUpdateEvent(series?: string) {
           {
             reach: 'all',
             color: colorsOf(event.calendarId).solid,
-            // Red where the series became this one event, deleting all the others, as the server
-            // decides: saved without a rule, one that had a rule, or whose all-day flag changed. A
-            // series of dates alone (RDATE) saved as it was keeps them.
-            tone: !input.rrule && (event.rrule !== '' || input.allDay !== event.allDay) ? 'destructive' : 'default',
+            // Red where the series became this one event, deleting all the others.
+            tone: removesRule(event, input) ? 'destructive' : 'default',
           },
         )
       } else {
@@ -830,6 +846,157 @@ export function useDeleteOccurrence(series?: string) {
     },
     onError: (err, event, ctx) => {
       ctx?.snapshot.forEach(([k, data]) => qc.setQueryData(k, data))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, event) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/** The day of `event` as a toast names it, like the scope question; `now` only decides whether it needs its year. */
+function eventDay(event: CalEvent, prefs: FormatPrefs): string {
+  return formatPickerDate(event.startsAt, prefs, new Date())
+}
+
+/**
+ * Splits the series of `event` at it ("This and following events", FR-17):
+ * the series ends before it, and one of its own goes on from it with `input`.
+ * Sent with the ETag the series has now; the old series' new ETag, when the
+ * server told one, is noted within the mutation, so a write queued behind it
+ * in the series' scope already uses it (NFR-26). The event is named in the
+ * path, so `instanceStart` stays out of the body.
+ */
+async function writeFollowing(qc: QueryClient, event: CalEvent, input: EventInput): Promise<Following> {
+  const { instanceStart: _instanceStart, ...body } = input
+  const etag = currentEtag(qc, event)
+  const answer = await endpoints.updateFollowing(event.id, event.recurrenceId ?? '', etag, body)
+  if (answer.etag) replaceEtag(qc, event.id, etag, answer.etag)
+  return answer
+}
+
+/**
+ * The events a split of the series of `event` reached (FR-17): the following
+ * ones, or all of them when the answer's event is still of the same resource,
+ * as the server changes the whole series at what is its first event by now
+ * (a view not reloaded since).
+ */
+function splitReach(event: CalEvent, answer: Following): Scope {
+  return answer.event.id === event.id ? 'all' : 'following'
+}
+
+export const MOVE_FOLLOWING_KEY = [...MOVE_EVENT_KEY, 'following'] as const
+
+/**
+ * Drag & drop move/resize of an event and the following ones of its series
+ * as a series of their own (FR-10, FR-17). Not optimistic, as the series
+ * splits in two: the event shows busy until both series are reloaded, since
+ * `CalendarDnd` finds pending moves by `MOVE_EVENT_KEY`, which
+ * `MOVE_FOLLOWING_KEY` starts with (NFR-26). The toast's Undo is the old
+ * series', which takes the new one back too. With the `id` of the series,
+ * after its other writes.
+ */
+export function useMoveFollowing(series?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
+  const prefs = usePrefs()
+  return useMutation({
+    mutationKey: MOVE_FOLLOWING_KEY,
+    ...seriesScope(series),
+    mutationFn: ({ event, start, end }: MoveVars) => writeFollowing(qc, event, moveInput(event, start, end)),
+    onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
+    onSuccess: (answer, { event, change }, ctx) => {
+      const reach = splitReach(event, answer)
+      const date = eventDay(event, prefs)
+      eventToast(
+        qc,
+        t,
+        event,
+        reach === 'all'
+          ? t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved')
+          : t(change ? 'scope.toast.followingChanged' : 'scope.toast.followingMoved', { date }),
+        { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
+        { reach, color: colorsOf(event.calendarId).solid },
+      )
+    },
+    onError: (err, { event }) => {
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/**
+ * Saves an event and the following ones of its series as a series of their
+ * own (FR-17), not optimistic, like a split by a move. Saved without a rule,
+ * the new series is this one event, so the toast says, in red, that the
+ * series now ends before it. With the `id` of the series, after its other
+ * writes.
+ */
+export function useUpdateFollowing(series?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
+  const prefs = usePrefs()
+  return useMutation({
+    ...seriesScope(series),
+    mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) => writeFollowing(qc, event, input),
+    onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
+    onSuccess: (answer, { event, input }, ctx) => {
+      const reach = splitReach(event, answer)
+      const removed = removesRule(event, input)
+      const date = eventDay(event, prefs)
+      eventToast(
+        qc,
+        t,
+        event,
+        reach === 'all'
+          ? t('scope.toast.allChanged')
+          : t(removed ? 'scope.toast.ended' : 'scope.toast.followingChanged', { date }),
+        { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
+        { reach, color: colorsOf(event.calendarId).solid, tone: removed ? 'destructive' : 'default' },
+      )
+    },
+    onError: (err, { event }) => {
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+    },
+    onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
+  })
+}
+
+/**
+ * Ends the series of `event` before it ("This and following events", FR-17),
+ * not optimistic, like a split. While the series is kept, the answer carries
+ * its new ETag, noted within the mutation like a split's (NFR-26), and the
+ * undo token. A `204` tells neither: the series went, as the event was its
+ * first by now, or the server told no ETag. Either way the toast says the
+ * series ends, without an Undo. With the `id` of the series, after its other
+ * writes.
+ */
+export function useDeleteFollowing(series?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorsOf = useCalendarColors()
+  const prefs = usePrefs()
+  return useMutation({
+    ...seriesScope(series),
+    mutationFn: async (event: CalEvent) => {
+      const etag = currentEtag(qc, event)
+      const res = await endpoints.deleteFollowing(event.id, event.recurrenceId ?? '', etag)
+      if (res?.etag) replaceEtag(qc, event.id, etag, res.etag)
+      return res
+    },
+    onMutate: (event) => ({ generation: startSeriesWrite(qc, event.id) }),
+    onSuccess: (res, event, ctx) => {
+      eventToast(
+        qc,
+        t,
+        event,
+        t('scope.toast.ended', { date: eventDay(event, prefs) }),
+        { etag: res?.etag ?? '', undoToken: res?.undoToken, generation: ctx.generation },
+        { reach: 'following', color: colorsOf(event.calendarId).solid, tone: 'destructive' },
+      )
+    },
+    onError: (err, event) => {
       reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
     },
     onSettled: (_d, _e, event) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),

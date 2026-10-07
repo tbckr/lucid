@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useMutationState, useQuery } from '@tanstack/react-query'
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action } from 'sonner'
@@ -11,19 +11,24 @@ import { todoToInput } from '@/lib/tasks'
 import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
 import {
+  MOVE_EVENT_KEY,
   queryKeys,
   useCalendarTasks,
   useDeleteEvent,
+  useDeleteFollowing,
   useDeleteOccurrence,
   useDeleteTodo,
   useDeleteTodos,
   useMoveEvent,
+  useMoveFollowing,
   useMoveOccurrence,
   usePendingSeries,
   useTodos,
   useUpdateEvent,
+  useUpdateFollowing,
   useUpdateOccurrence,
   useUpdateTodo,
+  type MoveVars,
 } from './queries'
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -1096,6 +1101,9 @@ describe('event series toasts', () => {
         updateOccurrence: useUpdateOccurrence('e1'),
         deleteOccurrence: useDeleteOccurrence('e1'),
         deleteEvent: useDeleteEvent('e1'),
+        moveFollowing: useMoveFollowing('e1'),
+        updateFollowing: useUpdateFollowing('e1'),
+        deleteFollowing: useDeleteFollowing('e1'),
       }
     }
 
@@ -1115,6 +1123,14 @@ describe('event series toasts', () => {
       ['changing only this event', (h) => h.updateOccurrence.mutate({ event: toCalEvent(second), input })],
       ['deleting only this event', (h) => h.deleteOccurrence.mutate(toCalEvent(second))],
       ['deleting the series', (h) => h.deleteEvent.mutate(toCalEvent(second))],
+      ['moving this and the following events', (h) => h.moveFollowing.mutate({ event: toCalEvent(second), ...to })],
+      [
+        'changing this and the following events',
+        (h) => {
+          h.updateFollowing.mutate({ event: toCalEvent(second), input: { ...input, rrule: 'FREQ=WEEKLY' } })
+        },
+      ],
+      ['deleting this and the following events', (h) => h.deleteFollowing.mutate(toCalEvent(second))],
     ]
 
     it.each(starts)('takes the undo of an earlier change away as soon as %s starts', async (_name, start) => {
@@ -1223,6 +1239,386 @@ describe('event series toasts', () => {
       expect(error).toHaveBeenCalledWith("Couldn't undo: the event was changed elsewhere in the meantime.")
     })
     expect(success).not.toHaveBeenCalledWith('Undone.')
+    await waitFor(() => {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+    })
+  })
+})
+
+// FR-17: "This and following events" ends a series before an event, and a change of it goes on
+// from there as a series of its own. Neither is optimistic: the series is reloaded afterwards.
+describe('this and following events', () => {
+  const key = queryKeys.events('c1', 'r1', 'r2')
+  const first = apiEvent({
+    id: 'e1',
+    key: 'e1@2025-03-03T08:00:00Z',
+    etag: '"1"',
+    start: '2025-03-03T08:00:00Z',
+    end: '2025-03-03T09:00:00Z',
+    recurring: true,
+    rrule: 'FREQ=WEEKLY',
+    recurrenceId: '2025-03-03T08:00:00Z',
+    first: true,
+  })
+  // Mon, Mar 17: the event the series is split at.
+  const late = apiEvent({
+    ...first,
+    key: 'e1@2025-03-17T08:00:00Z',
+    start: '2025-03-17T08:00:00Z',
+    end: '2025-03-17T09:00:00Z',
+    recurrenceId: '2025-03-17T08:00:00Z',
+    first: false,
+  })
+  const to = { start: '2025-03-17T10:00:00Z', end: '2025-03-17T11:00:00Z' }
+  const input = { title: 'Event', description: '', location: '', allDay: false, timezone: 'Europe/Berlin', ...to }
+  /** The answer to a split: the event in the new series `e9`, and the old series' new ETag. */
+  const split = (etag: string, undoToken?: string) =>
+    jsonResponse(200, {
+      event: apiEvent({ ...late, ...to, id: 'e9', key: 'e9@2025-03-17T10:00:00Z', uid: 'u9', etag: '"n1"', first: true }),
+      etag,
+      ...(undoToken ? { undoToken } : {}),
+    })
+  /** The answer when the server changed the whole series, as it does at its first event. */
+  const whole = (etag: string, undoToken?: string) =>
+    jsonResponse(200, { event: apiEvent({ ...late, ...to, etag }), etag, ...(undoToken ? { undoToken } : {}) })
+  const red = 'var(--destructive)'
+
+  beforeEach(() => {
+    // Only the date, so the toast leaves the year out: fake timers would stall the requests.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2025, 2, 10, 12))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A client holding the series, and a server answering each request with the next of `answers`. */
+  function setup(...answers: (Response | Promise<Response>)[]) {
+    api.setCsrfToken('tok')
+    const queryClient = eventClient()
+    queryClient.setQueryData<EventList>(key, { events: [first, late], corrupted: [] })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const next = answers.shift()
+      return next ? Promise.resolve(next) : Promise.reject(new Error('unexpected request'))
+    })
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const writes = () =>
+      fetch.mock.calls.map(([url, init]) => ({
+        request: `${init?.method} ${urlOf(url)}`,
+        etag: (init?.headers as Record<string, string>)['If-Match'],
+        body: bodyOf(init),
+      }))
+    const cached = () => queryClient.getQueryData<EventList>(key)?.events
+    return { queryClient, wrap, writes, cached }
+  }
+
+  it('splits a series from a moved event, and says from when', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap, writes } = setup(split('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(late), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    // The event is named in the path: the body has no instanceStart.
+    expect(writes()).toEqual([
+      {
+        request: 'PUT /api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z',
+        etag: '"1"',
+        body: { ...input, rrule: 'FREQ=WEEKLY' },
+      },
+    ])
+    const shown = toastOf(success.mock.calls, 'Moved from Mon, Mar 17 on, as a series of its own.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    // This event and the ones after it, in the color of its calendar.
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+  })
+
+  it('says the series changed from when after a resize', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(split('"2"', 'tok'))
+    const { result } = renderHook(() => useMoveFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(late), ...to, change: true })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(toastOf(success.mock.calls, 'Changed from Mon, Mar 17 on, as a series of its own.')).toMatchObject({
+      id: 'series:e1',
+      action: 'Undo',
+    })
+    expect(success).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks a split busy as a move, until the server answers', async () => {
+    let answerSplit: (r: Response) => void = () => undefined
+    const { queryClient, wrap, cached } = setup(new Promise<Response>((resolve) => (answerSplit = resolve)))
+    const { result } = renderHook(
+      () => ({
+        split: useMoveFollowing('e1'),
+        // As `CalendarDnd` finds the tiles to show busy.
+        moving: useMutationState({
+          filters: { mutationKey: MOVE_EVENT_KEY, status: 'pending' },
+          select: (m) => (m.state.variables as MoveVars | undefined)?.event.key,
+        }),
+      }),
+      { wrapper: wrap },
+    )
+
+    act(() => {
+      result.current.split.mutate({ event: toCalEvent(late), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.moving).toEqual([late.key])
+    })
+    // Not optimistic: the event stays where it was until the series is reloaded.
+    expect(cached()).toEqual([first, late])
+
+    answerSplit(split('"2"', 'tok'))
+    await waitFor(() => {
+      expect(result.current.moving).toEqual([])
+    })
+    await waitFor(() => {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+    })
+  })
+
+  it("queues a write behind a split with the old series' new ETag", async () => {
+    let answerSplit: (r: Response) => void = () => undefined
+    const { queryClient, wrap, writes } = setup(
+      new Promise<Response>((resolve) => (answerSplit = resolve)),
+      jsonResponse(200, apiEvent({ ...first, start: '2025-03-03T09:00:00Z', etag: '"10"', modified: true })),
+    )
+    const { result } = renderHook(
+      () => ({ split: useMoveFollowing('e1'), occurrence: useMoveOccurrence('e1') }),
+      { wrapper: wrap },
+    )
+
+    // Both from the events as shown, with the ETag they were loaded with.
+    act(() => {
+      result.current.split.mutate({ event: toCalEvent(late), ...to })
+      result.current.occurrence.mutate({
+        event: toCalEvent(first),
+        start: '2025-03-03T09:00:00Z',
+        end: '2025-03-03T10:00:00Z',
+      })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(writes()).toHaveLength(1)
+
+    answerSplit(split('"9"', 'tok'))
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect(writes()[1]).toMatchObject({
+      request: 'PUT /api/v1/events/e1/occurrences/2025-03-03T08%3A00%3A00Z',
+      etag: '"9"',
+    })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  it('queues a write behind a split with the ETag it had when the server told no new one', async () => {
+    const { queryClient, wrap, writes } = setup(
+      split(''),
+      jsonResponse(200, apiEvent({ ...first, start: '2025-03-03T09:00:00Z', etag: '"10"', modified: true })),
+    )
+    const { result } = renderHook(
+      () => ({ split: useMoveFollowing('e1'), occurrence: useMoveOccurrence('e1') }),
+      { wrapper: wrap },
+    )
+
+    act(() => {
+      result.current.split.mutate({ event: toCalEvent(late), ...to })
+      result.current.occurrence.mutate({
+        event: toCalEvent(first),
+        start: '2025-03-03T09:00:00Z',
+        end: '2025-03-03T10:00:00Z',
+      })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    // No new ETag to go on: the write keeps the one it had, and conflicts as after a change elsewhere.
+    expect(writes()[1]?.etag).toBe('"1"')
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  // Review Focus 5: "following" at what is the series' first event by now (a stale view) is "All".
+  it.each([
+    {
+      write: 'a move',
+      message: 'All events moved.',
+      useWrite: () => {
+        const move = useMoveFollowing('e1')
+        return () => {
+          move.mutate({ event: toCalEvent(late), ...to })
+        }
+      },
+    },
+    {
+      write: 'the editor',
+      message: 'All events changed.',
+      useWrite: () => {
+        const update = useUpdateFollowing('e1')
+        return () => {
+          update.mutate({ event: toCalEvent(late), input: { ...input, rrule: 'FREQ=WEEKLY' } })
+        }
+      },
+    },
+  ])('says all events changed when the server changed the whole series by $write', async ({ message, useWrite }) => {
+    const success = vi.spyOn(toast, 'success')
+    const { queryClient, wrap } = setup(whole('"2"', 'tok'))
+    const { result } = renderHook(useWrite, { wrapper: wrap })
+
+    act(result.current)
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    const shown = toastOf(success.mock.calls, message)
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    expect(success).toHaveBeenCalledTimes(1)
+    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill(CALENDAR_COLOR))
+  })
+
+  it('splits a series from the editor, and says from when', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap, writes } = setup(split('"2"', 'tok'))
+    const { result } = renderHook(() => useUpdateFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({
+        event: toCalEvent(late),
+        input: { ...input, rrule: 'FREQ=DAILY', instanceStart: late.recurrenceId! },
+      })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(writes()).toEqual([
+      {
+        request: 'PUT /api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z',
+        etag: '"1"',
+        body: { ...input, rrule: 'FREQ=DAILY' },
+      },
+    ])
+    const shown = toastOf(success.mock.calls, 'Changed from Mon, Mar 17 on, as a series of its own.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+  })
+
+  it('ends a series from the editor in red when the rule is removed', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(split('"2"', 'tok'))
+    const { result } = renderHook(() => useUpdateFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(late), input: { ...input, rrule: '' } })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'The series now ends before Mon, Mar 17.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', red, red, red])
+  })
+
+  it('ends a series before an event', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap, writes } = setup(jsonResponse(200, { etag: '"2"', undoToken: 'tok' }), jsonResponse(200, { etag: '"3"' }))
+    const { result } = renderHook(() => useDeleteFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(late))
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(writes()[0]).toMatchObject({
+      request: 'DELETE /api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z',
+      etag: '"1"',
+    })
+    const shown = toastOf(success.mock.calls, 'The series now ends before Mon, Mar 17.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000, action: 'Undo' })
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', red, red, red])
+
+    act(shown.click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok' } })
+  })
+
+  // P10: a 204 is either the series deleted (a stale first event) or kept with an ETag the server
+  // didn't tell; either way, nothing to undo.
+  it('says the series ended, without undo, when the server tells no ETag', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { wrap } = setup(new Response(null, { status: 204 }))
+    const { result } = renderHook(() => useDeleteFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate(toCalEvent(late))
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'The series now ends before Mon, Mar 17.')
+    expect(shown).toMatchObject({ id: 'series:e1', duration: 8000 })
+    expect(shown.action).toBeUndefined()
+    expect(dotsOf(shown.icon)).toEqual(['none', 'none', red, red, red])
+    expect(success).not.toHaveBeenCalledWith('Event deleted')
+  })
+
+  // Review Focus 4: the undo of a split deletes the new series only while no other app changed it.
+  it('tells that the new series stays after an undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const warning = vi.spyOn(toast, 'warning')
+    const { wrap, writes } = setup(split('"2"', 'tok'), jsonResponse(200, { etag: '"3"', copyKept: true }))
+    const { result } = renderHook(() => useMoveFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(late), ...to })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    act(toastOf(success.mock.calls, 'Moved from Mon, Mar 17 on, as a series of its own.').click)
+
+    await waitFor(() => {
+      expect(warning).toHaveBeenCalledWith('Undone. The new series was changed in another app and stays.')
+    })
+    expect(success).not.toHaveBeenCalledWith('Undone.')
+    // Sent to the old series, the one the toast is about.
+    expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok' } })
+  })
+
+  it('reports a series that cannot be split', async () => {
+    const error = vi.spyOn(toast, 'error')
+    const { queryClient, wrap } = setup(
+      jsonResponse(400, { error: { code: 'series_split_unsupported', message: 'x' } }),
+    )
+    const { result } = renderHook(() => useMoveFollowing('e1'), { wrapper: wrap })
+
+    act(() => {
+      result.current.mutate({ event: toCalEvent(late), ...to })
+    })
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith("This series can't be split. Change only this event or all events instead.")
+    })
     await waitFor(() => {
       expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
     })
