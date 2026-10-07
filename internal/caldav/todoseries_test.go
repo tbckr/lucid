@@ -380,6 +380,19 @@ func TestRefusedMoveLeavesCalendar(t *testing.T) {
 			start: date(2025, 3, 6, 8, 0),
 		},
 		{
+			// Two apps wrote an override of the moved repeat, one of each
+			// value type, and the anchor's hid the date's (A-11). The move
+			// drops the anchor's; within the day, the date's would take
+			// over the moved repeat.
+			name: "the moved repeat's override of the other value type",
+			comps: [][]string{
+				{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+				{"RECURRENCE-ID:20250310T090000Z", "DESCRIPTION:Timed"},
+				{"RECURRENCE-ID;VALUE=DATE:20250310", "DESCRIPTION:Dated"},
+			},
+			start: date(2025, 3, 10, 10, 0),
+		},
+		{
 			// The repeat off the rule onto the completed 9th.
 			name: "a repeat off the rule",
 			comps: [][]string{

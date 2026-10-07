@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emersion/go-ical"
+
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
 	"github.com/tbckr/lucid/internal/domain"
 )
@@ -401,5 +403,34 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// sameChangeProps confirms a restore only by the stamps of components of the
+// restored kind: a calendar without one confirms none, also against another
+// without one, as there is nothing to compare (A-01). Its only caller,
+// settleRestore, never passes a restored calendar without one, as
+// restoreResource refuses such a snapshot before it writes.
+func TestSameChangeProps(t *testing.T) {
+	t.Parallel()
+	todo := []string{
+		"BEGIN:VTODO", "UID:r", "DTSTAMP:20250301T120000Z", "LAST-MODIFIED:20250301T120000Z", "SEQUENCE:2", "END:VTODO",
+	}
+	event := []string{"BEGIN:VEVENT", "UID:e", "DTSTAMP:20250301T120000Z", "DTSTART:20250301T120000Z", "END:VEVENT"}
+	for _, tc := range []struct {
+		name string
+		a, b []string
+		want bool
+	}{
+		{name: "the same stamps", a: todo, b: todo, want: true},
+		{name: "no component of the kind on either side", a: event, b: event},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			a, b := mustParse(t, ics(tc.a...)), mustParse(t, ics(tc.b...))
+			if got := sameChangeProps(a, b, ical.CompToDo); got != tc.want {
+				t.Errorf("sameChangeProps = %v; want %v", got, tc.want)
+			}
+		})
 	}
 }

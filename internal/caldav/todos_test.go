@@ -2952,21 +2952,122 @@ func TestMoveFixedDaysBySeriesShift(t *testing.T) {
 		mustNotMove(t, e, id, -14*24*time.Hour)
 	})
 
+	// Moved back past another app's completion, a later repeat that lands
+	// next to it, on its day at another time or on the day before its date,
+	// is a repeat of its own: the move goes through, and the completion stays
+	// where it is, off the rule (A-10). Of the same value type, the instants
+	// tell them apart; of the other, the completion's date counts as written
+	// and the repeat's time by its date in the series' zone (A-11).
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		at        time.Time // the current repeat's new start
+		stored    []string
+		dates     []time.Time // from 20 February to 11 March
+		states    []string
+	}{
+		{
+			// Back by two weeks and an hour: the later repeat lands at
+			// 10:00 on the 3rd, which another app completed at 09:00.
+			name:   "at another time of its day",
+			master: []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250317T090000Z", "SUMMARY:Later"},
+			},
+			at: date(2025, 2, 24, 10, 0),
+			stored: []string{
+				"DTSTART:20250224T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID:20250303T090000Z", "RECURRENCE-ID:20250303T100000Z",
+			},
+			dates: []time.Time{
+				date(2025, 2, 24, 10, 0), date(2025, 3, 3, 9, 0), date(2025, 3, 3, 10, 0), date(2025, 3, 10, 10, 0),
+			},
+			states: []string{
+				domain.OccurrenceCurrent, domain.OccurrenceDone, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming,
+			},
+		},
+		{
+			// In New York, from Monday the 17th to Sunday the 2nd: the later
+			// repeat lands on Sunday the 9th, the day before the Monday
+			// another app completed by its date, the 10th, though midnight
+			// UTC of the 10th is still the 9th in New York.
+			name:   "on the day before one by its date, west of UTC",
+			master: []string{"DTSTART;TZID=America/New_York:20250310T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID;VALUE=DATE:20250310", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID;TZID=America/New_York:20250324T090000", "SUMMARY:Later"},
+			},
+			at: date(2025, 3, 2, 14, 0), // 09:00 EST
+			stored: []string{
+				"DTSTART;TZID=America/New_York:20250302T090000", "RRULE:FREQ=WEEKLY;BYDAY=SU\r\n",
+				"RECURRENCE-ID;VALUE=DATE:20250310", "RECURRENCE-ID;TZID=America/New_York:20250309T090000",
+			},
+			dates: []time.Time{date(2025, 3, 2, 14, 0), date(2025, 3, 9, 13, 0), date(2025, 3, 10, 13, 0)},
+			states: []string{
+				domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceDone,
+			},
+		},
+	} {
+		t.Run("a later repeat moved back next to a completion, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			in.Start = &tc.at
+			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "series", storedObject(t, e, id), tc.stored, nil)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 2, 20, 0, 0), date(2025, 3, 12, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, tc.dates, tc.states)
+		})
+	}
+
 	// An EXDATE before the current repeat excluded a repeat the series left
-	// behind; moved back past it, the series has a repeat of its own there,
-	// and the EXDATE goes.
-	t.Run("a move back past an excluded repeat drops its EXDATE", func(t *testing.T) {
-		t.Parallel()
-		e := newEnv(t, caldavtest.Options{})
-		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE:20250303T090000Z"})
-		moveListed(t, e, id, -14*24*time.Hour)
-		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250224T090000Z"}, []string{"EXDATE"})
-		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 2, 20, 0, 0), date(2025, 3, 12, 0, 0))
-		mustNoErr(t, err)
-		checkTodoOccurrences(t, occs,
-			[]time.Time{date(2025, 2, 24, 9, 0), date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0)},
-			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
-	})
+	// behind; moved back past it, or onto its day, the series has a repeat of
+	// its own there, and the EXDATE goes.
+	for _, tc := range []struct {
+		name   string
+		exdate string
+		by     time.Duration
+		start  string
+		dates  []time.Time // from 20 February to 11 March
+		states []string
+	}{
+		{
+			name:   "a move back past an excluded repeat drops its EXDATE",
+			exdate: "EXDATE:20250303T090000Z",
+			by:     -14 * 24 * time.Hour,
+			start:  "DTSTART:20250224T090000Z",
+			dates:  []time.Time{date(2025, 2, 24, 9, 0), date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming},
+		},
+		{
+			// Another app excluded the 3rd by its date (A-11), which is
+			// the day of the new start, not before it, though its instant,
+			// midnight, is.
+			name:   "a move back onto a day excluded by a date drops its EXDATE",
+			exdate: "EXDATE;VALUE=DATE:20250303",
+			by:     -7 * 24 * time.Hour,
+			start:  "DTSTART:20250303T090000Z",
+			dates:  []time.Time{date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0)},
+			states: []string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO", tc.exdate})
+			moveListed(t, e, id, tc.by)
+			checkStored(t, "series", storedObject(t, e, id), []string{tc.start}, []string{"EXDATE"})
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 2, 20, 0, 0), date(2025, 3, 12, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, tc.dates, tc.states)
+		})
+	}
 
 	// Days count in the series' zone, where the rule's days lie, not in UTC
 	// or in the zone of the browser.
@@ -3224,6 +3325,27 @@ func TestMoveOffRuleCurrentMovesSeries(t *testing.T) {
 				date(2025, 3, 13, 9, 0), date(2025, 3, 14, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 21, 9, 0), date(2025, 3, 24, 9, 0),
 			},
 			states: []string{current, upcoming, upcoming, upcoming, upcoming},
+		},
+		{
+			// The COUNT loses the instances before the 9th, the excluded
+			// 2nd, but not the 9th, which moves along to the new anchor and
+			// counts on there, excluded: three of four are left.
+			name: "an interval rule with a COUNT, a day later",
+			master: []string{
+				"DTSTART:20250302T090000Z", "DUE:20250302T100000Z", "RRULE:FREQ=WEEKLY;COUNT=4",
+				"EXDATE:20250302T090000Z", "EXDATE:20250309T090000Z",
+			},
+			by: 24 * time.Hour,
+			stored: []string{
+				"RRULE:FREQ=WEEKLY;COUNT=3\r\n", "DTSTART:20250310T090000Z", "DUE:20250310T100000Z",
+				"EXDATE:20250302T090000Z", "EXDATE:20250310T090000Z",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z",
+			},
+			lacks:  []string{"EXDATE:20250309", "RECURRENCE-ID:20250310"},
+			start:  date(2025, 3, 13, 9, 0),
+			next:   date(2025, 3, 17, 9, 0),
+			dates:  []time.Time{date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0)},
+			states: []string{current, upcoming, upcoming},
 		},
 		{
 			// Back onto the RECURRENCE-ID of the 9th, which its EXDATE no
