@@ -556,6 +556,28 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 	return nil
 }
 
+// rollPast rolls the series s past its current occurrence cur, which leaves
+// it, completed, detached or skipped, to next, the next open one (FR-17, A-10):
+// the master rolls onto next (see roll), also from an occurrence off the rule
+// (see todoOcc.offGrid), whose override goes with the roll. When next lies off
+// the rule, the master stays where it is: cur, off the rule, only loses its
+// override, and cur, an instance, gets an EXDATE (see exclude). It fails with
+// errRuleUnsupported, leaving cal as it was, when the rule cannot be evaluated
+// as roll needs it.
+func (s *todoSeries) rollPast(cal *ical.Calendar, cur, next todoOcc) error {
+	switch {
+	case next.offGrid && cur.offGrid:
+		dropOccurrence(cal, s.master, cur)
+	case next.offGrid:
+		s.exclude(cal, cur)
+	default:
+		if err := s.roll(cal, cur, next); err != nil {
+			return errRuleUnsupported
+		}
+	}
+	return nil
+}
+
 // exclude excludes the completed rule instance occ of s, whose next
 // occurrence lies off the rule, where the master cannot roll (FR-17, A-10):
 // an EXDATE in the form the anchor is written in, and occ's override goes.

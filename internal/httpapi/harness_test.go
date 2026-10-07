@@ -70,6 +70,9 @@ type fakeService struct {
 	// DeleteFollowing and UpdateFollowing, if set.
 	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot, deleteFollowingSnapshot,
 	updateFollowingSnapshot *domain.Snapshot
+	// detachTodoSnapshot and skipTodoSnapshot are returned as the snapshot
+	// of DetachTodoOccurrence and SkipTodoOccurrence, if set.
+	detachTodoSnapshot, skipTodoSnapshot *domain.Snapshot
 
 	calls    []string
 	gotCal   string
@@ -254,6 +257,34 @@ func (f *fakeService) DeleteTodo(_ context.Context, id, etag string) error {
 	f.gotID, f.gotETag = id, etag
 	f.mu.Unlock()
 	return f.record("DeleteTodo")
+}
+
+// DetachTodoOccurrence answers with the rolled series and the detached copy
+// "t-copy", which has the input's title.
+func (f *fakeService) DetachTodoOccurrence(_ context.Context, id, etag string, rid time.Time, in domain.TodoInput) (domain.Todo, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID, f.gotTodo = id, etag, rid, in
+	snap := f.detachTodoSnapshot
+	f.mu.Unlock()
+	if err := f.record("DetachTodoOccurrence"); err != nil {
+		return domain.Todo{}, nil, err
+	}
+	return domain.Todo{
+		ID: id, Title: "Series", ETag: `"6"`, Recurring: true,
+		DetachedCopy: &domain.Todo{ID: "t-copy", Title: in.Title, ETag: `"c"`, DetachedFrom: "series-uid"},
+	}, snap, nil
+}
+
+// SkipTodoOccurrence answers with the rolled series.
+func (f *fakeService) SkipTodoOccurrence(_ context.Context, id, etag string, rid time.Time) (domain.Todo, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID = id, etag, rid
+	snap := f.skipTodoSnapshot
+	f.mu.Unlock()
+	if err := f.record("SkipTodoOccurrence"); err != nil {
+		return domain.Todo{}, nil, err
+	}
+	return domain.Todo{ID: id, Title: "Series", ETag: `"7"`, Recurring: true}, snap, nil
 }
 
 type syncBuffer struct {

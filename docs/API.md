@@ -453,8 +453,9 @@ and the token is kept. A refusal (`4xx`) is answered as above.
 `NEEDS-ACTION | IN-PROCESS | COMPLETED | CANCELLED`.
 
 `undoToken` and `copyKept` are response-only fields, never part of `TodoInput`
-and never seen here: `undoToken` appears on the `PUT` response below when the
-change can be undone, and `copyKept` on the undo endpoint's response when the
+and never seen here: `undoToken` appears on the responses of the writes below
+(`PUT /todos/{todoId}`, and detaching or skipping a repeat) when the change
+can be undone, and `copyKept` on the undo endpoint's response when the
 completed copy it had created could not be removed.
 
 `start` is the todo's `DTSTART`. A todo with `DTSTART` and `DURATION` but no
@@ -498,12 +499,13 @@ absent) unless they apply:
   implicitly may then have told others of a change. A change of such a resource
   succeeds without an `undoToken` (see `PUT` below), as an event's does.
 - `detachedFrom` is the `UID` of the series the todo was detached from, as the
-  property `X-LUCID-DETACHED-FROM` stores it. Every write but one keeps it;
-  giving the todo an `rrule` drops it, as the todo is then a series of its own.
-- `detachedCopy` is the repeat just detached from a series as a todo of its
-  own (a `Todo`, with `detachedFrom`), returned only by the request that
-  detaches it, like `completedCopy` by the one that completes it; never in a
-  list.
+  property `X-LUCID-DETACHED-FROM` stores it. Every write keeps it but one
+  that sets or changes the todo's `rrule`, which drops it, as the todo is then
+  a series of its own.
+- `detachedCopy` is the todo a detach just made of a series' current repeat (a
+  `Todo`, with `detachedFrom`), returned only by
+  `PUT /todos/{todoId}/occurrences/{recurrenceId}` (below), like
+  `completedCopy` by the `PUT` that completes a repeat; never in a list.
 
 ### `GET /api/v1/calendars/{calendarId}/todos/occurrences?start=<RFC3339>&end=<RFC3339>`
 
@@ -644,11 +646,88 @@ Undo is its own endpoint (`POST /api/v1/todos/{todoId}/undo`, below) rather
 than another `PUT`: it restores the todo's resource exactly as the change
 that returned `undoToken` had read it, instead of replaying that edit in
 reverse. It also removes the completed copy that change left, if any, unless
-another client has since changed it (`copyKept: true`). A change of a todo
+another client has since changed it (`copyKept: true`), and the todo a detach
+made (see below). A change of a todo
 whose resource has attendees (`hasAttendees`, wherever in the series they
 are, also in an override the change drops) succeeds without an `undoToken`:
 the server may have sent them the change with the `SEQUENCE` it carries, and a
 restore would write an older one back (RFC 5545 section 3.8.7.4).
+
+### `PUT /api/v1/todos/{todoId}/occurrences/{recurrenceId}` (header `If-Match`) → `200` `Todo`
+
+Detaches the current repeat of a recurring todo ("Only this one"): the repeat
+becomes a todo of its own, changed by the body, and the series rolls on to its
+next repeat. `recurrenceId` is the repeat's `recurrenceId` from
+`GET .../todos/occurrences`: RFC 3339, UTC, whole seconds, URL-encoded.
+
+Body (`TodoInput`), as for `PUT /todos/{todoId}`, with two exceptions: its
+`rrule` is ignored, as the rule belongs to the series, and its `status` must
+leave the repeat open (`NEEDS-ACTION`, `IN-PROCESS`, or absent). `COMPLETED`
+or `CANCELLED` is `400 invalid_input`, before anything is read: a repeat is
+completed through `PUT /todos/{todoId}`. `start` is handled as there: a body
+without it, or without any date, takes the repeat's `start`.
+
+- **The detached todo** is a clone of the repeat as stored, as for a
+  completed copy (see `PUT /todos/{todoId}` above), with a new `id`/`uid`.
+  It takes the body's dates and the fields the body changes (title, notes,
+  checklist with its state, priority), over an override's own. It keeps the
+  repeat's alarms: an override's own where it has any, else the series'. It
+  is open (`STATUS:NEEDS-ACTION`, without `COMPLETED` or `PERCENT-COMPLETE`),
+  and its `X-LUCID-DETACHED-FROM` is the series' `UID` (`detachedFrom`).
+- **The series** rolls on as after a completion, to its next repeat, also
+  from a repeat off the rule, whose override goes. Its title, notes and
+  priority stay as stored, whatever the body says, as only the detached
+  repeat changes. It is `NEEDS-ACTION` again, without `PERCENT-COMPLETE`, and
+  its own checklist is unchecked, as it belongs to the next repeat now.
+
+The detached todo is written first (`If-None-Match: *`), then the series
+(`If-Match`). If the series can't be written, the detached todo is deleted
+again, as a completed copy is, and the error is returned. `200` with the
+rolled series, the detached todo as `detachedCopy`, and an `undoToken` if the
+change can be undone: as for `PUT /todos/{todoId}`, and only where the server
+tells the new `etag` of both. The undo restores the series and deletes the
+detached todo, unless that changed since (see the undo below).
+
+At the series' **last repeat** (`next: null`) there is no next one to roll
+to: the request is `PUT /todos/{todoId}` with the body (without its `rrule`),
+which changes the task itself, and answers as that does, without
+`detachedCopy`.
+
+Errors:
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds; the body is invalid or completes or cancels the repeat;
+  `recurrenceId` is a later open repeat than the current one; or Lucid can't
+  evaluate the series' rule (*"the repeat rule cannot be evaluated"*).
+- `400 series_split_unsupported`: the todo's resource has attendees
+  (`hasAttendees`), at any repeat, the last one too. The repeat, still open,
+  would leave them: the detached todo is written without `ORGANIZER` and
+  `ATTENDEE`, as a completed copy is, and a server that schedules implicitly
+  would tell them only that the series rolled on.
+- `403 read_only`: the calendar is read-only.
+- `404 not_found`: the todo does not exist.
+- `409 conflict`: `If-Match` mismatch, or `recurrenceId` is no open
+  repeat of the series any more, as in a view not reloaded since the series
+  changed elsewhere: it is done, the series rolled past it, it is excluded,
+  cancelled or none of the series, or the todo is completed, cancelled, or no
+  longer recurs. Reload and retry.
+- `428 precondition_required`: `If-Match` missing.
+
+Nothing is written for any of these.
+
+### `DELETE /api/v1/todos/{todoId}/occurrences/{recurrenceId}` (header `If-Match`) → `200` `Todo`
+
+Skips the current repeat of a recurring todo: the series rolls on to its next
+repeat as after a completion, without a copy, also from a repeat off the
+rule, whose override goes. No field changes but those of the roll: the series
+is `NEEDS-ACTION` again, without `PERCENT-COMPLETE`, and its checklist is
+unchecked. `200` with the rolled series (new `etag`) and an `undoToken` if the
+change can be undone, as for `PUT /todos/{todoId}`.
+
+The series' **last repeat** (`next: null`) is not skipped (`400
+invalid_input`): it would leave a series without a repeat; the client deletes
+the task instead. Errors otherwise as for the `PUT` above, except that a
+resource with attendees is skipped, without an `undoToken`, as nothing new is
+written for it.
 
 ### `POST /api/v1/todos/{todoId}/undo` → `200` `Todo`
 
@@ -658,6 +737,11 @@ single-use and short-lived, is the concurrency control).
 Undoes the change that returned `undoToken`. Response `200` with the restored
 `Todo` (new `etag`, no `completedCopy`); `copyKept: true` when the completed
 copy the change had created could not be removed and still exists.
+
+The undo of a detach also deletes the detached todo. If that todo changed
+since, in Lucid or in another client, the undo is refused with `409` and
+writes nothing: the series restored next to it would show that repeat twice,
+and deleting it would lose the change.
 
 If the write that restores the series fails without the server's refusal (a
 `5xx`, no answer), the undo reads the series back, as the undo of an event
@@ -672,7 +756,7 @@ In any other case the answer is `502`, the copy stays, and the token is kept.
 | 403    | `csrf_invalid`   | Missing/wrong CSRF token                                                    |
 | 403    | `read_only`      | Calendar is read-only                                                       |
 | 404    | `not_found`      | Token unknown, expired, already used, or belongs to another todo ("nothing to undo") |
-| 409    | `conflict`       | Todo changed or was deleted since (`If-Match` would have failed)            |
+| 409    | `conflict`       | Todo changed or was deleted since (`If-Match` would have failed), or the todo a detach made changed since; nothing is written |
 | 429    | `rate_limited`   | Too many requests                                                           |
 | 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
 

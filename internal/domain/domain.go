@@ -40,7 +40,9 @@ var (
 	// or walk to the occurrence, the occurrence is at or before DTSTART
 	// without being the first, or a new series of a single event would lose
 	// an event the series shows after it. Nothing is written; the whole
-	// series or only the event can change instead (FR-17).
+	// series or only the event can change instead. A task series with an
+	// ORGANIZER or an ATTENDEE refuses to have a repeat detached ("only this
+	// one") alike (FR-17).
 	ErrSeriesSplitUnsupported = errors.New("series split unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")
@@ -549,6 +551,31 @@ type CalendarService interface {
 	// then it stays, and the todo reports CopyKept (FR-17).
 	RestoreTodo(ctx context.Context, snap Snapshot) (Todo, error)
 	DeleteTodo(ctx context.Context, todoID, etag string) error
+	// DetachTodoOccurrence turns the current repeat at recurrenceID of the
+	// recurring todo todoID into a todo of its own ("only this one"), changed
+	// by in as UpdateTodo changes a todo, but for in.RRule, which is the
+	// series' and ignored; the series rolls on to its next repeat, as after a
+	// completion, with its own title, notes and priority. It returns the
+	// rolled series with the new todo as DetachedCopy, and the snapshot that
+	// RestoreTodo undoes the change with, which also deletes the new todo
+	// (nil when either ETag is unknown, or the resource has an ORGANIZER or
+	// an ATTENDEE). At the series' last repeat it is UpdateTodo with in, and
+	// answers as that does. A status of in that completes or cancels the
+	// repeat is ErrInvalidInput, and so is a later repeat than the current
+	// one; a resource with an ORGANIZER or an ATTENDEE is
+	// ErrSeriesSplitUnsupported; a recurrenceID that is no open repeat of the
+	// series any more, as in a view not reloaded since, is ErrConflict.
+	// Nothing is written then. etag must match (If-Match), otherwise
+	// ErrConflict (FR-17).
+	DetachTodoOccurrence(ctx context.Context, todoID, etag string, recurrenceID time.Time, in TodoInput) (Todo, *Snapshot, error)
+	// SkipTodoOccurrence skips the current repeat at recurrenceID of the
+	// recurring todo todoID: the series rolls on to its next repeat, as after
+	// a completion, without a copy. It returns the rolled series and the
+	// snapshot RestoreTodo undoes the change with, as UpdateTodo does. The
+	// series' last repeat is not skipped (ErrInvalidInput; the task is
+	// deleted instead), and the rest is refused as by DetachTodoOccurrence,
+	// except that an ORGANIZER or an ATTENDEE is none (FR-17).
+	SkipTodoOccurrence(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
 }
 
 // Provider connects users to their CalDAV server.

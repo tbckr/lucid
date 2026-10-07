@@ -932,6 +932,57 @@ date: with its default, "Show unstarted" on, nothing changes there; with it
 off, a timed series shows only from its due time on. Lucid's own editor shows
 the series with a start equal to its due date from the first completion on.
 
+**Detaching** the current occurrence ("only this one") makes it a task of its
+own and lets the series roll on. It writes the same two resources as a
+completion, in the same steps, but leaves the occurrence open:
+
+1. The detached task under a new UID (`If-None-Match: *`), a clone of the
+   occurrence as stored like a completed copy, with the request's dates and
+   the fields the client changed, the checklist with its state. Unlike a
+   completed copy it stays open (`STATUS:NEEDS-ACTION`, without `COMPLETED`
+   or `PERCENT-COMPLETE`), and it keeps its alarms: copies of the
+   override's own where it has any, else of the series'. It records where it
+   came from in `X-LUCID-DETACHED-FROM`, the series' `UID`, so that the UI
+   can say so. No other client reads it; to them it is a plain task. A
+   series that carries such a property itself, as a detached task another
+   app gave a rule may, passes it on to its clones; the detached task's is
+   set over it, never added next to it.
+2. The rolled series (`If-Match`), as after a completion: the same roll, also
+   from an occurrence off the rule, whose override goes, or the same
+   `EXDATE` before one. Only the series' own fields stay: its title, notes
+   and priority as stored, whatever the request says, as "only this one"
+   changes only the detached occurrence. It is open again, without
+   `PERCENT-COMPLETE`, and its own checklist is unchecked, as it belongs to
+   the next occurrence now.
+
+If the series cannot be written, the detached task goes again, as a
+completed copy does. The last occurrence has no next one to roll to: "only
+this one" is all of it, and Lucid changes the task itself, as an edit of the
+series would. Nothing is detached from a series with an `ORGANIZER` or an
+`ATTENDEE`, not even its last occurrence: the occurrence, still open, would
+leave its attendees. The new task is written without `ORGANIZER` and
+`ATTENDEE`, as a completed copy is, and a server that schedules implicitly
+would tell them only that the series rolled on (RFC 6638). A request to
+detach an occurrence as completed or cancelled is refused too: completing
+goes as above.
+
+**Skipping** the current occurrence rolls the series on as a completion
+does, without a copy: nothing records that the occurrence was skipped. Only
+the roll changes the series: it is open again, without `PERCENT-COMPLETE`,
+and its checklist is unchecked. The last occurrence is not skipped, which
+would leave a series without one; the user deletes the task instead. A
+series with attendees is skipped all the same, since nothing new is written
+for it, but gets no undo (see below).
+
+Both name the occurrence by its `RECURRENCE-ID`, as the calendar shows it,
+and act only on the current one. A later one is refused, as the rolling
+model has no place for it (see
+[Moving one occurrence](#moving-one-occurrence)). One that is no open
+occurrence any more, done, rolled past, excluded or cancelled since, as from
+a view not reloaded since another client changed the series, is answered as
+a conflict, as for events: the user sees the series as it is now and decides
+again.
+
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
 `DUE` gets a `DTSTART` here too), and drops that occurrence's override and
@@ -1017,7 +1068,14 @@ those bytes puts back everything the write touched together: a completion's
 roll, a move's shifted references and `UNTIL`, or a rule change's dropped
 overrides and `EXDATE`s. It also removes the completed copy that write
 created, unless another client has since changed it, when the copy stays
-and the response reports `copyKept: true`. A rule change or removal that
+and the response reports `copyKept: true`. A completed copy is a record of
+its own and may stay; a detached task may not. The series restored next to
+it would show that occurrence twice, open in both, and deleting it would
+lose the change. So the undo of a detach is refused (`409`) when the
+detached task changed since, in Lucid or another app, before anything is
+written. A detach whose server tells the detached task's ETag neither on its
+create nor when read back hands out no undo at all: the undo could never tell
+that task unchanged. A rule change or removal that
 converted other clients' completions into entries of their own (see below)
 returns no `undoToken` to begin with, so those entries are never undone by
 it. So does a write to a resource that has an `ORGANIZER` or an `ATTENDEE` on
@@ -1061,10 +1119,11 @@ keeps the properties and components Lucid does not know.
 
 ### Limits
 
-- Only the current occurrence can be completed, so occurrences are completed
-  in order. Later ones are a preview, and none can be skipped.
-- No occurrence moves on its own: moving the current one, one off the rule
-  too, moves the series from it on. With an interval rule the later
+- Only the current occurrence can be completed, detached or skipped, so
+  occurrences are completed in order. Later ones are a preview.
+- No occurrence moves on its own within the series: moving the current one,
+  one off the rule too, moves the series from it on, and only detaching it
+  moves it alone, as a task of its own. With an interval rule the later
   occurrences move along, so in the calendar any of them can be dragged as
   well, like an occurrence of a recurring event: the series moves by the
   distance it was dragged, from the current occurrence on. On fixed days the

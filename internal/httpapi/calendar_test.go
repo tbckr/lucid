@@ -34,6 +34,8 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"x"}`},
 		{method: http.MethodPut, path: "/api/v1/todos/t1", body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodPut, path: todoRepeatPath, body: `{"title":"x"}`, headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodDelete, path: todoRepeatPath, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"x"}`},
 		{method: http.MethodPost, path: "/api/v1/events/e1/undo", body: `{"token":"x"}`},
 	} {
@@ -967,6 +969,141 @@ func TestUndoTodoErrors(t *testing.T) {
 		other := h.login(t)
 		w := h.do(t, other, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + token + `"}`})
 		expectError(t, w, http.StatusNotFound, codeNotFound)
+	})
+}
+
+const (
+	// todoRepeatPath names the repeat of the todo t1 on 10 March 2025, 08:00
+	// UTC, for detaching (PUT) or skipping (DELETE) it.
+	todoRepeatPath = "/api/v1/todos/t1/occurrences/2025-03-10T08:00:00Z"
+	todoRepeatBody = `{"title":"Water plants","start":"2025-03-10T09:00:00Z","rrule":"FREQ=DAILY"}`
+)
+
+// TestTodoRepeatWrites checks the routes that detach and skip one repeat of a
+// task series: the path values and the body reach the service, and its
+// errors answer as for the other todo writes, a series with attendees that
+// cannot be detached as 400 series_split_unsupported (FR-17).
+func TestTodoRepeatWrites(t *testing.T) {
+	t.Parallel()
+	ifMatch := map[string]string{"If-Match": `"t-etag"`}
+	wantRID := time.Date(2025, 3, 10, 8, 0, 0, 0, time.UTC)
+	put := func(path, body string, headers map[string]string) req {
+		return req{method: http.MethodPut, path: path, body: body, headers: headers}
+	}
+	del := func(path string, headers map[string]string) req {
+		return req{method: http.MethodDelete, path: path, headers: headers}
+	}
+	tests := []struct {
+		name   string
+		rq     req
+		svcErr error
+		status int
+		code   string
+		call   string
+	}{
+		{"detach", put(todoRepeatPath, todoRepeatBody, ifMatch), nil, http.StatusOK, "", "DetachTodoOccurrence"},
+		{"detach encoded", put("/api/v1/todos/t1/occurrences/2025-03-10T08%3A00%3A00Z", todoRepeatBody, ifMatch), nil, http.StatusOK, "", "DetachTodoOccurrence"},
+		{"detach bad recurrence id", put("/api/v1/todos/t1/occurrences/x", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"detach fractional seconds", put("/api/v1/todos/t1/occurrences/2025-03-10T08:00:00.5Z", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"detach no if-match", put(todoRepeatPath, todoRepeatBody, nil), nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+		{"detach invalid body", put(todoRepeatPath, `{"title":""}`, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"detach long id", put("/api/v1/todos/"+strings.Repeat("t", 1100)+"/occurrences/2025-03-10T08:00:00Z", todoRepeatBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"detach a later repeat", put(todoRepeatPath, todoRepeatBody, ifMatch), fmt.Errorf("%w: not the current repeat", domain.ErrInvalidInput), http.StatusBadRequest, codeInvalidInput, "DetachTodoOccurrence"},
+		{"detach a stale repeat", put(todoRepeatPath, todoRepeatBody, ifMatch), domain.ErrConflict, http.StatusConflict, codeConflict, "DetachTodoOccurrence"},
+		{"detach with attendees", put(todoRepeatPath, todoRepeatBody, ifMatch), fmt.Errorf("%w: attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported, "DetachTodoOccurrence"},
+		{"detach not found", put(todoRepeatPath, todoRepeatBody, ifMatch), domain.ErrNotFound, http.StatusNotFound, codeNotFound, "DetachTodoOccurrence"},
+		{"skip", del(todoRepeatPath, ifMatch), nil, http.StatusOK, "", "SkipTodoOccurrence"},
+		{"skip bad recurrence id", del("/api/v1/todos/t1/occurrences/x", ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"skip no if-match", del(todoRepeatPath, nil), nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+		{"skip long id", del("/api/v1/todos/"+strings.Repeat("t", 1100)+"/occurrences/2025-03-10T08:00:00Z", ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"skip the last repeat", del(todoRepeatPath, ifMatch), fmt.Errorf("%w: the last repeat", domain.ErrInvalidInput), http.StatusBadRequest, codeInvalidInput, "SkipTodoOccurrence"},
+		{"skip a stale repeat", del(todoRepeatPath, ifMatch), domain.ErrConflict, http.StatusConflict, codeConflict, "SkipTodoOccurrence"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.err = tt.svcErr
+			w := h.do(t, c, tt.rq)
+			if tt.code != "" {
+				expectError(t, w, tt.status, tt.code)
+			} else {
+				decode(t, w, tt.status, nil)
+			}
+			if got := strings.Join(h.svc.calls, ","); got != tt.call {
+				t.Fatalf("calls = %q, want %q", got, tt.call)
+			}
+			if tt.call != "" && (h.svc.gotID != "t1" || h.svc.gotETag != `"t-etag"` || !h.svc.gotRID.Equal(wantRID)) {
+				t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
+			}
+			if got := h.svc.gotTodo; tt.call == "DetachTodoOccurrence" && (got.Title != "Water plants" || got.Start == nil) {
+				t.Errorf("got body %+v; want the request's", got)
+			}
+		})
+	}
+}
+
+// TestTodoRepeatAnswers checks what detaching and skipping a repeat answer:
+// 200 with the rolled series, for a detach with the detached task as
+// detachedCopy, both with checklists as arrays, and the undo token where the
+// service hands out a snapshot (FR-17).
+func TestTodoRepeatAnswers(t *testing.T) {
+	t.Parallel()
+	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: "t1", ETag: `"2"`, Data: []byte("x"), Account: "acct", TakenAt: time.Now()}
+	ifMatch := map[string]string{"If-Match": `"t-etag"`}
+	for _, tc := range []struct {
+		name     string
+		rq       req
+		snapshot bool
+		detached bool
+	}{
+		{"detach", req{method: http.MethodPut, path: todoRepeatPath, body: todoRepeatBody, headers: ifMatch}, true, true},
+		{"detach without a snapshot", req{method: http.MethodPut, path: todoRepeatPath, body: todoRepeatBody, headers: ifMatch}, false, true},
+		{"skip", req{method: http.MethodDelete, path: todoRepeatPath, headers: ifMatch}, true, false},
+		{"skip without a snapshot", req{method: http.MethodDelete, path: todoRepeatPath, headers: ifMatch}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			c := h.login(t)
+			if tc.snapshot {
+				h.svc.detachTodoSnapshot, h.svc.skipTodoSnapshot = snap, snap
+			}
+			w := h.do(t, c, tc.rq)
+			body := w.Body.String()
+			var got domain.Todo
+			decode(t, w, http.StatusOK, &got)
+			if got.ID != "t1" || got.ETag == "" || (got.DetachedCopy != nil) != tc.detached ||
+				(tc.detached && (got.DetachedCopy.ID != "t-copy" || got.DetachedCopy.Title != "Water plants")) {
+				t.Errorf("answer = %+v; want the rolled series, with the detached task: %v", got, tc.detached)
+			}
+			if tc.snapshot != (len(got.UndoToken) == 43) {
+				t.Errorf("undoToken = %q; want one: %v", got.UndoToken, tc.snapshot)
+			}
+			wantLists := 1
+			if tc.detached {
+				wantLists = 2
+			}
+			if n := strings.Count(body, `"checklist":[]`); n != wantLists {
+				t.Errorf("%d empty checklist arrays; want %d: %s", n, wantLists, body)
+			}
+		})
+	}
+
+	// A token of a detach undoes it at the todo's own undo route.
+	t.Run("the token undoes the detach", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.detachTodoSnapshot = snap
+		var got domain.Todo
+		decode(t, h.do(t, c, req{method: http.MethodPut, path: todoRepeatPath, body: todoRepeatBody, headers: ifMatch}), http.StatusOK, &got)
+		w := h.do(t, c, req{method: http.MethodPost, path: "/api/v1/todos/t1/undo", body: `{"token":"` + got.UndoToken + `"}`})
+		decode(t, w, http.StatusOK, nil)
+		if h.svc.gotSnap.ID != "t1" || h.svc.gotSnap.ETag != `"2"` {
+			t.Errorf("RestoreTodo got %+v", h.svc.gotSnap)
+		}
 	})
 }
 

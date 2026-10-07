@@ -361,16 +361,9 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
-	// Keep DTSTART for clients that predate `start`, and for recurring todos
-	// sent without any date: RFC 5545 requires DTSTART with RRULE (FR-16).
-	if in.StartOmitted || (in.Start == nil && in.Due == nil && cur.Recurring) {
-		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
-	}
-	unchanged := sameDates(cur, in)
-	if !unchanged {
-		if err := in.ValidateDates(); err != nil {
-			return domain.Todo{}, nil, err
-		}
+	unchanged, err := fillTodoDates(cur, &in)
+	if err != nil {
+		return domain.Todo{}, nil, err
 	}
 	edit, rr, err := ruleEditOf(c, in)
 	if err != nil {
@@ -471,26 +464,50 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	return t, s.snapshot(todoID, cur, raw, t, entries), nil
 }
 
+// fillTodoDates fills in the dates a change of the todo cur, as read, leaves
+// out of in (FR-16): a body without start keeps cur's, for clients that
+// predate it, and so does a recurring todo sent without any date, as RFC 5545
+// requires DTSTART with RRULE; for an open series, cur's dates are those of
+// its current occurrence. It reports whether in then has cur's dates, and
+// checks them only where it does not, so that todos from other clients can
+// still be completed.
+func fillTodoDates(cur domain.Todo, in *domain.TodoInput) (unchanged bool, err error) {
+	if in.StartOmitted || (in.Start == nil && in.Due == nil && cur.Recurring) {
+		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
+	}
+	if sameDates(cur, *in) {
+		return true, nil
+	}
+	return false, in.ValidateDates()
+}
+
 // snapshot returns what undoes a change of the todo todoID, read as cur from
 // raw, that left t (FR-17): raw itself, the ETag the change gave it and the
-// completed copy the change left, which may stay when it changed since (see
-// domain.CreatedRef.MayStay). Only the change of a recurring todo gets
-// one, and only when its new ETag is known: without it, an undo could not
-// tell another client's change from its own. A change that turned completed
-// overrides into the entries entries gets none: restoring raw would bring
-// the overrides back next to their entries (A-18). There is none either if
-// the resource as read has attendees (cur.HasAttendees, also in an override
-// the change dropped): the server may have sent them the change with the
-// SEQUENCE it carries, and a restore would write an older one back (RFC 5545
-// section 3.8.7.4), as for events (see eventSnapshot). The undo store stamps
-// when it took the snapshot in, by its own clock.
+// todo the change created, the completed copy, which may stay when it changed
+// since, or the detached one, which may not (see domain.CreatedRef.MayStay).
+// Only the change of a recurring todo gets one, and only when its new ETag is
+// known: without it, an undo could not tell another client's change from its
+// own. Neither is there one when the ETag of a detached todo is unknown: an
+// undo could never tell it unchanged, and would always be refused. A change
+// that turned completed overrides into the entries entries gets none:
+// restoring raw would bring the overrides back next to their entries (A-18).
+// There is none either if the resource as read has attendees
+// (cur.HasAttendees, also in an override the change dropped): the server may
+// have sent them the change with the SEQUENCE it carries, and a restore would
+// write an older one back (RFC 5545 section 3.8.7.4), as for events (see
+// eventSnapshot). The undo store stamps when it took the snapshot in, by its
+// own clock.
 func (s *service) snapshot(todoID string, cur domain.Todo, raw []byte, t domain.Todo, entries []calObject) *domain.Snapshot {
-	if !cur.Recurring || cur.HasAttendees || t.ETag == "" || len(entries) > 0 {
+	detached := t.DetachedCopy
+	if !cur.Recurring || cur.HasAttendees || t.ETag == "" || len(entries) > 0 || (detached != nil && detached.ETag == "") {
 		return nil
 	}
 	snap := &domain.Snapshot{Kind: domain.SnapshotTodo, ID: todoID, ETag: t.ETag, Data: raw, Account: s.identity()}
 	if c := t.CompletedCopy; c != nil {
-		snap.Created = []domain.CreatedRef{{ID: c.ID, ETag: c.ETag, MayStay: true}}
+		snap.Created = append(snap.Created, domain.CreatedRef{ID: c.ID, ETag: c.ETag, MayStay: true})
+	}
+	if detached != nil {
+		snap.Created = append(snap.Created, domain.CreatedRef{ID: detached.ID, ETag: detached.ETag})
 	}
 	return snap
 }
@@ -600,62 +617,138 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 //
 // It returns the rolled series with the copy as CompletedCopy.
 func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput) (domain.Todo, error) {
+	t, copyTodo, err := s.writeOffCurrent(ctx, objPath, calPath, etag, cal, c, series, in, true)
+	if err != nil {
+		return domain.Todo{}, err
+	}
+	t.CompletedCopy = &copyTodo
+	return t, nil
+}
+
+// writeOffCurrent splits the current occurrence of the open series c in cal
+// off as a todo of its own, completed or not, see splitOffCurrent, and writes
+// it and then the rolled series, see writeCreatedThenMaster (FR-17). It
+// returns both as written: the series, with its new ETag if the server tells
+// it, and the todo split off.
+func (s *service) writeOffCurrent(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput, completed bool) (t, split domain.Todo, err error) {
+	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
+	cc, copyCal, err := s.splitOffCurrent(cal, c, series, in, cur, completed, s.p.now().UTC())
+	if err != nil {
+		return domain.Todo{}, domain.Todo{}, err
+	}
+	defer s.invalidate(calPath)
+	calendarID := encodeID(calPath)
+	copyObj := calObject{path: objectPath(calPath, text(cc.Props, ical.PropUID)+".ics"), cal: copyCal}
+	o := calObject{path: objPath, cal: cal}
+	if o.etag, err = s.writeCreatedThenMaster(ctx, calPath, &copyObj, objPath, cal, etag); err != nil {
+		return domain.Todo{}, domain.Todo{}, err
+	}
+	return todoFromObject(o, calendarID, c), todoFromObject(copyObj, calendarID, cc), nil
+}
+
+// splitOffCurrent splits the current occurrence of the open series c in cal,
+// the todo cur as read, off as a todo of its own, and rolls the series on to
+// its next occurrence, all in memory (FR-15, FR-17). It is what completing
+// and detaching the current occurrence share; the copy and the series differ
+// by completed:
+//
+//   - The copy, a clone of the occurrence as stored (see cloneOccurrence),
+//     takes the dates of in where they differ from cur's, the occurrence's,
+//     and the fields of in that differ from cur's (see applyChangedFields),
+//     the checklist with its state. A completed one is marked completed and
+//     has no alarms, since a done task must not ring. A detached one keeps
+//     the occurrence's alarms, is open (STATUS:NEEDS-ACTION, without
+//     COMPLETED or PERCENT-COMPLETE), and carries the UID of the series it
+//     was detached from (propDetachedFrom), set over one it may have cloned
+//     from the series, never added next to it.
+//   - The series rolls on, see rollPast, and is open (STATUS:NEEDS-ACTION,
+//     without COMPLETED or PERCENT-COMPLETE). On a completion it takes in's
+//     fields, its checklist unchecked: the client edited the series it was
+//     given. On a detach its title, notes and priority stay as stored, as
+//     in's fields are the detached occurrence's, and only its own checklist
+//     is unchecked, see reopen.
+//
+// It returns the copy and a calendar of its own for it, with the VTIMEZONEs
+// of the series as read (see entryCalendar). The series has a next
+// occurrence, or it is ErrInvalidInput: the last one has nothing to roll to.
+// It fails, with cal unchanged, when the rule cannot be evaluated as far as
+// the roll needs it, see rollPast.
+func (s *service) splitOffCurrent(cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput, cur domain.Todo, completed bool, now time.Time) (cc *ical.Component, copyCal *ical.Calendar, err error) {
 	occ, next, err := series.current()
 	if err != nil {
-		return domain.Todo{}, errRuleUnsupported
+		return nil, nil, errRuleUnsupported
 	}
 	if next == nil {
 		// UpdateTodo completes the master itself for the last occurrence.
-		return domain.Todo{}, fmt.Errorf("%w: the series has no next occurrence", domain.ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: the series has no next occurrence", domain.ErrInvalidInput)
 	}
-	now := s.p.now().UTC()
-	calendarID := encodeID(calPath)
 
 	// The copy is the occurrence as stored, changed where the client changed
 	// the series as it was given: its dates, its fields.
-	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
-	uid := newUID()
-	cc := cloneOccurrence(series, occ, uid, now)
+	cc = cloneOccurrence(series, occ, newUID(), now, !completed)
 	if !sameDates(cur, in) {
 		series.setEntryDates(cc, todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay})
 	}
 	applyChangedFields(cc, in, cur, now)
-	markCompleted(cc, now)
-	copyCal := entryCalendar(cal, cc)
+	if completed {
+		markCompleted(cc, now)
+	} else {
+		markOpen(cc)
+		// TEXT is the value type of an X- property (RFC 5545 section
+		// 3.8.8.2), which go-ical would write out as VALUE=TEXT.
+		origin := ical.NewProp(propDetachedFrom)
+		origin.SetText(text(c.Props, ical.PropUID))
+		origin.Params.Del(ical.ParamValue)
+		cc.Props.Set(origin)
+	}
+	copyCal = entryCalendar(cal, cc)
 
 	// Roll the master in memory first: a rule that cannot be evaluated to its
 	// end fails before anything is written.
-	switch {
-	case next.offGrid && occ.offGrid:
-		dropOccurrence(cal, c, occ)
-	case next.offGrid:
-		series.exclude(cal, occ)
-	default:
-		if err := series.roll(cal, occ, *next); err != nil {
-			return domain.Todo{}, errRuleUnsupported
+	if err := series.rollPast(cal, occ, *next); err != nil {
+		return nil, nil, err
+	}
+	if completed {
+		rolled := in
+		rolled.Status = domain.TodoNeedsAction
+		rolled.Checklist = make([]domain.ChecklistItem, len(in.Checklist))
+		for i, it := range in.Checklist {
+			it.Done = false
+			rolled.Checklist[i] = it
 		}
+		applyTodoFields(c, rolled, now)
+		c.Props.Del(ical.PropPercentComplete)
+	} else {
+		reopen(c)
 	}
-	rolled := in
-	rolled.Status = domain.TodoNeedsAction
-	rolled.Checklist = make([]domain.ChecklistItem, len(in.Checklist))
-	for i, it := range in.Checklist {
-		it.Done = false
-		rolled.Checklist[i] = it
-	}
-	applyTodoFields(c, rolled, now)
-	c.Props.Del(ical.PropPercentComplete)
 	bumpChangeProps(c, now)
+	return cc, copyCal, nil
+}
 
-	defer s.invalidate(calPath)
-	copyObj := calObject{path: objectPath(calPath, uid+".ics"), cal: copyCal}
-	o := calObject{path: objPath, cal: cal}
-	if o.etag, err = s.writeCreatedThenMaster(ctx, calPath, &copyObj, objPath, cal, etag); err != nil {
-		return domain.Todo{}, err
+// markOpen sets STATUS:NEEDS-ACTION and removes COMPLETED and
+// PERCENT-COMPLETE: c is a todo nothing has been done of (FR-17).
+func markOpen(c *ical.Component) {
+	c.Props.Set(rawProp(ical.PropStatus, domain.TodoNeedsAction))
+	c.Props.Del(ical.PropCompleted)
+	c.Props.Del(ical.PropPercentComplete)
+}
+
+// reopen opens the master c of a series rolled past an occurrence that left
+// without a change of the series, detached or skipped, for its next one, as
+// a completion does (FR-17): STATUS:NEEDS-ACTION, without COMPLETED or
+// PERCENT-COMPLETE, and its own checklist unchecked, which belongs to the
+// next occurrence now. Its title, notes and priority stay as stored, and so
+// does DESCRIPTION while nothing on its checklist is checked.
+func reopen(c *ical.Component) {
+	markOpen(c)
+	notes, list := splitChecklist(text(c.Props, ical.PropDescription))
+	if !slices.ContainsFunc(list, func(it domain.ChecklistItem) bool { return it.Done }) {
+		return
 	}
-	copyTodo := todoFromObject(copyObj, calendarID, cc)
-	t := todoFromObject(o, calendarID, c)
-	t.CompletedCopy = &copyTodo
-	return t, nil
+	for i := range list {
+		list[i].Done = false
+	}
+	setText(c.Props, ical.PropDescription, joinChecklist(notes, list))
 }
 
 // convertDoneOverrides creates a completed entry (cloneOccurrence) for every
@@ -683,7 +776,7 @@ func (s *service) convertDoneOverrides(ctx context.Context, calPath string, cal 
 			continue
 		}
 		uid := newUID()
-		c := cloneOccurrence(series, occ, uid, now)
+		c := cloneOccurrence(series, occ, uid, now, false)
 		markCompleted(c, now)
 		entry := calObject{path: objectPath(calPath, uid+".ics"), cal: entryCalendar(cal, c)}
 		if entry.etag, err = s.putObject(ctx, entry.path, entry.cal, "", true); err != nil {
@@ -704,17 +797,20 @@ const propExRule = "EXRULE"
 
 // cloneOccurrence returns a new VTODO for occ of series s (FR-17): the master's
 // properties overlaid with occ's override, without RRULE, RDATE, EXDATE,
-// EXRULE, RECURRENCE-ID, X-KDE-LIBKCAL-DTRECURRENCE, VALARM children,
-// RELATED-TO;RELTYPE=CHILD, ORGANIZER and ATTENDEE, with a new UID and fresh
+// EXRULE, RECURRENCE-ID, X-KDE-LIBKCAL-DTRECURRENCE, RELATED-TO;RELTYPE=CHILD,
+// ORGANIZER and ATTENDEE, with a new UID and fresh
 // DTSTAMP/CREATED/LAST-MODIFIED/SEQUENCE, and occ's dates in the series' form.
 //
 // An override's property replaces all of the master's with its name, so a
 // full override, as Thunderbird writes it, is cloned as it is, and a minimal
 // one keeps the series' title and categories. A completed entry is a private
 // record: a new resource with ORGANIZER and ATTENDEE could make the server
-// send scheduling messages for every completion (RFC 6638). The clone has no
-// children: a VTODO holds only VALARMs. Its VTIMEZONEs are entryCalendar's.
-func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time) *ical.Component {
+// send scheduling messages for every completion (RFC 6638). A VTODO holds
+// only VALARMs as children: the clone has none, since a done task must not
+// ring, unless keepAlarms is set, for an occurrence that stays open; then it
+// has copies of occ's alarms, its override's own where it has any, else the
+// series'. Its VTIMEZONEs are entryCalendar's.
+func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time, keepAlarms bool) *ical.Component {
 	c := ical.NewComponent(ical.CompToDo)
 	for name, props := range s.master.Props {
 		c.Props[name] = cloneProps(props)
@@ -740,6 +836,18 @@ func cloneOccurrence(s *todoSeries, occ todoOcc, uid string, now time.Time) *ica
 	}
 	maps.Copy(c.Props, newComponent(ical.CompToDo, uid, now).Props)
 	s.setEntryDates(c, occ)
+	if keepAlarms {
+		isAlarm := func(a *ical.Component) bool { return a.Name == ical.CompAlarm }
+		from := s.master
+		if occ.override != nil && slices.ContainsFunc(occ.override.Children, isAlarm) {
+			from = occ.override
+		}
+		for _, a := range from.Children {
+			if isAlarm(a) {
+				c.Children = append(c.Children, copyComponent(a))
+			}
+		}
+	}
 	return c
 }
 

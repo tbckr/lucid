@@ -179,6 +179,8 @@ func TestInvalidAccount(t *testing.T) {
 	_, _, checks["UpdateTodo"] = svc.UpdateTodo(ctx, "x", "e", domain.TodoInput{})
 	_, checks["RestoreTodo"] = svc.RestoreTodo(ctx, domain.Snapshot{Kind: domain.SnapshotTodo, ID: "x"})
 	checks["DeleteTodo"] = svc.DeleteTodo(ctx, "x", "e")
+	_, _, checks["DetachTodoOccurrence"] = svc.DetachTodoOccurrence(ctx, "x", "e", date(2025, 1, 2, 0, 0), domain.TodoInput{})
+	_, _, checks["SkipTodoOccurrence"] = svc.SkipTodoOccurrence(ctx, "x", "e", date(2025, 1, 2, 0, 0))
 	for name, err := range checks {
 		if !errors.Is(err, domain.ErrUpstream) {
 			t.Errorf("%s: error = %v; want ErrUpstream", name, err)

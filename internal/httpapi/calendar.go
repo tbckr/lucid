@@ -480,6 +480,72 @@ func (s *Server) handleUpdateTodo(w http.ResponseWriter, r *http.Request) {
 	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
 }
 
+// handleDetachTodoOccurrence detaches the current repeat of a task series as
+// a task of its own, changed by the body, while the series rolls on ("only
+// this one", FR-17). It answers 200 with the rolled series, the new task as
+// detachedCopy, and the undo token if there is one; at the series' last
+// repeat it answers as handleUpdateTodo does. The body's rrule is ignored: the
+// rule is the series'.
+func (s *Server) handleDetachTodoOccurrence(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "todoId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathRecurrenceID(w, r)
+	if !ok {
+		return
+	}
+	var in domain.TodoInput
+	if !s.decodeValid(w, r, &in) {
+		return
+	}
+	todo, snap, err := svc.DetachTodoOccurrence(r.Context(), id, etag, rid, in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	todo.UndoToken = s.storeUndo(r, snap)
+	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
+}
+
+// handleSkipTodoOccurrence skips the current repeat of a task series, which
+// rolls on to its next one (FR-17). It answers 200 with the rolled series,
+// its new ETag for the client's next write of it (NFR-26), and the undo token
+// if there is one.
+func (s *Server) handleSkipTodoOccurrence(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "todoId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathRecurrenceID(w, r)
+	if !ok {
+		return
+	}
+	todo, snap, err := svc.SkipTodoOccurrence(r.Context(), id, etag, rid)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	todo.UndoToken = s.storeUndo(r, snap)
+	middleware.WriteJSON(w, http.StatusOK, normalizeTodo(todo))
+}
+
 // storeUndo keeps snap in the undo store for the caller's session and returns
 // the token that undoes it (FR-17). It returns "" when snap is nil, when undo
 // is off, when the request has no session cookie, or when the store refuses
