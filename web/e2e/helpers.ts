@@ -28,9 +28,10 @@ export async function deleteTestEvents(page: Page): Promise<void> {
   const { calendars } = (await calendarsRes.json()) as {
     calendars: { id: string; readOnly: boolean; supportsEvents: boolean }[]
   }
-  // The specs create events today; a week either way covers "the next full hour" at midnight.
+  // The specs create events today, and split a series two weeks on: a week before covers "the
+  // next full hour" at midnight, and three weeks after the new series a split leaves behind.
   const week = 7 * 24 * 3600 * 1000
-  const params = { start: new Date(Date.now() - week).toISOString(), end: new Date(Date.now() + week).toISOString() }
+  const params = { start: new Date(Date.now() - week).toISOString(), end: new Date(Date.now() + 3 * week).toISOString() }
   for (const calendar of calendars.filter((c) => c.supportsEvents && !c.readOnly)) {
     const eventsRes = await api.get(`/api/v1/calendars/${calendar.id}/events`, { params })
     await expect(eventsRes).toBeOK()

@@ -582,3 +582,93 @@ test('keeps the undo of the latest change only', async ({ page }) => {
   await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
   await expect(block.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
 })
+
+/** The day `weeks` weeks after today in the browser, as the toasts name it, e.g. "Wed, Oct 21" (formatPickerDate). */
+async function dayInWeeks(page: Page, weeks: number): Promise<string> {
+  return page.evaluate((n) => {
+    const now = new Date()
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7 * n)
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      ...(day.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+    }).format(day)
+  }, weeks)
+}
+
+/** Expect the one event of the series in the week shown at `time`, e.g. "9 AM – 9:30 AM". */
+async function expectAt(block: Locator, time: string): Promise<void> {
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${SERIES}, ${time}`)
+}
+
+/**
+ * Page `weeks` weeks on, or back when negative, and wait for the events of the week reached to
+ * come in: a week shown before shows its cached events until then, which would pass a check of
+ * how they were before a change. Unlike the buttons, the keys leave the pointer on a hovered
+ * toast, which keeps its Undo however long the checks take.
+ */
+async function pageWeeks(page: Page, weeks: number): Promise<void> {
+  const key = weeks > 0 ? 'j' : 'k'
+  for (let i = Math.abs(weeks); i > 1; i--) await page.keyboard.press(key)
+  const listed = page.waitForResponse((r) => /\/api\/v1\/calendars\/[^/]+\/events\?/.test(r.url()))
+  await page.keyboard.press(key)
+  await listed
+  await expect(page.locator('header svg[aria-label="Loading…"]')).toHaveCount(0)
+}
+
+test('splits a series by dragging a later event, and undoes it', async ({ page }) => {
+  const block = await createSeries(page)
+  const third = await dayInWeeks(page, 2)
+  await pageWeeks(page, 2)
+  await expectAt(block, '9 AM – 9:30 AM')
+
+  const question = await dragAnHourLater(page, block)
+  await question.getByRole('button', { name: 'This and following events' }).click()
+  await expect(question).toBeHidden()
+  const toast = await hoverToast(page, `Moved from ${third} on, as a series of its own.`)
+  await expectAt(block, '10 AM – 10:30 AM')
+
+  // The two earlier events keep their time.
+  await pageWeeks(page, -1)
+  await expectAt(block, '9 AM – 9:30 AM')
+  await pageWeeks(page, -1)
+  await expectAt(block, '9 AM – 9:30 AM')
+  // The later ones moved along, as a series, none of them changed on its own.
+  await pageWeeks(page, 3)
+  await expectAt(block, '10 AM – 10:30 AM')
+  await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
+
+  // Undo takes the new series back, and the old one goes on as before: one event a week, at 9 AM.
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByText('Undone.', { exact: true })).toBeVisible()
+  await expectAt(block, '9 AM – 9:30 AM')
+  await pageWeeks(page, -1)
+  await expectAt(block, '9 AM – 9:30 AM')
+  await pageWeeks(page, -1)
+  await expectAt(block, '9 AM – 9:30 AM')
+})
+
+test('ends a series before an event', async ({ page }) => {
+  const block = await createSeries(page)
+  const third = await dayInWeeks(page, 2)
+  await pageWeeks(page, 2)
+  await expectAt(block, '9 AM – 9:30 AM')
+
+  await block.click()
+  const details = page.getByRole('dialog', { name: SERIES })
+  await details.getByRole('button', { name: 'Delete event' }).click()
+  await details
+    .getByRole('alertdialog', { name: 'This event repeats. Which events should be deleted?' })
+    .getByRole('button', { name: 'This and following events' })
+    .click()
+  await expect(details).toBeHidden()
+  await expect(page.locator('[data-sonner-toast]', { hasText: `The series now ends before ${third}.` })).toBeVisible()
+  // The third event and the later ones are gone; the earlier ones stay.
+  await expect(block).toHaveCount(0)
+  await pageWeeks(page, 1)
+  await expect(block).toHaveCount(0)
+  await pageWeeks(page, -2)
+  await expectAt(block, '9 AM – 9:30 AM')
+})
