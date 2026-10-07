@@ -3,9 +3,9 @@
 This document records how CalDAV clients and servers handle overrides of
 recurring events (a `VEVENT` with `RRULE`, plus a second `VEVENT` sharing its
 `UID` and carrying a `RECURRENCE-ID`) and deleted occurrences (`EXDATE`). It is
-the basis for Lucid's "Only this event" and "All events" writes (FR-17), which
-[Lucid's behavior](#lucids-behavior) describes. The API is in
-[API.md](API.md#events).
+the basis for Lucid's "Only this event", "This and following events" and "All
+events" writes (FR-17), which [Lucid's behavior](#lucids-behavior) describes.
+The API is in [API.md](API.md#events).
 
 The survey was done on 2026-10-02, in two reports: part A covers DAVx⁵ with
 the Android calendar provider and the Etar and Fossify Calendar apps,
@@ -692,27 +692,38 @@ Read at Kozea/Radicale
 ## Lucid's behavior
 
 Lucid lets the user change, move or delete only one event of a recurring
-series ("Only this event"), or change the whole series from that event on
-("All events"), on dragging, resizing, editing or deleting (FR-17). The API
-is in [API.md](API.md#events); the implementation is
-`internal/caldav/occurrences.go` (only this event), the series path of
-`UpdateEvent` in `internal/caldav/events.go` (all events), and
+series ("Only this event"), that event and the later ones ("This and
+following events"), or the whole series from that event on ("All events"),
+on dragging, resizing, editing or deleting (FR-17). The API is in
+[API.md](API.md#events); the implementation is
+`internal/caldav/occurrences.go` (only this event),
+`internal/caldav/following.go` (this and following events), the series
+path of `UpdateEvent` in `internal/caldav/events.go` (all events), and
 `internal/caldav/seriesshift.go` (which moves are allowed).
 
 **Decision: write RFC 5545 overrides and `EXDATE`s**, the shape every
 surveyed client and server round-trips (see [Summary](#summary)).
 
 **Lucid asks only when there is a choice** (`scopeOptions` in
-`web/src/lib/scope.ts`). Deleting an event of a series always asks, since
-both answers are possible. A save that changes or removes the rule, or
-turns the series all-day or timed, can only apply to "All events", and a
-move the series can't follow only to "Only this event" (see "Which moves
-are refused" below); neither asks. Instead, the editor's footer or a pill
-under the dragged event says beforehand which events the change reaches,
-for example "Applies to every event in the series.", or "The series
-becomes this one event. All others are deleted." when the rule is removed.
-The question, these hints and the toast after the change show that reach
-as five dots, the middle one the edited event.
+`web/src/lib/scope.ts`). Deleting an event of a series always asks, since at
+least "Only this event" and "All events" are possible. A save that changes
+or removes the rule, or turns the series all-day or timed, never applies to
+only this event: at a later event it asks between "This and following
+events" and "All events", but at the series' first event, or in a series
+with attendees, it can only apply to "All events". A move that `seriesShift`
+says the series can't follow (see "Which moves are refused" below) can only
+apply to "Only this event". With one option left, Lucid doesn't ask.
+Instead, the editor's footer or a pill under the dragged event says
+beforehand which events the change reaches, for example "Applies to every
+event in the series.", or "The series becomes this one event. All others are
+deleted." when the rule is removed. The question, these hints and the toast
+after the change show that reach as five dots, the middle one the edited
+event, and while an option of the question has the pointer or the focus, a
+ring marks the events in view that it reaches. Some moves only the server
+refuses, as the browser can't tell beforehand that a monthly or yearly
+series would leave its days (see "Which moves are refused"): there the
+question offers "All events", and "This and following events" at a later
+event, and the refusal comes as a toast.
 
 ### "Only this event"
 
@@ -856,9 +867,12 @@ as five dots, the middle one the edited event.
   alone decides this, on every path that counts in months and days: "All
   events" with the rule and `allDay` unchanged (`moveSeries`), a save that
   changes the rule, and one that turns the series all-day or timed
-  (`toggledStart`). The frontend offers "All events" there and shows the
-  refusal as a toast: "This series can't move like this. Move only this
-  event instead."
+  (`toggledStart`), and on "This and following events", for the new
+  series (see below). The frontend can't foresee these refusals, so it
+  asks as for any other move, with "All events" and, at a later event,
+  "This and following events" among the options, and shows the refusal as
+  a toast: "This series can't move like this. Move only this event
+  instead."
   - From an event on another day of the month than `DTSTART`'s (an
     `RDATE`, or an exception left on another day), a change of date is
     refused (`dateShift`): counted in months and days from there, the
@@ -895,16 +909,153 @@ as five dots, the middle one the edited event.
   from its `RECURRENCE-ID` or any of those fields differs from the series,
   since it is shown as a changed occurrence of its own.
 
+### "This and following events"
+
+Lucid never writes `RANGE=THISANDFUTURE` for it: like every surveyed writer
+but KDE (see [Summary](#summary)), it **splits** the series at the event
+acted on, whose `RECURRENCE-ID` is R. A delete only ends the series before R
+(`DeleteFollowing`). A move, a resize or a save ends it there too and goes on
+from R with a **new series**, a resource of its own with a new `UID`, changed
+as entered (`UpdateFollowing`).
+
+- **Partitioned by `RECURRENCE-ID`.** Everything from R on goes to the new
+  series, and everything before it stays: the rule's events, the `EXDATE`
+  and `RDATE` values, compared as instants, not as text, and the overrides,
+  by the instant of their `RECURRENCE-ID`, never by their own date. An event
+  before R that an override moved past R stays in the old series and is
+  still listed once; an override at R or later goes to the new series and
+  takes its `UID`. So the later events keep their changes and deletions, as
+  with Apple, and unlike Nextcloud Calendar, which deletes later overrides
+  and `EXDATE`s, or InfCloud and Roundcube, which orphan or drop them.
+- **The old series ends** with an `UNTIL` just before R (`endBefore`), in the
+  form RFC 5545 section 3.3.10 asks for with its `DTSTART`: for a date, the
+  day before R; for a date-time with a `TZID` or in UTC, R − 1 s in UTC, an
+  instant no change of summer time can move (a Berlin series at 09:00 split
+  at its 2026-06-04 event gets `UNTIL=20260604T065959Z`); for a floating
+  date-time, R − 1 s floating. A `COUNT` becomes that `UNTIL`, and it
+  replaces a later `UNTIL`; a `COUNT` or an `UNTIL` that already ends the
+  series before R stays. In a `TZID` Lucid can't resolve, R's instant is its
+  wall clock read as UTC, and an `UNTIL` would be off by the zone's offset:
+  such a series ends with a `COUNT` of its events before R instead, whether
+  it had a `COUNT`, an `UNTIL` or no end. Its `SEQUENCE`, `DTSTAMP` and
+  `LAST-MODIFIED` change as on any other write (`bumpChangeProps`).
+- **The new series** (`splitOff`) is a copy of the series with all of its
+  properties and components, alarms included, and the `VTIMEZONE`s, with a
+  new `UID`, `SEQUENCE:0`, a new `DTSTAMP`, `CREATED` and `LAST-MODIFIED`,
+  and `DTSTART` at R in the series' form (`seriesDateProp`), keeping the
+  series' duration; it is the first `VEVENT` (`masterFirst`). Its rule keeps
+  an `UNTIL`, and a `COUNT` is lowered by the rule's events before its
+  `DTSTART`, counted as RFC 5545 section 3.3.10 counts them: `DTSTART` is
+  the first, an event an `EXDATE` deleted still counts, and an `RDATE`
+  doesn't. Both series together then have the events the one had: a
+  `FREQ=WEEKLY;COUNT=10` series split at its fourth event keeps three, and
+  the new one gets `COUNT=7`, also where an `EXDATE` deleted the second.
+- **An R off the rule**, an `RDATE`, stays an `RDATE` of the new series,
+  which starts at the rule's first event after R. Without an event of the
+  rule after R, the new series has no `RRULE`, starts at R and keeps the
+  later `RDATE`s. Without those either, it is a single event, as R was
+  shown: an override at R is laid over it, with its own dates, properties
+  and alarms (`layOver`), and the `EXDATE`s and the other overrides go, as a
+  single event shows none.
+- **The change** applies to the new series as "All events" applies it from
+  R (`applySeriesEdit`, shared with `UpdateEvent`): the same distance,
+  fields and time zone, and the same refusals (see "Which moves are
+  refused" above). A save that sends the series' rule as it is stored,
+  compared case-insensitively (RFC 5545 section 3.1), keeps the rule the
+  new series inherited, with its lowered `COUNT`, so that a move doesn't
+  count as a new rule; any other rule is the new series' own, and no rule
+  makes it the single event entered.
+- **No link between the two.** Like most surveyed writers (Apple and
+  Nextcloud Calendar add a `RELATED-TO`), Lucid writes neither a
+  `RELATED-TO` nor a `RANGE`: the two series are independent resources,
+  which every client reads as two series.
+- **Refused** with `400 series_split_unsupported`, and nothing written,
+  where Lucid can't split the series (`loadFollowing`). The first three
+  hold at the series' first event too:
+  - an `ORGANIZER` or an `ATTENDEE` on any `VEVENT` of the resource: a
+    server that schedules implicitly would tell the attendees of a series
+    that ends and of another with a new `UID`. The event list says so with
+    `hasAttendees`, the same test, so the frontend doesn't offer the split;
+  - an `EXRULE`: copied into the new series, it would count from the new
+    `DTSTART` and exclude other events;
+  - a rule Lucid can't read, such as one with the RFC 7529 parts `RSCALE`
+    or `SKIP`;
+  - a rule Lucid can't walk to R within its iteration cap
+    (`maxRRuleIterations`);
+  - an R at or before `DTSTART` that isn't the first event, which only an
+    `RDATE` or an override before `DTSTART` leaves possible: no rule can end
+    before its `DTSTART`.
+
+  An R that is an `EXDATE` or a `STATUS:CANCELLED` override is no event
+  Lucid shows: `404 not_found`.
+- **At the series' first event**, nothing comes before it, so "This and
+  following events" is "All events". The frontend doesn't offer it there,
+  but a view not reloaded since another app deleted the earlier events
+  still can: the server then changes all events, as `UpdateEvent` does
+  with R as `instanceStart`, or deletes the resource, as `DeleteEvent`
+  does. The first event is the earliest one `ListEvents` shows
+  (`firstOccurrence`, the event list's `first`): of the rule's events,
+  `DTSTART` included, the `RDATE`s and the overrides' `RECURRENCE-ID`s,
+  none of them an `EXDATE` or a cancelled override.
+- **The write order** (`writeCreatedThenMaster` in
+  `internal/caldav/writes.go`, which the completion of a repeating task
+  shares): the new series is created first, with `If-None-Match: *`, and
+  then the old series is written, with `If-Match`. A failure in between
+  can leave events twice, which the user sees, but never loses the later
+  ones. What a failed split wrote goes again as far as Lucid can tell:
+  - The create fails: the old series is not written. A failure that is no
+    refusal by the server, such as a timeout or a proxy's `5xx`, can come
+    after the server stored the new series. Lucid then reads its ETag and,
+    if it is there, deletes it with `If-Match`; its `UID` is new, so no
+    other client knows it. One whose ETag can't be read, or is weak, stays
+    and is logged, and a create that lands only after this check can't be
+    caught.
+  - The old series' write fails: refused by the server, or with its ETag
+    read back unchanged, it was not applied, and the new series is
+    deleted again (unless the server told no ETag for it, which keeps it,
+    logged); the error is answered. With its ETag changed, the write
+    counts as applied, as behind a reverse proxy whose read timeout fired
+    after the server committed: the split is saved, with the old series'
+    new ETag unknown and no Undo. With its ETag unreadable, the new series
+    stays, logged, and the error is answered.
+- **In the UI**, "This and following events" comes before "All events" in
+  the drop question, the editor's question and the delete question, after
+  "Only this event" where that is offered too. It is missing at the series'
+  first event, where it would do what "All events" does, without a word, and
+  in a series with attendees, where the question says "With attendees, the
+  series can't be split." Its note names the day of the event: "From Wed,
+  Oct 21 on, as a series of its own. Earlier ones stay as they are.", "The
+  series ends before Wed, Oct 21." on a delete, and "From Wed, Oct 21 on,
+  only this event stays. Earlier ones stay as they are." for a save that
+  removes the rule. While it has the pointer or the focus, the ring marks
+  the events from R on, by recurrence ID, so an event before R that an
+  override moved past it stays unmarked. None of these writes is optimistic:
+  the calendar shows the change once the series is reloaded, and a dragged
+  event shows busy until then. The toast says "Moved from Wed, Oct 21 on, as
+  a series of its own." ("Changed …" for a resize or a save), and in red
+  "The series now ends before Wed, Oct 21." for a delete or a save that
+  removes the rule, with an Undo (see below). Where the server changed all
+  events instead, at what had become the first event, the toast says "All
+  events moved." or "All events changed.". A delete answered with `204` says
+  that the series ends too, without an Undo: the answer can't tell a series
+  deleted at its first event from one kept whose new ETag the server didn't
+  tell.
+
 ### Undo
 
 A change to a series returns an `undoToken` (FR-17) if its resource stays in
 place and the CalDAV server tells the new ETag; a save that removes the rule
 counts too. A non-recurring event gets none, nor does a delete that removes
-the whole resource (a whole series, or the last event of one). Nor does a
-resource with an `ORGANIZER` or an `ATTENDEE` on any of its events: a server
-that schedules implicitly may have sent the attendees the change with its
-`SEQUENCE`, which must never go down (RFC 5545 section 3.8.7.4), and the
-restore would write the older one back.
+the whole resource (a whole series, the last event of one, or the first
+event and the following ones). Nor does a resource with an `ORGANIZER` or an
+`ATTENDEE` on any of its events: a server that schedules implicitly may have
+sent the attendees the change with its `SEQUENCE`, which must never go down
+(RFC 5545 section 3.8.7.4), and the restore would write the older one back.
+A split ("This and following events") gets one only if the server tells the
+new ETags of both series: without the old series', the undo could not tell
+its own change from another client's, and without the new series', it could
+not delete the new series, which would then stand next to the restored one
+with every event from R on twice.
 
 Undo restores the resource **byte for byte** as it was read before that
 write, a snapshot the backend keeps under the token, with one `PUT` and
@@ -914,7 +1065,11 @@ together. If another client has changed the series since, the `PUT` fails,
 the undo is refused (`409`) and nothing is written. The one exception is a
 write that lands in the single round trip in which Lucid reads back an ETag
 the server did not send with its answer to the change: the snapshot then
-carries that ETag. The store keeps a snapshot for 2 minutes and refuses one
+carries that ETag. The undo of a split restores the old series this way and
+then deletes the new one, with `If-Match` of the ETag the split gave it. If
+another app has changed the new series since, it stays, and the answer says
+so (`copyKept`), as does the toast: "Undone. The new series was changed in
+another app and stays." The store keeps a snapshot for 2 minutes and refuses one
 over 1 MiB, so a series with years of overrides changes without an undo; it
 can also drop a snapshot earlier, to keep at most 8 per session and 64 MiB
 in total. The UI offers the Undo for 8 seconds, in the toast that says what
@@ -924,11 +1079,19 @@ takes that Undo away.
 
 ### Limits
 
-- "This and following" is not offered this round: every surveyed writer
-  splits the series (`UNTIL` + a new UID) rather than using
-  `RANGE=THISANDFUTURE`, which is poorly supported on both read and write
-  (only KDE writes and fully reads it); Lucid follows the same "split, never
-  `RANGE`" direction but has not implemented it yet.
+- The two series of a split are independent resources: a later change of
+  "All events" of one of them, in Lucid or in another client, leaves the
+  other as it is.
+- A series with an `ORGANIZER` or an `ATTENDEE` can't be split: only one of
+  its events or all of them change. Neither can a series with an `EXRULE` or
+  a rule Lucid can't read (see "This and following events").
+- A split that fails can leave its new series next to the old one, as a
+  duplicate the user can see and delete: where the server stored it only
+  after Lucid checked, where its ETag can't be read or is weak, and where
+  the old series' write can't be verified.
+- An `EXDATE` or `RDATE` property with a value Lucid can't read stays with
+  the old series as it is. A client that reads it then shows, in the new
+  series, an event that such an `EXDATE` deleted.
 - Google's handling of existing exceptions on "All events" is **unknown**:
   the only sources found contradict each other (overwritten vs. kept if
   still matching), and no capture of a before/after state exists.

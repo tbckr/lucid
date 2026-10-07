@@ -105,7 +105,10 @@ export function createEndpoints(client: ApiClient) {
         schema: eventSchema,
       }),
 
-    /** Resolves with the series' new ETag and undo token, or with nothing once its resource is deleted with its last event. */
+    /**
+     * Resolves with the series' new ETag and undo token, or with nothing once its resource is deleted with its last
+     * event, or when the server told no new ETag for the series it kept.
+     */
     deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<DeletedOccurrence | undefined> =>
       client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, {
         method: 'DELETE',
@@ -126,7 +129,10 @@ export function createEndpoints(client: ApiClient) {
         schema: followingSchema,
       }),
 
-    /** As `deleteOccurrence`: the series' new ETag and undo token, or nothing once its resource is deleted. */
+    /**
+     * As `deleteOccurrence`: the series' new ETag and undo token, or nothing once its resource is deleted, at what is
+     * its first event by now, or when the server told no new ETag for the series it kept.
+     */
     deleteFollowing: (eventId: string, recurrenceId: string, etag: string): Promise<DeletedOccurrence | undefined> =>
       client.request(`/events/${enc(eventId)}/following/${enc(recurrenceId)}`, {
         method: 'DELETE',

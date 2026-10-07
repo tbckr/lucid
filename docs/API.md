@@ -263,12 +263,14 @@ Once the resource is deleted: `204` without a body, an `ETag` header or an
 Changes this occurrence and the following ones as a series of their own
 ("This and following events"). The series ends before `recurrenceId`, as the
 `DELETE` below ends it, and a new series, a resource with a UID of its own,
-goes on from it: a copy of the series with `DTSTART` at `recurrenceId`, the
+goes on from it: a copy of the series with `DTSTART` at `recurrenceId` (for
+an `RDATE`, which it keeps, at the rule's next event if there is one), the
 rule's `COUNT` lowered by the events before it (an `UNTIL` stays), and the
 `EXDATE` and `RDATE` values and the overrides from `recurrenceId` on, by the
 `RECURRENCE-ID` of an override, never by its own date. Neither refers to the
-other. `recurrenceId` is the occurrence's `recurrenceId`: RFC 3339, UTC, whole
-seconds, URL-encoded.
+other; [RECURRING-EVENTS.md](RECURRING-EVENTS.md#this-and-following-events)
+has the details. `recurrenceId` is the occurrence's `recurrenceId`: RFC 3339,
+UTC, whole seconds, URL-encoded.
 
 Body: `EventInput`; `instanceStart` is ignored, `recurrenceId` is the edited
 occurrence. The change applies to the new series as
@@ -297,24 +299,30 @@ Response `200`:
   CalDAV server tells none. At the first event it is `event.etag`.
 - `undoToken`: as for `PUT /events/{id}` above. The undo writes the series
   back as it was and deletes the new series, unless that changed since (see
-  the undo below). There is none when the CalDAV server tells the new `etag`
-  of either series not: an undo could not tell its own change from another
-  client's, or could not delete the new series, which would then stand next
-  to the restored series with every event from `recurrenceId` on twice.
+  the undo below). There is none unless the CalDAV server tells the new
+  `etag` of both series: without the series', an undo could not tell its own
+  change from another client's, and without the new series', it could not
+  delete the new series, which would then stand next to the restored series
+  with every event from `recurrenceId` on twice.
 
 The new series is written first, with `If-None-Match: *`, and then the
-series, with `If-Match`. If the new series' write fails without the server
-refusing it (a timeout, a `5xx` of a proxy), the server may have stored it
-all the same: it is deleted again if it is there, and the series is not
-written. If the series' write fails, the new series is deleted again where
-that write is known not to have landed: the server refused it, or the series
-still has its ETag. Where its ETag changed, the split counts as saved: `200`
-with `etag` `""` and no `undoToken`. Where the ETag cannot be read, the new
-series stays and the error is answered.
+series, with `If-Match`. If the new series' write fails, the series is not
+written. Where the server did not refuse that write (a timeout, a `5xx` of a
+proxy), it may have stored the new series all the same: the backend reads
+its ETag and deletes it with `If-Match` if it is there. One whose ETag
+cannot be read, or is weak, stays (logged), and so does one the server
+stores only after that check. If the series' write fails, the new series is
+deleted again where that write is known not to have landed: the server
+refused it, or the series still has its ETag (a new series whose `etag` the
+server did not tell stays, logged). Where its ETag changed, the split counts
+as saved: `200` with `etag` `""` and no `undoToken`. Where the ETag cannot be
+read, the new series stays and the error is answered.
 
 Errors, with nothing written:
-- `400 invalid_input`: as for `PUT …/occurrences/…` above, and an invalid
-  `rrule`.
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds, or the fields or the `rrule` are invalid. Unlike
+  `PUT …/occurrences/…`, the body may change `allDay`, as for
+  `PUT /events/{id}`.
 - `400 series_split_unsupported`: as for the `DELETE` below.
 - `400 series_move_unsupported`: the new series can't follow the move, as for
   `PUT /events/{id}` above.
@@ -334,7 +342,8 @@ whole seconds, URL-encoded.
 
 At the series' first event (`first` in the event list above) there is nothing
 before it, so this is "all events": the resource is deleted, as by
-`DELETE /api/v1/events/{eventId}`, and so it is once no event is left.
+`DELETE /api/v1/events/{eventId}`. At any later event, the events before it
+stay, and so does the resource.
 
 The answer is that of the `DELETE` above for one occurrence: `200` with
 `{ "etag": "...", "undoToken": "..." }` and an `ETag` header while the series

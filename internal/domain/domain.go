@@ -36,7 +36,8 @@ var (
 	// ErrSeriesSplitUnsupported means a recurring series cannot be split at
 	// an occurrence ("this and following events"): it has an ORGANIZER or an
 	// ATTENDEE, an EXRULE, or a rule Lucid cannot read or walk to the
-	// occurrence. Nothing is written; the whole series or only the event can
+	// occurrence, or the occurrence is at or before DTSTART without being
+	// the first. Nothing is written; the whole series or only the event can
 	// change instead (FR-17).
 	ErrSeriesSplitUnsupported = errors.New("series split unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
@@ -492,13 +493,13 @@ type CalendarService interface {
 	// at recurrenceID ("this and following events"): the series' rule gets an
 	// end just before it, and its exceptions and overrides from there on go.
 	// At the series' first event that is all events: the resource itself is
-	// deleted, as it is once no event is left. Its answer is
+	// deleted. At a later one, the events before it are left. Its answer is
 	// DeleteOccurrence's: the resource's new ETag, or "" once it is deleted
 	// or when the server tells none, and the snapshot RestoreEvent undoes the
-	// change with. A series with an ORGANIZER or an ATTENDEE, with an EXRULE,
-	// or with a rule Lucid cannot read is ErrSeriesSplitUnsupported, and an
-	// occurrence ListEvents shows nowhere (an EXDATE, a cancelled override) is
-	// ErrNotFound. etag must match (If-Match), otherwise ErrConflict (FR-17).
+	// change with. A series it cannot split, see ErrSeriesSplitUnsupported,
+	// is that error, and an occurrence ListEvents shows nowhere (an EXDATE, a
+	// cancelled override) is ErrNotFound. etag must match (If-Match),
+	// otherwise ErrConflict (FR-17).
 	DeleteFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
 	// UpdateFollowing changes the occurrence at recurrenceID of the recurring
 	// series eventID and the following ones ("this and following events") as
