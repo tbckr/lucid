@@ -243,7 +243,7 @@ func splitAt(t *testing.T, cal *ical.Calendar, rid time.Time) (s, n *ical.Calend
 	tm, err := parseTiming(master)
 	mustNoErr(t, err)
 	before := encodeCal(t, cal)
-	n, err = splitOff(cal, master, tm, rid, splitUID, splitNow)
+	n, err = splitOff(cal, master, tm, rid, splitUID, splitNow, false)
 	mustNoErr(t, err)
 	if got := encodeCal(t, cal); got != before {
 		t.Fatalf("splitOff changed the series:\n%s\nwant\n%s", got, before)
@@ -677,7 +677,7 @@ func TestSplitOffCopiesTheSeries(t *testing.T) {
 	tm, err := parseTiming(master)
 	mustNoErr(t, err)
 	before := encodeCal(t, cal)
-	n, err := splitOff(cal, master, tm, date(2025, 3, 24, 8, 0), splitUID, splitNow)
+	n, err := splitOff(cal, master, tm, date(2025, 3, 24, 8, 0), splitUID, splitNow, false)
 	mustNoErr(t, err)
 
 	var names []string
@@ -811,7 +811,7 @@ func TestEndBeforeRefusesUnreadableRule(t *testing.T) {
 			before := encodeCal(t, cal)
 			// Whatever the reason, a split Lucid cannot compute is one it does
 			// not support.
-			if n, err := splitOff(cal, master, tm, rid, splitUID, splitNow); !errors.Is(err, domain.ErrSeriesSplitUnsupported) || n != nil {
+			if n, err := splitOff(cal, master, tm, rid, splitUID, splitNow, false); !errors.Is(err, domain.ErrSeriesSplitUnsupported) || n != nil {
 				t.Errorf("splitOff = %v, %v; want ErrSeriesSplitUnsupported", n, err)
 			}
 			if err := endBefore(cal, master, tm, rid); !errors.Is(err, domain.ErrSeriesSplitUnsupported) {
@@ -1019,7 +1019,7 @@ func TestSplitOffSingleEvent(t *testing.T) {
 		tm, err := parseTiming(m)
 		mustNoErr(t, err)
 		before := encodeCal(t, cal)
-		_, err = splitOff(cal, m, tm, date(2025, 3, 26, 9, 0), splitUID, splitNow)
+		_, err = splitOff(cal, m, tm, date(2025, 3, 26, 9, 0), splitUID, splitNow, false)
 		mustErr(t, err, domain.ErrSeriesSplitUnsupported)
 		if got := encodeCal(t, cal); got != before {
 			t.Errorf("splitOff changed the series:\n%s\nwant\n%s", got, before)
@@ -1898,6 +1898,71 @@ func TestUpdateFollowingCannotSplit(t *testing.T) {
 			}
 			if now := storedObject(t, e, id); now != seeded {
 				t.Errorf("the resource changed:\n%s\nwant\n%s", now, seeded)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingRemovesRulePastOrphan splits a series at its last RDATE,
+// with no event of its rule after it, while the series shows an override off
+// the rule after it (FR-17). A change that removes the rule makes N the
+// single event entered, and its question says that the later events go: the
+// override goes, as announced, instead of the split being refused. Any other
+// change, a move that keeps the rule among them, is still refused, as N, a
+// single event, would drop the override without a word.
+func TestUpdateFollowingRemovesRulePastOrphan(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY;COUNT=3",
+		"RDATE:20250326T090000Z", "END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Orphan",
+		"RECURRENCE-ID:20250402T090000Z", "DTSTART:20250402T090000Z", "DTEND:20250402T100000Z", "END:VEVENT",
+	}
+	rid := date(2025, 3, 26, 9, 0)
+
+	t.Run("the rule removed", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		got := updateFollowing(t, e, lines, rid, func(in *domain.EventInput) {
+			laterBy(time.Hour)(in)
+			in.RRule = ""
+		})
+		mustNoErr(t, got.err)
+		if got.puts != 2 || got.snap == nil {
+			t.Errorf("%d PUTs and a snapshot: %v; want N's and S's, and a snapshot", got.puts, got.snap != nil)
+		}
+		_, nData := newSeriesIn(t, e, got.id)
+		checkStored(t, "N", nData, []string{"DTSTART:20250326T100000Z"},
+			[]string{"RRULE", "RDATE", "RECURRENCE-ID", "Orphan"})
+		checkStored(t, "S", storedObject(t, e, got.id), []string{"RRULE:FREQ=WEEKLY;COUNT=3"},
+			[]string{"RDATE", "RECURRENCE-ID", "Orphan"})
+		want := []string{
+			"2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Standup", "2025-03-10T09:00:00Z/2025-03-10T10:00:00Z Standup",
+			"2025-03-17T09:00:00Z/2025-03-17T10:00:00Z Standup", "2025-03-26T10:00:00Z/2025-03-26T11:00:00Z Standup",
+		}
+		if shown := listedEvents(t, e); !slices.Equal(shown, want) {
+			t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+		}
+	})
+
+	for _, tt := range []struct {
+		name string
+		edit func(in *domain.EventInput)
+	}{
+		{"the rule kept", laterBy(time.Hour)},
+		{"a new rule", func(in *domain.EventInput) { in.RRule = "FREQ=DAILY;COUNT=2" }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, lines, rid, tt.edit)
+			mustErr(t, got.err, domain.ErrSeriesSplitUnsupported)
+			if got.puts != 0 || got.deletes != 0 || got.snap != nil {
+				t.Errorf("%d PUTs, %d DELETEs and a snapshot: %v; want none", got.puts, got.deletes, got.snap != nil)
+			}
+			if now := storedObject(t, e, got.id); now != got.seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, got.seeded)
 			}
 		})
 	}

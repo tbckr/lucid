@@ -196,13 +196,15 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 // and the other overrides go, as a single event shows none (see
 // removeRecurrence). An override off the rule after rid that the series
 // shows would be lost that way, so the split is refused then
-// (errSplitLosesEvent).
+// (errSplitLosesEvent), unless ruleRemoved: the caller makes N the single
+// event entered anyway, as a change that removes the rule does, whose
+// question says that the events after rid go.
 //
 // It fails for a rule Lucid cannot walk to rid (see placeInRule). It does
 // not check that the series can end before rid: callers call splitOff
 // first, on the series as read, and then endBefore, which changes cal in
 // place and refuses an rid at or before DTSTART (errSplitAtStart).
-func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time, uid string, now time.Time) (*ical.Calendar, error) {
+func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time, uid string, now time.Time, ruleRemoved bool) (*ical.Calendar, error) {
 	before, start, err := placeInRule(master, tm, rid)
 	if err != nil {
 		return nil, err
@@ -251,7 +253,7 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 		shiftDatePropBy(p, func(dateValue) time.Time { return end })
 	}
 	if offRule && !isRecurring(nm) {
-		if showsOverrideAfter(n, nm, rid) {
+		if !ruleRemoved && showsOverrideAfter(n, nm, rid) {
 			return nil, errSplitLosesEvent
 		}
 		if ov := findOverride(n, nm, rid); ov != nil {
@@ -532,10 +534,13 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 	// Judged on S as read, before endBefore ends its rule.
 	// Rule parts are case-insensitive (RFC 5545 section 3.1).
 	ruleKept := strings.EqualFold(rr, rruleString(master))
+	// N becomes the single event entered, and the question said that the
+	// later events go.
+	ruleRemoved := !ruleKept && rr == ""
 	now := s.p.now().UTC()
 	uid := newUID()
 	// splitOff reads the series as it is; endBefore changes it in place.
-	n, err := splitOff(cal, master, tm, rid, uid, now)
+	n, err := splitOff(cal, master, tm, rid, uid, now, ruleRemoved)
 	if err != nil {
 		return domain.FollowingResult{}, nil, err
 	}
@@ -548,7 +553,7 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 		// "" once N has no RRULE left: then N moves by its RDATEs, or, a
 		// single event, takes the dates entered.
 		rr = rruleString(nm)
-	case rr == "":
+	case ruleRemoved:
 		// Also N's RDATEs go, which applySeriesEdit would move along.
 		removeRecurrence(n, nm)
 	}

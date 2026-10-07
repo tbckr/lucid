@@ -957,7 +957,10 @@ as entered (`UpdateFollowing`).
   shown: an override at R is laid over it, with its own dates, properties
   and alarms (`layOver`), and the `EXDATE`s and the other overrides go, as a
   single event shows none. Where the series shows one of those, an override
-  off the rule after R, the split is refused, as that event would be lost.
+  off the rule after R, the split is refused, as that event would be lost
+  without a word. A save that removes the rule isn't refused: it makes the
+  new series the single event entered anyway, and its question says that
+  the later events go.
 - **The change** applies to the new series as "All events" applies it from
   R (`applySeriesEdit`, shared with `UpdateEvent`): the same distance,
   fields and time zone, and the same refusals (see "Which moves are
@@ -989,9 +992,9 @@ as entered (`UpdateFollowing`).
   - an R at or before `DTSTART` that isn't the first event, which only an
     `RDATE` or an override before `DTSTART` leaves possible: no rule can end
     before its `DTSTART`;
-  - for a change, a new series that would be a single event while the
-    series shows an override off the rule after R (see "An R off the rule"
-    above).
+  - for a change that doesn't remove the rule, a new series that would be a
+    single event while the series shows an override off the rule after R
+    (see "An R off the rule" above).
 
   An R that is an `EXDATE` or a `STATUS:CANCELLED` override is no event
   Lucid shows: `404 not_found`.

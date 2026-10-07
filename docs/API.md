@@ -336,7 +336,10 @@ Errors, with nothing written:
 - `400 series_split_unsupported`: as for the `DELETE` below, and where the new
   series would be a single event (`recurrenceId` is the last `RDATE`, with no
   event of the rule after it) while the series shows an override off the rule
-  after `recurrenceId`, which a single event can't show.
+  after `recurrenceId`, which a single event can't show. A save that removes
+  the rule (`rrule` `""` on a series that has one) isn't refused for it: it
+  makes the new series the single event entered anyway, and the override
+  goes, as do the other events after `recurrenceId`.
 - `400 series_move_unsupported`: the new series can't follow the move, as for
   `PUT /events/{id}` above.
 - `404 not_found`, `409 conflict`, `428 precondition_required`: as for the
