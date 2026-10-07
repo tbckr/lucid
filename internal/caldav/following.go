@@ -191,7 +191,9 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 // later RDATEs. Without those it is a single event, the event rid as shown:
 // an override at rid is laid over the master (see layOver), and the EXDATEs
 // and the other overrides go, as a single event shows none (see
-// removeRecurrence); so does an override off the rule after rid.
+// removeRecurrence). An override off the rule after rid that the series
+// shows would be lost that way, so the split is refused then
+// (errSplitLosesEvent).
 //
 // It fails for a rule Lucid cannot walk to rid (see placeInRule). It does
 // not check that the series can end before rid: callers call splitOff
@@ -246,6 +248,9 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 		shiftDatePropBy(p, func(dateValue) time.Time { return end })
 	}
 	if offRule && !isRecurring(nm) {
+		if showsOverrideAfter(n, nm, rid) {
+			return nil, errSplitLosesEvent
+		}
 		if ov := findOverride(n, nm, rid); ov != nil {
 			layOver(nm, ov)
 		}
@@ -253,6 +258,26 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	}
 	masterFirst(n, nm)
 	return n, nil
+}
+
+// errSplitLosesEvent refuses a split whose new series would be a single
+// event while the series shows an override off the rule after the event
+// the split starts at, which a single event cannot show (FR-17). Like every
+// split Lucid cannot do without losing an event, it is
+// domain.ErrSeriesSplitUnsupported.
+var errSplitLosesEvent = fmt.Errorf("%w: an event after this one would be lost", domain.ErrSeriesSplitUnsupported)
+
+// showsOverrideAfter reports whether the series master in cal shows an
+// override whose RECURRENCE-ID is after rid: one neither cancelled nor at an
+// EXDATE, as expandObject shows them (FR-17).
+func showsOverrideAfter(cal *ical.Calendar, master *ical.Component, rid time.Time) bool {
+	exdates := exceptionDates(master)
+	for ridUnix, ov := range recurrenceOverrides(cal, master) {
+		if ridUnix > rid.Unix() && !exdates[ridUnix] && !isCancelled(ov) {
+			return true
+		}
+	}
+	return false
 }
 
 // layOver writes the override ov over master, which becomes the single
@@ -376,7 +401,9 @@ type followingSeries struct {
 //   - The series has no ORGANIZER or ATTENDEE in any event, since a server
 //     that schedules implicitly would tell them of a series that ends and
 //     another with a UID of its own; no EXRULE, which a new series would
-//     count from its own start and so exclude other events; and a rule
+//     count from its own start and so exclude other events; at most one
+//     RRULE, as Lucid reads and ends only the first, and a second would go
+//     on past recurrenceID, in the series and in a copy of it; and a rule
 //     ruleInstances can read, though only the walk to recurrenceID needs it.
 //     Else ErrSeriesSplitUnsupported, with nothing written, even where
 //     recurrenceID is the first event and the series would simply go.
@@ -397,6 +424,9 @@ func (s *service) loadFollowing(ctx context.Context, eventID, etag string, recur
 	}
 	if ls.master.Props.Get(propExRule) != nil {
 		return followingSeries{}, fmt.Errorf("%w: the series has an EXRULE", domain.ErrSeriesSplitUnsupported)
+	}
+	if len(ls.master.Props[ical.PropRecurrenceRule]) > 1 {
+		return followingSeries{}, fmt.Errorf("%w: the series has more than one RRULE", domain.ErrSeriesSplitUnsupported)
 	}
 	if _, err := ruleInstances(rruleString(ls.master), ls.tm.start.t); err != nil {
 		return followingSeries{}, unsplittable(err)

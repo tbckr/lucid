@@ -956,7 +956,8 @@ as entered (`UpdateFollowing`).
   later `RDATE`s. Without those either, it is a single event, as R was
   shown: an override at R is laid over it, with its own dates, properties
   and alarms (`layOver`), and the `EXDATE`s and the other overrides go, as a
-  single event shows none.
+  single event shows none. Where the series shows one of those, an override
+  off the rule after R, the split is refused, as that event would be lost.
 - **The change** applies to the new series as "All events" applies it from
   R (`applySeriesEdit`, shared with `UpdateEvent`): the same distance,
   fields and time zone, and the same refusals (see "Which moves are
@@ -970,7 +971,7 @@ as entered (`UpdateFollowing`).
   `RELATED-TO` nor a `RANGE`: the two series are independent resources,
   which every client reads as two series.
 - **Refused** with `400 series_split_unsupported`, and nothing written,
-  where Lucid can't split the series (`loadFollowing`). The first three
+  where Lucid can't split the series (`loadFollowing`). The first four
   hold at the series' first event too:
   - an `ORGANIZER` or an `ATTENDEE` on any `VEVENT` of the resource: a
     server that schedules implicitly would tell the attendees of a series
@@ -978,13 +979,19 @@ as entered (`UpdateFollowing`).
     `hasAttendees`, the same test, so the frontend doesn't offer the split;
   - an `EXRULE`: copied into the new series, it would count from the new
     `DTSTART` and exclude other events;
+  - more than one `RRULE`, which RFC 5545 advises against: Lucid reads and
+    ends only the first, so the second would keep the old series going past
+    R and, copied, list the new series' events twice;
   - a rule Lucid can't read, such as one with the RFC 7529 parts `RSCALE`
     or `SKIP`;
   - a rule Lucid can't walk to R within its iteration cap
     (`maxRRuleIterations`);
   - an R at or before `DTSTART` that isn't the first event, which only an
     `RDATE` or an override before `DTSTART` leaves possible: no rule can end
-    before its `DTSTART`.
+    before its `DTSTART`;
+  - for a change, a new series that would be a single event while the
+    series shows an override off the rule after R (see "An R off the rule"
+    above).
 
   An R that is an `EXDATE` or a `STATUS:CANCELLED` override is no event
   Lucid shows: `404 not_found`.

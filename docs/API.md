@@ -331,7 +331,10 @@ Errors, with nothing written:
   whole seconds, or the fields or the `rrule` are invalid. Unlike
   `PUT …/occurrences/…`, the body may change `allDay`, as for
   `PUT /events/{id}`.
-- `400 series_split_unsupported`: as for the `DELETE` below.
+- `400 series_split_unsupported`: as for the `DELETE` below, and where the new
+  series would be a single event (`recurrenceId` is the last `RDATE`, with no
+  event of the rule after it) while the series shows an override off the rule
+  after `recurrenceId`, which a single event can't show.
 - `400 series_move_unsupported`: the new series can't follow the move, as for
   `PUT /events/{id}` above.
 - `404 not_found`, `409 conflict`, `428 precondition_required`: as for the
@@ -364,12 +367,14 @@ Errors:
 - `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
   whole seconds.
 - `400 series_split_unsupported`, and nothing is written or deleted, where the
-  series cannot be split. The first three hold at its first event too, which
+  series cannot be split. The first four hold at its first event too, which
   is not deleted then:
   - some event of the resource has an `ORGANIZER` or an `ATTENDEE`
     (`hasAttendees`), as a server that schedules implicitly would tell them;
   - the series has an `EXRULE`, which a new series would count from its own
     start;
+  - the series has more than one `RRULE`: the backend reads and ends only the
+    first;
   - its rule can't be read by the backend (such as one with the RFC 7529
     parts `RSCALE` or `SKIP`);
   - its rule does not reach `recurrenceId` within the backend's iteration cap;

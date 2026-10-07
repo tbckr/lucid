@@ -35,10 +35,11 @@ var (
 	ErrSeriesMoveUnsupported = errors.New("series move unsupported")
 	// ErrSeriesSplitUnsupported means a recurring series cannot be split at
 	// an occurrence ("this and following events"): it has an ORGANIZER or an
-	// ATTENDEE, an EXRULE, or a rule Lucid cannot read or walk to the
-	// occurrence, or the occurrence is at or before DTSTART without being
-	// the first. Nothing is written; the whole series or only the event can
-	// change instead (FR-17).
+	// ATTENDEE, an EXRULE, more than one RRULE, or a rule Lucid cannot read
+	// or walk to the occurrence, the occurrence is at or before DTSTART
+	// without being the first, or a new series of a single event would lose
+	// an event the series shows after it. Nothing is written; the whole
+	// series or only the event can change instead (FR-17).
 	ErrSeriesSplitUnsupported = errors.New("series split unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")

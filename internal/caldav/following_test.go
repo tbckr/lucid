@@ -3,6 +3,7 @@ package caldav
 import (
 	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -888,7 +889,8 @@ func TestWithCount(t *testing.T) {
 // and components replace the master's of the same name, its DTSTART, DTEND
 // and DURATION together where ListEvents shows the override at its own
 // times, while N keeps its own UID, SEQUENCE and timestamps. A single event
-// shows no overrides, so an override off the rule after R goes.
+// shows no overrides: an override off the rule after R that the series does
+// not show goes, and one it shows refuses the split.
 func TestSplitOffSingleEvent(t *testing.T) {
 	t.Parallel()
 	master := []string{
@@ -906,6 +908,10 @@ func TestSplitOffSingleEvent(t *testing.T) {
 		"RECURRENCE-ID:20250402T090000Z", "DTSTART:20250402T090000Z", "DTEND:20250402T100000Z",
 		"SUMMARY:Orphan",
 	}
+	excluded := []string{
+		"RECURRENCE-ID:20250409T090000Z", "DTSTART:20250409T090000Z", "DTEND:20250409T100000Z",
+		"SUMMARY:Excluded",
+	}
 	own := map[string]string{
 		ical.PropUID:           "UID:" + splitUID,
 		ical.PropSequence:      "SEQUENCE:0",
@@ -921,9 +927,9 @@ func TestSplitOffSingleEvent(t *testing.T) {
 	tests := []struct {
 		name      string
 		overrides [][]string
+		exdate    string            // an EXDATE of the series, if any
 		want      map[string]string // N's master; a property not named is absent
 		alarms    []string          // the descriptions of N's master's VALARMs
-		shown     []string          // nil: as the series showed them
 	}{
 		{
 			name:      "full override",
@@ -946,23 +952,25 @@ func TestSplitOffSingleEvent(t *testing.T) {
 			alarms: []string{"Series alarm"},
 		},
 		{
-			name:      "an override off the rule after R",
-			overrides: [][]string{atR, orphan},
+			// The series shows neither, so neither is lost.
+			name:      "overrides off the rule after R, cancelled or excluded",
+			overrides: [][]string{atR, append(slices.Clone(orphan), "STATUS:CANCELLED"), excluded},
+			exdate:    "EXDATE:20250409T090000Z",
 			want: with(map[string]string{
 				ical.PropDateTimeStart: "DTSTART:20250326T140000Z", ical.PropDuration: "DURATION:PT30M",
 				ical.PropSummary: "SUMMARY:At R", ical.PropCategories: "CATEGORIES:Home",
 			}),
 			alarms: []string{"R alarm"},
-			shown: []string{
-				"2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Series", "2025-03-10T09:00:00Z/2025-03-10T10:00:00Z Series",
-				"2025-03-17T09:00:00Z/2025-03-17T10:00:00Z Series", "2025-03-26T14:00:00Z/2025-03-26T14:30:00Z At R",
-			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			raw := seriesICS(master, tt.overrides...)
+			lines := master
+			if tt.exdate != "" {
+				lines = append(slices.Clone(master), tt.exdate)
+			}
+			raw := seriesICS(lines, tt.overrides...)
 			s, n := splitAt(t, mustParse(t, raw), date(2025, 3, 26, 9, 0))
 			nm := mainComponent(n, ical.CompEvent)
 			for _, name := range []string{
@@ -988,13 +996,26 @@ func TestSplitOffSingleEvent(t *testing.T) {
 			if got := overridesIn(n); got != nil {
 				t.Errorf("N's overrides = %q; want none", got)
 			}
-			if tt.shown == nil {
-				checkShownAsBefore(t, raw, s, n)
-			} else if got := shownIn(t, s, n); !slices.Equal(got, tt.shown) {
-				t.Errorf("S and N show %q; want %q", got, tt.shown)
-			}
+			checkShownAsBefore(t, raw, s, n)
 		})
 	}
+
+	// P4 caveat, final review: a single event shows no overrides, so N would
+	// lose an override off the rule after R that the series shows. The split
+	// is refused instead, and the series stays as it is.
+	t.Run("an override off the rule after R", func(t *testing.T) {
+		t.Parallel()
+		cal := mustParse(t, seriesICS(master, atR, orphan))
+		m := mainComponent(cal, ical.CompEvent)
+		tm, err := parseTiming(m)
+		mustNoErr(t, err)
+		before := encodeCal(t, cal)
+		_, err = splitOff(cal, m, tm, date(2025, 3, 26, 9, 0), splitUID, splitNow)
+		mustErr(t, err, domain.ErrSeriesSplitUnsupported)
+		if got := encodeCal(t, cal); got != before {
+			t.Errorf("splitOff changed the series:\n%s\nwant\n%s", got, before)
+		}
+	})
 }
 
 // weeklyStandup returns the components of a weekly series "Standup" from
@@ -1230,7 +1251,8 @@ func TestDeleteFollowingFirst(t *testing.T) {
 // events, whom a change tells; one with an EXRULE, which a new series would
 // count from its own start; a rule Lucid cannot read, or cannot walk to the
 // occurrence within maxRRuleIterations events; and an occurrence at or before
-// DTSTART that is not the first one.
+// DTSTART that is not the first one. TestFollowingRefusesTwoRules has the
+// series with more than one RRULE.
 func TestDeleteFollowingRefuses(t *testing.T) {
 	t.Parallel()
 	organizer := "ORGANIZER:mailto:boss@example.com"
@@ -1274,6 +1296,69 @@ func TestDeleteFollowingRefuses(t *testing.T) {
 			}
 			if now := storedObject(t, e, got.id); now != got.seeded {
 				t.Errorf("the resource changed:\n%s\nwant\n%s", now, got.seeded)
+			}
+		})
+	}
+}
+
+// TestFollowingRefusesTwoRules checks that both following writes refuse a
+// series with more than one RRULE, which RFC 5545 section 3.8.5.3 advises
+// against, with ErrSeriesSplitUnsupported and nothing written, also at its
+// first event (FR-17): Lucid reads and ends only the first rule, so the
+// second would keep the series going past R, and, copied into the new
+// series, show the events from R on twice. The mock stores no such series,
+// as go-ical writes none, so the GET of the resource answers it.
+func TestFollowingRefusesTwoRules(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		rid   time.Time
+		write func(t *testing.T, e *env, id, etag string, rid time.Time) error
+	}{
+		{"ending", date(2025, 3, 17, 8, 0), func(t *testing.T, e *env, id, etag string, rid time.Time) error {
+			t.Helper()
+			_, _, err := e.svc.DeleteFollowing(t.Context(), id, etag, rid)
+			return err
+		}},
+		{"ending at the first", date(2025, 3, 3, 8, 0), func(t *testing.T, e *env, id, etag string, rid time.Time) error {
+			t.Helper()
+			_, _, err := e.svc.DeleteFollowing(t.Context(), id, etag, rid)
+			return err
+		}},
+		{"splitting", date(2025, 3, 17, 8, 0), func(t *testing.T, e *env, id, etag string, rid time.Time) error {
+			t.Helper()
+			in := eventInputOf(shownEvent(t, e, "work", rid))
+			laterBy(time.Hour)(&in)
+			_, _, err := e.svc.UpdateFollowing(t.Context(), id, etag, rid, in)
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			objPath := mustDecode(t, e, id)
+			etag := storedETag(t, e, objPath)
+			seeded := storedObject(t, e, id)
+			twoRules := ics(slices.Insert(weeklyStandup(), len(weeklyStandup())-1, "RRULE:FREQ=DAILY;COUNT=40")...)
+			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodGet || r.URL.Path != objPath {
+					return false
+				}
+				w.Header().Set("ETag", etag)
+				_, _ = io.WriteString(w, twoRules)
+				return true
+			})
+			e.mock.ResetCounts()
+			mustErr(t, tt.write(t, e, id, etag, tt.rid), domain.ErrSeriesSplitUnsupported)
+			if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+				t.Errorf("%d writes; want none", n)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			if now := storedObject(t, e, id); now != seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, seeded)
 			}
 		})
 	}
@@ -1750,10 +1835,11 @@ func TestUpdateFollowingRefuses(t *testing.T) {
 
 // TestUpdateFollowingCannotSplit checks that a split UpdateFollowing cannot
 // compute is ErrSeriesSplitUnsupported, with nothing written (FR-17): a rule
-// it cannot walk to R within maxRRuleIterations events, where splitOff
-// fails, and an R before DTSTART that is not the first event, where
-// endBefore does. ListEvents does not show the first, so the request is made
-// as a client with a stale view would.
+// it cannot walk to R within maxRRuleIterations events, and a single N that
+// would lose an override the series shows, where splitOff fails, and an R
+// before DTSTART that is not the first event, where endBefore does.
+// ListEvents does not show the first, so the request is made as a client
+// with a stale view would.
 func TestUpdateFollowingCannotSplit(t *testing.T) {
 	t.Parallel()
 	utc := func(extra ...string) []string {
@@ -1771,6 +1857,18 @@ func TestUpdateFollowingCannotSplit(t *testing.T) {
 		{
 			"an RDATE before DTSTART, with one before it", utc("RRULE:FREQ=WEEKLY", "RDATE:20250224T090000Z,20250301T090000Z"),
 			date(2025, 3, 1, 9, 0),
+		},
+		// R is the last RDATE, after the rule's last event: N would be a
+		// single event, which shows none of the overrides, and the one off
+		// the rule after R, which the series shows, would be lost.
+		{
+			"an override off the rule after the last RDATE", slices.Concat(
+				utc("RRULE:FREQ=WEEKLY;COUNT=3", "RDATE:20250326T090000Z"),
+				[]string{
+					"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Orphan",
+					"RECURRENCE-ID:20250402T090000Z", "DTSTART:20250402T090000Z", "DTEND:20250402T100000Z", "END:VEVENT",
+				},
+			), date(2025, 3, 26, 9, 0),
 		},
 		// rrule-go reads rule parts in upper case only, so Lucid cannot read
 		// such a rule (loadFollowing refuses it) and shows its DTSTART only:
