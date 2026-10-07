@@ -1772,6 +1772,10 @@ func TestUpdateFollowingCannotSplit(t *testing.T) {
 			"an RDATE before DTSTART, with one before it", utc("RRULE:FREQ=WEEKLY", "RDATE:20250224T090000Z,20250301T090000Z"),
 			date(2025, 3, 1, 9, 0),
 		},
+		// rrule-go reads rule parts in upper case only, so Lucid cannot read
+		// such a rule (loadFollowing refuses it) and shows its DTSTART only:
+		// the case-insensitive comparison of the rules never meets one.
+		{"a rule in lower case, at DTSTART", utc("RRULE:FREQ=WEEKLY;count=10"), date(2025, 3, 3, 9, 0)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

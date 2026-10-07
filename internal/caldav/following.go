@@ -492,7 +492,8 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 
 	cal, master, tm := fs.cal, fs.master, fs.tm
 	// Judged on S as read, before endBefore ends its rule.
-	ruleKept := rr == rruleString(master)
+	// Rule parts are case-insensitive (RFC 5545 section 3.1).
+	ruleKept := strings.EqualFold(rr, rruleString(master))
 	now := s.p.now().UTC()
 	uid := newUID()
 	// splitOff reads the series as it is; endBefore changes it in place.
