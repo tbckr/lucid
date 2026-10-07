@@ -3,11 +3,11 @@ import { utcToZoned } from './dates'
 import { type CalEvent } from './events'
 
 /**
- * `seriesShift` and `canMoveAll` mirror `internal/caldav/seriesshift.go`
- * (FR-17): when a user drags one occurrence of a series, this decides
- * whether the whole series can follow it, and with which RRULE. The two
- * implementations are checked against the same case table,
- * `internal/caldav/testdata/series-shift.json`.
+ * `seriesShift` mirrors `internal/caldav/seriesshift.go` (FR-17): when a
+ * user drags one occurrence of a series, it decides whether the whole series
+ * can follow it, and with which RRULE; `moveAllRefusal` asks it about a move
+ * and says why not. The two implementations of `seriesShift` are checked
+ * against the same case table, `internal/caldav/testdata/series-shift.json`.
  */
 
 /** RRULE weekday codes, in `Date#getDay()` order (Sunday first). */
@@ -267,13 +267,4 @@ export function moveAllRefusal(
   const t = parseWallClock(to)
   const clockChanged = f.hh !== t.hh || f.mm !== t.mm
   return hasClockParts(event.rrule) && clockChanged ? 'fixedTimes' : 'fixedDays'
-}
-
-/** Whether a series can follow its event all the way to `newStart` (FR-17); see `moveAllRefusal`. */
-export function canMoveAll(
-  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
-  newStart: Date,
-  browserZone: string,
-): boolean {
-  return moveAllRefusal(event, newStart, browserZone) === null
 }

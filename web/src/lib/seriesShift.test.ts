@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { canMoveAll, moveAllRefusal, seriesShift } from './seriesShift'
+import { moveAllRefusal, seriesShift } from './seriesShift'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
 interface SeriesShiftCase {
@@ -34,7 +34,8 @@ describe('seriesShift', () => {
   })
 })
 
-describe('canMoveAll', () => {
+// Whether the series can follow at all (`null`), judged on the right day and time.
+describe('moveAllRefusal: the wall clock it judges', () => {
   it('follows a weekday move in Berlin', () => {
     const event = {
       rrule: 'FREQ=WEEKLY;BYDAY=MO',
@@ -44,7 +45,7 @@ describe('canMoveAll', () => {
       startsAt: new Date('2026-03-09T09:00:00+01:00'), // Monday, CET
     }
     const newStart = new Date('2026-03-10T09:00:00+01:00') // Tuesday, CET
-    expect(canMoveAll(event, newStart, 'Europe/Berlin')).toBe(true)
+    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
   })
 
   it('rejects a day move but allows a time-only move for BYMONTHDAY', () => {
@@ -56,10 +57,10 @@ describe('canMoveAll', () => {
       startsAt: new Date('2026-03-15T09:00:00+01:00'),
     }
     const nextDay = new Date('2026-03-16T09:00:00+01:00')
-    expect(canMoveAll(event, nextDay, 'Europe/Berlin')).toBe(false)
+    expect(moveAllRefusal(event, nextDay, 'Europe/Berlin')).toBe('fixedDays')
 
     const sameDayLater = new Date('2026-03-15T11:00:00+01:00')
-    expect(canMoveAll(event, sameDayLater, 'Europe/Berlin')).toBe(true)
+    expect(moveAllRefusal(event, sameDayLater, 'Europe/Berlin')).toBeNull()
   })
 
   it('judges the day in the event zone, not the browser zone', () => {
@@ -72,7 +73,7 @@ describe('canMoveAll', () => {
     }
     // 23:30Z is 00:30 Tuesday in Berlin, but 19:30 Monday in New York.
     const newStart = new Date('2026-03-09T23:30:00Z')
-    expect(canMoveAll(event, newStart, 'Europe/Berlin')).toBe(true)
+    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
   })
 
   it('derives all-day wall clocks from the UTC calendar date', () => {
@@ -84,7 +85,7 @@ describe('canMoveAll', () => {
       startsAt: new Date(2026, 2, 9),
     }
     const newStart = new Date('2026-03-10T00:00:00Z') // Tuesday
-    expect(canMoveAll(event, newStart, 'Europe/Berlin')).toBe(true)
+    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
   })
 
   // FR-17: all-day events are date-only on the wire (UTC midnight). Reading
@@ -102,8 +103,8 @@ describe('canMoveAll', () => {
         start: '2026-09-25T00:00:00Z',
         startsAt: new Date(2026, 8, 25),
       }
-      expect(canMoveAll(event, new Date('2026-09-25T00:00:00Z'), 'Europe/Berlin')).toBe(true)
-      expect(canMoveAll(event, new Date('2026-09-26T00:00:00Z'), 'Europe/Berlin')).toBe(false)
+      expect(moveAllRefusal(event, new Date('2026-09-25T00:00:00Z'), 'Europe/Berlin')).toBeNull()
+      expect(moveAllRefusal(event, new Date('2026-09-26T00:00:00Z'), 'Europe/Berlin')).toBe('fixedDays')
     } finally {
       process.env.TZ = originalTz
     }
