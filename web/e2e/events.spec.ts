@@ -559,11 +559,14 @@ test('keeps the undo of the latest change only', async ({ page }) => {
 
   const first = await dragAnHourLater(page, block)
   await first.getByRole('button', { name: 'Only this event' }).click()
-  await expect(page.locator('[data-sonner-toast]', { hasText: 'Only this event moved.' })).toBeVisible()
+  const firstToast = page.locator('[data-sonner-toast]', { hasText: 'Only this event moved.' })
+  await expect(firstToast).toBeVisible()
   await expect(block).toHaveAccessibleName(`${SERIES}, 10 AM – 10:30 AM`)
 
   // Again within the 8 s of the first toast: the second change takes its Undo away as it starts.
   const second = await dragAnHourLater(page, block)
+  // Still shown with its Undo right before: on a run too slow for that, the rest proves nothing.
+  await expect(firstToast.getByRole('button', { name: 'Undo' })).toBeVisible()
   const answered = page.waitForResponse((r) => r.request().method() === 'PUT' && r.url().includes('/occurrences/'))
   await second.getByRole('button', { name: 'Only this event' }).click()
   await answered
