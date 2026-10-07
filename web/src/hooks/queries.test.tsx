@@ -763,16 +763,24 @@ describe('event series toasts', () => {
     expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill(CALENDAR_COLOR))
   })
 
-  it('draws the reach of a removed rule in red', async () => {
+  // Red only where the change deletes the other events (spec §2), as the server decides: saved
+  // without a rule, a series that had one, or whose all-day flag changes, becomes this one event.
+  // A series of dates alone (RDATE, no rule) saved as it was keeps them all.
+  it.each([
+    { change: 'a changed rule', rrule: 'FREQ=WEEKLY', saved: { rrule: 'FREQ=DAILY' }, red: false },
+    { change: 'a removed rule', rrule: 'FREQ=WEEKLY', saved: { rrule: '' }, red: true },
+    { change: 'the all-day flag beside a rule', rrule: 'FREQ=WEEKLY', saved: { rrule: 'FREQ=WEEKLY', allDay: true }, red: false },
+    { change: 'nothing of a series of dates alone', rrule: '', saved: { rrule: '' }, red: false },
+    { change: 'the all-day flag of a series of dates alone', rrule: '', saved: { rrule: '', allDay: true }, red: true },
+  ])('draws the reach of $change in red: $red', async ({ rrule, saved, red }) => {
     const success = vi.spyOn(toast, 'success')
     const { wrap } = setup(answer('"2"', 'tok'))
     const { result } = renderHook(() => useUpdateEvent('e1'), { wrapper: wrap })
 
-    // "Does not repeat": the series becomes this one event, and all the others go.
     act(() => {
       result.current.mutate({
-        event: toCalEvent(second),
-        input: { ...input, rrule: '', instanceStart: second.recurrenceId! },
+        event: toCalEvent({ ...second, rrule }),
+        input: { ...input, ...saved, instanceStart: second.recurrenceId! },
       })
     })
     await waitFor(() => {
@@ -780,7 +788,7 @@ describe('event series toasts', () => {
     })
     const shown = toastOf(success.mock.calls, 'All events changed.')
     expect(shown).toMatchObject({ id: 'series:e1', action: 'Undo' })
-    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill('var(--destructive)'))
+    expect(dotsOf(shown.icon)).toEqual(Array<string>(5).fill(red ? 'var(--destructive)' : CALENDAR_COLOR))
   })
 
   it('says a single event was saved', async () => {

@@ -535,8 +535,10 @@ export function useUpdateEvent(series?: string) {
         eventToast(qc, t, event, t('scope.toast.allChanged'), { etag: updated.etag, undoToken }, {
           reach: 'all',
           color: colorsOf(event.calendarId).solid,
-          // Without its rule, the series became this one event: all the others are deleted.
-          tone: input.rrule ? 'default' : 'destructive',
+          // Red where the series became this one event, deleting all the others, as the server
+          // decides: saved without a rule, one that had a rule, or whose all-day flag changed. A
+          // series of dates alone (RDATE) saved as it was keeps them.
+          tone: !input.rrule && (event.rrule !== '' || input.allDay !== event.allDay) ? 'destructive' : 'default',
         })
       } else {
         toast.success(t('event.saved'))
