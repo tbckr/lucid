@@ -270,10 +270,11 @@ export function CalendarPage() {
               }
               const drag = { id: 'overlay', data: d, disabled: true }
               // Which events of its series the drop reaches when there is no choice (FR-17), beneath.
+              // The dots sit on the first line, and a wrapped line lines up with the text, not under them.
               const pill = hint && (
-                <LimitPill className="absolute top-full left-0 mt-1">
-                  <ScopeGlyph inverted slots={glyphSlots(hint.reach)} className="mr-1.5 inline align-[-1px]" />
-                  {hint.text}
+                <LimitPill className="absolute top-full left-0 mt-1 flex items-start gap-1.5">
+                  <ScopeGlyph inverted slots={glyphSlots(hint.reach)} className="mt-[3px] shrink-0" />
+                  <span>{hint.text}</span>
                 </LimitPill>
               )
               if (d.type === 'timed') {
