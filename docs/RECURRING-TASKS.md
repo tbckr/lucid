@@ -963,7 +963,14 @@ weekly series moved a week earlier also ends a week earlier. With a monthly
 or yearly interval rule the amount is counted in calendar months, then days,
 because its occurrences keep their day of the month: a series moved from 10
 March to 10 April moves an override of 10 June to 10 July. What refers to
-earlier occurrences, such as other apps' completions, stays where it is.
+earlier occurrences, such as other apps' completions, stays where it is,
+except an `EXDATE` from the new `DTSTART` on: it excluded an occurrence the
+series left behind, and would exclude one of the moved series, so it goes.
+An override that stays, though, has a meaning of its own: a move that would
+put an occurrence of the moved series on one another app already marked
+done or changed is refused with `series_move_unsupported` too, before
+anything is written. That override would take the occurrence over, say
+mark it done, or share it with one the move moved.
 
 A move between all-day and timed dates converts every override
 (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
@@ -987,6 +994,9 @@ for an all-day series, floating for a floating one, UTC otherwise) in place
 of a `COUNT` or an `UNTIL`, so that it stays the only occurrence and no rule
 day comes back after it. In a `TZID` Lucid cannot resolve, that `UNTIL`
 would be off by the zone's offset, so the rule ends with `COUNT=1` instead.
+The references stay where they are, but an `EXDATE` from the new `DTSTART`
+on goes, as it could only exclude the moved occurrence; an override of
+another app there refuses the move, as above.
 
 A current occurrence **off the rule** moves the series by the distance it
 moves from where it is shown, as an event series moves from an exception.
@@ -995,9 +1005,9 @@ it moves by that distance from its last occurrence before it, as from a
 current occurrence (rule, `COUNT`, `UNTIL`, later references), with the
 moved occurrence's override among the later references, which then takes
 the new dates. That rule occurrence, done or excluded since the one off the
-rule is current, stays out with an `EXDATE` at its new place, and an
-override that completed it stays where it is. A change of the due alone
-changes only the occurrence off the rule.
+rule is current, stays out at its new place: its `EXDATE` moves along, or a
+new one excludes it there, and an override that completed it stays where
+it is. A change of the due alone changes only the occurrence off the rule.
 
 **Undo** restores the todo's resource exactly as it was read before the
 write that returned `undoToken` (a snapshot, kept server-side under the
@@ -1064,6 +1074,10 @@ keeps the properties and components Lucid does not know.
   server refuses such a move. Only the last repeat moves to any day. The
   days count from the current occurrence's `RECURRENCE-ID` in the series'
   zone, not from the date another client moved it to.
+- Moving a series never puts one of its repeats onto a repeat another app
+  already marked done or changed: the server refuses such a move, for
+  example the current repeat dragged back onto a repeat another app
+  completed, or the last one onto a later repeat another app completed.
 - A view reports at most the first 1,000 occurrences of a series within the
   requested window; a sub-hourly series can have more, and the rest does
   not show.

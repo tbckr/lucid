@@ -443,8 +443,9 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
-		// A move the rule cannot follow fails before anything is written;
-		// an undo restores the resource as read and is no move (FR-17).
+		// A move the rule cannot follow, or one onto a repeat another app
+		// changed, fails before anything is written; an undo restores the
+		// resource as read and is no move (FR-17).
 		if err := series.move(cal, cur.Status, in); err != nil {
 			return domain.Todo{}, nil, err
 		}

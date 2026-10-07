@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+
+	"github.com/tbckr/lucid/internal/domain"
 )
 
 func TestRuleHasFixedDays(t *testing.T) {
@@ -353,6 +355,58 @@ func TestTodoSeriesErrors(t *testing.T) {
 			got := todoFromObject(calObject{path: "/c/s.ics", cal: cal}, "c", s.master)
 			if !got.Recurring || !got.RuleUnsupported || got.Next != nil || !sameTime(got.Start, tc.start) {
 				t.Errorf("todo = %+v; want a recurring todo with an unsupported rule at its raw start %v", got, tc.start)
+			}
+		})
+	}
+}
+
+// A move refused after it was applied, because it put a repeat on one
+// another app changed, leaves the calendar as it was, a VTIMEZONE it added
+// included (FR-17).
+func TestRefusedMoveLeavesCalendar(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		comps [][]string
+		start time.Time
+	}{
+		{
+			// Monday to the Thursday before, which another app completed.
+			name: "the moved repeat",
+			comps: [][]string{
+				{"DTSTART;TZID=Europe/Berlin:20250306T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH", "EXDATE;TZID=Europe/Berlin:20250313T090000"},
+				{"RECURRENCE-ID;TZID=Europe/Berlin:20250306T090000", "STATUS:COMPLETED"},
+			},
+			start: date(2025, 3, 6, 8, 0),
+		},
+		{
+			// The repeat off the rule onto the completed 9th.
+			name: "a repeat off the rule",
+			comps: [][]string{
+				{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY"},
+				{"RECURRENCE-ID:20250309T090000Z", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z"},
+			},
+			start: date(2025, 3, 11, 9, 0),
+		},
+		{
+			// The last repeat onto the completed 17th.
+			name: "the last repeat",
+			comps: [][]string{
+				{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3", "EXDATE:20250317T090000Z,20250331T090000Z"},
+				{"RECURRENCE-ID:20250324T090000Z", "STATUS:COMPLETED"},
+			},
+			start: date(2025, 3, 24, 9, 0),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, cal := testSeries(t, tc.comps...)
+			before := encodeCal(t, cal)
+			err := s.move(cal, "NEEDS-ACTION", domain.TodoInput{Start: &tc.start, Timezone: "Europe/Berlin"})
+			mustErr(t, err, errMoveOntoRepeat)
+			if after := encodeCal(t, cal); after != before {
+				t.Errorf("calendar after the refused move:\n%s\nwant it as it was:\n%s", after, before)
 			}
 		})
 	}

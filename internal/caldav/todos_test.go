@@ -2885,26 +2885,62 @@ func TestMoveFixedDaysBySeriesShift(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name   string
-		master []string
-		by     time.Duration
+		name      string
+		master    []string
+		overrides [][]string
+		by        time.Duration
 	}{
-		{"a monthly rule refuses another day", []string{"DTSTART:20250315T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15"}, 24 * time.Hour},
-		{"a rule that fixes the hour refuses another time", []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYHOUR=9"}, time.Hour},
+		{name: "a monthly rule refuses another day", master: []string{"DTSTART:20250315T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15"}, by: 24 * time.Hour},
+		{name: "a rule that fixes the hour refuses another time", master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY;BYHOUR=9"}, by: time.Hour},
 		{
 			// A day later, Sunday's repeat crosses into the next week
 			// (WKST=MO), and Tuesday's does not.
-			"a weekly rule every other week refuses a move across its weeks",
-			[]string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,TU"},
-			24 * time.Hour,
+			name:   "a weekly rule every other week refuses a move across its weeks",
+			master: []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,TU"},
+			by:     24 * time.Hour,
+		},
+		{
+			// Monday to the Thursday before, which another app completed:
+			// the moved repeat would read as done.
+			name:      "a move onto a repeat another app completed is refused",
+			master:    []string{"DTSTART:20250306T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			overrides: [][]string{{"RECURRENCE-ID:20250306T090000Z", "STATUS:COMPLETED"}},
+			by:        -4 * 24 * time.Hour,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
-			mustNotMove(t, e, seedSeries(t, e, tc.master), tc.by)
+			mustNotMove(t, e, seedSeries(t, e, tc.master, tc.overrides...), tc.by)
 		})
 	}
+
+	// Moved back by two weeks, the series' next repeat would land on the 3rd,
+	// another app's completion: it would read as done.
+	t.Run("a later repeat moved onto a repeat another app completed is refused", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			[]string{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "SUMMARY:Later"})
+		mustNotMove(t, e, id, -14*24*time.Hour)
+	})
+
+	// An EXDATE before the current repeat excluded a repeat the series left
+	// behind; moved back past it, the series has a repeat of its own there,
+	// and the EXDATE goes.
+	t.Run("a move back past an excluded repeat drops its EXDATE", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE:20250303T090000Z"})
+		moveListed(t, e, id, -14*24*time.Hour)
+		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250224T090000Z"}, []string{"EXDATE"})
+		occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 2, 20, 0, 0), date(2025, 3, 12, 0, 0))
+		mustNoErr(t, err)
+		checkTodoOccurrences(t, occs,
+			[]time.Time{date(2025, 2, 24, 9, 0), date(2025, 3, 3, 9, 0), date(2025, 3, 10, 9, 0)},
+			[]string{domain.OccurrenceCurrent, domain.OccurrenceUpcoming, domain.OccurrenceUpcoming})
+	})
 
 	// Days count in the series' zone, where the rule's days lie, not in UTC
 	// or in the zone of the browser.
@@ -3053,6 +3089,15 @@ func TestMoveLastRepeat(t *testing.T) {
 			dates: []time.Time{date(2025, 3, 15, 9, 0), date(2025, 4, 15, 9, 0), date(2025, 5, 20, 9, 0)},
 		},
 		{
+			// The EXDATE could only exclude the moved repeat.
+			name:   "onto an excluded date",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2", "EXDATE:20250317T090000Z"},
+			by:     7 * 24 * time.Hour,
+			want:   []string{"DTSTART:20250317T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20250317T090000Z\r\n"},
+			lacks:  []string{"EXDATE"},
+			dates:  []time.Time{date(2025, 3, 17, 9, 0)},
+		},
+		{
 			name:   "unknown zone, an UNTIL",
 			master: []string{"DTSTART;TZID=W. Europe Standard Time:20250310T090000", "RRULE:FREQ=WEEKLY;UNTIL=20250317T080000Z"},
 			by:     24 * time.Hour,
@@ -3082,6 +3127,17 @@ func TestMoveLastRepeat(t *testing.T) {
 			checkTodoOccurrences(t, occs, tc.dates, states)
 		})
 	}
+
+	// The moved repeat would read as done, and the series would have no
+	// current repeat left.
+	t.Run("a move onto a repeat another app completed is refused", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=3"},
+			[]string{"RECURRENCE-ID:20250317T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "STATUS:COMPLETED"})
+		mustNotMove(t, e, id, 7*24*time.Hour)
+	})
 }
 
 // A current repeat off the rule, an override another app gave a
@@ -3095,64 +3151,125 @@ func TestMoveLastRepeat(t *testing.T) {
 func TestMoveOffRuleCurrentMovesSeries(t *testing.T) {
 	t.Parallel()
 	// The current repeat's RECURRENCE-ID is Monday 10 March, off a rule from
-	// Sunday the 9th, which is excluded; another app shows it on Wednesday.
+	// Sunday the 9th, which is excluded or done; another app shows it on
+	// Wednesday the 12th.
 	override := []string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z", "SUMMARY:Moved"}
+	excluded := []string{"DTSTART:20250309T090000Z", "DUE:20250309T100000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250309T090000Z"}
+	done := []string{"RECURRENCE-ID:20250309T090000Z", "STATUS:COMPLETED"}
+	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent
 	for _, tc := range []struct {
-		name   string
-		rule   string
-		stored []string
-		next   time.Time
-		dates  []time.Time // from 1 to 25 March
+		name        string
+		master      []string
+		done        bool // the 9th is done instead of excluded
+		by          time.Duration
+		stored      []string
+		lacks       []string
+		start, next time.Time
+		dates       []time.Time // from 1 to 25 March
+		states      []string
 	}{
 		{
-			name:   "an interval rule",
-			rule:   "RRULE:FREQ=WEEKLY",
-			stored: []string{"RRULE:FREQ=WEEKLY\r\n"},
+			// The EXDATE of the 9th moves along to the new anchor.
+			name:   "an interval rule, a day later",
+			master: excluded,
+			by:     24 * time.Hour,
+			stored: []string{
+				"RRULE:FREQ=WEEKLY\r\n", "DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "EXDATE:20250310T090000Z",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z",
+			},
+			lacks:  []string{"EXDATE:20250309", "RECURRENCE-ID:20250310"},
+			start:  date(2025, 3, 13, 9, 0),
 			next:   date(2025, 3, 17, 9, 0),
 			dates:  []time.Time{date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0)},
+			states: []string{current, upcoming, upcoming},
 		},
 		{
-			name:   "a rule on fixed days",
-			rule:   "RRULE:FREQ=WEEKLY;BYDAY=SU,TH",
-			stored: []string{"RRULE:FREQ=WEEKLY;BYDAY=MO,FR\r\n"},
-			next:   date(2025, 3, 14, 9, 0),
+			name:   "a rule on fixed days, a day later",
+			master: []string{"DTSTART:20250309T090000Z", "DUE:20250309T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=SU,TH", "EXDATE:20250309T090000Z"},
+			by:     24 * time.Hour,
+			stored: []string{
+				"RRULE:FREQ=WEEKLY;BYDAY=MO,FR\r\n", "DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "EXDATE:20250310T090000Z",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z",
+			},
+			lacks: []string{"EXDATE:20250309", "RECURRENCE-ID:20250310"},
+			start: date(2025, 3, 13, 9, 0),
+			next:  date(2025, 3, 14, 9, 0),
 			dates: []time.Time{
 				date(2025, 3, 13, 9, 0), date(2025, 3, 14, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 21, 9, 0), date(2025, 3, 24, 9, 0),
 			},
+			states: []string{current, upcoming, upcoming, upcoming, upcoming},
+		},
+		{
+			// Back onto the RECURRENCE-ID of the 9th, which its EXDATE no
+			// longer holds: it moved to the new anchor, the 8th.
+			name:   "an interval rule, a day earlier",
+			master: excluded,
+			by:     -24 * time.Hour,
+			stored: []string{
+				"RRULE:FREQ=WEEKLY\r\n", "DTSTART:20250308T090000Z", "DUE:20250308T100000Z", "EXDATE:20250308T090000Z",
+				"RECURRENCE-ID:20250309T090000Z", "DTSTART:20250311T090000Z", "DUE:20250311T100000Z",
+			},
+			lacks:  []string{"EXDATE:20250309", "RECURRENCE-ID:20250310"},
+			start:  date(2025, 3, 11, 9, 0),
+			next:   date(2025, 3, 15, 9, 0),
+			dates:  []time.Time{date(2025, 3, 11, 9, 0), date(2025, 3, 15, 9, 0), date(2025, 3, 22, 9, 0)},
+			states: []string{current, upcoming, upcoming},
+		},
+		{
+			// Another app's completion of the 9th stays where it is, before
+			// the new anchor, which an EXDATE excludes.
+			name:   "an interval rule after a done instance, a day later",
+			master: excluded[:3],
+			done:   true,
+			by:     24 * time.Hour,
+			stored: []string{
+				"RRULE:FREQ=WEEKLY\r\n", "DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "EXDATE:20250310T090000Z",
+				"RECURRENCE-ID:20250309T090000Z", "RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z",
+			},
+			lacks:  []string{"RECURRENCE-ID:20250310"},
+			start:  date(2025, 3, 13, 9, 0),
+			next:   date(2025, 3, 17, 9, 0),
+			dates:  []time.Time{date(2025, 3, 9, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0)},
+			states: []string{domain.OccurrenceDone, current, upcoming, upcoming},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
-			id := seedSeries(t, e, []string{"DTSTART:20250309T090000Z", "DUE:20250309T100000Z", tc.rule, "EXDATE:20250309T090000Z"}, override)
+			overrides := [][]string{override}
+			if tc.done {
+				overrides = append(overrides, done)
+			}
+			id := seedSeries(t, e, tc.master, overrides...)
 			if f := listedTodo(t, e, id); !sameTime(f.Start, ptr(date(2025, 3, 12, 9, 0))) {
 				t.Fatalf("listed series = %+v; want its current repeat on Wednesday 12 March", f)
 			}
-			got := moveListed(t, e, id, 24*time.Hour) // Wednesday to Thursday
-			if !sameTime(got.Start, ptr(date(2025, 3, 13, 9, 0))) || !sameTime(got.Due, ptr(date(2025, 3, 13, 10, 0))) ||
+			got := moveListed(t, e, id, tc.by)
+			if !sameTime(got.Start, &tc.start) || !sameTime(got.Due, ptr(tc.start.Add(time.Hour))) ||
 				!sameNext(got.Next, &domain.TodoDates{Start: &tc.next, Due: ptr(tc.next.Add(time.Hour))}) {
-				t.Errorf("moved series = %+v; want the repeat on Thursday, then %v", got, tc.next)
+				t.Errorf("moved series = %+v; want the repeat at %v, then %v", got, tc.start, tc.next)
 			}
-			checkStored(t, "series", storedObject(t, e, id), slices.Concat(tc.stored, []string{
-				"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "EXDATE:20250310T090000Z",
-				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z", "SUMMARY:Moved",
-			}), []string{"RECURRENCE-ID:20250310", "20250312T"})
+			checkStored(t, "series", storedObject(t, e, id), append(tc.stored, "SUMMARY:Moved"), append(tc.lacks, "20250312T"))
 			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 25, 0, 0))
 			mustNoErr(t, err)
-			states := []string{domain.OccurrenceCurrent}
-			for range tc.dates[1:] {
-				states = append(states, domain.OccurrenceUpcoming)
-			}
-			checkTodoOccurrences(t, occs, tc.dates, states)
+			checkTodoOccurrences(t, occs, tc.dates, tc.states)
 		})
 	}
+
+	// A day earlier, the repeat would take the RECURRENCE-ID of the 9th,
+	// which another app's completion holds: two overrides for one repeat.
+	t.Run("a move onto a repeat another app completed is refused", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		mustNotMove(t, e, seedSeries(t, e, excluded[:3], override, done), -24*time.Hour)
+	})
 
 	// Its due alone changed, the repeat has not moved, and neither does the
 	// series.
 	t.Run("a change of its due alone changes only the repeat", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
-		master := []string{"DTSTART:20250309T090000Z", "DUE:20250309T100000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250309T090000Z"}
+		master := excluded
 		id := seedSeries(t, e, master, override)
 		f := listedTodo(t, e, id)
 		in := editInput(&f)

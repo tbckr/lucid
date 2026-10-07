@@ -537,7 +537,8 @@ type CalendarService interface {
 	ListTodoOccurrences(ctx context.Context, calendarID string, start, end time.Time) ([]TodoOccurrence, error)
 	CreateTodo(ctx context.Context, calendarID string, in TodoInput) (Todo, error)
 	// UpdateTodo replaces the todo. etag must match (If-Match), otherwise
-	// ErrConflict. A move of a series that its rule cannot follow is
+	// ErrConflict. A move of a series that its rule cannot follow, or that
+	// puts a repeat on one another app already changed, is
 	// ErrSeriesMoveUnsupported, and nothing is written. The change of a
 	// recurring todo returns the snapshot that RestoreTodo undoes it with, or
 	// nil when it cannot be undone (FR-17).

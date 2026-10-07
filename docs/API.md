@@ -583,33 +583,39 @@ For a recurring todo, these edits are handled specially:
   rule on fixed days moves only within the day, and to another time of day
   only without `BYHOUR`, `BYMINUTE` or `BYSECOND`. A move the rule cannot
   follow is `400 series_move_unsupported`, and nothing is written. What
-  refers to later occurrences moves with them: their overrides, `EXDATE`s and an
-  `UNTIL` from the current occurrence on move by the same amount, whole
-  periods of the rule included, in the wall clock of the series (counted in
-  calendar months, then days, for a `MONTHLY` or `YEARLY` rule); earlier
-  ones, such as other clients' completions, stay. A change between all-day
-  and timed dates converts every override (`RECURRENCE-ID`, `DTSTART`,
-  `DUE`), `EXDATE` and the `UNTIL` to the new value type: a date gets the
-  new time of day in the series' zone (an `UNTIL` in UTC), a date-time
-  becomes its date in the series' zone; the later ones first move by the
-  change in date. A `COUNT` no longer counts the rule's instances before the
-  moved occurrence, and an `UNTIL` that would end before the new dates moves
-  onto them.
+  refers to later occurrences moves with them: their overrides, `EXDATE`s
+  and an `UNTIL` from the current occurrence on move by the same amount,
+  whole periods of the rule included, in the wall clock of the series
+  (counted in calendar months, then days, for a `MONTHLY` or `YEARLY` rule).
+  Earlier ones, such as other clients' completions, stay, except an
+  `EXDATE` from the new start on: it excluded an occurrence the series left
+  behind, and goes. A move that would put an occurrence of the series on one
+  another client already marked done or changed, an override that stays, is
+  `400 series_move_unsupported` as well, and nothing is written. A change
+  between all-day and timed dates converts every override (`RECURRENCE-ID`,
+  `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new value type: a date
+  gets the new time of day in the series' zone (an `UNTIL` in UTC), a
+  date-time becomes its date in the series' zone; the later ones first move
+  by the change in date. A `COUNT` no longer counts the rule's instances
+  before the moved occurrence, and an `UNTIL` that would end before the new
+  dates moves onto them.
   The **last repeat** (a current occurrence with `next: null`) moves to any
   date, also off a rule on fixed days: the rule then ends at it, with an
   `UNTIL` at the new start in the form RFC 5545 wants with `DTSTART`'s (a
   date, floating, or UTC) in place of a `COUNT` or an `UNTIL`; in a `TZID`
-  Lucid cannot resolve, with `COUNT=1` instead. Completing the last repeat
-  with new dates moves it the same way; an earlier one leaves them on its
-  completed copy, which is no move. A current occurrence **off the rule**
-  moves the series by the distance it moves from where it is shown, as an
-  event series moves from an exception: the rule moves by that distance
-  from its last instance before the occurrence, as above, with an `EXDATE`
-  that keeps this instance (done or excluded, as the occurrence is current)
-  out at its new place, and the occurrence's override moves along and takes
-  the new dates. A change of its `due` alone changes only the occurrence. A
-  move together with a new `rrule` starts the series over, and the undo
-  below restores the resource: neither is such a move.
+  Lucid cannot resolve, with `COUNT=1` instead. An `EXDATE` from the new
+  start on goes, and an override another client left there refuses the move
+  as above. Completing the last repeat with new dates moves it the same way;
+  an earlier one leaves them on its completed copy, which is no move. A
+  current occurrence **off the rule** moves the series by the distance it
+  moves from where it is shown, as an event series moves from an exception:
+  the rule moves by that distance from its last instance before the
+  occurrence, as above. That instance, done or excluded as the occurrence is
+  current, stays out at its new place by its `EXDATE`, which moves along, or
+  a new one; the occurrence's override moves along and takes the new dates.
+  A change of its `due` alone changes only the occurrence. A move together
+  with a new `rrule` starts the series over, and the undo below restores the
+  resource: neither is such a move.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay and an `UNTIL` take the new value type when the dates

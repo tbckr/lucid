@@ -38,6 +38,10 @@ var (
 	errRuleUnsupported error = &domain.ValidationError{Msg: "the repeat rule cannot be evaluated"}
 	// errRuleNeedsDate rejects a series without a date to recur from (FR-17).
 	errRuleNeedsDate error = &domain.ValidationError{Msg: "a repeating task needs a start or due date"}
+	// errMoveOntoRepeat refuses a move of a task series that puts one of its
+	// repeats on one another app already changed, see keepApart (FR-17).
+	errMoveOntoRepeat = fmt.Errorf("%w: the move puts a repeat on one another app already changed",
+		domain.ErrSeriesMoveUnsupported)
 )
 
 // todoSeries is a recurring VTODO and what other clients recorded in it, as
@@ -594,7 +598,9 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //   - an UNTIL from the moved occurrence on and the references to later
 //     occurrences (their overrides with their dates, EXDATEs) move by the
 //     whole distance, see refShift and movedRule, as the rule's later
-//     instances move; earlier ones, such as other apps' completions, stay;
+//     instances move; earlier ones, such as other apps' completions, stay,
+//     but an EXDATE among them from the new DTSTART on goes: it excluded an
+//     occurrence the series left behind, not one of the moved series;
 //   - a move that adds or removes the time moves them by its change in
 //     date only (see refShift), then rewrites UNTIL and the references in
 //     the new value type, see retypeRefs;
@@ -602,21 +608,39 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 //
 // The series' last open occurrence moves to any date instead, on fixed days
 // too: seriesShift does not decide, and the rule ends there, see endAt, so
-// that it stays the only one. The references, to done occurrences only,
-// stay where they are. A current occurrence off the rule (see
-// todoOcc.offGrid) moves the series as moveOffRule says. A rule Lucid cannot
-// evaluate (of a completed series) only gets its dates moved, and its
-// references converted. It fails, without changing anything, when in has no
-// date, the rule cannot follow the move, or the rule cannot be walked up to
-// the moved occurrence.
+// that it stays the only one. Its references stay where they are, but an
+// EXDATE from the new DTSTART on goes, as it could only exclude the moved
+// occurrence. A current occurrence off the rule (see todoOcc.offGrid) moves
+// the series as moveOffRule says. A rule Lucid cannot evaluate (of a
+// completed series) only gets its dates moved, and its references
+// converted.
+//
+// It fails, leaving cal as it was, when in has no date, the rule cannot
+// follow the move, the rule cannot be walked up to the moved occurrence, or
+// the move puts an occurrence of the series on one that an override it left
+// in place holds, see keepApart.
 //
 // Where the moved occurrence lies in the series (the instances before it)
 // is decided on the series as read, s: once shifted, the rewritten rule no
 // longer says where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
+	saved := saveCalendar(cal)
+	stayed, err := s.applyMove(cal, status, in)
+	if err == nil {
+		err = s.keepApart(cal, stayed)
+	}
+	if err != nil {
+		saved.restore(cal)
+	}
+	return err
+}
+
+// applyMove applies the move of move to cal and returns the overrides it
+// left in place, neither moved nor dropped, for keepApart (FR-17).
+func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.TodoInput) ([]*ical.Component, error) {
 	start, form := seriesStart(s.master, in, true)
 	if start == nil {
-		return errRuleNeedsDate
+		return nil, errRuleNeedsDate
 	}
 	c := s.master
 	p := c.Props.Get(ical.PropRecurrenceRule)
@@ -632,12 +656,22 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	if evaluable && !last {
 		var ok bool
 		if rule, ok = seriesShift(rule, rid.In(s.anchor.loc()), to.t.In(to.loc())); !ok {
-			return errMoveFixedDays
+			return nil, errMoveFixedDays
 		}
 		var err error
 		if before, err = s.instancesBefore(rid); err != nil {
-			return errRuleUnsupported
+			return nil, errRuleUnsupported
 		}
+	}
+	// What the move leaves in place: on the last occurrence everything, else
+	// what refers to the moved occurrence and those before it. Of that, an
+	// EXDATE from the new DTSTART on goes. A rule Lucid cannot evaluate keeps
+	// its references, as it has no occurrences to tell them by.
+	stays := func(d dateValue) bool { return last || s.placeRef(d, rid) <= 0 }
+	var stayed []*ical.Component
+	if evaluable {
+		stayed = s.overridesWhere(cal, stays)
+		dropExdates(c, func(d dateValue) bool { return stays(d) && notBefore(d, to) })
 	}
 	writeSeriesDates(cal, c, in, true)
 	var shift func(dateValue) time.Time
@@ -660,7 +694,7 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 	case evaluable && untilBefore(p.Value, to.t, loc):
 		p.Value = untilAt(p.Value, to.t, loc)
 	}
-	return nil
+	return stayed, nil
 }
 
 // moveOffRule moves the series s, whose current occurrence occ lies off the
@@ -673,11 +707,13 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 // an occurrence: its days as seriesShift says, its COUNT and UNTIL, and the
 // later references by the whole distance, occ's override among them, which
 // then takes the dates of in. prev is done, excluded or cancelled, as occ is
-// current: an EXDATE keeps it out at its new place, and what records it
-// stays where it is. A move that keeps occ's start (else due), such as a
-// change of its due alone, changes occ's dates only. It fails, without
-// changing anything, as move does.
-func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) error {
+// current: its EXDATE moves along to the new anchor, or an EXDATE there
+// keeps it out, and an override of it stays where it is, as do the
+// references before it, but for an EXDATE from the new anchor on, as in
+// move. A move that keeps occ's start (else due), such as a change of its
+// due alone, changes occ's dates only. It returns the overrides it left in
+// place, for keepApart, and fails, without changing anything, as move does.
+func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) ([]*ical.Component, error) {
 	// Without a start, DTSTART = DUE, as for the series.
 	moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
 	if moved.start == nil {
@@ -687,18 +723,25 @@ func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.Todo
 	shift := s.shiftBetween(
 		dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)},
 		dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)})
+	var stayed []*ical.Component
 	if shift != nil {
 		// occ lies after the anchor, an instance of the rule: prev exists.
 		prev, n, err := s.lastBefore(occ.rid)
 		if err != nil || n == 0 {
-			return errRuleUnsupported
+			return nil, errRuleUnsupported
 		}
 		to := shift(dateValue{t: prev.In(loc), allDay: s.anchor.allDay})
 		rule, ok := seriesShift(s.rrule, prev.In(loc), to.In(loc))
 		if !ok {
-			return errMoveFixedDays
+			return nil, errMoveFixedDays
 		}
 		c := s.master
+		stays := func(d dateValue) bool { return s.placeRef(d, prev) <= 0 }
+		stayed = s.overridesWhere(cal, stays)
+		anchor := dateValue{t: to, allDay: s.anchor.allDay}
+		dropExdates(c, func(d dateValue) bool {
+			return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, anchor))
+		})
 		s.anchorAt(cal, to)
 		c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, n-1, prev, shift) // n-1 before prev
 		c.Props.Del(propKDEPending)
@@ -706,7 +749,186 @@ func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.Todo
 		c.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, to, s.startForm))
 	}
 	s.setEntryDates(occ.override, moved)
+	return stayed, nil
+}
+
+// keepApart refuses with errMoveOntoRepeat a move of the series s, as
+// applied to cal, that put one of its occurrences on the RECURRENCE-ID of
+// an override in stayed, one the move left in place (FR-17): on an instance
+// of the moved rule, the moved occurrence's own included, that override
+// would take over a repeat it never belonged to, such as another app's
+// completion marking it done; on the RECURRENCE-ID of an override the move
+// moved, two overrides would hold one repeat. An override in stayed that
+// lies on neither, as a done one a move to an earlier day goes back past,
+// stays as history off the rule (A-10).
+func (s *todoSeries) keepApart(cal *ical.Calendar, stayed []*ical.Component) error {
+	if len(stayed) == 0 {
+		return nil
+	}
+	ns := newTodoSeries(cal, s.master) // a rule it cannot walk fails below
+	if ns == nil {
+		return nil
+	}
+	left := make(map[*ical.Component]bool, len(stayed))
+	for _, o := range stayed {
+		left[o] = true
+	}
+	var stays, moved []dateValue
+	for _, o := range cal.Children {
+		if o == s.master || o.Name != s.master.Name {
+			continue
+		}
+		rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
+		switch {
+		case err != nil:
+		case left[o]:
+			stays = append(stays, rid)
+		default:
+			moved = append(moved, rid)
+		}
+	}
+	for _, u := range stays {
+		for _, m := range moved {
+			if ns.sameRepeat(u, m) {
+				return errMoveOntoRepeat
+			}
+		}
+		on, err := ns.onInstance(u)
+		switch {
+		case err != nil:
+			return errRuleUnsupported
+		case on:
+			return errMoveOntoRepeat
+		}
+	}
 	return nil
+}
+
+// onInstance reports whether d, a RECURRENCE-ID, lies on an instance of the
+// rule of s, placed by placeRef: one ruleIterator yields, also where an
+// EXDATE excludes it (FR-17).
+func (s *todoSeries) onInstance(d dateValue) (bool, error) {
+	next, err := s.ruleIterator()
+	if err != nil {
+		return false, err
+	}
+	for range maxRRuleIterations {
+		t, ok := next()
+		if !ok {
+			return false, nil
+		}
+		switch c := s.placeRef(d, t); {
+		case c == 0:
+			return true, nil
+		case c < 0:
+			return false, nil
+		}
+	}
+	return false, errRRuleCap
+}
+
+// sameRepeat reports whether the RECURRENCE-IDs a and b stand for one
+// occurrence of s: the same instant in the anchor's value type, else the
+// same date in the series' zone (A-11).
+func (s *todoSeries) sameRepeat(a, b dateValue) bool {
+	if a.allDay == s.anchor.allDay && b.allDay == s.anchor.allDay {
+		return a.t.Equal(b.t)
+	}
+	return s.refDate(a).Equal(s.refDate(b))
+}
+
+// refDate returns the date a RECURRENCE-ID or EXDATE value d stands for, as
+// placeRef places it: of the anchor's value type, its date in the series'
+// zone; of the other, the date it is written with (A-11).
+func (s *todoSeries) refDate(d dateValue) time.Time {
+	if d.allDay == s.anchor.allDay {
+		return s.dayOf(d.t)
+	}
+	return civilDate(d.t)
+}
+
+// overridesWhere returns the overrides of the master of s in cal whose
+// RECURRENCE-ID keep reports (FR-17).
+func (s *todoSeries) overridesWhere(cal *ical.Calendar, keep func(rid dateValue) bool) []*ical.Component {
+	var out []*ical.Component
+	for _, o := range cal.Children {
+		if o == s.master || o.Name != s.master.Name {
+			continue
+		}
+		if rid, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err == nil && keep(rid) {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// notBefore reports whether the date value d does not lie before to: by
+// instant for the same value type, else by date, each in its own zone
+// (FR-17).
+func notBefore(d, to dateValue) bool {
+	if d.allDay == to.allDay {
+		return !d.t.Before(to.t)
+	}
+	return !civilDate(d.t.In(d.loc())).Before(civilDate(to.t.In(to.loc())))
+}
+
+// dropExdates removes the EXDATE values of master that drop reports, as
+// written, and an EXDATE property it leaves without values; a value Lucid
+// cannot read stays (FR-17).
+func dropExdates(master *ical.Component, drop func(dateValue) bool) {
+	props := master.Props[ical.PropExceptionDates]
+	if len(props) == 0 {
+		return
+	}
+	kept := props[:0]
+	for _, p := range props {
+		var vals []string
+		for v := range strings.SplitSeq(p.Value, ",") {
+			at, _, _ := strings.Cut(strings.TrimSpace(v), "/")
+			if d, err := parseDateValue(at, p.Params); err == nil && drop(d) {
+				continue
+			}
+			vals = append(vals, v)
+		}
+		if len(vals) > 0 {
+			p.Value = strings.Join(vals, ",")
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		master.Props.Del(ical.PropExceptionDates)
+		return
+	}
+	master.Props[ical.PropExceptionDates] = kept
+}
+
+// calendarState is what a move of a series can change in a calendar: the
+// list of its components, and the properties of each, so that a move
+// refused after it was applied leaves the calendar as it was (FR-17).
+type calendarState struct {
+	children []*ical.Component
+	props    map[*ical.Component]ical.Props
+}
+
+// saveCalendar returns the state of cal, see calendarState.
+func saveCalendar(cal *ical.Calendar) calendarState {
+	st := calendarState{children: slices.Clone(cal.Children), props: make(map[*ical.Component]ical.Props, len(cal.Children))}
+	for _, c := range cal.Children {
+		props := make(ical.Props, len(c.Props))
+		for name, ps := range c.Props {
+			props[name] = cloneProps(ps)
+		}
+		st.props[c] = props
+	}
+	return st
+}
+
+// restore puts cal back into the state st.
+func (st calendarState) restore(cal *ical.Calendar) {
+	cal.Children = st.children
+	for c, props := range st.props {
+		c.Props = props
+	}
 }
 
 // instancesBefore returns the number of occurrences of the rule of s before
