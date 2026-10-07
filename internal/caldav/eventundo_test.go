@@ -337,6 +337,15 @@ func TestRestoreSplit(t *testing.T) {
 		refused(t, e, id, nPath, snap, domain.ErrUpstream)
 	})
 
+	// The services never hand out such a ref, but a snapshot could carry one.
+	t.Run("a new series outside the calendar home", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, _, nPath, snap := split(t, e)
+		snap.Created = []domain.CreatedRef{{ID: encodeID("/elsewhere/new.ics"), ETag: snap.Created[0].ETag}}
+		refused(t, e, id, nPath, snap, domain.ErrNotFound)
+	})
+
 	t.Run("the new series deleted since", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
