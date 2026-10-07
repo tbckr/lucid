@@ -27,7 +27,7 @@ export function ScopeGlyph({
   className?: string
 }) {
   const fill = inverted ? 'var(--background)' : tone === 'destructive' ? 'var(--destructive)' : (color ?? 'currentColor')
-  const ring = inverted ? 'var(--background)' : 'var(--input)'
+  const ring = inverted ? 'var(--background)' : 'var(--muted-foreground)'
   return (
     <svg width={44} height={10} viewBox="0 0 44 10" className={className} aria-hidden focusable="false">
       {slots.map((slot, i) => {

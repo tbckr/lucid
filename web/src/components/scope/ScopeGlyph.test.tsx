@@ -35,7 +35,7 @@ describe('ScopeGlyph', () => {
     const [kept, , affected] = dots(container)
     expect(affected).toHaveAttribute('fill', '#3b82f6')
     expect(kept).toHaveAttribute('fill', 'none')
-    expect(kept).toHaveAttribute('stroke', 'var(--input)')
+    expect(kept).toHaveAttribute('stroke', 'var(--muted-foreground)')
     expect(kept).toHaveAttribute('stroke-width', '1.5')
     // A ring's stroke stays within the dot's size: r - 0.75.
     expect(kept).toHaveAttribute('r', '2.25')
@@ -45,7 +45,7 @@ describe('ScopeGlyph', () => {
     const { container } = render(<ScopeGlyph slots={glyphSlots('this')} color="#3b82f6" tone="destructive" />)
     const [kept, , affected] = dots(container)
     expect(affected).toHaveAttribute('fill', 'var(--destructive)')
-    expect(kept).toHaveAttribute('stroke', 'var(--input)')
+    expect(kept).toHaveAttribute('stroke', 'var(--muted-foreground)')
   })
 
   it('draws in the background color inside the ink pill, the kept ones fainter', () => {
