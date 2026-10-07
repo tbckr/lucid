@@ -468,10 +468,11 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 }
 
 // UpdateEvent implements domain.CalendarService. Unknown properties and
-// components (alarms, attendees, X- properties) are preserved. The change of
-// a series that was recurring before it, also one that removes the rule,
-// returns the snapshot RestoreEvent undoes it with, see eventSnapshot
-// (FR-17).
+// components (alarms, attendees, X- properties) are preserved. "All events"
+// from an instanceStart the series no longer shows is ErrNotFound, with
+// nothing written (see checkShown). The change of a series that was
+// recurring before it, also one that removes the rule, returns the snapshot
+// RestoreEvent undoes it with, see eventSnapshot (FR-17).
 func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in domain.EventInput) (domain.Event, *domain.Snapshot, error) {
 	if s.err != nil {
 		return domain.Event{}, nil, s.err
@@ -501,6 +502,9 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if master == nil {
 		return domain.Event{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
+	if err := checkShown(cal, master, in.InstanceStart); err != nil {
+		return domain.Event{}, nil, err
+	}
 
 	// Judged before the change, which may remove the rule.
 	wasRecurring, attendees := isRecurring(master), hasAttendees(cal)
@@ -527,6 +531,26 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 		return domain.Event{}, nil, err
 	}
 	return ev, snap, nil
+}
+
+// checkShown refuses "all events" from instanceStart, if set, where the
+// series master in cal no longer has that occurrence, as loadSeries checks
+// it: an instance of its rule, or one with an override (FR-17, NFR-26).
+// Sent from a view not reloaded since the series ended or split before it,
+// with the ETag that change gave, the edit would write the view's old rule
+// back, bringing deleted events back or showing those of a new series
+// twice; ErrNotFound reloads the view instead. A single event, and a series
+// whose timing Lucid cannot read, applySeriesEdit edits as entered.
+func checkShown(cal *ical.Calendar, master *ical.Component, instanceStart *time.Time) error {
+	if instanceStart == nil || !isRecurring(master) {
+		return nil
+	}
+	tm, tmErr := parseTiming(master)
+	rid := instanceStart.UTC()
+	if tmErr == nil && findOverride(cal, master, rid) == nil && !isInstance(master, tm, rid) {
+		return fmt.Errorf("%w: not an occurrence of the series", domain.ErrNotFound)
+	}
+	return nil
 }
 
 // editedEvent returns the event that a change through applySeriesEdit left

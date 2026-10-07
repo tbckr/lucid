@@ -1458,6 +1458,142 @@ describe('this and following events', () => {
     })
   })
 
+  // Final review, Important 1: a write that sends the series' rule, made from the view before a
+  // split and queued behind it, would write the rule back as the view had it, without the end the
+  // split gave the series. Run after the split's reload, it goes with the ETag it was read with.
+  describe('a write of the rule queued behind a split', () => {
+    // Mon, Mar 10: an event before the split, as the view showed it before.
+    const mid = apiEvent({
+      ...late,
+      key: 'e1@2025-03-10T08:00:00Z',
+      start: '2025-03-10T08:00:00Z',
+      end: '2025-03-10T09:00:00Z',
+      recurrenceId: '2025-03-10T08:00:00Z',
+    })
+    const moved = { start: '2025-03-10T09:00:00Z', end: '2025-03-10T10:00:00Z' }
+    const conflict = () => jsonResponse(409, { error: { code: 'conflict', message: 'x' } })
+    const writesOfRule = [
+      {
+        write: 'a move of all events',
+        request: 'PUT /api/v1/events/e1',
+        answer: () => jsonResponse(200, apiEvent({ ...mid, ...moved, etag: '"3"' })),
+        useWrite: () => {
+          const move = useMoveEvent('e1')
+          return () => {
+            move.mutate({ event: toCalEvent(mid), ...moved })
+          }
+        },
+      },
+      {
+        write: 'the editor, all events',
+        request: 'PUT /api/v1/events/e1',
+        answer: () => jsonResponse(200, apiEvent({ ...mid, ...moved, etag: '"3"' })),
+        useWrite: () => {
+          const update = useUpdateEvent('e1')
+          return () => {
+            update.mutate({
+              event: toCalEvent(mid),
+              input: { ...input, ...moved, rrule: 'FREQ=WEEKLY', instanceStart: mid.recurrenceId! },
+            })
+          }
+        },
+      },
+      {
+        write: 'a move of the following events',
+        request: 'PUT /api/v1/events/e1/following/2025-03-10T08%3A00%3A00Z',
+        answer: () => split('"3"'),
+        useWrite: () => {
+          const move = useMoveFollowing('e1')
+          return () => {
+            move.mutate({ event: toCalEvent(mid), ...moved })
+          }
+        },
+      },
+      {
+        write: 'the editor, the following events',
+        request: 'PUT /api/v1/events/e1/following/2025-03-10T08%3A00%3A00Z',
+        answer: () => split('"3"'),
+        useWrite: () => {
+          const update = useUpdateFollowing('e1')
+          return () => {
+            update.mutate({ event: toCalEvent(mid), input: { ...input, ...moved, rrule: 'FREQ=WEEKLY' } })
+          }
+        },
+      },
+    ]
+
+    /**
+     * Splits the series at `late` and, queued behind it, runs `write`, made from `mid` before the
+     * split. The calendar, shown meanwhile, reloads the series after the split with `rule`. With
+     * `older`, the list of a week shown a minute before, not reloaded since, holds the series with
+     * that rule.
+     */
+    async function queueBehindSplit(rule: string, useWrite: () => () => void, answer: Response, older?: string) {
+      const { queryClient, wrap, writes } = setup(split('"2"', 'tok'), answer)
+      queryClient.setQueryData<EventList>(key, { events: [first, mid, late], corrupted: [] })
+      if (older !== undefined) {
+        queryClient.setQueryData<EventList>(
+          queryKeys.events('c1', 'r0', 'r1'),
+          { events: [{ ...first, rrule: older }], corrupted: [] },
+          { updatedAt: Date.now() - 60_000 },
+        )
+      }
+      // The old series after the split, with the ETag it gave: its events before Mar 17.
+      const reloaded = (): EventList => ({
+        events: [first, mid].map((e) => ({ ...e, rrule: rule, etag: '"2"' })),
+        corrupted: [],
+      })
+      const { result } = renderHook(
+        () => ({
+          split: useMoveFollowing('e1'),
+          write: useWrite(),
+          shown: useQuery({ queryKey: key, queryFn: () => Promise.resolve(reloaded()), staleTime: Infinity }),
+        }),
+        { wrapper: wrap },
+      )
+
+      act(() => {
+        result.current.split.mutate({ event: toCalEvent(late), ...to })
+        result.current.write()
+      })
+      await waitFor(() => {
+        expect(writes()).toHaveLength(2)
+      })
+      await waitFor(() => {
+        expect(queryClient.isMutating()).toBe(0)
+      })
+      return writes()[1]
+    }
+
+    it.each(writesOfRule)(
+      'goes with the ETag it was read with once the series has another rule: $write',
+      async ({ request, useWrite }) => {
+        const warning = vi.spyOn(toast, 'warning')
+        const sent = await queueBehindSplit('FREQ=WEEKLY;UNTIL=20250317T075959Z', useWrite, conflict())
+
+        // The series no longer has it: the server refuses the write as a conflict, which reloads.
+        expect(sent).toMatchObject({ request, etag: '"1"' })
+        expect(warning).toHaveBeenCalledWith('This item was changed elsewhere. Lucid reloaded the latest version.')
+      },
+    )
+
+    it.each(writesOfRule)(
+      "goes with the ETag the split gave while the series has the rule it was read with: $write",
+      async ({ request, useWrite, answer }) => {
+        const sent = await queueBehindSplit('FREQ=WEEKLY', useWrite, answer())
+
+        expect(sent).toMatchObject({ request, etag: '"2"' })
+      },
+    )
+
+    it('takes the rule from the newest list that holds the series', async () => {
+      const [move] = writesOfRule
+      const sent = await queueBehindSplit('FREQ=WEEKLY', move!.useWrite, move!.answer(), 'FREQ=DAILY')
+
+      expect(sent).toMatchObject({ request: move!.request, etag: '"2"' })
+    })
+  })
+
   // Review Focus 5: "following" at what is the series' first event by now (a stale view) is "All".
   it.each([
     {

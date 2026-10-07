@@ -458,11 +458,15 @@ type CalendarService interface {
 	ListEvents(ctx context.Context, calendarID string, start, end time.Time) ([]Event, error)
 	CreateEvent(ctx context.Context, calendarID string, in EventInput) (Event, error)
 	// UpdateEvent replaces the event. etag must match (If-Match), otherwise
-	// ErrConflict. The change of a series that was recurring before it,
-	// including one that removes the rule, returns the snapshot that
-	// RestoreEvent undoes it with. A single event, a series with an
-	// ORGANIZER or an ATTENDEE, and a change whose new ETag the server does
-	// not tell, return nil: nothing could be restored safely (FR-17).
+	// ErrConflict. An in.InstanceStart that is no longer an occurrence of the
+	// series, neither an event of its rule nor one with an override, as in a
+	// view not reloaded since the series ended or split before it, is
+	// ErrNotFound, and nothing is written (FR-17, NFR-26). The change of a
+	// series that was recurring before it, including one that removes the
+	// rule, returns the snapshot that RestoreEvent undoes it with. A single
+	// event, a series with an ORGANIZER or an ATTENDEE, and a change whose
+	// new ETag the server does not tell, return nil: nothing could be
+	// restored safely (FR-17).
 	UpdateEvent(ctx context.Context, eventID, etag string, in EventInput) (Event, *Snapshot, error)
 	// UpdateOccurrence changes only the occurrence at recurrenceID of a
 	// recurring event ("only this event"), writing or editing an RFC 5545

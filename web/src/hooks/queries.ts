@@ -410,16 +410,51 @@ function seriesScope(id: string | undefined) {
   return id ? { scope: { id: `event:${id}` } } : {}
 }
 
-/** Writes `event`'s resource with the ETag it has now, and notes the one the write gave it. */
+/**
+ * Writes `event`'s resource with `etag`, by default the one it has now, and notes the one the
+ * write gave it.
+ */
 async function writeEvent(
   qc: QueryClient,
   event: CalEvent,
   write: (etag: string) => Promise<ApiEvent>,
+  etag = currentEtag(qc, event),
 ): Promise<ApiEvent> {
-  const etag = currentEtag(qc, event)
   const updated = await write(etag)
   replaceEtag(qc, event.id, etag, updated.etag)
   return updated
+}
+
+/**
+ * The rule of the series of `event` as the newest list in the cache that holds the series has it,
+ * `undefined` where none does. Lists of ranges not shown since keep what they were loaded with.
+ */
+function cachedRule(qc: QueryClient, event: CalEvent): string | undefined {
+  let rule: string | undefined
+  let loadedAt = Number.NEGATIVE_INFINITY
+  for (const query of qc.getQueryCache().findAll({ queryKey: queryKeys.eventsOf(event.calendarId) })) {
+    const held = (query.state.data as EventList | undefined)?.events.find((e) => e.id === event.id)
+    if (held && query.state.dataUpdatedAt > loadedAt) {
+      rule = held.rrule
+      loadedAt = query.state.dataUpdatedAt
+    }
+  }
+  return rule
+}
+
+/**
+ * The ETag for a write that sends the rule of the series of `event` (FR-17, NFR-26), called when
+ * the write runs, after the writes of the series queued before it: the one the series has now
+ * (`currentEtag`), unless the cache holds the series with another rule than `event` was read
+ * with. The series then has left the view the write was made from, as after a split or an end
+ * before an event queued ahead of it: the write would send the rule back as the view had it, and
+ * the server would take that for a new rule, undoing the end. It goes with the ETag `event` was
+ * read with instead, which the series no longer has, so the server refuses it as a conflict and
+ * the calendar reloads.
+ */
+function ruleWriteEtag(qc: QueryClient, event: CalEvent): string {
+  const rule = cachedRule(qc, event)
+  return rule !== undefined && rule !== event.rrule ? event.etag : currentEtag(qc, event)
 }
 
 /** How long a toast with an action stays, so there is time to reach the action. */
@@ -548,7 +583,7 @@ export function useUpdateEvent(series?: string) {
   return useMutation({
     ...seriesScope(series),
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) =>
-      writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, input)),
+      writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, input), ruleWriteEtag(qc, event)),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (updated, { event, input }, ctx) => {
       if (event.recurring) {
@@ -644,7 +679,12 @@ export function useMoveEvent(series?: string) {
     mutationKey: MOVE_EVENT_KEY,
     ...seriesScope(series),
     mutationFn: ({ event, start, end }: MoveVars) =>
-      writeEvent(qc, event, (etag) => endpoints.updateEvent(event.id, etag, moveInput(event, start, end))),
+      writeEvent(
+        qc,
+        event,
+        (etag) => endpoints.updateEvent(event.id, etag, moveInput(event, start, end)),
+        ruleWriteEtag(qc, event),
+      ),
     onMutate: async ({ event, start, end }) => {
       const generation = startSeriesWrite(qc, event.id)
       if (event.recurring) return { generation, snapshot: [] as [readonly unknown[], EventList | undefined][] }
@@ -860,14 +900,15 @@ function eventDay(event: CalEvent, prefs: FormatPrefs): string {
 /**
  * Splits the series of `event` at it ("This and following events", FR-17):
  * the series ends before it, and one of its own goes on from it with `input`.
- * Sent with the ETag the series has now; the old series' new ETag, when the
- * server told one, is noted within the mutation, so a write queued behind it
- * in the series' scope already uses it (NFR-26). The event is named in the
- * path, so `instanceStart` stays out of the body.
+ * Sent with the ETag the series has now, unless the series has left the view
+ * since (`ruleWriteEtag`); the old series' new ETag, when the server told
+ * one, is noted within the mutation, so a write queued behind it in the
+ * series' scope already uses it (NFR-26). The event is named in the path, so
+ * `instanceStart` stays out of the body.
  */
 async function writeFollowing(qc: QueryClient, event: CalEvent, input: EventInput): Promise<Following> {
   const { instanceStart: _instanceStart, ...body } = input
-  const etag = currentEtag(qc, event)
+  const etag = ruleWriteEtag(qc, event)
   const answer = await endpoints.updateFollowing(event.id, event.recurrenceId ?? '', etag, body)
   if (answer.etag) replaceEtag(qc, event.id, etag, answer.etag)
   return answer

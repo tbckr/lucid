@@ -1839,6 +1839,105 @@ func TestUpdateFollowingNotFound(t *testing.T) {
 	}
 }
 
+// TestUpdateEventFromEventSeriesLeft checks that "all events" from an event
+// the series no longer shows, neither an event of its rule nor an override,
+// is ErrNotFound, with nothing written (FR-17, NFR-26): sent from a view not
+// reloaded since the series ended or split before that event, with the ETag
+// the end or split gave, as a write queued behind the client's own change
+// sends it, it would write the series' old rule back, bringing deleted events
+// back or showing those of the new series twice.
+func TestUpdateEventFromEventSeriesLeft(t *testing.T) {
+	t.Parallel()
+	rid := date(2025, 3, 24, 8, 0)
+	// March 31, 09:00 in Berlin summer time, the event after R.
+	after := date(2025, 3, 31, 7, 0)
+	for _, tt := range []struct {
+		name string
+		// change changes the series, whose ETag is etag, and returns its new one.
+		change func(t *testing.T, e *env, id, etag string) string
+		at     time.Time // the event the stale view shows
+		from   time.Time // its recurrence ID as sent
+	}{
+		{
+			name: "ended before it",
+			change: func(t *testing.T, e *env, id, etag string) string {
+				t.Helper()
+				next, _, err := e.svc.DeleteFollowing(t.Context(), id, etag, rid)
+				mustNoErr(t, err)
+				return next
+			},
+			at: after, from: after,
+		},
+		{
+			name: "split before it",
+			change: func(t *testing.T, e *env, id, etag string) string {
+				t.Helper()
+				in := eventInputOf(shownEvent(t, e, "work", rid))
+				laterBy(time.Hour)(&in)
+				res, _, err := e.svc.UpdateFollowing(t.Context(), id, etag, rid, in)
+				mustNoErr(t, err)
+				return res.ETag
+			},
+			at: after, from: after,
+		},
+		{
+			name:   "no event of it",
+			change: func(_ *testing.T, _ *env, _, etag string) string { return etag },
+			at:     rid, from: date(2025, 3, 25, 8, 0),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			stale := shownEvent(t, e, "work", tt.at)
+			next := tt.change(t, e, id, stale.ETag)
+			if next == "" {
+				t.Fatal("the change told no ETag")
+			}
+			changed := storedObject(t, e, id)
+			shown := listedEvents(t, e)
+			e.mock.ResetCounts()
+
+			in := eventInputOf(stale)
+			in.InstanceStart = &tt.from
+			laterBy(time.Hour)(&in)
+			_, snap, err := e.svc.UpdateEvent(t.Context(), id, next, in)
+			mustErr(t, err, domain.ErrNotFound)
+			if snap != nil {
+				t.Error("returned a snapshot with an error")
+			}
+			if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+				t.Errorf("%d writes; want none", n)
+			}
+			if now := storedObject(t, e, id); now != changed {
+				t.Errorf("the series changed:\n%s\nwant\n%s", now, changed)
+			}
+			if now := listedEvents(t, e); !slices.Equal(now, shown) {
+				t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(now, "\n"), strings.Join(shown, "\n"))
+			}
+		})
+	}
+
+	// An override off the rule is an event the series shows: "all events"
+	// moves the series from it, as from any other.
+	t.Run("an override off the rule", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "work", "series.ics", slices.Concat(weeklyStandup(), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Moved",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250312T090000", "DTSTART;TZID=Europe/Berlin:20250312T090000",
+			"DTEND;TZID=Europe/Berlin:20250312T100000", "END:VEVENT",
+		})...)
+		orphan := shownEvent(t, e, "work", date(2025, 3, 12, 8, 0))
+		in := eventInputOf(orphan)
+		laterBy(time.Hour)(&in)
+		_, _, err := e.svc.UpdateEvent(t.Context(), id, orphan.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20250303T100000"}, nil)
+	})
+}
+
 // TestUpdateFollowingKeepsCountBoundary is Review Focus 1 through the whole
 // write: a series of ten weekly events moved an hour later from its fourth
 // keeps ten events, three in S and seven in N, none lost or doubled, also

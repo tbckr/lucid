@@ -203,6 +203,12 @@ attendees. A single event gets none.
   and the `allDay` flag are unchanged, keep the series' own time zone; the
   request's `timezone` applies to single (non-recurring) events and to a
   series save that changes the rule or `allDay`.
+- `404 not_found`, and nothing is written, where `instanceStart` is no longer
+  an occurrence of the series: neither an event of its rule nor one with an
+  override, as in a view not reloaded since the series ended or was split
+  before it (`…/following/…` below). Saved, the view's rule would replace
+  the series' new end, bringing the deleted events back or listing the new
+  series' events twice.
 
 ### `DELETE /api/v1/events/{eventId}` (header `If-Match`)
 

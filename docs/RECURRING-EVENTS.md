@@ -997,6 +997,18 @@ as entered (`UpdateFollowing`).
   (`firstOccurrence`, the event list's `first`): of the rule's events,
   `DTSTART` included, the `RDATE`s and the overrides' `RECURRENCE-ID`s,
   none of them an `EXDATE` or a cancelled override.
+- **A view the series has left.** A write made from the calendar as it was
+  before an end or a split, and queued behind it (NFR-26), still sends the
+  series' rule as that view had it, without the new end. Saved, it would
+  bring the deleted events back, or list the new series' events twice.
+  Such a write, "All events" or "This and following events" again, runs
+  only after the calendar has reloaded the series; if the series has
+  another rule by then, the frontend sends it with the ETag its event was
+  read with, not the one the end gave, so the server refuses it as a
+  conflict and the calendar reloads. The server answers "All events" from
+  an event the series no longer shows, neither an event of its rule nor
+  one with an override, with `404 not_found` (`UpdateEvent`), and writes
+  nothing.
 - **The write order** (`writeCreatedThenMaster` in
   `internal/caldav/writes.go`, which the completion of a repeating task
   shares): the new series is created first, with `If-None-Match: *`, and
