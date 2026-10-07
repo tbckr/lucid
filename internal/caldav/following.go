@@ -437,11 +437,14 @@ func (s *service) loadFollowing(ctx context.Context, eventID, etag string, recur
 // DeleteFollowing implements domain.CalendarService: it ends the recurring
 // series before its occurrence at recurrenceID, with endBefore, in one write
 // (FR-17; spec section 4 "Löschen"). At the series' first event, which is all
-// of them, and once no event is left, it deletes the resource instead, as
-// DeleteEvent does. It returns what DeleteOccurrence does: the new ETag of a
-// resource it keeps, so the client's next write of the series does not
-// conflict with this one (NFR-26), and the snapshot RestoreEvent undoes the
-// change with, the resource as it was; "" and nil for one it deletes.
+// of them, it deletes the resource instead, as DeleteEvent does. At a later
+// event the series keeps the events before it, so it is never left without
+// one; should endBefore and hasEventsLeft ever disagree on that, a guard
+// deletes the resource rather than write a series without events. It
+// returns what DeleteOccurrence does: the new ETag of a resource it keeps,
+// so the client's next write of the series does not conflict with this one
+// (NFR-26), and the snapshot RestoreEvent undoes the change with, the
+// resource as it was; "" and nil for one it deletes.
 func (s *service) DeleteFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *domain.Snapshot, error) {
 	if s.err != nil {
 		return "", nil, s.err
