@@ -151,7 +151,6 @@ func overlaps(ev domain.Event, from, to time.Time) bool {
 // [from, to).
 func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.Event, error) {
 	var master *ical.Component
-	overrides := map[int64]*ical.Component{}
 	var orphans []*ical.Component
 	for _, c := range o.cal.Children {
 		if c.Name != ical.CompEvent {
@@ -168,12 +167,14 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 	if master == nil {
 		// Only overridden instances (e.g. a single invitation): show them as-is.
 		var out []domain.Event
+		attendees := hasAttendees(o.cal)
 		for _, c := range orphans {
 			tm, err := parseTiming(c)
 			if err != nil {
 				return out, err
 			}
 			ev := at(baseEvent(o, calendarID, c), tm, tm.start.t)
+			ev.HasAttendees = attendees
 			if rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID)); err == nil {
 				t := rid.t.UTC()
 				ev.RecurrenceID = &t
@@ -190,6 +191,8 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 		return nil, err
 	}
 	base := baseEvent(o, calendarID, master)
+	// Judged on the whole resource, once, for each of its events (FR-17).
+	base.HasAttendees = hasAttendees(o.cal)
 	if !isRecurring(master) {
 		ev := at(base, tm, tm.start.t)
 		if overlaps(ev, from, to) {
@@ -198,22 +201,8 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 		return nil, nil
 	}
 
-	for _, c := range orphans {
-		rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID))
-		if err == nil {
-			overrides[rid.t.Unix()] = c
-		}
-	}
-	exdates := map[int64]bool{}
-	for _, p := range master.Props.Values(ical.PropExceptionDates) {
-		dvs, err := parseDateList(&p)
-		if err != nil {
-			continue
-		}
-		for _, d := range dvs {
-			exdates[d.t.Unix()] = true
-		}
-	}
+	overrides := recurrenceOverrides(o.cal, master)
+	exdates := exceptionDates(master)
 
 	occs, err := expandSeries(master, tm.start, from.Add(-tm.dur.approx()), to)
 	var out []domain.Event
@@ -227,7 +216,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 		}
 	}
 	for ridUnix, c := range overrides {
-		if exdates[ridUnix] || strings.EqualFold(text(c.Props, ical.PropStatus), "CANCELLED") {
+		if exdates[ridUnix] || isCancelled(c) {
 			continue
 		}
 		rid := time.Unix(ridUnix, 0)
@@ -245,7 +234,53 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 			out = append(out, ev)
 		}
 	}
+	if len(out) > 0 {
+		// Looked up once for the series, not for each occurrence (FR-17).
+		first := firstOccurrence(o.cal, master, tm)
+		for i := range out {
+			out[i].First = out[i].RecurrenceID.Equal(first)
+		}
+	}
 	return out, err
+}
+
+// exceptionDates returns the instants of the EXDATEs of the series master, as
+// Unix seconds. An EXDATE property that cannot be read is left out (FR-17).
+func exceptionDates(master *ical.Component) map[int64]bool {
+	exdates := map[int64]bool{}
+	for _, p := range master.Props.Values(ical.PropExceptionDates) {
+		dvs, err := parseDateList(&p)
+		if err != nil {
+			continue
+		}
+		for _, d := range dvs {
+			exdates[d.t.Unix()] = true
+		}
+	}
+	return exdates
+}
+
+// recurrenceOverrides returns the events of cal that override an occurrence
+// of the series master, by the instant of their RECURRENCE-ID as Unix
+// seconds. An override whose RECURRENCE-ID cannot be read is left out, and of
+// two for the same instant the later wins (FR-17).
+func recurrenceOverrides(cal *ical.Calendar, master *ical.Component) map[int64]*ical.Component {
+	overrides := map[int64]*ical.Component{}
+	for _, c := range cal.Children {
+		if c == master || c.Name != master.Name || c.Props.Get(ical.PropRecurrenceID) == nil {
+			continue
+		}
+		if rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID)); err == nil {
+			overrides[rid.t.Unix()] = c
+		}
+	}
+	return overrides
+}
+
+// isCancelled reports whether the override c has STATUS:CANCELLED, which
+// ListEvents shows as no event, like an EXDATE (FR-17).
+func isCancelled(c *ical.Component) bool {
+	return strings.EqualFold(text(c.Props, ical.PropStatus), "CANCELLED")
 }
 
 // overrideModified reports whether an override visibly changes its

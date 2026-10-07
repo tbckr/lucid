@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -333,6 +334,177 @@ func TestListEventsModified(t *testing.T) {
 				t.Errorf("Modified = %v; want %v", found.Modified, tt.want)
 			}
 		})
+	}
+}
+
+// TestListEventsMarksFirstAndAttendees checks the two fields the client
+// decides "This and following events" with: First on the occurrence that is
+// the series' first shown one, and HasAttendees on every event of a resource
+// where the series or any override has an ORGANIZER or ATTENDEE (FR-17).
+func TestListEventsMarksFirstAndAttendees(t *testing.T) {
+	t.Parallel()
+	weekly := []string{
+		"UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series", "DTSTART:20250303T080000Z",
+		"DTEND:20250303T090000Z", "RRULE:FREQ=WEEKLY;COUNT=4",
+	}
+	single := []string{
+		"UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Single", "DTSTART:20250303T080000Z",
+		"DTEND:20250303T090000Z",
+	}
+	with := func(base []string, extra ...string) []string {
+		return append(append([]string{}, base...), extra...)
+	}
+	// vevent is a VEVENT of the lines, and the overrides after it.
+	vevent := func(master []string, overrides ...[]string) []string {
+		out := append(append([]string{"BEGIN:VEVENT"}, master...), "END:VEVENT")
+		for _, o := range overrides {
+			out = append(out, "BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series")
+			out = append(out, o...)
+			out = append(out, "END:VEVENT")
+		}
+		return out
+	}
+	mar := func(d, h int) time.Time { return date(2025, 3, d, h, 0) }
+
+	tests := []struct {
+		name      string
+		lines     []string
+		from      time.Time
+		first     time.Time // the start of the event marked First, zero for none
+		attendees bool
+		count     int // events listed
+	}{
+		{"listed from its start", vevent(weekly), mar(1, 0), mar(3, 8), false, 4},
+		{"listed from its second week", vevent(weekly), mar(8, 0), time.Time{}, false, 3},
+		{"listed from within its first event", vevent(weekly), mar(3, 8), mar(3, 8), false, 4},
+		{
+			"first excluded by an EXDATE", vevent(with(weekly, "EXDATE:20250303T080000Z")), mar(1, 0),
+			mar(10, 8), false, 3,
+		},
+		{
+			"first excluded, listed from the week of the next", vevent(with(weekly, "EXDATE:20250303T080000Z")),
+			mar(8, 0), mar(10, 8), false, 3,
+		},
+		{
+			"first excluded, listed from the week after", vevent(with(weekly, "EXDATE:20250303T080000Z")),
+			mar(11, 0),
+			time.Time{},
+			false, 2,
+		},
+		{
+			"first cancelled by an override", vevent(weekly, []string{
+				"RECURRENCE-ID:20250303T080000Z", "STATUS:CANCELLED", "DTSTART:20250303T080000Z", "DTEND:20250303T090000Z",
+			}), mar(1, 0), mar(10, 8), false, 3,
+		},
+		{
+			"first moved by its override", vevent(weekly, []string{
+				"RECURRENCE-ID:20250303T080000Z", "DTSTART:20250320T080000Z", "DTEND:20250320T090000Z",
+			}), mar(1, 0), mar(20, 8), false, 4,
+		},
+		{
+			"first moved by its override, listed where the override is not", vevent(weekly, []string{
+				"RECURRENCE-ID:20250303T080000Z", "DTSTART:20250320T080000Z", "DTEND:20250320T090000Z",
+			}), mar(21, 0), time.Time{}, false, 1,
+		},
+		{"RDATE before DTSTART", vevent(with(weekly, "RDATE:20250301T080000Z")), mar(1, 0), mar(1, 8), false, 5},
+		{"a single event", vevent(single), mar(1, 0), time.Time{}, false, 1},
+		{"attendee of the series", vevent(with(weekly, "ATTENDEE:mailto:a@example.com")), mar(1, 0), mar(3, 8), true, 4},
+		{
+			"organizer of the series", vevent(with(weekly, "ORGANIZER:mailto:o@example.com")), mar(8, 0),
+			time.Time{},
+			true, 3,
+		},
+		{
+			"attendee only of an override", vevent(weekly, []string{
+				"RECURRENCE-ID:20250317T080000Z", "DTSTART:20250317T080000Z", "DTEND:20250317T090000Z",
+				"ATTENDEE:mailto:a@example.com",
+			}), mar(1, 0), mar(3, 8), true, 4,
+		},
+		{
+			"attendee only of a cancelled override", vevent(weekly, []string{
+				"RECURRENCE-ID:20250317T080000Z", "STATUS:CANCELLED", "DTSTART:20250317T080000Z",
+				"ATTENDEE:mailto:a@example.com",
+			}), mar(1, 0), mar(3, 8), true, 3,
+		},
+		{
+			"attendee of a single event", vevent(with(single, "ATTENDEE:mailto:a@example.com")), mar(1, 0),
+			time.Time{},
+			true, 1,
+		},
+		{
+			"invitation to one occurrence", []string{
+				"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series",
+				"RECURRENCE-ID:20250310T080000Z", "DTSTART:20250310T080000Z", "DTEND:20250310T090000Z",
+				"ORGANIZER:mailto:o@example.com", "ATTENDEE:mailto:a@example.com", "END:VEVENT",
+			}, mar(1, 0), time.Time{}, true, 1,
+		},
+		{
+			"override without a series, no attendees", []string{
+				"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series",
+				"RECURRENCE-ID:20250310T080000Z", "DTSTART:20250310T080000Z", "DTEND:20250310T090000Z", "END:VEVENT",
+			}, mar(1, 0), time.Time{}, false, 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
+			got, err := expandObject(o, "cal", tt.from, date(2025, 5, 1, 0, 0))
+			mustNoErr(t, err)
+			if len(got) != tt.count {
+				t.Fatalf("got %d events; want %d: %+v", len(got), tt.count, got)
+			}
+			var firsts []time.Time
+			for _, ev := range got {
+				if ev.First {
+					firsts = append(firsts, ev.Start)
+				}
+				if ev.HasAttendees != tt.attendees {
+					t.Errorf("event at %s: HasAttendees = %v; want %v", ev.Start, ev.HasAttendees, tt.attendees)
+				}
+			}
+			switch {
+			case tt.first.IsZero() && len(firsts) != 0:
+				t.Errorf("First is set on %v; want none", firsts)
+			case !tt.first.IsZero() && (len(firsts) != 1 || !firsts[0].Equal(tt.first)):
+				t.Errorf("First is set on %v; want only %v", firsts, tt.first)
+			}
+		})
+	}
+}
+
+// TestListEventsFirstAndAttendeesOnTheWire checks that ListEvents hands both
+// fields out, in the JSON the API sends and without them where they do not
+// hold (FR-17).
+func TestListEventsFirstAndAttendeesOnTheWire(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	e.put(t, "work", "series.ics", "BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Series",
+		"DTSTART:20250303T080000Z", "DTEND:20250303T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2",
+		"ATTENDEE:mailto:a@example.com", "END:VEVENT")
+	e.put(t, "work", "plain.ics", "BEGIN:VEVENT", "UID:2", "DTSTAMP:20250101T000000Z", "SUMMARY:Plain",
+		"DTSTART:20250304T080000Z", "DTEND:20250304T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2", "END:VEVENT")
+
+	evs := listed(t, e, "work", date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	want := map[string]string{ // start -> JSON fields
+		"2025-03-03T08:00:00Z": `"hasAttendees":true,"first":true`,
+		"2025-03-10T08:00:00Z": `"hasAttendees":true`,
+		"2025-03-04T08:00:00Z": `"first":true`,
+		"2025-03-11T08:00:00Z": ``,
+	}
+	if len(evs) != len(want) {
+		t.Fatalf("got %d events; want %d", len(evs), len(want))
+	}
+	for _, ev := range evs {
+		b, err := json.Marshal(ev)
+		mustNoErr(t, err)
+		js := string(b)
+		fields := want[ev.Start.Format(time.RFC3339)]
+		for _, name := range []string{`"hasAttendees":true`, `"first":true`} {
+			if has, wanted := strings.Contains(js, name), strings.Contains(fields, name); has != wanted {
+				t.Errorf("event at %s: %s present = %v; want %v in %s", ev.Start, name, has, wanted, js)
+			}
+		}
 	}
 }
 

@@ -94,6 +94,15 @@ type Event struct {
 	// description. Invisible differences, such as PARTSTAT or an added
 	// VALARM, do not set it (FR-17).
 	Modified bool `json:"modified,omitempty"`
+	// First is true for the occurrence that is the first one of its series
+	// ListEvents shows, whatever the window: a window that starts after it
+	// has no such event. A series is not split at its first event, which
+	// "this and following events" there is "all events" for (FR-17).
+	First bool `json:"first,omitempty"`
+	// HasAttendees is true for every event of a resource where the series or
+	// any of its overrides has an ORGANIZER or an ATTENDEE. The server does
+	// not split such a series, so the client does not offer it (FR-17).
+	HasAttendees bool `json:"hasAttendees,omitempty"`
 	// UndoToken undoes the change of the series whose response carries it
 	// (FR-17).
 	UndoToken string `json:"undoToken,omitempty"`

@@ -109,6 +109,17 @@ resource for updates/deletes. `modified` is `true` for an occurrence of a
 series whose override visibly changed it (start, duration, all-day, title,
 location or description); it is omitted (`false`) otherwise.
 
+`first` is `true` on the occurrence that is the first one of its series
+that the server shows, whatever range was asked for: a range that starts
+after it has no event with `first`. The series' first one is the earliest
+`recurrenceId` among the rule's instances (`DTSTART` included), the `RDATE`s
+and the overrides, none of them an `EXDATE` or a cancelled override. A rule
+the server cannot read counts as `DTSTART` only. `hasAttendees` is `true` on
+every event of a resource where the series or any override has an `ORGANIZER`
+or an `ATTENDEE`; it is the same test the server splits a series by, so a
+client that offers "this and following events" only without it never offers
+what the server refuses. Both are omitted (`false`) otherwise.
+
 `undoToken` is a response-only field, never part of `EventInput` and never
 seen in the list: it appears on the response of the changes below that can be
 undone (`POST /api/v1/events/{eventId}/undo`, below). The change of a series
