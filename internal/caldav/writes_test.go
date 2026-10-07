@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -151,32 +153,75 @@ func TestRemoveCreated(t *testing.T) {
 	})
 }
 
+// restoreAnswer is how answerRestore makes the mock answer the PUT that
+// restores a series, and the GET that reads it back.
+type restoreAnswer struct {
+	status int // the PUT's answer in place of the mock's
+	// stored is the data the server holds after the PUT, from the data sent
+	// and the data it held before; nil: the PUT is not applied.
+	stored    func(sent, held string) string
+	getStatus int // a GET of the series fails with it, if set
+}
+
+// answerRestore makes mock answer a PUT of the series at objPath as a says:
+// the server applies it as it likes, then answers with status, as a reverse
+// proxy whose read timeout fired after the server committed does. A write that
+// lands is stored without an HTTP request, so the mock counts one PUT.
+func answerRestore(t *testing.T, mock *caldavtest.Server, objPath string, a restoreAnswer) {
+	t.Helper()
+	calPath, name := path.Split(objPath)
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != objPath {
+			return false
+		}
+		switch r.Method {
+		case http.MethodPut:
+			if a.stored != nil {
+				sent, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("reading the PUT: %v", err)
+				}
+				held, _ := mock.Object(objPath)
+				if _, err := mock.PutObject(calPath, name, a.stored(string(sent), held)); err != nil {
+					t.Errorf("PutObject: %v", err)
+				}
+			}
+			w.WriteHeader(a.status)
+			return true
+		case http.MethodGet:
+			if a.getStatus != 0 {
+				w.WriteHeader(a.getStatus)
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // A restore whose PUT of the series fails without the server's refusal, as
-// behind a reverse proxy whose read timeout fired, is settled by the series'
-// ETag, as the master write of a change that wrote before it is (FR-17,
-// A-01, see settleWrite):
-//   - changed since: the restore was applied. It answers without an ETag, and
-//     removes what the change created, as after a restore that was not in
-//     doubt;
-//   - unchanged, or the server refused the write: it was not applied, and
-//     nothing is removed;
-//   - not readable: the restore may have been applied, so what the change
-//     created stays, and the error says that it could not be verified, which
-//     keeps the undo token.
-//
-// What stands next to the series then is a duplicate the user can see and
-// delete; deleted on doubt, the new series of a split would be a loss.
+// behind a reverse proxy whose read timeout fired, counts as applied only if
+// the series read back is the restored one: it has the data of the snapshot,
+// or the stamps of its components, as a server that stores them in its own
+// form keeps them. Then it removes what the change created and answers
+// without an ETag. In any other case it answers the error, 502, with nothing
+// removed and the token kept, whether the change created anything or not: the
+// series may have been written by another client, with the restore not
+// applied (a changed ETag says no more), and then removing what the change
+// created would lose its repeats, and an answer of 200 would consume the
+// token. A definite refusal is its error, too (FR-17, A-01, see
+// settleRestore).
 func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 	t.Parallel()
-	// The kinds of change: each leaves a resource it created, and returns the
-	// calendar and ID of the series it changed and its snapshot.
+	// The kinds of change: each returns the calendar and ID of the series it
+	// changed and its snapshot, and says whether it created a resource.
 	kinds := []struct {
 		name    string
+		created bool
 		change  func(t *testing.T, e *env) (calendar, id string, snap domain.Snapshot)
 		restore func(t *testing.T, e *env, snap domain.Snapshot) (etag string, kept bool, err error)
 	}{
 		{
-			name: "a completion",
+			name: "a completion", created: true,
 			change: func(t *testing.T, e *env) (string, string, domain.Snapshot) {
 				t.Helper()
 				id, _, _, snap := completeSeeded(t, e)
@@ -189,7 +234,28 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 			},
 		},
 		{
-			name: "a split",
+			name: "a move of a task",
+			change: func(t *testing.T, e *env) (string, string, domain.Snapshot) {
+				t.Helper()
+				id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+				f := listedTodo(t, e, id)
+				in := editInput(&f)
+				in.Start = ptr(f.Start.Add(24 * time.Hour))
+				_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+				mustNoErr(t, err)
+				if snap == nil {
+					t.Fatal("UpdateTodo returned no snapshot")
+				}
+				return "tasks", id, *snap
+			},
+			restore: func(t *testing.T, e *env, snap domain.Snapshot) (string, bool, error) {
+				t.Helper()
+				got, err := e.svc.RestoreTodo(t.Context(), snap)
+				return got.ETag, got.CopyKept, err
+			},
+		},
+		{
+			name: "a split", created: true,
 			change: func(t *testing.T, e *env) (string, string, domain.Snapshot) {
 				t.Helper()
 				id := e.put(t, "work", "series.ics", weeklyStandup()...)
@@ -209,27 +275,76 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 				return got.ETag, got.CopyKept, err
 			},
 		},
+		{
+			// It bumps the stamps of the new override only: the master of the
+			// series is the same before and after.
+			name: "an occurrence",
+			change: func(t *testing.T, e *env) (string, string, domain.Snapshot) {
+				t.Helper()
+				seed := eventSeeds()[0]
+				id := e.put(t, "work", "series.ics", seed.lines...)
+				ev := shownEvent(t, e, "work", seed.rid)
+				_, snap, err := e.svc.UpdateOccurrence(t.Context(), id, ev.ETag, *ev.RecurrenceID, occurrenceInputOf(ev, time.Hour))
+				mustNoErr(t, err)
+				if snap == nil {
+					t.Fatal("UpdateOccurrence returned no snapshot")
+				}
+				return "work", id, *snap
+			},
+			restore: func(t *testing.T, e *env, snap domain.Snapshot) (string, bool, error) {
+				t.Helper()
+				got, err := e.svc.RestoreEvent(t.Context(), snap)
+				return got.ETag, got.CopyKept, err
+			},
+		},
+	}
+	sent := func(sent, _ string) string { return sent }
+	// reserialized is what a server stores that writes the data in its own
+	// form: with a property of its own, in the first component.
+	reserialized := func(sent, _ string) string {
+		return strings.Replace(sent, "\r\nEND:V", "\r\nX-SERVER:1\r\nEND:V", 1)
+	}
+	// otherClient is another client's write of the series, which lands in
+	// place of the restore.
+	otherClient := func(_, held string) string {
+		return strings.Replace(held, "SUMMARY:", "SUMMARY:Other ", 1)
 	}
 	rows := []struct {
-		name           string
-		apply          bool // the server applies the write before it answers
-		status         int
-		propfindStatus int   // the PROPFIND of the series fails with it, if set
-		wantErr        error // nil: the undo succeeded
-		unverified     bool  // wantErr says that the write could not be verified
-		wantObjects    int   // the series, and what the change created if it stays
-		wantDeletes    int
+		name string
+		restoreAnswer
+		restored    bool  // the series is the restored one afterwards
+		other       bool  // the series is another client's afterwards
+		wantErr     error // nil: the undo succeeded
+		unverified  bool  // wantErr says that the restore could not be confirmed
+		wantRemoved bool  // what the change created is removed
 	}{
-		{name: "applied, then 502", apply: true, status: http.StatusBadGateway, wantObjects: 1, wantDeletes: 1},
-		{name: "not applied, 502", status: http.StatusBadGateway, wantErr: domain.ErrUpstream, wantObjects: 2},
-		{name: "refused with 412", status: http.StatusPreconditionFailed, wantErr: domain.ErrConflict, wantObjects: 2},
 		{
-			name: "applied, then 502, unverifiable", apply: true, status: http.StatusBadGateway, propfindStatus: http.StatusInternalServerError,
-			wantErr: domain.ErrUpstream, unverified: true, wantObjects: 2,
+			name: "applied, then 502", restoreAnswer: restoreAnswer{status: http.StatusBadGateway, stored: sent},
+			restored: true, wantRemoved: true,
 		},
 		{
-			name: "not applied, 502, unverifiable", status: http.StatusBadGateway, propfindStatus: http.StatusInternalServerError,
-			wantErr: domain.ErrUpstream, unverified: true, wantObjects: 2,
+			name: "applied in the server's own form, then 502", restoreAnswer: restoreAnswer{status: http.StatusBadGateway, stored: reserialized},
+			restored: true, wantRemoved: true,
+		},
+		{
+			name: "not applied, 502", restoreAnswer: restoreAnswer{status: http.StatusBadGateway},
+			wantErr: domain.ErrUpstream, unverified: true,
+		},
+		{
+			name: "another client's write lands, not the restore, 502", restoreAnswer: restoreAnswer{status: http.StatusBadGateway, stored: otherClient},
+			other: true, wantErr: domain.ErrUpstream, unverified: true,
+		},
+		{
+			name: "refused with 412", restoreAnswer: restoreAnswer{status: http.StatusPreconditionFailed},
+			wantErr: domain.ErrConflict,
+		},
+		{
+			name: "applied, then 502, unreadable", restoreAnswer: restoreAnswer{status: http.StatusBadGateway, stored: sent, getStatus: http.StatusInternalServerError},
+			restored: true, wantErr: domain.ErrUpstream, unverified: true,
+		},
+		{
+			name: "not applied, 502, unreadable", restoreAnswer: restoreAnswer{status: http.StatusBadGateway, getStatus: http.StatusInternalServerError},
+			wantErr: domain.ErrUpstream, unverified: true,
 		},
 	}
 	for _, k := range kinds {
@@ -239,7 +354,7 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 				e := newEnv(t, caldavtest.Options{})
 				calendar, id, snap := k.change(t, e)
 				left := storedObject(t, e, id)
-				answerPutWith(e.mock, mustDecode(t, e, id), row.apply, row.status, row.propfindStatus)
+				answerRestore(t, e.mock, mustDecode(t, e, id), row.restoreAnswer)
 				e.mock.ResetCounts()
 
 				etag, kept, err := k.restore(t, e, snap)
@@ -254,28 +369,35 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 				if etag != "" || kept {
 					t.Errorf("restore = ETag %q, kept %v; want no ETag, as the one of an applied write is unknown, and nothing kept", etag, kept)
 				}
-				// The mock counts the PUT the hook applies too.
-				wantPuts := 1
-				if row.apply {
-					wantPuts++
+				if n := e.mock.Count(http.MethodPut); n != 1 {
+					t.Errorf("PUT count = %d; want 1", n)
 				}
-				if n := e.mock.Count(http.MethodPut); n != wantPuts {
-					t.Errorf("PUT count = %d; want %d", n, wantPuts)
+				wantDeletes, wantObjects := 0, 1
+				switch {
+				case k.created && row.wantRemoved:
+					wantDeletes = 1
+				case k.created:
+					wantObjects = 2
 				}
-				if n := e.mock.Count(http.MethodDelete); n != row.wantDeletes {
-					t.Errorf("DELETE count = %d; want %d", n, row.wantDeletes)
+				if n := e.mock.Count(http.MethodDelete); n != wantDeletes {
+					t.Errorf("DELETE count = %d; want %d", n, wantDeletes)
 				}
-				if paths := e.mock.ObjectPaths(e.paths[calendar]); len(paths) != row.wantObjects {
-					t.Errorf("objects = %v; want %d", paths, row.wantObjects)
+				if paths := e.mock.ObjectPaths(e.paths[calendar]); len(paths) != wantObjects {
+					t.Errorf("objects = %v; want %d", paths, wantObjects)
 				}
-				// The restore is stored where the server applied it, whatever it
-				// answered.
-				want := left
-				if row.apply {
-					want = string(snap.Data)
-				}
-				if got := storedObject(t, e, id); got != want {
-					t.Errorf("series:\n%s\nwant:\n%s", got, want)
+				switch got := storedObject(t, e, id); {
+				case row.restored:
+					if want := string(snap.Data); strings.ReplaceAll(got, "X-SERVER:1\r\n", "") != want {
+						t.Errorf("series:\n%s\nwant the restored one:\n%s", got, want)
+					}
+				case row.other:
+					if got != otherClient("", left) {
+						t.Errorf("series:\n%s\nwant the other client's write left alone", got)
+					}
+				default:
+					if got != left {
+						t.Errorf("series:\n%s\nwant it as the change left it:\n%s", got, left)
+					}
 				}
 			})
 		}

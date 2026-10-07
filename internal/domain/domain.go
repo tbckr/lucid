@@ -424,10 +424,11 @@ type CreatedRef struct {
 	ID, ETag string
 	// MayStay says that the undo may leave the resource where it is, reported
 	// as kept, when it changed since the write: a completed copy, a record of
-	// the completion that stands on its own. Any other resource may not stay:
-	// the new series of a split, or the task a detach made, next to the series
-	// restored would show its repeats twice. The undo is refused then, with
-	// nothing written (FR-17).
+	// the completion that stands on its own. Any other resource may not stay,
+	// as it holds what the series restored holds again: the new series of a
+	// split would show every repeat from the split on twice, a task a detach
+	// made the detached occurrence. The undo is refused then, with nothing
+	// written (FR-17).
 	MayStay bool
 }
 

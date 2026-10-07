@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,10 +117,10 @@ func (s *service) removeIfStored(ctx context.Context, calPath, path string) {
 	s.removeEntries(ctx, calPath, []calObject{{path: path, etag: etag}})
 }
 
-// errWriteUnverified marks the error of a master PUT that failed without the
+// errWriteUnverified marks the error of a PUT that failed without the
 // server's definite refusal and whose outcome could not be verified either,
-// see settleWrite: the write may have been applied, so what the change
-// wrote before it stays.
+// see settleWrite and settleRestore: the write may have been applied, so what
+// the change wrote before it stays.
 var errWriteUnverified = errors.New("the write could not be verified")
 
 // settleWrite settles the failure err of the PUT of objPath with If-Match
@@ -143,11 +144,8 @@ var errWriteUnverified = errors.New("the write could not be verified")
 //
 // A change that wrote nothing before has nothing to decide on and returns
 // its error as it is: a changed ETag can as well be another client's write
-// while its own was lost. The restore of a series (see restoreResource) uses
-// it the other way round: it removes what the change created only once its
-// write is through, so nil removes it, and any error keeps it. The
-// verification runs on after the request is cancelled, like the compensation
-// it decides on.
+// while its own was lost. The verification runs on after the request is
+// cancelled, like the compensation it decides on.
 func (s *service) settleWrite(ctx context.Context, objPath, etag string, err error) error {
 	if writeRefused(err) {
 		return err
@@ -167,6 +165,73 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 	return nil
 }
 
+// settleRestore settles the failure err of the PUT that restores the series
+// at objPath, whose data are the calendar restored, with the components of
+// kind comp (FR-17, A-01). The restore removes what the change created only
+// once it is through, so nil must mean that it is, and settleWrite's rule
+// does not hold: a changed ETag can as well be another client's write, with
+// the restore not applied, and what the change created would go while the
+// series stays as that client left it, every repeat of a split lost.
+//   - The server refused it (see writeRefused): not applied, and err is
+//     returned.
+//   - An ambiguous failure, and the resource read back is the restored one:
+//     nil, the restore is applied all the same, as behind a reverse proxy
+//     whose read timeout fired after the server committed. It is the
+//     restored one if its components have the LAST-MODIFIED, DTSTAMP and
+//     SEQUENCE of restored, see sameChangeProps: the data written have them,
+//     a server that stores what it is sent in its own form keeps them, and
+//     any write of a change or of another client changes them.
+//   - Otherwise, the resource is not the restored one, or cannot be read, or
+//     is no calendar object: err wrapped in errWriteUnverified, so that the
+//     caller keeps what the change created. The restore may have been applied
+//     all the same; a duplicate the user can see and delete is the lesser
+//     harm. It is an ErrUpstream: the undo token stays.
+//
+// It decides the same whether the change created anything or not: an error
+// where the undo may not have landed is no answer of 200 that consumes the
+// token. The verification runs on after the request is cancelled.
+func (s *service) settleRestore(ctx context.Context, objPath, comp string, restored *ical.Calendar, err error) error {
+	if writeRefused(err) {
+		return err
+	}
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
+	defer cancel()
+	cal, _, _, verr := s.getObject(vctx, objPath)
+	if verr == nil && sameChangeProps(cal, restored, comp) {
+		return nil
+	}
+	// Paths and errors only, never calendar content.
+	s.p.log.WarnContext(ctx, "keeping what a change created: the restore could not be confirmed",
+		"path", objPath, "error", err, "verification_error", verr)
+	return fmt.Errorf("%w: %w", err, errWriteUnverified)
+}
+
+// sameChangeProps reports whether the components of kind comp in a and b have
+// the same RECURRENCE-ID, LAST-MODIFIED, DTSTAMP and SEQUENCE, the properties
+// a change of a series sets, see bumpChangeProps. All of the resource's
+// components count, not only its master: a change of one occurrence bumps its
+// override alone, and the master of the series as it was before and as it is
+// after look the same.
+func sameChangeProps(a, b *ical.Calendar, comp string) bool {
+	stamps := func(cal *ical.Calendar) []string {
+		var out []string
+		for _, c := range cal.Children {
+			if c.Name != comp {
+				continue
+			}
+			var parts []string
+			for _, name := range []string{ical.PropRecurrenceID, ical.PropLastModified, ical.PropDateTimeStamp, ical.PropSequence} {
+				parts = append(parts, text(c.Props, name))
+			}
+			out = append(out, strings.Join(parts, "\x00"))
+		}
+		slices.Sort(out)
+		return out
+	}
+	restored := stamps(b)
+	return len(restored) > 0 && slices.Equal(stamps(a), restored)
+}
+
 // restoreResource writes the resource of snap back as it is, if it still has
 // the ETag the change gave it (ErrConflict otherwise), and then removes the
 // resources the change created, see removeCreated (FR-17). It does all of a
@@ -174,31 +239,29 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 // component is c, of kind comp (ical.CompToDo or ical.CompEvent). calPath is
 // the path of its calendar, and createdKept reports that a resource the
 // change created stays. o.etag is "" where the server tells no ETag, or where
-// the write failed ambiguously and went through all the same, see below.
+// the write failed ambiguously and was confirmed all the same, see below.
 //
 // kind is the kind of resource the caller restores. A snapshot of another
 // kind, of another account or without an ETag is no snapshot of it
 // (ErrNotFound), and nothing is written. The restore checks first that each
 // resource the change created that may not stay is unchanged or gone, see
 // unchangedCreated: a task's completed copy may stay next to the restored
-// series (domain.CreatedRef.MayStay), a new series of a split or a detached
-// task may not, whatever the kind.
+// series (domain.CreatedRef.MayStay), the new series of a split may not,
+// whatever the kind.
 //
 // The restore's PUT can fail without the server's refusal, as behind a
-// reverse proxy whose read timeout fired after the server committed. What the
-// change created goes only if the restore was applied, so settleWrite decides
-// on the series' ETag, as for the master write of a change that wrote before
-// it:
-//   - applied (the ETag is no longer the snapshot's): the restore succeeded,
-//     with o.etag unknown, and what the change created goes as usual;
-//   - not applied, or refused: the error, and nothing is removed;
-//   - not verifiable (errWriteUnverified): the error, and nothing is removed,
-//     as the restore may have been applied. It is an ErrUpstream, so the undo
-//     token stays.
+// reverse proxy whose read timeout fired after the server committed, whether
+// the change created anything or not. settleRestore decides:
+//   - the resource read back is the restored one: the restore succeeded, with
+//     o.etag unknown, and what the change created goes as usual;
+//   - it is not, or cannot be read (errWriteUnverified): the error, with
+//     nothing removed. The restore may have been applied all the same, or
+//     another client wrote since; the error is an ErrUpstream, so the undo
+//     token stays;
+//   - the server refused the write: the error, with nothing removed.
 //
 // Without that, a retry would be refused for the series' If-Match, and the
-// series would stand restored next to what the change created, every repeat
-// of a split twice.
+// series would stand restored next to what the change created.
 func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kind domain.SnapshotKind, comp string) (o calObject, c *ical.Component, calPath string, createdKept bool, err error) {
 	if s.err != nil {
 		return calObject{}, nil, "", false, s.err
@@ -242,9 +305,9 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 	}
 	o = calObject{path: objPath, cal: cal}
 	if o.etag, err = s.putBytes(ctx, objPath, snap.Data, snap.ETag, false); err != nil {
-		// Applied all the same, if it says so: o.etag stays "", as the
+		// Applied all the same, if confirmed: o.etag stays "", as the
 		// server's answer with the new one was lost.
-		if err := s.settleWrite(ctx, objPath, snap.ETag, err); err != nil {
+		if err := s.settleRestore(ctx, objPath, comp, cal, err); err != nil {
 			return calObject{}, nil, "", false, err
 		}
 	}
@@ -253,16 +316,16 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 
 // unchangedCreated checks, before a restore writes anything, that each
 // resource refs a change created that may not stay (domain.CreatedRef.MayStay),
-// the new series N of a split or a detached task, still has the ETag of its
-// ref, and returns the refs of those still there, and those that may stay
-// (FR-17). One gone since leaves nothing to delete. One changed since, in
-// Lucid or in another app, refuses the restore (ErrConflict): written back
-// next to it, the series S would show every repeat from the split on twice,
-// and deleting it would lose that change. So does one whose ETag is unknown
-// or weak, which cannot be told from one changed since. A read that fails
-// otherwise is returned as it is, an ErrUpstream after which the undo can be
-// tried again. Only a change between this check and the delete leaves N next
-// to S restored, see removeCreated.
+// the new series N of a split, still has the ETag of its ref, and returns the
+// refs of those still there, and those that may stay (FR-17). One gone since
+// leaves nothing to delete. One changed since, in Lucid or in another app,
+// refuses the restore (ErrConflict): written back next to it, the series S
+// would show every repeat from the split on twice, and deleting it would lose
+// that change. So does one whose ETag is unknown or weak, which cannot be
+// told from one changed since. A read that fails otherwise is returned as it
+// is, an ErrUpstream after which the undo can be tried again. Only a change
+// between this check and the delete leaves N next to S restored, see
+// removeCreated.
 func (s *service) unchangedCreated(ctx context.Context, refs []domain.CreatedRef) ([]domain.CreatedRef, error) {
 	var there []domain.CreatedRef
 	for _, ref := range refs {

@@ -416,11 +416,13 @@ series, and the answer has `copyKept: true`. No other change of an event
 creates a resource, so it is omitted there.
 
 If the write that restores the series fails without the server's refusal (a
-`5xx`, no answer), the undo reads the series' ETag. Changed since: the restore
-counts as applied, and the undo answers `200` without `etag` and removes the
-new series as above. Unchanged: nothing is removed, and the answer is the
-error. Unreadable: the restore may have been applied, so the new series
-stays, and the answer is `502`.
+`5xx`, no answer), the undo reads the series back. Only if it is the restored
+one does the restore count as applied: its `LAST-MODIFIED`, `DTSTAMP` and
+`SEQUENCE` are those of the snapshot, in every component. The undo then
+answers `200` without `etag`, and a split's new series is deleted as above.
+In any other case (the series is still as the change left it, another client
+wrote it since, or it cannot be read) the answer is `502`, nothing is removed,
+and the token is kept. A refusal (`4xx`) is answered as above.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|
@@ -652,11 +654,10 @@ Undoes the change that returned `undoToken`. Response `200` with the restored
 copy the change had created could not be removed and still exists.
 
 If the write that restores the series fails without the server's refusal (a
-`5xx`, no answer), the undo reads the series' ETag as the undo of an event
-does: if it changed since, the restore counts as applied, and the answer is
-`200` without `etag`, with the completed copy removed; if it did not, or it
-cannot be read, the copy stays and the answer is the error, a `502` that keeps
-the token.
+`5xx`, no answer), the undo reads the series back, as the undo of an event
+does. Only if it is the restored one does the restore count as applied: the
+answer is `200` without `etag`, and the completed copy is removed as above.
+In any other case the answer is `502`, the copy stays, and the token is kept.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|
