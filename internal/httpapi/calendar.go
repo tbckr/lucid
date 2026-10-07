@@ -288,12 +288,50 @@ func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) 
 		s.fail(w, r, err)
 		return
 	}
+	s.answerDeleted(w, r, next, snap)
+}
+
+// answerDeleted answers a delete that ends in the series' new ETag next, which
+// is "" once the resource is deleted or when the server told none, and in the
+// snapshot that undoes it (FR-17, NFR-26; see handleDeleteOccurrence).
+func (s *Server) answerDeleted(w http.ResponseWriter, r *http.Request, next string, snap *domain.Snapshot) {
 	if next == "" {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	w.Header().Set("ETag", next)
 	middleware.WriteJSON(w, http.StatusOK, deletedOccurrence{ETag: next, UndoToken: s.storeUndo(r, snap)})
+}
+
+// handleDeleteFollowing ends a recurring series before one of its occurrences
+// ("this and following events"): the rule ends just before it, and the later
+// exceptions and overrides go. It answers as handleDeleteOccurrence does:
+// 200 with the series' new ETag and the undo token while the resource is
+// kept, 204 once it is deleted, as it is at the series' first event, or when
+// the server told no new ETag (FR-17).
+func (s *Server) handleDeleteFollowing(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "eventId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathTime(w, r, "recurrenceId")
+	if !ok {
+		return
+	}
+	next, snap, err := svc.DeleteFollowing(r.Context(), id, etag, rid)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.answerDeleted(w, r, next, snap)
 }
 
 type todosResponse struct {

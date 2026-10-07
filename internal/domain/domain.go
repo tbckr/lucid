@@ -32,6 +32,12 @@ var (
 	// move as asked without some of them landing elsewhere than the edited
 	// one, so only that event can move (FR-17).
 	ErrSeriesMoveUnsupported = errors.New("series move unsupported")
+	// ErrSeriesSplitUnsupported means a recurring series cannot be split at
+	// an occurrence ("this and following events"): it has an ORGANIZER or an
+	// ATTENDEE, an EXRULE, or a rule Lucid cannot read or walk to the
+	// occurrence. Nothing is written; the whole series or only the event can
+	// change instead (FR-17).
+	ErrSeriesSplitUnsupported = errors.New("series split unsupported")
 	// ErrDiscovery means no CalDAV service could be found for the given URL.
 	ErrDiscovery = errors.New("caldav discovery failed")
 	// ErrForbiddenTarget means the target address was rejected by SSRF protection.
@@ -473,6 +479,18 @@ type CalendarService interface {
 	// ORGANIZER or an ATTENDEE. etag must match
 	// (If-Match), otherwise ErrConflict (FR-17).
 	DeleteOccurrence(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
+	// DeleteFollowing ends the recurring series eventID before its occurrence
+	// at recurrenceID ("this and following events"): the series' rule gets an
+	// end just before it, and its exceptions and overrides from there on go.
+	// At the series' first event that is all events: the resource itself is
+	// deleted, as it is once no event is left. Its answer is
+	// DeleteOccurrence's: the resource's new ETag, or "" once it is deleted
+	// or when the server tells none, and the snapshot RestoreEvent undoes the
+	// change with. A series with an ORGANIZER or an ATTENDEE, with an EXRULE,
+	// or with a rule Lucid cannot read is ErrSeriesSplitUnsupported, and an
+	// occurrence ListEvents shows nowhere (an EXDATE, a cancelled override) is
+	// ErrNotFound. etag must match (If-Match), otherwise ErrConflict (FR-17).
+	DeleteFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)
 	// ListTodoOccurrences returns the occurrences of open, readable recurring

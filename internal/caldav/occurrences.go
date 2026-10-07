@@ -273,16 +273,7 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 		// also once that DTSTART event is deleted.
 		return true
 	}
-	exdates := map[int64]bool{}
-	for _, p := range master.Props.Values(ical.PropExceptionDates) {
-		dvs, err := parseDateList(&p)
-		if err != nil {
-			continue
-		}
-		for _, d := range dvs {
-			exdates[d.t.Unix()] = true
-		}
-	}
+	exdates := exceptionDates(master)
 	for range maxRRuleIterations {
 		t, ok := next()
 		if !ok {

@@ -1,13 +1,18 @@
 package caldav
 
 import (
+	"errors"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/emersion/go-ical"
+
+	"github.com/tbckr/lucid/internal/caldav/caldavtest"
+	"github.com/tbckr/lucid/internal/domain"
 )
 
 // TestFirstOccurrence checks which RECURRENCE-ID firstOccurrence names as the
@@ -791,11 +796,13 @@ func TestEndBeforeRefusesUnreadableRule(t *testing.T) {
 			mustNoErr(t, err)
 			rid := date(2025, 3, 5, 9, 0)
 			before := encodeCal(t, cal)
-			if n, err := splitOff(cal, master, tm, rid, splitUID, splitNow); err == nil || n != nil {
-				t.Errorf("splitOff = %v, %v; want an error", n, err)
+			// Whatever the reason, a split Lucid cannot compute is one it does
+			// not support.
+			if n, err := splitOff(cal, master, tm, rid, splitUID, splitNow); !errors.Is(err, domain.ErrSeriesSplitUnsupported) || n != nil {
+				t.Errorf("splitOff = %v, %v; want ErrSeriesSplitUnsupported", n, err)
 			}
-			if err := endBefore(cal, master, tm, rid); err == nil {
-				t.Error("endBefore = nil; want an error")
+			if err := endBefore(cal, master, tm, rid); !errors.Is(err, domain.ErrSeriesSplitUnsupported) {
+				t.Errorf("endBefore = %v; want ErrSeriesSplitUnsupported", err)
 			}
 			if got := encodeCal(t, cal); got != before {
 				t.Errorf("the series changed:\n%s\nwant\n%s", got, before)
@@ -827,7 +834,9 @@ func TestEndBeforeRefusesStart(t *testing.T) {
 			tm, err := parseTiming(master)
 			mustNoErr(t, err)
 			before := encodeCal(t, cal)
-			mustErr(t, endBefore(cal, master, tm, tt.rid), errSplitAtStart)
+			err = endBefore(cal, master, tm, tt.rid)
+			mustErr(t, err, errSplitAtStart)
+			mustErr(t, err, domain.ErrSeriesSplitUnsupported)
 			if got := encodeCal(t, cal); got != before {
 				t.Errorf("the series changed:\n%s\nwant\n%s", got, before)
 			}
@@ -980,6 +989,389 @@ func TestSplitOffSingleEvent(t *testing.T) {
 				checkShownAsBefore(t, raw, s, n)
 			} else if got := shownIn(t, s, n); !slices.Equal(got, tt.shown) {
 				t.Errorf("S and N show %q; want %q", got, tt.shown)
+			}
+		})
+	}
+}
+
+// weeklyStandup returns the components of a weekly series "Standup" from
+// Monday, March 3, 2025, 09:00 to 10:00 in Berlin, with the VTIMEZONE and
+// the extra lines in the master: the series of the DeleteFollowing tests.
+// Its fourth event, March 24, is at 08:00Z, still in winter time.
+func weeklyStandup(extra ...string) []string {
+	return slices.Concat(berlinVTimezone, []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+		"DTSTART;TZID=Europe/Berlin:20250303T090000", "DTEND;TZID=Europe/Berlin:20250303T100000",
+		"RRULE:FREQ=WEEKLY",
+	}, extra, []string{"END:VEVENT"})
+}
+
+// followingEnd is what DeleteFollowing answered for a series seeded with
+// deleteFollowing, and what the server saw of it.
+type followingEnd struct {
+	id, seeded string
+	next       string
+	snap       *domain.Snapshot
+	err        error
+	puts       int
+	deletes    int
+}
+
+// deleteFollowing seeds lines as a resource in the calendar "work", shows its
+// events once, as a client does, and then ends the series before rid with
+// DeleteFollowing.
+func deleteFollowing(t *testing.T, e *env, lines []string, rid time.Time) followingEnd {
+	t.Helper()
+	id := e.put(t, "work", "series.ics", lines...)
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	etag := storedETag(t, e, objPath)
+	_, err = e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+	mustNoErr(t, err)
+	seeded := storedObject(t, e, id)
+	e.mock.ResetCounts()
+	next, snap, err := e.svc.DeleteFollowing(t.Context(), id, etag, rid)
+	return followingEnd{
+		id: id, seeded: seeded, next: next, snap: snap, err: err,
+		puts: e.mock.Count(http.MethodPut), deletes: e.mock.Count(http.MethodDelete),
+	}
+}
+
+// listedEvents returns the events of the calendar "work" in March and April
+// 2025 as ListEvents shows them, each as its start, end and title.
+func listedEvents(t *testing.T, e *env) []string {
+	t.Helper()
+	evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
+	mustNoErr(t, err)
+	var out []string
+	for i := range evs {
+		out = append(out, evs[i].Start.Format(time.RFC3339)+"/"+evs[i].End.Format(time.RFC3339)+" "+evs[i].Title)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestDeleteFollowing checks that DeleteFollowing ends the series before the
+// occurrence in one write: S ends just before it, in the form of its DTSTART,
+// the EXDATEs, RDATEs and overrides from there on go, the series' SEQUENCE
+// goes up, and the answer is the new ETag and the snapshot that undoes it,
+// the resource as it was (FR-17). ListEvents shows the change at once.
+func TestDeleteFollowing(t *testing.T) {
+	t.Parallel()
+	override := func(title, rid, start, end string) []string {
+		return []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:" + title,
+			"RECURRENCE-ID:" + rid, "DTSTART:" + start, "DTEND:" + end, "END:VEVENT",
+		}
+	}
+	tests := []struct {
+		name      string
+		lines     []string
+		rid       time.Time
+		rule      string   // the stored RRULE
+		overrides []string // the stored overrides, as overridesIn lists them
+		shown     []string
+	}{
+		{
+			// Mondays 09:00 CET, so R is 08:00Z, and UNTIL is one second
+			// before it, in UTC (RFC 5545 section 3.3.10).
+			name:  "in a zone, without an end",
+			lines: weeklyStandup(),
+			rid:   date(2025, 3, 24, 8, 0),
+			rule:  "RRULE:FREQ=WEEKLY;UNTIL=20250324T075959Z",
+			shown: []string{
+				"2025-03-03T08:00:00Z/2025-03-03T09:00:00Z Standup", "2025-03-10T08:00:00Z/2025-03-10T09:00:00Z Standup",
+				"2025-03-17T08:00:00Z/2025-03-17T09:00:00Z Standup",
+			},
+		},
+		{
+			// A date wants a date: the day before R.
+			name: "all-day, with a COUNT",
+			lines: []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Garbage",
+				"DTSTART;VALUE=DATE:20250303", "DTEND;VALUE=DATE:20250304", "RRULE:FREQ=WEEKLY;COUNT=10", "END:VEVENT",
+			},
+			rid:  date(2025, 3, 24, 0, 0),
+			rule: "RRULE:FREQ=WEEKLY;UNTIL=20250323",
+			shown: []string{
+				"2025-03-03T00:00:00Z/2025-03-04T00:00:00Z Garbage", "2025-03-10T00:00:00Z/2025-03-11T00:00:00Z Garbage",
+				"2025-03-17T00:00:00Z/2025-03-18T00:00:00Z Garbage",
+			},
+		},
+		{
+			// The exception and the RDATE from R on, and the override at
+			// April 7, go; the override of March 10, listed before the
+			// series, stays, and the series stays the first event.
+			name: "exceptions from R on",
+			lines: slices.Concat(
+				override("Moved", "20250310T090000Z", "20250310T120000Z", "20250310T130000Z"),
+				[]string{
+					"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+					"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY;COUNT=10",
+					"EXDATE:20250331T090000Z", "RDATE:20250402T090000Z", "END:VEVENT",
+				},
+				override("Later", "20250407T090000Z", "20250407T120000Z", "20250407T130000Z"),
+			),
+			rid:       date(2025, 3, 24, 9, 0),
+			rule:      "RRULE:FREQ=WEEKLY;UNTIL=20250324T085959Z",
+			overrides: []string{"series RECURRENCE-ID:20250310T090000Z Moved"},
+			shown: []string{
+				"2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Standup", "2025-03-10T12:00:00Z/2025-03-10T13:00:00Z Moved",
+				"2025-03-17T09:00:00Z/2025-03-17T10:00:00Z Standup",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := deleteFollowing(t, e, tt.lines, tt.rid)
+			mustNoErr(t, got.err)
+			if got.puts != 1 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want one PUT", got.puts, got.deletes)
+			}
+
+			stored := mustParse(t, storedObject(t, e, got.id))
+			master := mainComponent(stored, ical.CompEvent)
+			if first := vevents(stored)[0]; first != master {
+				t.Error("the series is not the first event of the resource")
+			}
+			if line := propLine(master, ical.PropRecurrenceRule); line != tt.rule {
+				t.Errorf("RRULE = %q; want %q", line, tt.rule)
+			}
+			for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
+				if lines := propLines(master, name); lines != nil {
+					t.Errorf("%s = %q; want none from R on", name, lines)
+				}
+			}
+			if got := overridesIn(stored); !slices.Equal(got, tt.overrides) {
+				t.Errorf("overrides = %q; want %q", got, tt.overrides)
+			}
+			if line := propLine(master, ical.PropSequence); line != "SEQUENCE:1" {
+				t.Errorf("%s; want SEQUENCE:1", line)
+			}
+			if want := "LAST-MODIFIED:20250301T120000Z"; propLine(master, ical.PropLastModified) != want {
+				t.Errorf("%s; want %s", propLine(master, ical.PropLastModified), want)
+			}
+			if want := storedETag(t, e, mustDecode(t, e, got.id)); got.next != want {
+				t.Errorf("ETag = %q; want the stored resource's %q", got.next, want)
+			}
+			if shown := listedEvents(t, e); !slices.Equal(shown, tt.shown) {
+				t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(tt.shown, "\n"))
+			}
+
+			if got.snap == nil {
+				t.Fatal("no snapshot")
+			}
+			if got.snap.Kind != domain.SnapshotEvent || got.snap.ID != got.id || got.snap.ETag != got.next ||
+				string(got.snap.Data) != got.seeded {
+				t.Errorf("snapshot = %+v; want the resource as seeded, with the ETag after the change", got.snap)
+			}
+		})
+	}
+}
+
+// mustDecode returns the path of the resource id.
+func mustDecode(t *testing.T, e *env, id string) string {
+	t.Helper()
+	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	mustNoErr(t, err)
+	return objPath
+}
+
+// TestDeleteFollowingFirst checks that ending a series before its first event
+// deletes the resource, as deleting all events does: no PUT, no ETag, no
+// snapshot, since nothing is left to restore (FR-17). It is the first event
+// ListEvents shows, whatever DTSTART is.
+func TestDeleteFollowingFirst(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		lines []string
+		rid   time.Time
+	}{
+		{"DTSTART", weeklyStandup(), date(2025, 3, 3, 8, 0)},
+		{"DTSTART excluded", weeklyStandup("EXDATE;TZID=Europe/Berlin:20250303T090000"), date(2025, 3, 10, 8, 0)},
+		{"DTSTART cancelled by an override", slices.Concat(weeklyStandup(), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "STATUS:CANCELLED",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250303T090000", "DTSTART;TZID=Europe/Berlin:20250303T090000", "END:VEVENT",
+		}), date(2025, 3, 10, 8, 0)},
+		{"an RDATE before DTSTART", weeklyStandup("RDATE;TZID=Europe/Berlin:20250301T090000"), date(2025, 3, 1, 8, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := deleteFollowing(t, e, tt.lines, tt.rid)
+			mustNoErr(t, got.err)
+			if got.next != "" || got.snap != nil {
+				t.Errorf("answered %q and a snapshot: %v; want neither", got.next, got.snap != nil)
+			}
+			if got.puts != 0 || got.deletes != 1 {
+				t.Errorf("%d PUTs and %d DELETEs; want one DELETE", got.puts, got.deletes)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 0 {
+				t.Errorf("objects = %v; want none", paths)
+			}
+			if shown := listedEvents(t, e); shown != nil {
+				t.Errorf("shown = %q; want none", shown)
+			}
+		})
+	}
+}
+
+// TestDeleteFollowingRefuses checks that DeleteFollowing refuses, with
+// ErrSeriesSplitUnsupported and nothing written or deleted, a series it
+// cannot end before an occurrence, also one that its first event would have
+// deleted (FR-17): a series with an ORGANIZER or an ATTENDEE, in any of its
+// events, whom a change tells; one with an EXRULE, which a new series would
+// count from its own start; a rule Lucid cannot read, or cannot walk to the
+// occurrence within maxRRuleIterations events; and an occurrence at or before
+// DTSTART that is not the first one.
+func TestDeleteFollowingRefuses(t *testing.T) {
+	t.Parallel()
+	organizer := "ORGANIZER:mailto:boss@example.com"
+	utc := func(extra ...string) []string {
+		return slices.Concat([]string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+			"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z",
+		}, extra, []string{"END:VEVENT"})
+	}
+	tests := []struct {
+		name  string
+		lines []string
+		rid   time.Time
+	}{
+		{"attendees", weeklyStandup(organizer), date(2025, 3, 17, 8, 0)},
+		{"attendees, at the first", weeklyStandup("ATTENDEE:mailto:me@example.com"), date(2025, 3, 3, 8, 0)},
+		{"attendees in an override only", slices.Concat(weeklyStandup(), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", organizer,
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250310T100000", "END:VEVENT",
+		}), date(2025, 3, 17, 8, 0)},
+		{"an EXRULE", weeklyStandup("EXRULE:FREQ=WEEKLY;INTERVAL=2"), date(2025, 3, 17, 8, 0)},
+		// ListEvents shows DTSTART and the RDATEs of such a series only.
+		{"a rule that cannot be read", utc("RRULE:FREQ=WEEKLY;RSCALE=GREGORIAN", "RDATE:20250310T090000Z"), date(2025, 3, 10, 9, 0)},
+		{"a rule that cannot be read, at the first", utc("RRULE:FREQ=WEEKLY;RSCALE=GREGORIAN"), date(2025, 3, 3, 9, 0)},
+		// R is an RDATE a week after DTSTART, beyond the first 100,000 events.
+		{"a rule beyond the iteration cap", utc("RRULE:FREQ=SECONDLY", "RDATE:20250310T090000Z"), date(2025, 3, 10, 9, 0)},
+		{"DTSTART, with an RDATE before it", utc("RRULE:FREQ=WEEKLY", "RDATE:20250224T090000Z"), date(2025, 3, 3, 9, 0)},
+		{"an RDATE before DTSTART, with one before it", utc("RRULE:FREQ=WEEKLY", "RDATE:20250224T090000Z,20250301T090000Z"), date(2025, 3, 1, 9, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := deleteFollowing(t, e, tt.lines, tt.rid)
+			mustErr(t, got.err, domain.ErrSeriesSplitUnsupported)
+			if got.next != "" || got.snap != nil {
+				t.Errorf("answered %q and a snapshot: %v; want neither with an error", got.next, got.snap != nil)
+			}
+			if got.puts != 0 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want none", got.puts, got.deletes)
+			}
+			if now := storedObject(t, e, got.id); now != got.seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, got.seeded)
+			}
+		})
+	}
+}
+
+// TestDeleteFollowingNotFound checks that DeleteFollowing answers ErrNotFound
+// for an occurrence ListEvents shows nowhere, and ErrConflict for a stale
+// ETag, writing nothing (FR-17): a series ends before something a user saw.
+func TestDeleteFollowingNotFound(t *testing.T) {
+	t.Parallel()
+	moved := func(extra ...string) []string {
+		return slices.Concat(weeklyStandup("EXDATE;TZID=Europe/Berlin:20250310T090000"), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Moved",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=Europe/Berlin:20250310T110000",
+		}, extra, []string{"END:VEVENT"})
+	}
+	tests := []struct {
+		name  string
+		lines []string
+		rid   time.Time
+		want  error
+	}{
+		{"not an occurrence", weeklyStandup(), date(2025, 3, 11, 8, 0), domain.ErrNotFound},
+		{"a single event", []string{
+			"BEGIN:VEVENT", "UID:once", "DTSTAMP:20250101T000000Z", "DTSTART:20250310T090000Z", "END:VEVENT",
+		}, date(2025, 3, 10, 9, 0), domain.ErrNotFound},
+		{"excluded, with an override", moved(), date(2025, 3, 10, 8, 0), domain.ErrNotFound},
+		{"cancelled by an override", slices.Concat(weeklyStandup(), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "STATUS:CANCELLED",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250317T090000", "DTSTART;TZID=Europe/Berlin:20250317T090000", "END:VEVENT",
+		}), date(2025, 3, 17, 8, 0), domain.ErrNotFound},
+		{"cancelled by an override, at the first", slices.Concat(weeklyStandup(), []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "STATUS:cancelled",
+			"RECURRENCE-ID;TZID=Europe/Berlin:20250303T090000", "DTSTART;TZID=Europe/Berlin:20250303T090000", "END:VEVENT",
+		}), date(2025, 3, 3, 8, 0), domain.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := deleteFollowing(t, e, tt.lines, tt.rid)
+			mustErr(t, got.err, tt.want)
+			if got.puts != 0 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want none", got.puts, got.deletes)
+			}
+			if now := storedObject(t, e, got.id); now != got.seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, got.seeded)
+			}
+		})
+	}
+
+	t.Run("stale ETag", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "work", "series.ics", weeklyStandup()...)
+		seeded := storedObject(t, e, id)
+		e.mock.ResetCounts()
+		_, _, err := e.svc.DeleteFollowing(t.Context(), id, `"stale"`, date(2025, 3, 17, 8, 0))
+		mustErr(t, err, domain.ErrConflict)
+		if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+			t.Errorf("%d writes; want none", n)
+		}
+		if now := storedObject(t, e, id); now != seeded {
+			t.Errorf("the resource changed:\n%s\nwant\n%s", now, seeded)
+		}
+	})
+}
+
+// TestDeleteFollowingWriteFails checks that a PUT the server refuses fails
+// DeleteFollowing without an ETag or a snapshot, and that the whole series is
+// still shown (FR-17): a write can fail after the series was read, as another
+// client's write can land in between.
+func TestDeleteFollowingWriteFails(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name   string
+		status int
+		want   error
+	}{
+		{"precondition failed", http.StatusPreconditionFailed, domain.ErrConflict},
+		{"server error", http.StatusInternalServerError, domain.ErrUpstream},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			ev := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPut {
+					return false
+				}
+				w.WriteHeader(tt.status)
+				return true
+			})
+			next, snap, err := e.svc.DeleteFollowing(t.Context(), id, ev.ETag, *ev.RecurrenceID)
+			mustErr(t, err, tt.want)
+			if next != "" || snap != nil {
+				t.Errorf("answered %q and a snapshot: %v; want neither with an error", next, snap != nil)
+			}
+			if shown := listedEvents(t, e); len(shown) < 5 {
+				t.Errorf("shown = %q; want the whole series", shown)
 			}
 		})
 	}

@@ -115,6 +115,10 @@ func eventActions() []eventAction {
 			_, snap, err := e.svc.DeleteOccurrence(ctx, ev.ID, ev.ETag, *ev.RecurrenceID)
 			return domain.Event{}, snap, err
 		}},
+		{"delete this and following", func(ctx context.Context, e *env, ev domain.Event) (domain.Event, *domain.Snapshot, error) {
+			_, snap, err := e.svc.DeleteFollowing(ctx, ev.ID, ev.ETag, *ev.RecurrenceID)
+			return domain.Event{}, snap, err
+		}},
 	}
 }
 
@@ -362,7 +366,8 @@ func TestEventWritesWithoutSnapshot(t *testing.T) {
 		t.Parallel()
 		seed := eventSeeds()[0]
 		for _, a := range eventActions() {
-			if a.name != "all events a day later" && a.name != "only this moved" && a.name != "delete only this" {
+			if a.name != "all events a day later" && a.name != "only this moved" && a.name != "delete only this" &&
+				a.name != "delete this and following" {
 				continue
 			}
 			t.Run(a.name, func(t *testing.T) {

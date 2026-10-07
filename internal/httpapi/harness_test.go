@@ -61,13 +61,13 @@ type fakeService struct {
 	updateTodoResult *domain.Todo
 	// updateTodoSnapshot is returned as UpdateTodo's snapshot, if set.
 	updateTodoSnapshot *domain.Snapshot
-	// occurrenceETag is the ETag DeleteOccurrence returns: "" as for a
-	// deleted resource.
-	occurrenceETag string
-	// updateEventSnapshot, occurrenceSnapshot and deleteOccurrenceSnapshot
-	// are returned as the snapshot of UpdateEvent, UpdateOccurrence and
-	// DeleteOccurrence, if set.
-	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot *domain.Snapshot
+	// occurrenceETag and followingETag are the ETags DeleteOccurrence and
+	// DeleteFollowing return: "" as for a deleted resource.
+	occurrenceETag, followingETag string
+	// updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot and
+	// deleteFollowingSnapshot are returned as the snapshot of UpdateEvent,
+	// UpdateOccurrence, DeleteOccurrence and DeleteFollowing, if set.
+	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot, deleteFollowingSnapshot *domain.Snapshot
 
 	calls    []string
 	gotCal   string
@@ -164,6 +164,17 @@ func (f *fakeService) DeleteOccurrence(_ context.Context, id, etag string, rid t
 	next, snap := f.occurrenceETag, f.deleteOccurrenceSnapshot
 	f.mu.Unlock()
 	if err := f.record("DeleteOccurrence"); err != nil {
+		return "", nil, err
+	}
+	return next, snap, nil
+}
+
+func (f *fakeService) DeleteFollowing(_ context.Context, id, etag string, rid time.Time) (string, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID = id, etag, rid
+	next, snap := f.followingETag, f.deleteFollowingSnapshot
+	f.mu.Unlock()
+	if err := f.record("DeleteFollowing"); err != nil {
 		return "", nil, err
 	}
 	return next, snap, nil

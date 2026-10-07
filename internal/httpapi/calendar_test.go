@@ -27,6 +27,7 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/events", body: eventBody},
 		{method: http.MethodPut, path: "/api/v1/events/e1", body: eventBody, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/events/e1", headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodDelete, path: followingPath, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"},
 		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"},
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/todos", body: `{"title":"x"}`},
@@ -85,6 +86,7 @@ func TestErrorMapping(t *testing.T) {
 		{domain.ErrReadOnly, http.StatusForbidden, codeReadOnly},
 		{fmt.Errorf("%w: VTODO", domain.ErrUnsupportedComponent), http.StatusUnprocessableEntity, codeUnsupportedComponent},
 		{fmt.Errorf("%w: off its day", domain.ErrSeriesMoveUnsupported), http.StatusBadRequest, codeSeriesMoveUnsupported},
+		{fmt.Errorf("%w: has attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported},
 		{fmt.Errorf("x: %w", domain.ErrNotFound), http.StatusNotFound, codeNotFound},
 		{domain.ErrConflict, http.StatusConflict, codeConflict},
 		{domain.ErrDiscovery, http.StatusUnprocessableEntity, codeDiscoveryFailed},
@@ -349,6 +351,114 @@ func TestDeleteOccurrenceAnswers(t *testing.T) {
 	})
 
 	t.Run("resource deleted", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		decode(t, w, http.StatusNoContent, nil)
+		if w.Body.Len() != 0 {
+			t.Errorf("body = %q; want empty", w.Body)
+		}
+		if got := w.Header().Values("ETag"); got != nil {
+			t.Errorf("ETag header = %q; want none", got)
+		}
+	})
+}
+
+// TestDeleteFollowingWrites checks the route that ends a series before an
+// occurrence: the path values reach the service, and its errors answer as for
+// the other event writes, a series it cannot split as 400
+// series_split_unsupported (FR-17).
+func TestDeleteFollowingWrites(t *testing.T) {
+	t.Parallel()
+	const path = followingPath
+	ifMatch := map[string]string{"If-Match": `"etag-1"`}
+	wantRID := time.Date(2025, 3, 10, 8, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		rq     req
+		svcErr error
+		status int
+		code   string
+		call   string
+	}{
+		{"delete", req{method: http.MethodDelete, path: path, headers: ifMatch}, nil, http.StatusNoContent, "", "DeleteFollowing"},
+		{"delete encoded", req{method: http.MethodDelete, path: "/api/v1/events/e1/following/2025-03-10T08%3A00%3A00Z", headers: ifMatch}, nil, http.StatusNoContent, "", "DeleteFollowing"},
+		{"delete unsupported", req{method: http.MethodDelete, path: path, headers: ifMatch}, fmt.Errorf("%w: has attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported, "DeleteFollowing"},
+		{"delete not found", req{method: http.MethodDelete, path: path, headers: ifMatch}, domain.ErrNotFound, http.StatusNotFound, codeNotFound, "DeleteFollowing"},
+		{"delete conflict", req{method: http.MethodDelete, path: path, headers: ifMatch}, domain.ErrConflict, http.StatusConflict, codeConflict, "DeleteFollowing"},
+		{"delete bad id", req{method: http.MethodDelete, path: "/api/v1/events/e1/following/x", headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"delete event id too long", req{method: http.MethodDelete, path: "/api/v1/events/" + strings.Repeat("a", maxIDLen+1) + "/following/2025-03-10T08:00:00Z", headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"delete fractional seconds", req{method: http.MethodDelete, path: "/api/v1/events/e1/following/2025-03-10T08:00:00.5Z", headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"delete no if-match", req{method: http.MethodDelete, path: path}, nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.err = tt.svcErr
+			w := h.do(t, c, tt.rq)
+			if tt.code != "" {
+				expectError(t, w, tt.status, tt.code)
+			} else {
+				decode(t, w, tt.status, nil)
+			}
+			if got := strings.Join(h.svc.calls, ","); got != tt.call {
+				t.Fatalf("calls = %q, want %q", got, tt.call)
+			}
+			if tt.call != "" && (h.svc.gotID != "e1" || h.svc.gotETag != `"etag-1"` || !h.svc.gotRID.Equal(wantRID)) {
+				t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
+			}
+		})
+	}
+}
+
+// TestDeleteFollowingAnswers checks that ending a series answers as deleting
+// one of its events does: 200 with the series' new ETag in the body and in an
+// ETag header, and the undo token if there is a snapshot, while the resource
+// is kept; 204 without either once it is deleted (FR-17, NFR-26).
+func TestDeleteFollowingAnswers(t *testing.T) {
+	t.Parallel()
+	const path = followingPath
+	ifMatch := map[string]string{"If-Match": `"etag-1"`}
+
+	t.Run("resource kept", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.followingETag = `"5"`
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		decode(t, w, http.StatusOK, nil)
+		if got, want := w.Body.String(), `{"etag":"\"5\""}`; strings.TrimSpace(got) != want {
+			t.Errorf("body = %s; want %s", got, want)
+		}
+		if got := w.Header().Values("ETag"); !slices.Equal(got, []string{`"5"`}) {
+			t.Errorf("ETag header = %q; want %q", got, `"5"`)
+		}
+	})
+
+	t.Run("resource kept with a snapshot", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, withUndo)
+		c := h.login(t)
+		h.svc.followingETag = `"5"`
+		h.svc.deleteFollowingSnapshot = eventSnapshot("e1")
+		w := h.do(t, c, req{method: http.MethodDelete, path: path, headers: ifMatch})
+		var got struct {
+			ETag      string `json:"etag"`
+			UndoToken string `json:"undoToken"`
+		}
+		decode(t, w, http.StatusOK, &got)
+		if got.ETag != `"5"` || len(got.UndoToken) != 43 {
+			t.Errorf("answer = %+v; want etag %q and a token of length 43", got, `"5"`)
+		}
+		if hdr := w.Header().Values("ETag"); !slices.Equal(hdr, []string{`"5"`}) {
+			t.Errorf("ETag header = %q; want %q", hdr, `"5"`)
+		}
+	})
+
+	t.Run("resource deleted, or its new ETag unknown", func(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t, withUndo)
 		c := h.login(t)
@@ -714,14 +824,15 @@ func eventSnapshot(id string) *domain.Snapshot {
 const (
 	allEventsPath     = "/api/v1/events/e1"
 	onlyThisEventPath = "/api/v1/events/e1/occurrences/2025-03-10T08:00:00Z"
+	followingPath     = "/api/v1/events/e1/following/2025-03-10T08:00:00Z"
 	occurrenceBody    = `{"title":"Lunch","start":"2025-03-10T08:00:00Z","end":"2025-03-10T09:00:00Z","allDay":false,"timezone":"Europe/Berlin"}`
 )
 
 var eventIfMatch = map[string]string{"If-Match": `"etag-1"`}
 
-// eventChange is one of the three event routes that answer with an undo
-// token: the change of a whole series, of one occurrence, and the deletion of
-// one occurrence (FR-17).
+// eventChange is one of the event routes that answer with an undo
+// token: the change of a whole series, of one occurrence, the deletion of
+// one occurrence, and the end of a series before one (FR-17).
 type eventChange struct {
 	name string
 	// setSnapshot hands the fake the snapshot its next change returns.
@@ -750,6 +861,14 @@ var eventChanges = []eventChange{
 			f.occurrenceETag = `"5"`
 		},
 		req{method: http.MethodDelete, path: onlyThisEventPath, headers: eventIfMatch},
+	},
+	{
+		"delete this and following events",
+		func(f *fakeService, snap *domain.Snapshot) {
+			f.deleteFollowingSnapshot = snap
+			f.followingETag = `"5"`
+		},
+		req{method: http.MethodDelete, path: followingPath, headers: eventIfMatch},
 	},
 }
 

@@ -30,6 +30,7 @@ This is the contract between the frontend (`web/`) and the Go backend
   | 400    | `invalid_input`       | Validation failed (`message` says why)         |
   | 400    | `forbidden_target`    | Server URL points to a blocked (internal) net  |
   | 400    | `series_move_unsupported` | "All events" can't move the series like this; only the event can |
+  | 400    | `series_split_unsupported` | The series can't be split at an occurrence ("this and following events"); only the event or all events can change |
   | 401    | `unauthenticated`     | No/expired session → show login                |
   | 401    | `invalid_credentials` | Login rejected by the CalDAV server            |
   | 403    | `csrf_invalid`        | Missing/wrong CSRF token                       |
@@ -256,6 +257,48 @@ Once the resource is deleted: `204` without a body, an `ETag` header or an
 `undoToken`; there is nothing to restore it from. A kept series whose new
 `etag` the server does not tell answers `204` as well. Errors: as for the
 `PUT` above.
+
+### `DELETE /api/v1/events/{eventId}/following/{recurrenceId}` (header `If-Match`)
+
+Ends the series before this occurrence ("This and following events"): the
+rule gets an `UNTIL` just before `recurrenceId` (the day before for a date,
+one second before it otherwise; a `COUNT` of the events before it for a time
+zone the backend cannot resolve), and the `EXDATE` and `RDATE`
+values and the overrides from `recurrenceId` on are removed, by the
+`RECURRENCE-ID` of an override, never by its own date. Earlier events stay as
+they are. `recurrenceId` is the occurrence's `recurrenceId`: RFC 3339, UTC,
+whole seconds, URL-encoded.
+
+At the series' first event (`first` in the event list above) there is nothing
+before it, so this is "all events": the resource is deleted, as by
+`DELETE /api/v1/events/{eventId}`, and so it is once no event is left.
+
+The answer is that of the `DELETE` above for one occurrence: `200` with
+`{ "etag": "...", "undoToken": "..." }` and an `ETag` header while the series
+is kept and the CalDAV server tells its new `etag`, to send with the series'
+next write (`undoToken` as for that `DELETE`), and `204` without a body, an
+`ETag` header or an `undoToken` once the resource is deleted or when the new
+`etag` is unknown.
+
+Errors:
+- `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
+  whole seconds.
+- `400 series_split_unsupported`, and nothing is written or deleted, where the
+  series cannot be split. The first three hold at its first event too, which
+  is not deleted then:
+  - some event of the resource has an `ORGANIZER` or an `ATTENDEE`
+    (`hasAttendees`), as a server that schedules implicitly would tell them;
+  - the series has an `EXRULE`, which a new series would count from its own
+    start;
+  - its rule can't be read by the backend (such as one with the RFC 7529
+    parts `RSCALE` or `SKIP`);
+  - its rule does not reach `recurrenceId` within the backend's iteration cap;
+  - `recurrenceId` is at or before `DTSTART` without being the first event,
+    which only an `RDATE` or an override before `DTSTART` leaves possible.
+- `404 not_found`: the event does not exist, is not a recurring series, or
+  `recurrenceId` is not an event the list shows: no occurrence of the series,
+  an `EXDATE`, or an override with `STATUS:CANCELLED`.
+- `409 conflict`/`428 precondition_required`: as for `PUT /events/{id}` above.
 
 ### `POST /api/v1/events/{eventId}/undo` → `200` `{etag, copyKept}`
 

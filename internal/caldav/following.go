@@ -6,6 +6,8 @@ package caldav
 // series N, a resource of its own, goes on from R (FR-17).
 
 import (
+	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -20,8 +22,16 @@ import (
 // errSplitAtStart refuses to end a series before an occurrence at or before
 // its DTSTART, which only an RDATE or override before DTSTART leaves
 // possible: DTSTART is always an occurrence of the series (RFC 5545 section
-// 3.8.5.3), so no rule can end before it (FR-17).
-var errSplitAtStart error = &domain.ValidationError{Msg: "the series cannot end before this event"}
+// 3.8.5.3), so no rule can end before it. Like every split Lucid cannot
+// compute, it is domain.ErrSeriesSplitUnsupported (FR-17).
+var errSplitAtStart = fmt.Errorf("%w: the series cannot end before this event", domain.ErrSeriesSplitUnsupported)
+
+// unsplittable returns err, why Lucid cannot walk a series' rule to an
+// occurrence, as domain.ErrSeriesSplitUnsupported: a split it cannot compute
+// is one it does not support, never a server failure (FR-17).
+func unsplittable(err error) error {
+	return fmt.Errorf("%w: %w", domain.ErrSeriesSplitUnsupported, err)
+}
 
 // firstOccurrence returns the earliest RECURRENCE-ID ListEvents shows for the
 // series master in cal, whose timing is tm: no window shows an occurrence of
@@ -85,12 +95,13 @@ func firstOccurrence(cal *ical.Calendar, master *ical.Component, tm timing) time
 // counts those before rid as a COUNT counts them (RFC 5545 section 3.3.10):
 // DTSTART is the first, and an EXDATE does not take one away. from is the
 // first at or after rid, rid itself if it is one, the zero time if there is
-// none. It fails for a rule ruleInstances cannot read, and for one that does
-// not reach rid within maxRRuleIterations occurrences.
+// none. It fails, as domain.ErrSeriesSplitUnsupported (see unsplittable),
+// for a rule ruleInstances cannot read, and for one that does not reach rid
+// within maxRRuleIterations occurrences.
 func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, from time.Time, err error) {
 	next, err := ruleInstances(rruleString(master), tm.start.t)
 	if err != nil {
-		return 0, time.Time{}, err
+		return 0, time.Time{}, unsplittable(err)
 	}
 	for range maxRRuleIterations {
 		t, ok := next()
@@ -103,7 +114,7 @@ func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, 
 			return before, t, nil
 		}
 	}
-	return 0, time.Time{}, errRRuleCap
+	return 0, time.Time{}, unsplittable(errRRuleCap)
 }
 
 // endBefore ends the series master in cal, whose timing is tm, just before
@@ -126,8 +137,9 @@ func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, 
 //     stays.
 //
 // It fails, changing nothing, for a rule Lucid cannot walk to rid (see
-// placeInRule) and for a rid at or before DTSTART (errSplitAtStart). It
-// neither bumps SEQUENCE nor writes: the caller does.
+// placeInRule) and for a rid at or before DTSTART (errSplitAtStart), both as
+// domain.ErrSeriesSplitUnsupported. It neither bumps SEQUENCE nor writes: the
+// caller does.
 func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time) error {
 	before, from, err := placeInRule(master, tm, rid)
 	if err != nil {
@@ -345,4 +357,91 @@ func keepDates(c *ical.Component, name string, keep func(time.Time) bool) {
 	for i := range props {
 		c.Props.Add(&props[i])
 	}
+}
+
+// followingSeries is a series loaded for a write to the occurrence rid and
+// the ones after it (see loadFollowing): the series, as loadSeries reads it,
+// and whether rid is the first event ListEvents shows for it (FR-17).
+type followingSeries struct {
+	loadedSeries
+	first bool
+}
+
+// loadFollowing reads the resource at eventID for ending its series before
+// recurrenceID, or for splitting it there, and checks that it can (FR-17; spec
+// section 4 "Teilen"). DeleteFollowing and UpdateFollowing share it. Besides
+// what loadSeries checks:
+//   - recurrenceID is an event ListEvents shows, neither an EXDATE nor a
+//     cancelled override, else ErrNotFound: a user cannot have picked it.
+//   - The series has no ORGANIZER or ATTENDEE in any event, since a server
+//     that schedules implicitly would tell them of a series that ends and
+//     another with a UID of its own; no EXRULE, which a new series would
+//     count from its own start and so exclude other events; and a rule
+//     ruleInstances can read, though only the walk to recurrenceID needs it.
+//     Else ErrSeriesSplitUnsupported, with nothing written, even where
+//     recurrenceID is the first event and the series would simply go.
+//
+// It tells whether recurrenceID is the first event ListEvents shows (see
+// firstOccurrence), where "this and following" is "all".
+func (s *service) loadFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (followingSeries, error) {
+	ls, err := s.loadSeries(ctx, eventID, etag, recurrenceID)
+	if err != nil {
+		return followingSeries{}, err
+	}
+	rid := ls.rid.Unix()
+	if ov := recurrenceOverrides(ls.cal, ls.master)[rid]; exceptionDates(ls.master)[rid] || (ov != nil && isCancelled(ov)) {
+		return followingSeries{}, fmt.Errorf("%w: not an event of the series", domain.ErrNotFound)
+	}
+	if hasAttendees(ls.cal) {
+		return followingSeries{}, fmt.Errorf("%w: the series has attendees", domain.ErrSeriesSplitUnsupported)
+	}
+	if ls.master.Props.Get(propExRule) != nil {
+		return followingSeries{}, fmt.Errorf("%w: the series has an EXRULE", domain.ErrSeriesSplitUnsupported)
+	}
+	if _, err := ruleInstances(rruleString(ls.master), ls.tm.start.t); err != nil {
+		return followingSeries{}, unsplittable(err)
+	}
+	return followingSeries{loadedSeries: ls, first: ls.rid.Equal(firstOccurrence(ls.cal, ls.master, ls.tm))}, nil
+}
+
+// DeleteFollowing implements domain.CalendarService: it ends the recurring
+// series before its occurrence at recurrenceID, with endBefore, in one write
+// (FR-17; spec section 4 "Löschen"). At the series' first event, which is all
+// of them, and once no event is left, it deletes the resource instead, as
+// DeleteEvent does. It returns what DeleteOccurrence does: the new ETag of a
+// resource it keeps, so the client's next write of the series does not
+// conflict with this one (NFR-26), and the snapshot RestoreEvent undoes the
+// change with, the resource as it was; "" and nil for one it deletes.
+func (s *service) DeleteFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *domain.Snapshot, error) {
+	if s.err != nil {
+		return "", nil, s.err
+	}
+	fs, err := s.loadFollowing(ctx, eventID, etag, recurrenceID)
+	if err != nil {
+		return "", nil, err
+	}
+	if !fs.first {
+		if err := endBefore(fs.cal, fs.master, fs.tm, fs.rid); err != nil {
+			return "", nil, err
+		}
+		// The series has an event before rid, as rid is not its first, and
+		// hasEventsLeft counts every such event, so this holds. The check
+		// keeps a series without events from ever being written, which
+		// Baïkal answers with 500 (see DeleteOccurrence), should the two
+		// ever differ.
+		if hasEventsLeft(fs.cal, fs.master, fs.tm) {
+			bumpChangeProps(fs.master, s.p.now().UTC())
+			masterFirst(fs.cal, fs.master)
+			next, err := s.putObject(ctx, fs.objPath, fs.cal, etag, false)
+			s.invalidate(fs.calPath)
+			if err != nil {
+				return "", nil, err
+			}
+			// The series has no attendees, or loadFollowing had refused it.
+			return next, s.eventSnapshot(eventID, fs.raw, next, false), nil
+		}
+	}
+	err = s.deleteObject(ctx, fs.objPath, etag)
+	s.invalidate(fs.calPath)
+	return "", nil, err
 }

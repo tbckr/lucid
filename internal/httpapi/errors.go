@@ -15,19 +15,20 @@ import (
 
 // Error codes of docs/API.md.
 const (
-	codeInvalidInput          = middleware.CodeInvalidInput
-	codeForbiddenTarget       = "forbidden_target"
-	codeUnauthenticated       = "unauthenticated"
-	codeInvalidCredentials    = "invalid_credentials" //nolint:gosec // G101: an error code, not a credential
-	codeReadOnly              = "read_only"
-	codeUnsupportedComponent  = "unsupported_component"
-	codeSeriesMoveUnsupported = "series_move_unsupported"
-	codeNotFound              = "not_found"
-	codeConflict              = "conflict"
-	codeDiscoveryFailed       = "discovery_failed"
-	codePreconditionRequired  = "precondition_required"
-	codeUpstreamError         = "upstream_error"
-	codeInternal              = middleware.CodeInternal
+	codeInvalidInput           = middleware.CodeInvalidInput
+	codeForbiddenTarget        = "forbidden_target"
+	codeUnauthenticated        = "unauthenticated"
+	codeInvalidCredentials     = "invalid_credentials" //nolint:gosec // G101: an error code, not a credential
+	codeReadOnly               = "read_only"
+	codeUnsupportedComponent   = "unsupported_component"
+	codeSeriesMoveUnsupported  = "series_move_unsupported"
+	codeSeriesSplitUnsupported = "series_split_unsupported"
+	codeNotFound               = "not_found"
+	codeConflict               = "conflict"
+	codeDiscoveryFailed        = "discovery_failed"
+	codePreconditionRequired   = "precondition_required"
+	codeUpstreamError          = "upstream_error"
+	codeInternal               = middleware.CodeInternal
 )
 
 // errBodyTooLarge marks request bodies above middleware.MaxBodyBytes.
@@ -47,6 +48,9 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrSeriesMoveUnsupported):
 		middleware.WriteError(w, http.StatusBadRequest, codeSeriesMoveUnsupported,
 			"all events of this series can't move like this, only this event can")
+	case errors.Is(err, domain.ErrSeriesSplitUnsupported):
+		middleware.WriteError(w, http.StatusBadRequest, codeSeriesSplitUnsupported,
+			"this series can't be split, only this event or all events can change")
 	case errors.Is(err, domain.ErrForbiddenTarget):
 		s.sec.Log(r, middleware.EventSSRFBlocked, slog.String("error", err.Error()))
 		middleware.WriteError(w, http.StatusBadRequest, codeForbiddenTarget,

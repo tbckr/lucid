@@ -115,6 +115,7 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("DELETE /api/v1/events/{eventId}", s.handleDeleteEvent)
 	mux.HandleFunc("PUT /api/v1/events/{eventId}/occurrences/{recurrenceId}", s.handleUpdateOccurrence)
 	mux.HandleFunc("DELETE /api/v1/events/{eventId}/occurrences/{recurrenceId}", s.handleDeleteOccurrence)
+	mux.HandleFunc("DELETE /api/v1/events/{eventId}/following/{recurrenceId}", s.handleDeleteFollowing)
 	mux.HandleFunc("POST /api/v1/events/{eventId}/undo", s.handleUndoEvent)
 	mux.HandleFunc("GET /api/v1/calendars/{calendarId}/todos", s.handleListTodos)
 	mux.HandleFunc("GET /api/v1/calendars/{calendarId}/todos/occurrences", s.handleListTodoOccurrences)
