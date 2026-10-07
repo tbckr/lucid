@@ -1023,13 +1023,15 @@ as entered (`UpdateFollowing`).
     and is logged, and a create that lands only after this check can't be
     caught.
   - The old series' write fails: refused by the server, or with its ETag
-    read back unchanged, it was not applied, and the new series is
-    deleted again (unless the server told no ETag for it, which keeps it,
-    logged); the error is answered. With its ETag changed, the write
-    counts as applied, as behind a reverse proxy whose read timeout fired
-    after the server committed: the split is saved, with the old series'
-    new ETag unknown and no Undo. With its ETag unreadable, the new series
-    stays, logged, and the error is answered.
+    read back unchanged, it was not applied, and the new series is deleted
+    again; the error is answered. Where the server told no ETag for the new
+    series, Lucid reads it again, as after a failed create, and deletes it
+    with the ETag read; one whose ETag can't be read, or is weak, stays and
+    is logged. With the old series' ETag changed, the write counts as
+    applied, as behind a reverse proxy whose read timeout fired after the
+    server committed: the split is saved, with the old series' new ETag
+    unknown and no Undo. With that ETag unreadable, the new series stays,
+    logged, and the error is answered.
 - **In the UI**, "This and following events" comes before "All events" in
   the drop question, the editor's question and the delete question, after
   "Only this event" where that is offered too. It is missing at the series'

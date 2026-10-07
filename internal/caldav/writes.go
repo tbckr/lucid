@@ -61,7 +61,8 @@ func (s *service) removeEntries(ctx context.Context, calPath string, entries []c
 //     a retry would add another.
 //   - The master's write fails: settleWrite decides, and created goes again
 //     unless the write may have been applied (errWriteUnverified), see
-//     removeEntries.
+//     removeEntries; one whose ETag the server told neither on its create
+//     nor when read back, see removeIfStored.
 func (s *service) writeCreatedThenMaster(ctx context.Context, calPath string, created *calObject, objPath string, cal *ical.Calendar, etag string) (string, error) {
 	var err error
 	if created.etag, err = s.putObject(ctx, created.path, created.cal, "", true); err != nil {
@@ -75,7 +76,12 @@ func (s *service) writeCreatedThenMaster(ctx context.Context, calPath string, cr
 		err = s.settleWrite(ctx, objPath, etag, err)
 	}
 	if err != nil {
-		if !errors.Is(err, errWriteUnverified) {
+		switch {
+		case errors.Is(err, errWriteUnverified):
+			// The master's write may have landed: created stays with it.
+		case created.etag == "":
+			s.removeIfStored(ctx, calPath, created.path)
+		default:
 			s.removeEntries(ctx, calPath, []calObject{*created})
 		}
 		return "", err
@@ -83,13 +89,15 @@ func (s *service) writeCreatedThenMaster(ctx context.Context, calPath string, cr
 	return next, nil
 }
 
-// removeIfStored deletes the resource at path in calPath, whose create failed
-// without the server's refusal, if the server stored it all the same (FR-17,
-// A-01). Its UID is new, so no other client knows of it, and the delete takes
-// the ETag it has now, read first. One whose ETag is unknown or weak stays,
-// logged, as removeEntries keeps it, and so does one whose ETag cannot be
-// read. It runs on after the request is cancelled, which may be what failed
-// the create.
+// removeIfStored deletes the resource at path in calPath, which a change
+// created with a new UID, if it is there, when the change does not know its
+// ETag (FR-17, A-01): its create failed without the server's refusal, which
+// can come after the server stored it all the same, or the server told its
+// ETag neither on the create nor when read back. Its UID is new, so no other
+// client knows of it, and the delete takes the ETag it has now, read first.
+// One whose ETag is unknown or weak stays, logged, as removeEntries keeps it,
+// and so does one whose ETag cannot be read. It runs on after the request is
+// cancelled, which may be what failed the create.
 func (s *service) removeIfStored(ctx context.Context, calPath, path string) {
 	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
 	defer cancel()
@@ -99,7 +107,7 @@ func (s *service) removeIfStored(ctx context.Context, calPath, path string) {
 		return // not stored
 	case err != nil:
 		// Paths and errors only, never calendar content.
-		s.p.log.WarnContext(ctx, "could not tell whether the server stored a resource whose create failed",
+		s.p.log.WarnContext(ctx, "keeping a resource a change created whose etag cannot be read",
 			"path", path, "error", err)
 		return
 	case strings.HasPrefix(etag, "W/"):

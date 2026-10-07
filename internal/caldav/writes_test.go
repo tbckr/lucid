@@ -21,14 +21,20 @@ type createAnswer struct {
 	// propfind is the status a PROPFIND of the created resource fails with;
 	// 0: the mock answers it.
 	propfind int
-	weakETag bool // a PROPFIND of the created resource tells a weak ETag
+	// propfindOnce: only the first PROPFIND of the created resource fails
+	// with propfind, the one that reads its ETag back after the create, and
+	// the mock answers the later ones, as after a passing failure.
+	propfindOnce bool
+	weakETag     bool // a PROPFIND of the created resource tells a weak ETag
+	master       int  // the status the PUT of the master fails with; 0: the mock's answer
 }
 
 // answerCreate makes mock answer as a says, and counts in toMaster the PUTs
 // of the resource masterPath.
 func answerCreate(mock *caldavtest.Server, masterPath string, a createAnswer, toMaster *atomic.Int32) {
-	var inner atomic.Bool // the hook passes requests on to mock, which calls it again
-	var created sync.Map  // the paths of the PUTs that created a resource
+	var inner atomic.Bool      // the hook passes requests on to mock, which calls it again
+	var created sync.Map       // the paths of the PUTs that created a resource
+	var propfinds atomic.Int32 // the PROPFINDs of a created resource
 	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
 		if inner.Load() {
 			return false
@@ -36,6 +42,10 @@ func answerCreate(mock *caldavtest.Server, masterPath string, a createAnswer, to
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == masterPath:
 			toMaster.Add(1)
+			if a.master != 0 {
+				w.WriteHeader(a.master)
+				return true
+			}
 		case r.Method == http.MethodPut && r.Header.Get("If-None-Match") == "*":
 			created.Store(r.URL.Path, true)
 			inner.Store(true)
@@ -56,8 +66,8 @@ func answerCreate(mock *caldavtest.Server, masterPath string, a createAnswer, to
 			if _, ok := created.Load(r.URL.Path); !ok {
 				return false
 			}
-			switch {
-			case a.propfind != 0:
+			switch n := propfinds.Add(1); {
+			case a.propfind != 0 && (!a.propfindOnce || n == 1):
 				w.WriteHeader(a.propfind)
 				return true
 			case a.weakETag:

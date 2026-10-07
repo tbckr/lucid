@@ -4215,9 +4215,9 @@ func answerCreateWithoutETag(mock *caldavtest.Server, calPath, refusePath string
 }
 
 // A compensating delete never weakens its precondition to If-Match: *: a
-// copy whose ETag is unknown stays when the master write is refused,
-// logged, rather than be deleted whatever another client did to it since
-// (FR-17).
+// copy whose ETag the server tells neither on its create nor when read
+// again stays when the master write is refused, logged, rather than be
+// deleted whatever another client did to it since (FR-17).
 func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
@@ -4244,6 +4244,58 @@ func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
 	}
 	checkStored(t, "log", logs.String(),
 		[]string{"keeping an entry a change created whose etag is unknown", "path=" + copyPath}, []string{"Series"})
+}
+
+// A copy whose ETag is unknown after its create, as the read back failed,
+// is read again when the series' write is refused: its UID is fresh, so no
+// other client knows it, and it is deleted with that ETag (FR-17, A-01).
+// One that can't be read again stays, logged.
+func TestRefusedWriteRemovesCopyWithETagReadAgain(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		once        bool
+		wantObjects int
+		wantDeletes int
+	}{
+		{"readable again", true, 1, 1},
+		{"unreadable", false, 2, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			var logs bytes.Buffer
+			e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
+			id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
+			before := storedObject(t, e, id)
+			f := listedTodo(t, e, id)
+			var toMaster atomic.Int32
+			answerCreate(e.mock, mustDecode(t, e, id), createAnswer{
+				noETag: true, propfind: http.StatusInternalServerError, propfindOnce: tc.once,
+				master: http.StatusPreconditionFailed,
+			}, &toMaster)
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, completeInput(&f))
+			mustErr(t, err, domain.ErrConflict)
+			if n := toMaster.Load(); n != 1 || snap != nil {
+				t.Errorf("%d PUTs of the series and a snapshot: %v; want one PUT and no snapshot", n, snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["tasks"]); len(paths) != tc.wantObjects {
+				t.Errorf("objects = %v; want %d", paths, tc.wantObjects)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.wantDeletes {
+				t.Errorf("DELETE count = %d; want %d", n, tc.wantDeletes)
+			}
+			if after := storedObject(t, e, id); after != before {
+				t.Errorf("series = %q; want it unchanged: %q", after, before)
+			}
+			if tc.wantDeletes == 0 {
+				checkStored(t, "log", logs.String(),
+					[]string{"keeping a resource a change created whose etag cannot be read", "path=" + e.paths["tasks"]},
+					[]string{"Series"})
+			}
+		})
+	}
 }
 
 // answerCreateWithFailingETagReadback makes mock strip the ETag from any PUT

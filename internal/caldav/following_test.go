@@ -2117,7 +2117,7 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 		{
 			"creating N fails, N stored, its ETag unreadable",
 			createAnswer{status: http.StatusBadGateway, stored: true, propfind: http.StatusInternalServerError},
-			domain.ErrUpstream, 2, 0, "could not tell whether the server stored a resource whose create failed",
+			domain.ErrUpstream, 2, 0, "keeping a resource a change created whose etag cannot be read",
 		},
 		{
 			"creating N fails, N stored, its ETag weak",
@@ -2142,6 +2142,60 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 			mustErr(t, err, tc.want)
 			if n := toS.Load(); n != 0 || snap != nil {
 				t.Errorf("%d PUTs of S and a snapshot: %v; want neither", n, snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != tc.wantObjects {
+				t.Errorf("objects = %v; want %d", paths, tc.wantObjects)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.wantDeletes {
+				t.Errorf("%d DELETEs; want %d", n, tc.wantDeletes)
+			}
+			if now := storedObject(t, e, id); now != seeded {
+				t.Errorf("S = %q; want it unchanged: %q", now, seeded)
+			}
+			if tc.wantLog != "" {
+				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.paths["work"]}, []string{"Standup"})
+			}
+		})
+	}
+
+	// S's write refused, and N created without an ETag the server told on
+	// its create or when read back: N's UID is fresh, so its ETag is read
+	// again and N deleted with it, a strong one; else N stays, logged (see
+	// removeIfStored).
+	for _, tc := range []struct {
+		name        string
+		answer      createAnswer
+		wantObjects int
+		wantDeletes int
+		wantLog     string
+	}{
+		{"N's ETag readable again", createAnswer{
+			noETag: true, propfind: http.StatusInternalServerError, propfindOnce: true, master: http.StatusPreconditionFailed,
+		}, 1, 1, ""},
+		{"N's ETag unreadable", createAnswer{
+			noETag: true, propfind: http.StatusInternalServerError, master: http.StatusPreconditionFailed,
+		}, 2, 0, "keeping a resource a change created whose etag cannot be read"},
+		{"N's ETag weak", createAnswer{
+			noETag: true, weakETag: true, master: http.StatusPreconditionFailed,
+		}, 2, 0, "keeping an entry a change created whose etag is unknown"},
+	} {
+		t.Run("S refused, "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			var logs bytes.Buffer
+			e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			seeded := storedObject(t, e, id)
+			ev := shownEvent(t, e, "work", rid)
+			var toS atomic.Int32
+			answerCreate(e.mock, mustDecode(t, e, id), tc.answer, &toS)
+			in := eventInputOf(ev)
+			laterBy(time.Hour)(&in)
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+			mustErr(t, err, domain.ErrConflict)
+			if n := toS.Load(); n != 1 || snap != nil {
+				t.Errorf("%d PUTs of S and a snapshot: %v; want one PUT and no snapshot", n, snap != nil)
 			}
 			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != tc.wantObjects {
 				t.Errorf("objects = %v; want %d", paths, tc.wantObjects)

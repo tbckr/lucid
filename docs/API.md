@@ -319,10 +319,12 @@ its ETag and deletes it with `If-Match` if it is there. One whose ETag
 cannot be read, or is weak, stays (logged), and so does one the server
 stores only after that check. If the series' write fails, the new series is
 deleted again where that write is known not to have landed: the server
-refused it, or the series still has its ETag (a new series whose `etag` the
-server did not tell stays, logged). Where its ETag changed, the split counts
-as saved: `200` with `etag` `""` and no `undoToken`. Where the ETag cannot be
-read, the new series stays and the error is answered.
+refused it, or the series still has its ETag. A new series whose `etag` the
+server did not tell is read again, as after a failed write, and deleted with
+the `etag` read; one whose ETag cannot be read, or is weak, stays (logged).
+Where its ETag changed, the split counts as saved: `200` with `etag` `""`
+and no `undoToken`. Where the ETag cannot be read, the new series stays and
+the error is answered.
 
 Errors, with nothing written:
 - `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
@@ -543,8 +545,10 @@ For a recurring todo, these edits are handled specially:
   master**, with the copy attached as `completedCopy`. On the series' last
   occurrence there is no next one: the master itself becomes `COMPLETED` and
   `completedCopy` is absent. If writing the rolled master fails, the
-  already-written copy is deleted again and the error is returned. After a
-  failure without the server's clear answer (`5xx`, none at all), the backend
+  already-written copy is deleted again and the error is returned (a copy
+  whose `etag` the server did not tell is read again for that, and stays,
+  logged, where its ETag can't be read or is weak). After a failure
+  without the server's clear answer (`5xx`, none at all), the backend
   reads the master's ETag back first: unchanged, the copy goes; changed, the
   completion succeeds without `etag` and without `undoToken`; unreadable, the
   copy stays and the error is returned. An occurrence **off the rule** (an

@@ -904,17 +904,18 @@ of the roll, and completing one off the rule writes its copy and drops its
 override. The `EXDATE` stays behind once the master rolls on.
 
 If the master cannot be written, for example because another client changed
-it in the meantime, Lucid deletes the copy again and reports the error. A
-failure without the server's clear answer, a `5xx` or none at all, may come
-after the server stored the master, so Lucid reads the master's ETag back
-first: unchanged, the copy goes as before; changed, the completion counts as
-saved and the copy stays; unreadable, the copy stays and the error is
-reported. A stray copy is a duplicate the user can see and delete; a copy
-deleted on doubt would be a lost completion. The last occurrence gets no
-copy: the master itself becomes `COMPLETED` and keeps its `RRULE`, as with
-Apple, Tasks.org and Evolution. An undo of the completion restores the
-master's resource exactly as it was before the write, and removes the copy
-(see Undo below).
+it in the meantime, Lucid deletes the copy again and reports the error; a
+copy whose ETag the server did not tell is read again for that delete, and
+stays, logged, where its ETag can't be read or is weak. A failure without
+the server's clear answer, a `5xx` or none at all, may come after the server
+stored the master, so Lucid reads the master's ETag back first: unchanged,
+the copy goes as before; changed, the completion counts as saved and the
+copy stays; unreadable, the copy stays and the error is reported. A stray
+copy is a duplicate the user can see and delete; a copy deleted on doubt
+would be a lost completion. The last occurrence gets no copy: the master
+itself becomes `COMPLETED` and keeps its `RRULE`, as with Apple, Tasks.org
+and Evolution. An undo of the completion restores the master's resource
+exactly as it was before the write, and removes the copy (see Undo below).
 
 A series anchored on `DUE` gets its `DTSTART` because RFC 5545 requires one
 with `RRULE`, and because the readers above do better with it: Thunderbird
