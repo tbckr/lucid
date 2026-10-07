@@ -135,7 +135,6 @@ export function DetailActions({
   confirm,
   onEdit,
   onDelete,
-  onDeleteScope,
   deleteScope,
   onScopeOpenChange,
 }: {
@@ -146,10 +145,12 @@ export function DetailActions({
   confirm: string
   onEdit: () => void
   onDelete: () => void
-  /** Deletes one event of a series or the whole series (FR-17); omitted for single events and tasks. */
-  onDeleteScope?: (scope: Scope) => void
-  /** With `onDeleteScope`: the options the question offers (`eventScopeItems`), and the series' calendar color. */
-  deleteScope?: { items: ScopeItem[]; color: string }
+  /**
+   * The question which events of a series to delete (FR-17): the options it offers
+   * (`eventScopeItems`), the series' calendar color, and what a choice deletes. Given only where
+   * there is a choice; a single event, a task and a series with one option ask the plain `confirm`.
+   */
+  deleteScope?: { items: ScopeItem[]; color: string; onChoose: (scope: Scope) => void }
   /**
    * Reports how to cancel the scope question while it is open, or `null` once it isn't, so the
    * surrounding popover can route Escape to it instead of closing (NFR-27): Radix's dismissable
@@ -175,14 +176,14 @@ export function DetailActions({
     onScopeOpenChange?.(null)
   }
 
-  if (confirming && onDeleteScope && deleteScope) {
+  if (confirming && deleteScope) {
     return (
       <ScopeChoice
         tone="destructive"
         question={t('scope.event.delete')}
         items={deleteScope.items}
         color={deleteScope.color}
-        onChoose={onDeleteScope}
+        onChoose={deleteScope.onChoose}
         onCancel={cancel}
       />
     )
@@ -220,7 +221,7 @@ export function DetailActions({
         className="-ml-2.5 text-destructive"
         onClick={() => {
           setConfirming(true)
-          if (onDeleteScope) onScopeOpenChange?.(cancel)
+          if (deleteScope) onScopeOpenChange?.(cancel)
         }}
       >
         <Trash2Icon aria-hidden />

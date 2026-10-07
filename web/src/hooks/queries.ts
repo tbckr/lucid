@@ -469,8 +469,9 @@ async function undoEventChange(
 
 /**
  * Says what a change of a series did, with an Undo while the answer carries a
- * token (FR-17). `after` is this change's ETag and undo token, the token
- * already dropped by `latestUndoToken` once a later write started; a token on
+ * token (FR-17). `after` is this change's answer: the series' ETag it gave,
+ * its undo token, and the `generation` of the write (`startSeriesWrite`). The
+ * token is dropped by `latestUndoToken` once a later write started; a token on
  * `event`, or one cached with it, is from an earlier answer and never offered.
  * The ID is the series', so a later change replaces this toast and its Undo.
  * Its icon shows the events the change reached, `look.reach`, in the
@@ -482,10 +483,11 @@ function eventToast(
   t: TFn,
   event: CalEvent,
   message: string,
-  after: { etag: string; undoToken?: string | null },
+  after: { etag: string; undoToken?: string | null; generation: number },
   look: { reach: Scope; color: string; tone?: 'default' | 'destructive' },
 ): void {
-  const { etag, undoToken } = after
+  const { etag, generation } = after
+  const undoToken = latestUndoToken(qc, event.id, generation, after.undoToken)
   toast.success(message, {
     id: seriesToastId(event.id),
     duration: ACTION_TOAST_MS,
@@ -532,15 +534,21 @@ export function useUpdateEvent(series?: string) {
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (updated, { event, input }, ctx) => {
       if (event.recurring) {
-        const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
-        eventToast(qc, t, event, t('scope.toast.allChanged'), { etag: updated.etag, undoToken }, {
-          reach: 'all',
-          color: colorsOf(event.calendarId).solid,
-          // Red where the series became this one event, deleting all the others, as the server
-          // decides: saved without a rule, one that had a rule, or whose all-day flag changed. A
-          // series of dates alone (RDATE) saved as it was keeps them.
-          tone: !input.rrule && (event.rrule !== '' || input.allDay !== event.allDay) ? 'destructive' : 'default',
-        })
+        eventToast(
+          qc,
+          t,
+          event,
+          t('scope.toast.allChanged'),
+          { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
+          {
+            reach: 'all',
+            color: colorsOf(event.calendarId).solid,
+            // Red where the series became this one event, deleting all the others, as the server
+            // decides: saved without a rule, one that had a rule, or whose all-day flag changed. A
+            // series of dates alone (RDATE) saved as it was keeps them.
+            tone: !input.rrule && (event.rrule !== '' || input.allDay !== event.allDay) ? 'destructive' : 'default',
+          },
+        )
       } else {
         toast.success(t('event.saved'))
       }
@@ -636,13 +644,12 @@ export function useMoveEvent(series?: string) {
     },
     onSuccess: (updated, { event, change }, ctx) => {
       if (event.recurring) {
-        const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
         eventToast(
           qc,
           t,
           event,
           t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved'),
-          { etag: updated.etag, undoToken },
+          { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
           { reach: 'all', color: colorsOf(event.calendarId).solid },
         )
       } else {
@@ -731,13 +738,12 @@ export function useMoveOccurrence(series?: string) {
     },
     onSuccess: (updated, { event, change }, ctx) => {
       putOccurrence(qc, event, updated)
-      const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
       eventToast(
         qc,
         t,
         event,
         t(change ? 'scope.toast.thisChanged' : 'scope.toast.thisMoved'),
-        { etag: updated.etag, undoToken },
+        { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
         { reach: 'this', color: colorsOf(event.calendarId).solid },
       )
     },
@@ -765,11 +771,14 @@ export function useUpdateOccurrence(series?: string) {
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (updated, { event }, ctx) => {
       putOccurrence(qc, event, updated)
-      const undoToken = latestUndoToken(qc, event.id, ctx.generation, updated.undoToken)
-      eventToast(qc, t, event, t('scope.toast.thisChanged'), { etag: updated.etag, undoToken }, {
-        reach: 'this',
-        color: colorsOf(event.calendarId).solid,
-      })
+      eventToast(
+        qc,
+        t,
+        event,
+        t('scope.toast.thisChanged'),
+        { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
+        { reach: 'this', color: colorsOf(event.calendarId).solid },
+      )
     },
     onError: (err, { event }) => {
       reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
@@ -809,12 +818,14 @@ export function useDeleteOccurrence(series?: string) {
     },
     onSuccess: (res, event, ctx) => {
       // No answer: the series went with its last event, so there is nothing to undo.
-      const undoToken = latestUndoToken(qc, event.id, ctx.generation, res?.undoToken)
-      eventToast(qc, t, event, t('scope.toast.thisDeleted'), { etag: res?.etag ?? '', undoToken }, {
-        reach: 'this',
-        color: colorsOf(event.calendarId).solid,
-        tone: 'destructive',
-      })
+      eventToast(
+        qc,
+        t,
+        event,
+        t('scope.toast.thisDeleted'),
+        { etag: res?.etag ?? '', undoToken: res?.undoToken, generation: ctx.generation },
+        { reach: 'this', color: colorsOf(event.calendarId).solid, tone: 'destructive' },
+      )
       if (res) setSeriesEtag(qc, event, res.etag)
     },
     onError: (err, event, ctx) => {

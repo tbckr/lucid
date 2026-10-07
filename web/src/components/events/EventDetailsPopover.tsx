@@ -170,8 +170,15 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
               del.mutate(event)
               openDetail(null)
             }}
-            onDeleteScope={deleteOptions.length > 1 ? deleteScoped : undefined}
-            deleteScope={{ items: eventScopeItems(t, event, deleteOptions, prefs, now), color: colors.solid }}
+            deleteScope={
+              deleteOptions.length > 1
+                ? {
+                    items: eventScopeItems(t, event, deleteOptions, prefs, now),
+                    color: colors.solid,
+                    onChoose: deleteScoped,
+                  }
+                : undefined
+            }
             onScopeOpenChange={(cancel) => {
               cancelScope.current = cancel
             }}
