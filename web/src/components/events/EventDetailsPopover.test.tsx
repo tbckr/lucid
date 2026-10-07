@@ -176,6 +176,8 @@ describe('EventDetailsPopover', () => {
     const user = userEvent.setup()
     const { dialog, fetch } = await openDetails({
       id: 'e1',
+      start: '2026-03-13T08:00:00Z',
+      end: '2026-03-13T09:00:00Z',
       recurring: true,
       rrule: 'FREQ=DAILY',
       recurrenceId: '2026-03-13T08:00:00Z',
@@ -185,7 +187,7 @@ describe('EventDetailsPopover', () => {
       name: 'This event repeats. Which events should be deleted?',
     })
     const following = within(question).getByRole('button', { name: 'This and following events' })
-    expect(following).toHaveAccessibleDescription(/^The series ends before Fri, Sep 25(, 2026)?\.$/)
+    expect(following).toHaveAccessibleDescription(/^The series ends before Fri, Mar 13(, 2026)?\.$/)
     const red = 'var(--destructive)'
     expect(Array.from(following.querySelectorAll('circle')).map((c) => c.getAttribute('fill'))).toEqual([
       'none',

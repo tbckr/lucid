@@ -1035,23 +1035,27 @@ as entered (`UpdateFollowing`).
   "Only this event" where that is offered too. It is missing at the series'
   first event, where it would do what "All events" does, without a word, and
   in a series with attendees, where the question says "With attendees, the
-  series can't be split." Its note names the day of the event: "From Wed,
-  Oct 21 on, as a series of its own. Earlier ones stay as they are.", "The
-  series ends before Wed, Oct 21." on a delete, and "From Wed, Oct 21 on,
-  only this event stays. Earlier ones stay as they are." for a save that
-  removes the rule. While it has the pointer or the focus, the ring marks
-  the events from R on, by recurrence ID, so an event before R that an
-  override moved past it stays unmarked. None of these writes is optimistic:
-  the calendar shows the change once the series is reloaded, and a dragged
-  event shows busy until then. The toast says "Moved from Wed, Oct 21 on, as
-  a series of its own." ("Changed …" for a resize or a save), and in red
-  "The series now ends before Wed, Oct 21." for a delete or a save that
-  removes the rule, with an Undo (see below). Where the server changed all
-  events instead, at what had become the first event, the toast says "All
-  events moved." or "All events changed.". A delete answered with `204` says
-  that the series ends too, without an Undo: the answer can't tell a series
-  deleted at its first event from one kept whose new ETag the server didn't
-  tell.
+  series can't be split." Its note names the day the split starts from:
+  "From Wed, Oct 21 on, as a series of its own. Earlier ones stay as they
+  are.", "The series ends before Wed, Oct 21." on a delete, and "From Wed,
+  Oct 21 on, only this event stays. Earlier ones stay as they are." for a
+  save that removes the rule. That day is the earlier of the event's
+  recurrence date and the day it is shown on, as the split goes by
+  recurrence ID: an event of a daily series moved on its own from Oct 21 to
+  Oct 24 takes Oct 22 and 23 along, and its note and toast say Oct 21. "Only
+  this event" names the day it is shown on. While it has the pointer or the
+  focus, the ring marks the events from R on, by recurrence ID, so an event
+  before R that an override moved past it stays unmarked. None of these
+  writes is optimistic: the calendar shows the change once the series is
+  reloaded, and a dragged event shows busy until then. The toast says "Moved
+  from Wed, Oct 21 on, as a series of its own." ("Changed …" for a resize or
+  a save), and in red "The series now ends before Wed, Oct 21." for a delete
+  or a save that removes the rule, with an Undo (see below). Where the
+  server changed all events instead, at what had become the first event, the
+  toast says "All events moved." or "All events changed.". A delete answered
+  with `204` says that the series ends too, without an Undo: the answer
+  can't tell a series deleted at its first event from one kept whose new
+  ETag the server didn't tell.
 
 ### Undo
 

@@ -35,7 +35,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
-import { glyphSlots, type Scope } from '@/lib/scope'
+import { followingStart, glyphSlots, type Scope } from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
@@ -892,9 +892,12 @@ export function useDeleteOccurrence(series?: string) {
   })
 }
 
-/** The day of `event` as a toast names it, like the scope question; `now` only decides whether it needs its year. */
-function eventDay(event: CalEvent, prefs: FormatPrefs): string {
-  return formatPickerDate(event.startsAt, prefs, new Date())
+/**
+ * The day "this and following events" from `event` starts, as its toast names it, like the scope
+ * question (`followingStart`); `now` only decides whether it needs its year.
+ */
+function followingDay(event: CalEvent, prefs: FormatPrefs): string {
+  return formatPickerDate(followingStart(event), prefs, new Date())
 }
 
 /**
@@ -947,7 +950,7 @@ export function useMoveFollowing(series?: string) {
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (answer, { event, change }, ctx) => {
       const reach = splitReach(event, answer)
-      const date = eventDay(event, prefs)
+      const date = followingDay(event, prefs)
       eventToast(
         qc,
         t,
@@ -985,7 +988,7 @@ export function useUpdateFollowing(series?: string) {
     onSuccess: (answer, { event, input }, ctx) => {
       const reach = splitReach(event, answer)
       const removed = removesRule(event, input)
-      const date = eventDay(event, prefs)
+      const date = followingDay(event, prefs)
       eventToast(
         qc,
         t,
@@ -1032,7 +1035,7 @@ export function useDeleteFollowing(series?: string) {
         qc,
         t,
         event,
-        t('scope.toast.ended', { date: eventDay(event, prefs) }),
+        t('scope.toast.ended', { date: followingDay(event, prefs) }),
         { etag: res?.etag ?? '', undoToken: res?.undoToken, generation: ctx.generation },
         { reach: 'following', color: colorsOf(event.calendarId).solid, tone: 'destructive' },
       )

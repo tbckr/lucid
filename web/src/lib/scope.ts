@@ -1,4 +1,5 @@
 import { type TFunction } from 'i18next'
+import { utcDateToLocal } from './dates'
 import { type CalEvent } from './events'
 import { formatPickerDate, type FormatPrefs } from './format'
 import { moveAllRefusal, type ShiftReason } from './seriesShift'
@@ -114,9 +115,23 @@ export interface ScopeItem {
 export type ScopeNotes = 'change' | 'delete' | 'ruleRemoved'
 
 /**
+ * Where "this and following events" from `event` starts (FR-17): the earlier
+ * of its recurrence date and its shown start. The server splits a series by
+ * recurrence ID, so an event changed on its own to a later day takes the
+ * events between along, and one changed to an earlier day goes itself. An
+ * all-day event's recurrence date is read as a date, as its start is.
+ */
+export function followingStart(event: CalEvent): Date {
+  if (!event.recurrenceId) return event.startsAt
+  const rid = event.allDay ? utcDateToLocal(event.recurrenceId) : new Date(event.recurrenceId)
+  return rid < event.startsAt ? rid : event.startsAt
+}
+
+/**
  * The options `options` of a change of `event` as the scope question lists
  * them (FR-17), in the same order. The notes name the day the event is shown
- * on, and say what `notes` does to the events they reach.
+ * on, "this and following" the day it starts from (`followingStart`), and say
+ * what `notes` does to the events they reach.
  */
 export function eventScopeItems(
   t: TFunction,
@@ -131,8 +146,10 @@ export function eventScopeItems(
     switch (scope) {
       case 'this':
         return { scope, label: t('scope.event.this'), note: t('scope.event.thisNote', { date }) }
-      case 'following':
-        return { scope, label: t('scope.event.following'), note: followingNote(t, notes, date) }
+      case 'following': {
+        const from = formatPickerDate(followingStart(event), prefs, now)
+        return { scope, label: t('scope.event.following'), note: followingNote(t, notes, from) }
+      }
       case 'all':
         return {
           scope,

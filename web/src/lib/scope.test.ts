@@ -2,7 +2,7 @@ import { de } from 'date-fns/locale/de'
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
-import { toCalEvent } from './events'
+import { toCalEvent, type CalEvent } from './events'
 import { type FormatPrefs } from './format'
 import {
   eventScopeHint,
@@ -255,6 +255,48 @@ describe('eventScopeItems', () => {
       'Ab Mo., 9. März bleibt nur dieser Termin. Frühere bleiben, wie sie sind.',
       'Nur dieser Termin bleibt. Alle anderen werden gelöscht.',
     ])
+  })
+
+  // Final review, Minor 2: the server splits by recurrence ID, so "this and following" reaches every
+  // event from the earlier of the event's recurrence date and its shown start; "only this" stays
+  // on the day the event is shown.
+  describe('of an event changed on its own', () => {
+    const notes = (moved: CalEvent, kind: 'change' | 'delete' | 'ruleRemoved') =>
+      eventScopeItems(i18n.getFixedT('en'), moved, ['this', 'following', 'all'], us, now, kind).map((i) => i.note)
+
+    it('names its recurrence date when it was moved later', () => {
+      // Shown on Thursday, Mar 12, in place of Monday, Mar 9: the split takes Mar 10 and 11 along.
+      const later = toCalEvent({ ...event, start: '2026-03-12T08:00:00Z', end: '2026-03-12T09:00:00Z' })
+      expect(notes(later, 'change')).toEqual([
+        'Only Thu, Mar 12.',
+        'From Mon, Mar 9 on, as a series of its own. Earlier ones stay as they are.',
+        'Past ones too.',
+      ])
+      expect(notes(later, 'delete')[1]).toBe('The series ends before Mon, Mar 9.')
+      expect(notes(later, 'ruleRemoved')[1]).toBe(
+        'From Mon, Mar 9 on, only this event stays. Earlier ones stay as they are.',
+      )
+    })
+
+    it('names the day it is shown on when it was moved earlier', () => {
+      const earlier = toCalEvent({ ...event, start: '2026-03-07T08:00:00Z', end: '2026-03-07T09:00:00Z' })
+      expect(notes(earlier, 'delete').slice(0, 2)).toEqual(['Only Sat, Mar 7.', 'The series ends before Sat, Mar 7.'])
+    })
+
+    it('reads the recurrence date of an all-day event as a date', () => {
+      const allDay = toCalEvent(
+        apiEvent({
+          start: '2026-03-12T00:00:00Z',
+          end: '2026-03-13T00:00:00Z',
+          allDay: true,
+          timezone: '',
+          rrule: 'FREQ=WEEKLY',
+          recurring: true,
+          recurrenceId: '2026-03-09T00:00:00Z',
+        }),
+      )
+      expect(notes(allDay, 'delete').slice(0, 2)).toEqual(['Only Thu, Mar 12.', 'The series ends before Mon, Mar 9.'])
+    })
   })
 })
 

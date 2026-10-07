@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
 import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
-import { toCalEvent } from '@/lib/events'
+import { toCalEvent, type CalEvent } from '@/lib/events'
 import { todoToInput } from '@/lib/tasks'
 import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -1717,6 +1717,58 @@ describe('this and following events', () => {
     expect(shown.action).toBeUndefined()
     expect(dotsOf(shown.icon)).toEqual(['none', 'none', red, red, red])
     expect(success).not.toHaveBeenCalledWith('Event deleted')
+  })
+
+  // Final review, Minor 2: the server splits by recurrence ID, so an event moved on its own past
+  // later ones takes them along; the toast names the day it reaches from, its recurrence date.
+  it.each([
+    {
+      write: 'a move',
+      answer: () => split('"2"', 'tok'),
+      message: 'Moved from Mon, Mar 17 on, as a series of its own.',
+      useWrite: () => {
+        const move = useMoveFollowing('e1')
+        return (event: CalEvent) => {
+          move.mutate({ event, ...to })
+        }
+      },
+    },
+    {
+      write: 'the editor removing the rule',
+      answer: () => split('"2"', 'tok'),
+      message: 'The series now ends before Mon, Mar 17.',
+      useWrite: () => {
+        const update = useUpdateFollowing('e1')
+        return (event: CalEvent) => {
+          update.mutate({ event, input: { ...input, rrule: '' } })
+        }
+      },
+    },
+    {
+      write: 'a delete',
+      answer: () => jsonResponse(200, { etag: '"2"', undoToken: 'tok' }),
+      message: 'The series now ends before Mon, Mar 17.',
+      useWrite: () => {
+        const remove = useDeleteFollowing('e1')
+        return (event: CalEvent) => {
+          remove.mutate(event)
+        }
+      },
+    },
+  ])('names the recurrence date of an event moved on its own after it: $write', async ({ answer, message, useWrite }) => {
+    const success = vi.spyOn(toast, 'success')
+    const { queryClient, wrap } = setup(answer())
+    const { result } = renderHook(useWrite, { wrapper: wrap })
+    // Shown on Thursday, Mar 20, in place of Monday, Mar 17.
+    const moved = toCalEvent({ ...late, start: '2025-03-20T08:00:00Z', end: '2025-03-20T09:00:00Z', modified: true })
+
+    act(() => {
+      result.current(moved)
+    })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+    expect(success.mock.calls.map(([m]) => m)).toEqual([message])
   })
 
   // Review Focus 4: the undo of a split deletes the new series only while no other app changed it.
