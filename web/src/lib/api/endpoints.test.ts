@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { apiEvent, bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
-import { ApiClient } from './client'
+import i18n from '@/i18n'
+import { apiErrorMessage } from '../errors'
+import { ApiClient, isApiError } from './client'
 import { createEndpoints } from './endpoints'
 
 function setup(...responses: Response[]) {
@@ -82,6 +84,87 @@ describe('endpoints', () => {
   it('resolves with nothing once the series is gone', async () => {
     const { api } = setup(new Response(null, { status: 204 }))
     expect(await api.deleteOccurrence('e1', '2026-03-20T08:00:00Z', '"8"')).toBeUndefined()
+  })
+
+  it('splits a series at an occurrence and reads the new series, the old one\'s ETag and the undo token', async () => {
+    const moved = apiEvent({ id: 'e2', etag: '"n1"', recurring: true, recurrenceId: '2025-03-17T08:00:00Z', first: true })
+    const { api, calls } = setup(jsonResponse(200, { event: moved, etag: '"s2"', undoToken: 'tok' }))
+    const input = {
+      title: 'x',
+      description: '',
+      location: '',
+      start: moved.start,
+      end: moved.end,
+      allDay: false,
+      timezone: 'UTC',
+      rrule: 'FREQ=WEEKLY',
+    }
+    const res = await api.updateFollowing('e1', '2025-03-17T08:00:00Z', '"s1"', input)
+    expect(res.event.id).toBe('e2')
+    expect(res.event.first).toBe(true)
+    expect(res.etag).toBe('"s2"')
+    expect(res.undoToken).toBe('tok')
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['PUT', '/api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z'],
+    ])
+    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBe('"s1"')
+    expect(bodyOf(calls[0]?.init)).toEqual(input)
+  })
+
+  it('reads a split without an old ETag or an undo token', async () => {
+    const { api } = setup(jsonResponse(200, { event: apiEvent() }))
+    const res = await api.updateFollowing('e1', '2025-03-17T08:00:00Z', '"s1"', {
+      title: 'x',
+      description: '',
+      location: '',
+      start: '2026-09-25T08:00:00Z',
+      end: '2026-09-25T09:00:00Z',
+      allDay: false,
+      timezone: 'UTC',
+      rrule: '',
+    })
+    expect(res.etag).toBe('')
+    expect(res.undoToken).toBeUndefined()
+  })
+
+  it('ends a series before an occurrence and reads its new ETag and undo token', async () => {
+    const { api, calls } = setup(jsonResponse(200, { etag: '"5"', undoToken: 'tok' }, { ETag: '"5"' }))
+    expect(await api.deleteFollowing('e1', '2025-03-17T08:00:00Z', '"4"')).toEqual({ etag: '"5"', undoToken: 'tok' })
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['DELETE', '/api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z'],
+    ])
+    expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBe('"4"')
+  })
+
+  it('resolves with nothing once ending the series deleted it', async () => {
+    const { api } = setup(new Response(null, { status: 204 }))
+    expect(await api.deleteFollowing('e1', '2025-03-17T08:00:00Z', '"8"')).toBeUndefined()
+  })
+
+  it('names a series that cannot be split in either direction', async () => {
+    const refused = () =>
+      jsonResponse(400, { error: { code: 'series_split_unsupported', message: 'the series has attendees' } })
+    const { api } = setup(refused(), refused())
+    const input = {
+      title: 'x',
+      description: '',
+      location: '',
+      start: '2026-09-25T08:00:00Z',
+      end: '2026-09-25T09:00:00Z',
+      allDay: false,
+      timezone: 'UTC',
+      rrule: '',
+    }
+    for (const call of [
+      api.updateFollowing('e1', '2025-03-17T08:00:00Z', '"1"', input),
+      api.deleteFollowing('e1', '2025-03-17T08:00:00Z', '"1"'),
+    ]) {
+      const err: unknown = await call.catch((e: unknown) => e)
+      expect(isApiError(err, 'series_split_unsupported')).toBe(true)
+      expect(apiErrorMessage(i18n.getFixedT('en'), err)).toBe(
+        "This series can't be split. Change only this event or all events instead.",
+      )
+    }
   })
 
   it('undoes a change of an event series with its token, no If-Match', async () => {

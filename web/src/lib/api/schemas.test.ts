@@ -5,6 +5,7 @@ import {
   deletedOccurrenceSchema,
   eventRestoreSchema,
   eventSchema,
+  followingSchema,
   parseList,
   restoredTodoSchema,
   sessionSchema,
@@ -25,6 +26,24 @@ describe('schemas', () => {
 
   it('parses modified', () => {
     expect(eventSchema.parse(apiEvent({ modified: true })).modified).toBe(true)
+  })
+
+  it('parses the flags that decide whether a series can be split, false when left out', () => {
+    const { first: _f, hasAttendees: _a, ...unflagged } = apiEvent()
+    const left = eventSchema.parse(unflagged)
+    expect([left.first, left.hasAttendees]).toEqual([false, false])
+    const flagged = eventSchema.parse({ ...apiEvent(), first: true, hasAttendees: true })
+    expect([flagged.first, flagged.hasAttendees]).toEqual([true, true])
+  })
+
+  it('parses the answer of a split: the new series, the old one\'s ETag and an undo token, each optional but the event', () => {
+    const e = apiEvent({ id: 'e2' })
+    expect(followingSchema.parse({ event: e }).etag).toBe('')
+    expect(followingSchema.parse({ event: e }).undoToken).toBeUndefined()
+    const full = followingSchema.parse({ event: e, etag: '"3"', undoToken: 'tok' })
+    expect([full.event.id, full.etag, full.undoToken]).toEqual(['e2', '"3"', 'tok'])
+    expect(followingSchema.safeParse({ etag: '"3"' }).success).toBe(false)
+    expect(followingSchema.safeParse({ event: { id: 'e2' } }).success).toBe(false)
   })
 
   it('keeps the undo token of a change of an event series, and parses events without one', () => {

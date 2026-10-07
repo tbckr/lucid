@@ -187,6 +187,7 @@ describe('parseErrorResponse', () => {
   it.each([
     [422, 'unsupported_component'],
     [400, 'series_move_unsupported'],
+    [400, 'series_split_unsupported'],
   ])('keeps the code of a %i %s', async (status, code) => {
     const err = await parseErrorResponse(jsonResponse(status, { error: { code, message: 'm' } }))
     expect(err.code).toBe(code)

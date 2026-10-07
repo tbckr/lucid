@@ -50,7 +50,8 @@
     "invalid_input_detail": "Ungültige Eingabe: {{detail}}",
     "read_only": "Dieser Kalender ist schreibgeschützt.",
     "unsupported_component": "Dieser Kalender nimmt diese Art von Eintrag nicht an. Wähle einen anderen Kalender.",
-    "series_move_unsupported": "So lassen sich nicht alle Termine dieser Serie verschieben. Verschiebe nur diesen Termin.",
+    "series_move_unsupported": "So lässt sich diese Serie nicht verschieben. Verschiebe nur diesen Termin.",
+    "series_split_unsupported": "Diese Serie lässt sich nicht teilen. Ändere nur diesen Termin oder alle Termine.",
     "conflict": "Dieser Eintrag wurde anderswo geändert. Lucid hat die aktuelle Version geladen.",
     "not_found": "Diesen Eintrag gibt es nicht mehr. Lucid hat den Kalender neu geladen.",
     "unauthenticated": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
@@ -201,8 +202,16 @@
       "delete": "Dieser Termin wiederholt sich. Welche Termine löschen?",
       "this": "Nur diesen Termin",
       "thisNote": "Nur {{date}}.",
+      "following": "Diesen und alle folgenden",
       "all": "Alle Termine",
-      "allNote": "Auch vergangene."
+      "allNote": "Auch vergangene.",
+      "allRuleRemovedNote": "Nur dieser Termin bleibt. Alle anderen werden gelöscht."
+    },
+    "followingNote": "Ab {{date}} als eigene Serie. Frühere bleiben, wie sie sind.",
+    "followingDeleteNote": "Die Serie endet vor dem {{date}}.",
+    "followingRuleRemovedNote": "Ab {{date}} bleibt nur dieser Termin. Frühere bleiben, wie sie sind.",
+    "missing": {
+      "attendees": "Mit Teilnehmenden lässt sich die Serie nicht teilen."
     },
     "reason": {
       "fixedDays": "Die Serie bleibt auf ihren Tagen.",
@@ -218,9 +227,13 @@
       "thisChanged": "Nur dieser Termin geändert.",
       "thisDeleted": "Nur dieser Termin gelöscht.",
       "allMoved": "Alle Termine verschoben.",
-      "allChanged": "Alle Termine geändert."
+      "allChanged": "Alle Termine geändert.",
+      "followingMoved": "Ab {{date}} verschoben, als eigene Serie.",
+      "followingChanged": "Ab {{date}} geändert, als eigene Serie.",
+      "ended": "Die Serie endet jetzt vor dem {{date}}."
     },
     "undone": "Rückgängig gemacht.",
+    "undoneSeriesKept": "Rückgängig gemacht. Die neue Serie wurde in einer anderen App geändert und bleibt.",
     "undoGone": "Nichts mehr rückgängig zu machen."
   },
   "tasks": {

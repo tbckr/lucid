@@ -35,7 +35,8 @@ describe('apiErrorMessage', () => {
     ['invalid_input', 'invalid'],
     ['read_only', 'read-only'],
     ['unsupported_component', "doesn't accept"],
-    ['series_move_unsupported', "can't move like this. Move only this event instead."],
+    ['series_move_unsupported', "This series can't move like this. Move only this event instead."],
+    ['series_split_unsupported', "This series can't be split. Change only this event or all events instead."],
     ['conflict', 'changed elsewhere'],
     ['not_found', 'no longer exists'],
     ['unauthenticated', 'session expired'],
@@ -56,7 +57,10 @@ describe('apiErrorMessage', () => {
     const de = i18next.getFixedT('de')
     expect(apiErrorMessage(de, new ApiError(409, 'conflict', ''))).toContain('anderswo geändert')
     expect(apiErrorMessage(de, new ApiError(400, 'series_move_unsupported', ''))).toBe(
-      'So lassen sich nicht alle Termine dieser Serie verschieben. Verschiebe nur diesen Termin.',
+      'So lässt sich diese Serie nicht verschieben. Verschiebe nur diesen Termin.',
+    )
+    expect(apiErrorMessage(de, new ApiError(400, 'series_split_unsupported', ''))).toBe(
+      'Diese Serie lässt sich nicht teilen. Ändere nur diesen Termin oder alle Termine.',
     )
   })
 })

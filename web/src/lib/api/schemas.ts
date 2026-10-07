@@ -61,6 +61,10 @@ export const eventSchema = z
     recurrenceId: isoDateTime.nullish(),
     // FR-17: true for an occurrence of a series an override visibly changed.
     modified: z.boolean().optional().default(false),
+    // FR-17: true if the series or any override has an ORGANIZER or ATTENDEE, which the server refuses to split.
+    hasAttendees: z.boolean().optional().default(false),
+    // FR-17: true for the first occurrence of its series that the server shows, which has nothing before it to keep.
+    first: z.boolean().optional().default(false),
     // FR-17: set on the answer of a change of a recurring series that can be undone (POST /events/{id}/undo).
     undoToken: z.string().nullish(),
   })
@@ -77,6 +81,19 @@ export type ApiEvent = z.infer<typeof eventSchema>
  */
 export const deletedOccurrenceSchema = z.object({ etag: z.string(), undoToken: z.string().nullish() })
 export type DeletedOccurrence = z.infer<typeof deletedOccurrenceSchema>
+
+/**
+ * PUT /api/v1/events/{eventId}/following/{recurrenceId} response: the edited
+ * occurrence in the new series, the old series' new ETag (empty when the
+ * server told none), and an undo token when the split can be undone (FR-17,
+ * NFR-26).
+ */
+export const followingSchema = z.object({
+  event: eventSchema,
+  etag: z.string().optional().default(''),
+  undoToken: z.string().nullish(),
+})
+export type Following = z.infer<typeof followingSchema>
 
 /**
  * POST /api/v1/events/{eventId}/undo response: the series' ETag after the

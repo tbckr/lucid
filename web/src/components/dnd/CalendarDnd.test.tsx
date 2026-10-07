@@ -102,7 +102,11 @@ function Week({ days, events, full }: { days: Date[]; events: CalEvent[]; full?:
   ))
 }
 
-/** An event of a daily series, on 2026-09-`day` 10:00-11:00 in Berlin. */
+/**
+ * An event of a daily series, on 2026-09-`day` 10:00-11:00 in Berlin. It is
+ * the series' first shown event, which has nothing before it to split off, so
+ * the question asks only for this event or all (FR-17).
+ */
 function standup(day: number): CalEvent {
   const start = `2026-09-${day}T08:00:00Z`
   return toCalEvent(
@@ -112,6 +116,7 @@ function standup(day: number): CalEvent {
       start,
       end: `2026-09-${day}T09:00:00Z`,
       recurring: true,
+      first: true,
       rrule: 'FREQ=DAILY',
       recurrenceId: start,
     }),
@@ -494,7 +499,7 @@ describe('CalendarDnd', () => {
       await moveRight(chipIn(25, standupAt10))
       await user.click(await screen.findByRole('button', { name: 'All events' }))
       await waitFor(() => {
-        expect(error).toHaveBeenCalledWith("All events of this series can't move like this. Move only this event instead.")
+        expect(error).toHaveBeenCalledWith("This series can't move like this. Move only this event instead.")
       })
       await waitFor(() => {
         expect(queryClient.isMutating()).toBe(0)

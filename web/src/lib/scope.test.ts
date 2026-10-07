@@ -4,13 +4,20 @@ import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
 import { toCalEvent } from './events'
 import { type FormatPrefs } from './format'
-import { eventScopeHint, eventScopeItems, scopeOptions, type ScopeAction, type ScopeResult } from './scope'
+import {
+  eventScopeHint,
+  eventScopeItems,
+  eventScopeMissing,
+  scopeOptions,
+  type ScopeAction,
+  type ScopeResult,
+} from './scope'
 import { apiEvent } from '@/test/fixtures'
 
 const tz = 'Europe/Berlin'
 
 /** One shown occurrence of a series, starting Monday 2026-03-09 09:00 Berlin. */
-function occurrence(rrule: string) {
+function occurrence(rrule: string, flags: { first?: boolean; hasAttendees?: boolean } = {}) {
   return toCalEvent(
     apiEvent({
       start: '2026-03-09T08:00:00Z',
@@ -18,6 +25,7 @@ function occurrence(rrule: string) {
       rrule,
       recurring: true,
       recurrenceId: '2026-03-09T08:00:00Z',
+      ...flags,
     }),
   )
 }
@@ -26,6 +34,12 @@ describe('scopeOptions for events', () => {
   const weekly = occurrence('FREQ=WEEKLY;BYDAY=MO')
   const monthly = occurrence('FREQ=MONTHLY;BYMONTHDAY=9')
   const hourly = occurrence('FREQ=DAILY;BYHOUR=9')
+  // The series' first shown event has nothing before it; with attendees the server refuses to split.
+  const weeklyFirst = occurrence('FREQ=WEEKLY;BYDAY=MO', { first: true })
+  const monthlyFirst = occurrence('FREQ=MONTHLY;BYMONTHDAY=9', { first: true })
+  const weeklyAttendees = occurrence('FREQ=WEEKLY;BYDAY=MO', { hasAttendees: true })
+  const monthlyAttendees = occurrence('FREQ=MONTHLY;BYMONTHDAY=9', { hasAttendees: true })
+  const weeklyFirstAttendees = occurrence('FREQ=WEEKLY;BYDAY=MO', { first: true, hasAttendees: true })
   // All-day events are date-only on the wire; their shown start is local midnight.
   const allDay = toCalEvent(
     apiEvent({
@@ -48,15 +62,91 @@ describe('scopeOptions for events', () => {
   const sameDayLater = new Date('2026-03-09T11:00:00+01:00')
 
   const rows: { name: string; action: ScopeAction; item: ReturnType<typeof occurrence>; to?: Date; want: ScopeResult }[] = [
-    { name: 'move the series can follow', action: 'move', item: weekly, to: tuesday, want: { options: ['this', 'all'] } },
+    // move or change, the series can follow
     {
-      name: 'move the series cannot follow',
+      name: 'move a late event of a series that can follow',
+      action: 'move',
+      item: weekly,
+      to: tuesday,
+      want: { options: ['this', 'following', 'all'] },
+    },
+    { name: 'move the first event of a series that can follow', action: 'move', item: weeklyFirst, to: tuesday, want: { options: ['this', 'all'] } },
+    {
+      name: 'move a late event with attendees names what removed "following"',
+      action: 'move',
+      item: weeklyAttendees,
+      to: tuesday,
+      want: { options: ['this', 'all'], missing: 'attendees' },
+    },
+    {
+      name: 'move the first event with attendees: it is the first, not the attendees, that removes "following"',
+      action: 'move',
+      item: weeklyFirstAttendees,
+      to: tuesday,
+      want: { options: ['this', 'all'] },
+    },
+    {
+      name: 'change a late event of a series that can follow',
+      action: 'change',
+      item: weekly,
+      to: tuesday,
+      want: { options: ['this', 'following', 'all'] },
+    },
+    {
+      name: 'change the first event of a series that can follow',
+      action: 'change',
+      item: weeklyFirst,
+      to: tuesday,
+      want: { options: ['this', 'all'] },
+    },
+    {
+      name: 'change a late event with attendees',
+      action: 'change',
+      item: weeklyAttendees,
+      to: tuesday,
+      want: { options: ['this', 'all'], missing: 'attendees' },
+    },
+    {
+      name: 'move to another time of a fixed-days series',
+      action: 'move',
+      item: monthly,
+      to: sameDayLater,
+      want: { options: ['this', 'following', 'all'] },
+    },
+    {
+      name: 'change without a new start uses the shown start',
+      action: 'change',
+      item: monthly,
+      want: { options: ['this', 'following', 'all'] },
+    },
+    {
+      name: 'change of an all-day event without a new start',
+      action: 'change',
+      item: allDay,
+      want: { options: ['this', 'following', 'all'] },
+    },
+    // move or change, the series can't follow: neither "following" nor "all"
+    {
+      name: 'move a late event of a series that cannot follow',
       action: 'move',
       item: monthly,
       to: tuesday,
       want: { options: ['this'], reason: 'fixedDays' },
     },
-    { name: 'move to another time of a fixed-days series', action: 'move', item: monthly, to: sameDayLater, want: { options: ['this', 'all'] } },
+    {
+      name: 'move the first event of a series that cannot follow',
+      action: 'move',
+      item: monthlyFirst,
+      to: tuesday,
+      want: { options: ['this'], reason: 'fixedDays' },
+    },
+    {
+      name: 'move a late event with attendees of a series that cannot follow',
+      action: 'move',
+      item: monthlyAttendees,
+      to: tuesday,
+      want: { options: ['this'], reason: 'fixedDays' },
+    },
     {
       name: 'change refused by the time',
       action: 'change',
@@ -64,13 +154,24 @@ describe('scopeOptions for events', () => {
       to: sameDayLater,
       want: { options: ['this'], reason: 'fixedTimes' },
     },
-    { name: 'change without a new start uses the shown start', action: 'change', item: monthly, want: { options: ['this', 'all'] } },
-    { name: 'change of an all-day event without a new start', action: 'change', item: allDay, want: { options: ['this', 'all'] } },
-    { name: 'change the series can follow', action: 'change', item: weekly, to: tuesday, want: { options: ['this', 'all'] } },
-    { name: 'rule change', action: 'rule', item: weekly, want: { options: ['all'] } },
-    { name: 'rule change ignores the new start', action: 'rule', item: monthly, to: tuesday, want: { options: ['all'] } },
-    { name: 'delete', action: 'delete', item: weekly, want: { options: ['this', 'all'] } },
-    { name: 'delete of a fixed-days series', action: 'delete', item: monthly, want: { options: ['this', 'all'] } },
+    // a rule change: "following" only before the first event, and never with attendees
+    { name: 'rule change of a late event', action: 'rule', item: weekly, want: { options: ['following', 'all'] } },
+    { name: 'rule change of the first event', action: 'rule', item: weeklyFirst, want: { options: ['all'] } },
+    { name: 'rule change of a late event with attendees', action: 'rule', item: weeklyAttendees, want: { options: ['all'] } },
+    { name: 'rule change of the first event with attendees', action: 'rule', item: weeklyFirstAttendees, want: { options: ['all'] } },
+    { name: 'rule change ignores the new start', action: 'rule', item: monthly, to: tuesday, want: { options: ['following', 'all'] } },
+    // a delete
+    { name: 'delete a late event', action: 'delete', item: weekly, want: { options: ['this', 'following', 'all'] } },
+    { name: 'delete the first event', action: 'delete', item: weeklyFirst, want: { options: ['this', 'all'] } },
+    {
+      name: 'delete a late event with attendees',
+      action: 'delete',
+      item: weeklyAttendees,
+      want: { options: ['this', 'all'], missing: 'attendees' },
+    },
+    { name: 'delete the first event with attendees', action: 'delete', item: weeklyFirstAttendees, want: { options: ['this', 'all'] } },
+    { name: 'delete of a fixed-days series', action: 'delete', item: monthly, want: { options: ['this', 'following', 'all'] } },
+    // not a series: nothing to choose
     { name: 'move of a single event', action: 'move', item: single, to: tuesday, want: { options: [] } },
     { name: 'rule change of a single event', action: 'rule', item: single, want: { options: [] } },
     { name: 'delete of a single event', action: 'delete', item: single, want: { options: [] } },
@@ -80,7 +181,7 @@ describe('scopeOptions for events', () => {
   ]
 
   it.each(rows)('$name', ({ action, item, to, want }) => {
-    expect(scopeOptions({ kind: 'event', action, item, to, tz })).toEqual(want)
+    expect(scopeOptions({ kind: 'event', action, item, to, tz })).toStrictEqual(want)
   })
 })
 
@@ -105,8 +206,73 @@ describe('eventScopeItems', () => {
     ])
   })
 
-  it('has no words for "this and following" before it can be chosen', () => {
-    expect(() => eventScopeItems(i18n.getFixedT('en'), event, ['following'], us, now)).toThrow()
+  it('names "this and following" with the day it starts on', () => {
+    expect(eventScopeItems(i18n.getFixedT('en'), event, ['this', 'following', 'all'], us, now)).toEqual([
+      { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 9.' },
+      {
+        scope: 'following',
+        label: 'This and following events',
+        note: 'From Mon, Mar 9 on, as a series of its own. Earlier ones stay as they are.',
+      },
+      { scope: 'all', label: 'All events', note: 'Past ones too.' },
+    ])
+  })
+
+  it('names each option with what it reaches', () => {
+    const items = (notes: 'change' | 'delete' | 'ruleRemoved') =>
+      eventScopeItems(i18n.getFixedT('en'), event, ['this', 'following', 'all'], us, now, notes)
+    expect(items('change').map((i) => i.note)).toEqual([
+      'Only Mon, Mar 9.',
+      'From Mon, Mar 9 on, as a series of its own. Earlier ones stay as they are.',
+      'Past ones too.',
+    ])
+    expect(items('delete').map((i) => i.note)).toEqual([
+      'Only Mon, Mar 9.',
+      'The series ends before Mon, Mar 9.',
+      'Past ones too.',
+    ])
+    expect(items('ruleRemoved').map((i) => i.note)).toEqual([
+      'Only Mon, Mar 9.',
+      'From Mon, Mar 9 on, only this event stays. Earlier ones stay as they are.',
+      'Only this event stays. All others are deleted.',
+    ])
+  })
+
+  it('says "this and following" in German', () => {
+    const t = i18n.getFixedT('de')
+    const items = (notes: 'change' | 'delete' | 'ruleRemoved') =>
+      eventScopeItems(t, event, ['following', 'all'], deDE, now, notes)
+    expect(items('change')).toEqual([
+      {
+        scope: 'following',
+        label: 'Diesen und alle folgenden',
+        note: 'Ab Mo., 9. März als eigene Serie. Frühere bleiben, wie sie sind.',
+      },
+      { scope: 'all', label: 'Alle Termine', note: 'Auch vergangene.' },
+    ])
+    expect(items('delete')[0]?.note).toBe('Die Serie endet vor dem Mo., 9. März.')
+    expect(items('ruleRemoved').map((i) => i.note)).toEqual([
+      'Ab Mo., 9. März bleibt nur dieser Termin. Frühere bleiben, wie sie sind.',
+      'Nur dieser Termin bleibt. Alle anderen werden gelöscht.',
+    ])
+  })
+})
+
+describe('eventScopeMissing', () => {
+  const en = i18n.getFixedT('en')
+
+  it('says why "this and following" is not offered', () => {
+    expect(eventScopeMissing(en, { options: ['this', 'all'], missing: 'attendees' })).toBe(
+      "With attendees, the series can't be split.",
+    )
+    expect(eventScopeMissing(i18n.getFixedT('de'), { options: ['this', 'all'], missing: 'attendees' })).toBe(
+      'Mit Teilnehmenden lässt sich die Serie nicht teilen.',
+    )
+  })
+
+  it('has nothing to say when nothing is missing', () => {
+    expect(eventScopeMissing(en, { options: ['this', 'following', 'all'] })).toBeUndefined()
+    expect(eventScopeMissing(en, { options: ['this'], reason: 'fixedDays' })).toBeUndefined()
   })
 })
 
@@ -155,5 +321,9 @@ describe('eventScopeHint', () => {
   it('has nothing to say with a choice, which the question asks, or without a series', () => {
     expect(eventScopeHint(t, { options: ['this', 'all'] }, false)).toBeNull()
     expect(eventScopeHint(t, { options: [] }, false)).toBeNull()
+  })
+
+  it('has nothing to say for a sole "this and following", which no event has', () => {
+    expect(eventScopeHint(t, { options: ['following'] }, false)).toBeNull()
   })
 })

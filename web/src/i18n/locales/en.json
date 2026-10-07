@@ -50,7 +50,8 @@
     "invalid_input_detail": "Invalid input: {{detail}}",
     "read_only": "This calendar is read-only.",
     "unsupported_component": "This calendar doesn't accept this type of entry. Choose another calendar.",
-    "series_move_unsupported": "All events of this series can't move like this. Move only this event instead.",
+    "series_move_unsupported": "This series can't move like this. Move only this event instead.",
+    "series_split_unsupported": "This series can't be split. Change only this event or all events instead.",
     "conflict": "This item was changed elsewhere. Lucid reloaded the latest version.",
     "not_found": "This item no longer exists. Lucid reloaded the calendar.",
     "unauthenticated": "Your session expired. Sign in again.",
@@ -201,8 +202,16 @@
       "delete": "This event repeats. Which events should be deleted?",
       "this": "Only this event",
       "thisNote": "Only {{date}}.",
+      "following": "This and following events",
       "all": "All events",
-      "allNote": "Past ones too."
+      "allNote": "Past ones too.",
+      "allRuleRemovedNote": "Only this event stays. All others are deleted."
+    },
+    "followingNote": "From {{date}} on, as a series of its own. Earlier ones stay as they are.",
+    "followingDeleteNote": "The series ends before {{date}}.",
+    "followingRuleRemovedNote": "From {{date}} on, only this event stays. Earlier ones stay as they are.",
+    "missing": {
+      "attendees": "With attendees, the series can't be split."
     },
     "reason": {
       "fixedDays": "The series stays on its days.",
@@ -218,9 +227,13 @@
       "thisChanged": "Only this event changed.",
       "thisDeleted": "Only this event deleted.",
       "allMoved": "All events moved.",
-      "allChanged": "All events changed."
+      "allChanged": "All events changed.",
+      "followingMoved": "Moved from {{date}} on, as a series of its own.",
+      "followingChanged": "Changed from {{date}} on, as a series of its own.",
+      "ended": "The series now ends before {{date}}."
     },
     "undone": "Undone.",
+    "undoneSeriesKept": "Undone. The new series was changed in another app and stays.",
     "undoGone": "Nothing to undo anymore."
   },
   "tasks": {

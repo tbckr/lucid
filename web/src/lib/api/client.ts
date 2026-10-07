@@ -11,6 +11,7 @@ export type ApiErrorCode =
   | 'read_only'
   | 'unsupported_component'
   | 'series_move_unsupported'
+  | 'series_split_unsupported'
   | 'not_found'
   | 'conflict'
   | 'discovery_failed'
@@ -32,6 +33,7 @@ const KNOWN_CODES = new Set<string>([
   'read_only',
   'unsupported_component',
   'series_move_unsupported',
+  'series_split_unsupported',
   'not_found',
   'conflict',
   'discovery_failed',

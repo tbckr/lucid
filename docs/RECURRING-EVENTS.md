@@ -857,8 +857,8 @@ as five dots, the middle one the edited event.
   events" with the rule and `allDay` unchanged (`moveSeries`), a save that
   changes the rule, and one that turns the series all-day or timed
   (`toggledStart`). The frontend offers "All events" there and shows the
-  refusal as a toast: "All events of this series can't move like this.
-  Move only this event instead."
+  refusal as a toast: "This series can't move like this. Move only this
+  event instead."
   - From an event on another day of the month than `DTSTART`'s (an
     `RDATE`, or an exception left on another day), a change of date is
     refused (`dateShift`): counted in months and days from there, the

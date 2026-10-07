@@ -5,6 +5,7 @@ import {
   deletedOccurrenceSchema,
   eventRestoreSchema,
   eventSchema,
+  followingSchema,
   parseList,
   restoredTodoSchema,
   sessionSchema,
@@ -17,6 +18,7 @@ import {
   type DeletedOccurrence,
   type EventInput,
   type EventRestore,
+  type Following,
   type OccurrenceInput,
   type RestoredTodo,
   type Session,
@@ -106,6 +108,27 @@ export function createEndpoints(client: ApiClient) {
     /** Resolves with the series' new ETag and undo token, or with nothing once its resource is deleted with its last event. */
     deleteOccurrence: (eventId: string, recurrenceId: string, etag: string): Promise<DeletedOccurrence | undefined> =>
       client.request(`/events/${enc(eventId)}/occurrences/${enc(recurrenceId)}`, {
+        method: 'DELETE',
+        etag,
+        schema: deletedOccurrenceSchema.optional(),
+      }),
+
+    /**
+     * FR-17: "This and following events". The series ends before `recurrenceId` and a new series of its own goes
+     * on from it. Resolves with the edited occurrence in the new series and the old series' new ETag (empty when
+     * the server told none).
+     */
+    updateFollowing: (eventId: string, recurrenceId: string, etag: string, input: EventInput): Promise<Following> =>
+      client.request(`/events/${enc(eventId)}/following/${enc(recurrenceId)}`, {
+        method: 'PUT',
+        body: input,
+        etag,
+        schema: followingSchema,
+      }),
+
+    /** As `deleteOccurrence`: the series' new ETag and undo token, or nothing once its resource is deleted. */
+    deleteFollowing: (eventId: string, recurrenceId: string, etag: string): Promise<DeletedOccurrence | undefined> =>
+      client.request(`/events/${enc(eventId)}/following/${enc(recurrenceId)}`, {
         method: 'DELETE',
         etag,
         schema: deletedOccurrenceSchema.optional(),

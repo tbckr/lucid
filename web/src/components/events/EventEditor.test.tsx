@@ -171,7 +171,7 @@ describe('EventEditor', () => {
 
   it('saves a change between all-day and timed for the whole series without asking', async () => {
     const user = userEvent.setup()
-    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, first: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
     await user.click(within(dialog).getByRole('switch', { name: 'All day' }))
@@ -212,7 +212,7 @@ describe('EventEditor', () => {
   // FR-17: with one option, the footer says before Save what it reaches; red only where it deletes.
   it('warns in the footer before a new rule replaces the series', async () => {
     const user = userEvent.setup()
-    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, first: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
     const { dialog } = await openEditor({ mode: 'edit', event })
     // Unchanged, a save can still reach either, and the question will ask.
     expect(within(dialog).queryByText('Applies to every event in the series.')).toBeNull()
@@ -272,7 +272,7 @@ describe('EventEditor', () => {
   it('saves a new rule for the whole series without asking', async () => {
     const user = userEvent.setup()
     const event = toCalEvent(
-      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
+      apiEvent({ id: 'e1', recurring: true, first: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
     )
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
@@ -363,7 +363,7 @@ describe('EventEditor', () => {
 
   it('saves without asking after the question when the change makes the series all-day', async () => {
     const user = userEvent.setup()
-    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, first: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
