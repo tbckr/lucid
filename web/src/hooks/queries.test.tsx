@@ -1043,7 +1043,7 @@ describe('event series toasts', () => {
     expect(writes()[2]).toMatchObject({ request: 'POST /api/v1/events/e1/undo', body: { token: 'tok2' } })
   })
 
-  it('runs an undo after the writes of the series ahead of it', async () => {
+  it("runs an undo in the series' scope, after the writes ahead of it", async () => {
     const success = vi.spyOn(toast, 'success')
     let answerSecond: (r: Response) => void = () => undefined
     const { queryClient, wrap, writes } = setup(
@@ -1067,6 +1067,8 @@ describe('event series toasts', () => {
       expect(writes()).toHaveLength(2)
     })
 
+    // The first change's Undo, called directly: the second change took it off the toast as it
+    // started, so no one can click it now. What this pins is the order in the series' scope.
     act(undo.click)
     await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
     // Queued behind the change still on its way, not sent beside it.
@@ -1170,6 +1172,7 @@ describe('event series toasts', () => {
     await waitFor(() => {
       expect(writes()).toHaveLength(3)
     })
+    // The queued PUT's If-Match; not where replaceEtag runs, which only TanStack's internals would show.
     expect(writes()[2]).toMatchObject({
       request: 'PUT /api/v1/events/e1/occurrences/2025-03-10T08%3A00%3A00Z',
       etag: '"7"',
