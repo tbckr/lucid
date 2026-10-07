@@ -376,6 +376,137 @@ test('moves all events of a series within the day', async ({ page }) => {
   await expect(block.getByRole('img', { name: 'Recurring event' })).toBeVisible()
 })
 
+test('says beneath a dragged event what the drop reaches when there is no choice, and asks nothing', async ({ page }) => {
+  // A Wednesday at least four weeks ahead: Thursday is beside it whichever day weeks start on, and
+  // the demo data's one-off events, all within two weeks of today, stay out of its week. 8:30 UTC
+  // is 9:30 or 10:30 in Berlin, the time zone of the config: the same day either way.
+  const wednesday = new Date()
+  wednesday.setUTCHours(0, 0, 0, 0)
+  wednesday.setUTCDate(wednesday.getUTCDate() + 28 + ((10 - wednesday.getUTCDay()) % 7))
+  await page.clock.setFixedTime(new Date(wednesday.getTime() + 8.5 * 3600 * 1000))
+  await login(page)
+  const calendarsRes = await page.request.get('/api/v1/calendars')
+  await expect(calendarsRes).toBeOK()
+  const { calendars } = (await calendarsRes.json()) as { calendars: { id: string; name: string }[] }
+  const work = calendars.find((c) => c.name === 'Work')!.id
+  // 1 PM on Wednesday and Thursday in the browser's time zone, as the server writes times.
+  const [start, end, thursday] = await page.evaluate((day) => {
+    const at = (d: number, h: number) => {
+      const t = new Date(day)
+      return new Date(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() + d, h).toISOString().replace('.000Z', 'Z')
+    }
+    return [at(0, 13), at(0, 14), at(1, 13)]
+  }, wednesday.toISOString())
+
+  // An event of a series on a fixed day of the month (FR-17), which can't follow a move to another
+  // day: only this event can move. Served through routes, not the mock, so nothing of it stays.
+  const id = 'RTJFLWJvb2stY2x1Yg'
+  const series = {
+    id,
+    key: `${id}@${start}`,
+    calendarId: work,
+    uid: 'e2e-book-club',
+    etag: '"1"',
+    title: 'E2E Book club',
+    description: '',
+    location: '',
+    start,
+    end,
+    allDay: false,
+    timezone: 'Europe/Berlin',
+    rrule: `FREQ=MONTHLY;BYMONTHDAY=${wednesday.getUTCDate()}`,
+    recurring: true,
+    recurrenceId: start,
+    modified: false,
+  }
+  await page.route(/\/api\/v1\/calendars\/[^/]+\/events\?/, async (route) => {
+    const res = await route.fetch()
+    const body = (await res.json()) as { events: unknown[] }
+    const url = new URL(route.request().url())
+    const at = Date.parse(start)
+    const from = Date.parse(url.searchParams.get('start') ?? '')
+    const to = Date.parse(url.searchParams.get('end') ?? '')
+    if (url.pathname.includes(`/calendars/${work}/`) && from <= at && at < to) body.events.push(series)
+    await route.fulfill({ response: res, json: body })
+  })
+  // The server's answer to the write of one event of it, with a token to undo it.
+  const writes: { request: string; start: number }[] = []
+  await page.route(new RegExp(`/api/v1/events/${id}/`), async (route) => {
+    const req = route.request()
+    const body = req.postDataJSON() as { start: string; end: string }
+    writes.push({ request: `${req.method()} ${new URL(req.url()).pathname}`, start: Date.parse(body.start) })
+    await route.fulfill({ json: { ...series, start: body.start, end: body.end, etag: '"2"', modified: true, undoToken: 'e2e' } })
+  })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+  await page.keyboard.press('w')
+  const main = page.getByRole('main')
+  const block = main.locator('[data-event-key]', { hasText: 'E2E Book club' })
+  await expect(block).toHaveCount(1)
+
+  // Over Thursday at the same time, with real mouse moves.
+  await block.evaluate((el) => {
+    el.scrollIntoView({ block: 'center' })
+  })
+  const box = (await block.boundingBox())!
+  const target = (await main.getByRole('button', { name: /^New event at Thursday, .* 1:00 PM$/ }).boundingBox())!
+  const y = box.y + 10
+  await page.mouse.move(box.x + box.width / 2, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 10, y, { steps: 4 })
+  await page.mouse.move(target.x + target.width / 2, y, { steps: 8 })
+  // Before the drop, beneath the dragged event: what it reaches, and why not more.
+  await expect(page.locator('p[aria-hidden="true"]', { hasText: 'Only this event. The series stays on its days.' })).toBeVisible()
+  await page.mouse.up()
+
+  // The one thing the drop can do, it does without asking, and says so with an Undo.
+  const toast = page.locator('[data-sonner-toast]', { hasText: 'Only this event moved.' })
+  await expect(toast.getByRole('button', { name: 'Undo' })).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  // Only this event, to Thursday at the same time.
+  expect(writes).toEqual([
+    { request: `PUT /api/v1/events/${id}/occurrences/${encodeURIComponent(start)}`, start: Date.parse(thursday) },
+  ])
+})
+
+test('changes the rule from an event changed on its own, which keeps its title', async ({ page }) => {
+  const block = await createSeries(page)
+  const own = 'E2E Own title'
+  const main = page.getByRole('main')
+  const editor = page.getByRole('dialog', { name: 'Edit event' })
+
+  // Today's event of the series gets a title of its own.
+  await block.click()
+  await page.getByRole('dialog', { name: SERIES }).getByRole('button', { name: 'Edit event' }).click()
+  await editor.getByPlaceholder('Add a title').fill(own)
+  await editor.getByRole('button', { name: 'Save' }).click()
+  await editor
+    .getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    .getByRole('button', { name: 'Only this event' })
+    .click()
+  await expect(editor).toBeHidden()
+  const exception = main.locator('[data-event-key]', { hasText: own })
+  await expect(exception.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
+  await expect(block).toHaveCount(0)
+
+  // Only its rule: a new rule can only reach all events, so the editor says so before saving and
+  // asks nothing.
+  await exception.click()
+  await page.getByRole('dialog', { name: own }).getByRole('button', { name: 'Edit event' }).click()
+  await editor.getByRole('combobox', { name: 'Repeat' }).click()
+  await page.getByRole('option', { name: 'Every day', exact: true }).click()
+  await expect(editor.getByText('Applies to every event in the series.')).toBeVisible()
+  await editor.getByRole('button', { name: 'Save' }).click()
+  await expect(editor).toBeHidden()
+  await expect(page.locator('[data-sonner-toast]', { hasText: 'All events changed.' })).toBeVisible()
+
+  // The event keeps its own title, and the series its title, on every day now.
+  await expect(exception).toHaveCount(1)
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(7)
+  await expect(exception).toHaveCount(0)
+})
+
 /** The toast with `message`, after hovering it: that pauses sonner's 8 s timer, so a slow run keeps its Undo. */
 async function hoverToast(page: Page, message: string): Promise<Locator> {
   const toast = page.locator('[data-sonner-toast]', { hasText: message })
