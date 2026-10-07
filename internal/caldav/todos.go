@@ -361,94 +361,40 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 		return domain.Todo{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
 	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
-	unchanged, err := fillTodoDates(cur, &in)
+	edit, err := newTodoEdit(cal, c, cur, in)
 	if err != nil {
 		return domain.Todo{}, nil, err
-	}
-	edit, rr, err := ruleEditOf(c, in)
-	if err != nil {
-		return domain.Todo{}, nil, err
-	}
-	// A rule Lucid cannot evaluate can be kept or removed, but moving its
-	// series or replacing it needs its occurrences (FR-17).
-	if cur.RuleUnsupported && (edit == ruleSet || (edit == ruleKeep && !unchanged)) {
-		return domain.Todo{}, nil, errRuleUnsupported
 	}
 
-	series := newTodoSeries(cal, c)
 	now := s.p.now().UTC()
 	// The completions other apps recorded in the overrides a rule edit drops
-	// become entries of their own first. They go again when the master is
-	// not written: every error from here on comes before its PUT or from it,
-	// and a PUT whose new ETag is unknown is no error (A-01, A-18). One that
-	// may have been applied all the same keeps them (see settleWrite).
+	// become entries of their own first, cloned from the series as read.
+	// They go again when the master is not written: every error from here on
+	// comes before its PUT or from it, and a PUT whose new ETag is unknown is
+	// no error (A-01, A-18). One that may have been applied all the same
+	// keeps them (see settleWrite).
 	var entries []calObject
 	defer func() {
 		if err != nil && !errors.Is(err, errWriteUnverified) {
 			s.removeEntries(ctx, calPath, entries)
 		}
 	}()
-	switch edit {
-	case ruleRemove:
-		// The task stays at the current occurrence, whose dates in carries
-		// (FR-17).
-		if entries, err = s.convertDoneOverrides(ctx, calPath, cal, series, func(dateValue) bool { return true }, now); err != nil {
+	if edit.drop != nil {
+		if entries, err = s.convertDoneOverrides(ctx, calPath, cal, edit.series, edit.drop, now); err != nil {
 			return domain.Todo{}, nil, err
 		}
-		removeRecurrence(cal, c)
-		c.Props.Del(propKDEPending)
-		series = nil
-	case ruleSet:
-		var from todoOcc
-		if series != nil {
-			from, _ = series.reported(cur.Status)
-			if entries, err = s.convertDoneOverrides(ctx, calPath, cal, series, series.refsFrom(from.rid), now); err != nil {
-				return domain.Todo{}, nil, err
-			}
-		}
-		setTodoRule(cal, c, series, from, rr, in)
-		series = newTodoSeries(cal, c)
-	case ruleKeep:
 	}
-
-	// Completing an open series completes its current occurrence: a copy
-	// keeps it, and the series rolls on. Its last occurrence completes the
-	// series itself, below (FR-15, FR-17).
-	if series != nil && in.Status == domain.TodoCompleted &&
-		cur.Status != domain.TodoCompleted && cur.Status != domain.TodoCancelled {
-		if cur.RuleUnsupported {
-			return domain.Todo{}, nil, errRuleUnsupported
-		}
-		_, next, err := series.current()
+	series, complete, err := applyTodoEdit(cal, c, edit, now)
+	if err != nil {
+		return domain.Todo{}, nil, err
+	}
+	if complete {
+		t, err := s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, series, edit.in)
 		if err != nil {
-			return domain.Todo{}, nil, errRuleUnsupported
-		}
-		if next != nil {
-			t, err := s.completeOccurrence(ctx, objPath, calPath, etag, cal, c, series, in)
-			if err != nil {
-				return domain.Todo{}, nil, err
-			}
-			return t, s.snapshot(todoID, cur, raw, t, entries), nil
-		}
-	}
-
-	switch {
-	case series == nil:
-		applyTodoDates(c.Props, in)
-	case edit == ruleKeep && !unchanged:
-		// A move the rule cannot follow, or one onto a repeat another app
-		// changed, fails before anything is written; an undo restores the
-		// resource as read and is no move (FR-17).
-		if err := series.move(cal, cur.Status, in); err != nil {
 			return domain.Todo{}, nil, err
 		}
-	default:
-		// A series reports its current occurrence, not its stored dates.
-		// Sent back unchanged, they must not overwrite DTSTART/DUE: the rule
-		// would restart there and lose its overrides. A new rule wrote them
-		// already (FR-17).
+		return t, s.snapshot(todoID, cur, raw, t, entries), nil
 	}
-	applyTodoFields(c, in, now)
 	bumpChangeProps(c, now)
 
 	o := calObject{path: objPath, cal: cal}
@@ -462,6 +408,126 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	}
 	t := todoFromObject(o, encodeID(calPath), c)
 	return t, s.snapshot(todoID, cur, raw, t, entries), nil
+}
+
+// todoEdit is an update of a todo as UpdateTodo makes it, decided on the todo
+// as read, before anything changes, see newTodoEdit (FR-17).
+type todoEdit struct {
+	cur    domain.Todo      // the todo as read, see todoFromObject
+	in     domain.TodoInput // the update, with the dates fillTodoDates fills in
+	series *todoSeries      // the todo's series as read, nil if it does not recur
+	rule   ruleEdit
+	rr     string  // the rule ruleSet sets, normalized
+	from   todoOcc // the occurrence ruleSet sets it from: the one cur reports
+	// unchanged reports that in has cur's dates.
+	unchanged bool
+	// drop reports the RECURRENCE-IDs of the overrides the rule edit drops,
+	// nil where it drops none: all of them for ruleRemove, and for ruleSet of
+	// a series those from the occurrence it is set from on (see refsFrom).
+	// The completions other apps recorded in them become entries of their
+	// own before, see convertDoneOverrides.
+	drop func(rid dateValue) bool
+}
+
+// newTodoEdit decides the update in of the todo c in cal, read as cur
+// (FR-17): the dates in takes from cur where it leaves them out, see
+// fillTodoDates, what it does to the rule, see ruleEditOf, and the overrides
+// that drops. It refuses, before anything changes, dates that are not valid
+// where they differ from cur's, a rule that is not valid, and a move or a new
+// rule of a series whose rule Lucid cannot evaluate (errRuleUnsupported).
+func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in domain.TodoInput) (todoEdit, error) {
+	e := todoEdit{cur: cur, in: in, series: newTodoSeries(cal, c)}
+	var err error
+	if e.unchanged, err = fillTodoDates(cur, &e.in); err != nil {
+		return todoEdit{}, err
+	}
+	if e.rule, e.rr, err = ruleEditOf(c, e.in); err != nil {
+		return todoEdit{}, err
+	}
+	// A rule Lucid cannot evaluate can be kept or removed, but moving its
+	// series or replacing it needs its occurrences (FR-17).
+	if cur.RuleUnsupported && (e.rule == ruleSet || (e.rule == ruleKeep && !e.unchanged)) {
+		return todoEdit{}, errRuleUnsupported
+	}
+	switch {
+	case e.rule == ruleRemove:
+		// Only a recurring todo has a rule to remove: e.series is set.
+		e.drop = func(dateValue) bool { return true }
+	case e.rule == ruleSet && e.series != nil:
+		e.from, _ = e.series.reported(cur.Status)
+		e.drop = e.series.refsFrom(e.from.rid)
+	}
+	return e, nil
+}
+
+// applyTodoEdit applies the update e to the todo c in cal, in memory, as
+// UpdateTodo writes it (FR-17): the rule edit, then the dates, then the
+// fields, see applyTodoFields. It does no I/O: before it, the caller turns
+// the completions other apps recorded in the overrides e.drop reports into
+// entries of their own, see convertDoneOverrides, cloned from e.series as
+// read; after it, the caller bumps the change properties and writes. It
+// returns the todo's series as edited, nil once it does not recur.
+//
+// An update that completes the current occurrence of an open series with a
+// next one stops after the rule edit, and reports complete: the caller
+// completes that occurrence, see completeOccurrence, which writes. The last
+// occurrence has no next one to roll to: its fields complete the series
+// itself.
+//
+// It fails, with the dates and fields as they were, for a completion of a
+// series whose rule Lucid cannot evaluate (errRuleUnsupported), and for a
+// move the series cannot follow, see todoSeries.move; the rule edit stays
+// applied in cal then, which the caller does not write.
+func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.Time) (series *todoSeries, complete bool, err error) {
+	series = e.series
+	switch e.rule {
+	case ruleRemove:
+		// The task stays at the current occurrence, whose dates in carries
+		// (FR-17).
+		removeRecurrence(cal, c)
+		c.Props.Del(propKDEPending)
+		series = nil
+	case ruleSet:
+		setTodoRule(cal, c, series, e.from, e.rr, e.in)
+		series = newTodoSeries(cal, c)
+	case ruleKeep:
+	}
+
+	// Completing an open series completes its current occurrence: a copy
+	// keeps it, and the series rolls on. Its last occurrence completes the
+	// series itself, below (FR-15, FR-17).
+	if series != nil && e.in.Status == domain.TodoCompleted &&
+		e.cur.Status != domain.TodoCompleted && e.cur.Status != domain.TodoCancelled {
+		if e.cur.RuleUnsupported {
+			return nil, false, errRuleUnsupported
+		}
+		_, next, err := series.current()
+		if err != nil {
+			return nil, false, errRuleUnsupported
+		}
+		if next != nil {
+			return series, true, nil
+		}
+	}
+
+	switch {
+	case series == nil:
+		applyTodoDates(c.Props, e.in)
+	case e.rule == ruleKeep && !e.unchanged:
+		// A move the rule cannot follow, or one onto a repeat another app
+		// changed, fails before anything is written; an undo restores the
+		// resource as read and is no move (FR-17).
+		if err := series.move(cal, e.cur.Status, e.in); err != nil {
+			return nil, false, err
+		}
+	default:
+		// A series reports its current occurrence, not its stored dates.
+		// Sent back unchanged, they must not overwrite DTSTART/DUE: the rule
+		// would restart there and lose its overrides. A new rule wrote them
+		// already (FR-17).
+	}
+	applyTodoFields(c, e.in, now)
+	return series, false, nil
 }
 
 // fillTodoDates fills in the dates a change of the todo cur, as read, leaves
