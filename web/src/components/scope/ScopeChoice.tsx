@@ -11,16 +11,18 @@ import { ScopeGlyph } from './ScopeGlyph'
  * component used after dropping an occurrence, in the editor's footer and
  * before deleting, so the three look alike.
  *
- * Accessibility (NFR-27): `role="alertdialog"`, labelled by the question.
- * Each row is named by its label and described by its line. Escape cancels.
- * The initial focus is the first row, the smallest change, except when
- * deleting, where it is "Cancel".
+ * Accessibility (NFR-27): `role="alertdialog"`, labelled by the question and
+ * described by the line on a missing option. Each row is named by its label
+ * and described by its line. Escape cancels. The initial focus is the first
+ * row, the smallest change, except when the change deletes events (a delete,
+ * or a save that removes the rule), where it is "Cancel".
  */
 export function ScopeChoice({
   question,
   items,
   color,
   tone = 'default',
+  missing,
   onChoose,
   onCancel,
   onPreview,
@@ -30,8 +32,10 @@ export function ScopeChoice({
   items: ScopeItem[]
   /** The series' calendar color, for the dots of the events an option reaches. */
   color: string
-  /** `destructive` when deleting: the dots of the events an option reaches are red. */
+  /** `destructive` when the change deletes events: the dots of the events an option reaches are red. */
   tone?: 'default' | 'destructive'
+  /** Why an option the user could expect is not offered (`eventScopeMissing`), said below the options. */
+  missing?: string
   onChoose: (scope: Scope) => void
   onCancel: () => void
   /** Which option is focused or under the pointer, so a preview can follow it. */
@@ -41,6 +45,8 @@ export function ScopeChoice({
   const id = useId()
   const cancelRef = useRef<HTMLButtonElement>(null)
   const firstRef = useRef<HTMLButtonElement>(null)
+  // The option with the focus, which the preview goes back to once the pointer leaves another.
+  const focused = useRef<Scope | null>(null)
 
   useEffect(() => {
     if (tone === 'destructive') cancelRef.current?.focus()
@@ -52,6 +58,7 @@ export function ScopeChoice({
     <div
       role="alertdialog"
       aria-labelledby={`${id}-question`}
+      aria-describedby={missing ? `${id}-missing` : undefined}
       onKeyDown={(e) => {
         if (e.key === 'Escape') onCancel()
       }}
@@ -69,14 +76,20 @@ export function ScopeChoice({
             type="button"
             aria-labelledby={`${id}-${item.scope}`}
             aria-describedby={`${id}-${item.scope}-note`}
-            className="grid w-full grid-cols-[2.75rem_1fr] items-center gap-x-3 px-3 py-2 text-left transition-colors outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="grid w-full grid-cols-[44px_1fr] items-center gap-x-3 px-3 py-2 text-left transition-colors outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             onClick={() => {
               onChoose(item.scope)
             }}
-            onFocus={() => onPreview?.(item.scope)}
+            onFocus={() => {
+              focused.current = item.scope
+              onPreview?.(item.scope)
+            }}
             onMouseEnter={() => onPreview?.(item.scope)}
-            onBlur={() => onPreview?.(null)}
-            onMouseLeave={() => onPreview?.(null)}
+            onBlur={() => {
+              focused.current = null
+              onPreview?.(null)
+            }}
+            onMouseLeave={() => onPreview?.(focused.current)}
           >
             <ScopeGlyph slots={glyphSlots(item.scope)} color={color} tone={tone} />
             <span id={`${id}-${item.scope}`} className="text-sm font-medium">
@@ -88,6 +101,11 @@ export function ScopeChoice({
           </button>
         ))}
       </div>
+      {missing && (
+        <p id={`${id}-missing`} className="mt-2 text-[0.8125rem] text-muted-foreground">
+          {missing}
+        </p>
+      )}
       <div className="mt-2 flex justify-end">
         <Button ref={cancelRef} type="button" size="sm" variant="ghost" onClick={onCancel}>
           {t('common.cancel')}

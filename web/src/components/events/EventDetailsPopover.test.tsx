@@ -172,6 +172,59 @@ describe('EventDetailsPopover', () => {
     expect(useUi.getState().detail).toBeNull()
   })
 
+  it('ends the series before this event', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openDetails({
+      id: 'e1',
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+      recurrenceId: '2026-03-13T08:00:00Z',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    const question = within(dialog).getByRole('alertdialog', {
+      name: 'This event repeats. Which events should be deleted?',
+    })
+    const following = within(question).getByRole('button', { name: 'This and following events' })
+    expect(following).toHaveAccessibleDescription(/^The series ends before Fri, Sep 25(, 2026)?\.$/)
+    const red = 'var(--destructive)'
+    expect(Array.from(following.querySelectorAll('circle')).map((c) => c.getAttribute('fill'))).toEqual([
+      'none',
+      'none',
+      red,
+      red,
+      red,
+    ])
+
+    await user.click(following)
+    await waitFor(() => {
+      expect(
+        fetch.mock.calls.some(
+          ([input, init]) =>
+            init?.method === 'DELETE' && urlOf(input).endsWith('/events/e1/following/2026-03-13T08%3A00%3A00Z'),
+        ),
+      ).toBe(true)
+    })
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1)
+    expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('says that attendees keep the series from being split', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openDetails({
+      id: 'e1',
+      recurring: true,
+      hasAttendees: true,
+      rrule: 'FREQ=DAILY',
+      recurrenceId: '2026-03-13T08:00:00Z',
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    const question = within(dialog).getByRole('alertdialog', {
+      name: 'This event repeats. Which events should be deleted?',
+    })
+    expect(within(question).queryByRole('button', { name: 'This and following events' })).toBeNull()
+    expect(question).toHaveAccessibleDescription("With attendees, the series can't be split.")
+  })
+
   it('cancels only the delete scope question on Escape, leaving the details popover open (NFR-27)', async () => {
     const user = userEvent.setup()
     const { dialog, fetch } = await openDetails({

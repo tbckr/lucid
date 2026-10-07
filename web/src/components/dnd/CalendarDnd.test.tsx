@@ -12,7 +12,7 @@ import { TaskChip } from '@/components/tasks/TaskItems'
 import { queryKeys, UNDO_EVENT_KEY } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { endpoints } from '@/lib/api/endpoints'
-import { type EventRestore } from '@/lib/api/schemas'
+import { type ApiEvent, type EventRestore } from '@/lib/api/schemas'
 import { outsideWindow, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type DragData, type DropData } from '@/lib/dnd'
@@ -103,11 +103,11 @@ function Week({ days, events, full }: { days: Date[]; events: CalEvent[]; full?:
 }
 
 /**
- * An event of a daily series, on 2026-09-`day` 10:00-11:00 in Berlin. It is
- * the series' first shown event, which has nothing before it to split off, so
- * the question asks only for this event or all (FR-17).
+ * An event of a daily series, on 2026-09-`day` 10:00-11:00 in Berlin, with `p` on top. Without
+ * `p`, it is the series' first shown event, which has nothing before it to split off, so the
+ * question asks only for this event or all (FR-17).
  */
-function standup(day: number): CalEvent {
+function standup(day: number, p: Partial<ApiEvent> = {}): CalEvent {
   const start = `2026-09-${day}T08:00:00Z`
   return toCalEvent(
     apiEvent({
@@ -119,8 +119,14 @@ function standup(day: number): CalEvent {
       first: true,
       rrule: 'FREQ=DAILY',
       recurrenceId: start,
+      ...p,
     }),
   )
+}
+
+/** A later event of the daily series of `standup`, which the series can be split before (FR-17). */
+function laterStandup(day: number, p: Partial<ApiEvent> = {}): CalEvent {
+  return standup(day, { first: false, ...p })
 }
 
 /**
@@ -328,6 +334,21 @@ describe('CalendarDnd', () => {
     )
     const october = [15, 16, 17].map((d) => new Date(2026, 9, d))
 
+    /**
+     * Like `renderWeek`, but a tile measures in its own day cell, so one of any day can be
+     * moved; the overlay dnd-kit wraps around the dragged tile measures like the tile with the
+     * focus, which a keyboard drag keeps.
+     */
+    function renderInCells(events: CalEvent[], days?: Date[]) {
+      const result = renderWeek(events, days)
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.left) return rect(Number(this.dataset.left), 0, 100, 100)
+        const cell = this.closest<HTMLElement>('[data-left]') ?? document.activeElement?.closest<HTMLElement>('[data-left]')
+        return rect(cell ? Number(cell.dataset.left) + 10 : 10, 40, 80, 20)
+      })
+      return result
+    }
+
     it('asks after dropping an event of a series, and moves only it', async () => {
       const user = userEvent.setup()
       let release: (r: Response) => void = () => undefined
@@ -523,20 +544,6 @@ describe('CalendarDnd', () => {
         const ifMatch = (i: number) => (fetch.mock.calls[i]?.[1]?.headers as Record<string, string>)['If-Match']
         return { fetch, answers, ifMatch }
       }
-      /**
-       * Like `renderWeek`, but a tile measures in its own day cell, so one of any day can be
-       * moved; the overlay dnd-kit wraps around the dragged tile measures like the tile with the
-       * focus, which a keyboard drag keeps.
-       */
-      function renderInCells(events: CalEvent[]) {
-        const result = renderWeek(events)
-        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-          if (this.dataset.left) return rect(Number(this.dataset.left), 0, 100, 100)
-          const cell = this.closest<HTMLElement>('[data-left]') ?? document.activeElement?.closest<HTMLElement>('[data-left]')
-          return rect(cell ? Number(cell.dataset.left) + 10 : 10, 40, 80, 20)
-        })
-        return result
-      }
       const movedTo27 = () =>
         jsonResponse(
           200,
@@ -689,6 +696,112 @@ describe('CalendarDnd', () => {
       await user.tab()
       expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
       expect(chipIn(27, standupAt10)).not.toHaveClass('ring-2')
+      await user.keyboard('{Escape}')
+    })
+
+    it('offers this and following events at a later event and splits the series', async () => {
+      const user = userEvent.setup()
+      let release: (r: Response) => void = () => undefined
+      const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve
+          }),
+      )
+      const { queryClient } = renderWeek([laterStandup(25)])
+
+      await moveRight(chipIn(25, standupAt10))
+      const question = await screen.findByRole('alertdialog', { name: moveQuestion })
+      // From the smallest reach to the largest (FR-17).
+      const [only, following, all, cancel] = within(question).getAllByRole('button')
+      expect(only).toHaveAccessibleName('Only this event')
+      expect(following).toHaveAccessibleName('This and following events')
+      expect(following).toHaveAccessibleDescription(
+        /^From Fri, Sep 25(, 2026)? on, as a series of its own\. Earlier ones stay as they are\.$/,
+      )
+      expect(all).toHaveAccessibleName('All events')
+      expect(cancel).toHaveAccessibleName('Cancel')
+      expect(question).not.toHaveAccessibleDescription()
+
+      await user.click(following!)
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe(`/api/v1/events/e1/following/${encodeURIComponent('2026-09-25T08:00:00Z')}`)
+      expect(init?.method).toBe('PUT')
+      expect(bodyOf(init)).toMatchObject({ start: '2026-09-26T08:00:00.000Z', end: '2026-09-26T09:00:00.000Z' })
+      expect(bodyOf(init)).not.toHaveProperty('instanceStart')
+      // Not optimistic: the series shows its saving state at its old place until it is reloaded (NFR-26).
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+      expect(chipIn(25, standupAt10)).toHaveAttribute('aria-busy', 'true')
+      release(
+        jsonResponse(200, {
+          event: apiEvent({ ...laterStandup(25), id: 'e2', start: '2026-09-26T08:00:00Z', end: '2026-09-26T09:00:00Z' }),
+          etag: '"2"',
+        }),
+      )
+      await waitFor(() => {
+        expect(queryClient.isMutating()).toBe(0)
+      })
+    })
+
+    it('leaves out this and following at the first event', async () => {
+      vi.spyOn(globalThis, 'fetch')
+      renderWeek([standup(25)])
+
+      await moveRight(chipIn(25, standupAt10))
+      const question = await screen.findByRole('alertdialog', { name: moveQuestion })
+      const [only, all, cancel] = within(question).getAllByRole('button')
+      expect(only).toHaveAccessibleName('Only this event')
+      expect(all).toHaveAccessibleName('All events')
+      expect(cancel).toHaveAccessibleName('Cancel')
+      expect(within(question).getAllByRole('button')).toHaveLength(3)
+      // Nothing before the first event to keep: nothing to explain either.
+      expect(question).not.toHaveAccessibleDescription()
+      fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
+    })
+
+    it('says that attendees keep the series from being split', async () => {
+      vi.spyOn(globalThis, 'fetch')
+      renderWeek([laterStandup(25, { hasAttendees: true })])
+
+      await moveRight(chipIn(25, standupAt10))
+      const question = await screen.findByRole('alertdialog', { name: moveQuestion })
+      const [only, all, cancel] = within(question).getAllByRole('button')
+      expect(only).toHaveAccessibleName('Only this event')
+      expect(all).toHaveAccessibleName('All events')
+      expect(cancel).toHaveAccessibleName('Cancel')
+      expect(within(question).getAllByRole('button')).toHaveLength(3)
+      expect(question).toHaveAccessibleDescription("With attendees, the series can't be split.")
+      fireEvent.keyDown(document.activeElement ?? document, { key: 'Escape' })
+    })
+
+    it('rings this and the later events while this and following has the focus', async () => {
+      const user = userEvent.setup()
+      vi.spyOn(globalThis, 'fetch')
+      const days = [24, 25, 26, 27].map((d) => new Date(2026, 8, d))
+      renderInCells([laterStandup(24), laterStandup(25), laterStandup(27)], days)
+
+      // The 25th's event to the 26th.
+      await moveRight(chipIn(25, standupAt10))
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Only this event' })).toHaveFocus()
+      })
+      expect(chipIn(26, standupAt10)).toHaveClass('ring-2')
+      expect(chipIn(24, standupAt10)).not.toHaveClass('ring-2')
+      expect(chipIn(27, standupAt10)).not.toHaveClass('ring-2')
+
+      await user.tab()
+      expect(screen.getByRole('button', { name: 'This and following events' })).toHaveFocus()
+      expect(chipIn(26, standupAt10)).toHaveClass('ring-2')
+      expect(chipIn(27, standupAt10)).toHaveClass('ring-2')
+      expect(chipIn(27, standupAt10).style.getPropertyValue('--tw-ring-color')).toBe(colors.solid)
+      expect(chipIn(24, standupAt10)).not.toHaveClass('ring-2')
+
+      await user.tab()
+      expect(screen.getByRole('button', { name: 'All events' })).toHaveFocus()
+      expect(chipIn(24, standupAt10)).toHaveClass('ring-2')
       await user.keyboard('{Escape}')
     })
 

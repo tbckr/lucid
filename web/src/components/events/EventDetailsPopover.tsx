@@ -2,14 +2,14 @@ import { AlignLeftIcon, GlobeIcon, LockIcon, MapPinIcon } from 'lucide-react'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover } from '@/components/ui/popover'
-import { useDeleteEvent, useDeleteOccurrence, useVisibleCalendars } from '@/hooks/queries'
+import { useDeleteEvent, useDeleteFollowing, useDeleteOccurrence, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { eventTitle, type CalEvent } from '@/lib/events'
 import { formatEventWhen, type FormatPrefs } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { describeRRule } from '@/lib/rrule'
-import { eventScopeItems, scopeOptions, type Scope } from '@/lib/scope'
+import { eventScopeItems, eventScopeMissing, scopeOptions, type Scope } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from './DetailParts'
 import { RepeatGlyph } from './EventItems'
@@ -52,6 +52,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const series = event.recurring ? event.id : undefined
   const del = useDeleteEvent(series)
   const deleteOccurrence = useDeleteOccurrence(series)
+  const deleteFollowing = useDeleteFollowing(series)
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
   // Holds how to cancel the delete scope question while it is open, for the Escape handler below.
@@ -68,17 +69,20 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const inZone = zoneTimes(event, tz, prefs, now)
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
   // An event of a series asks which events to delete (FR-17); a single event only whether.
-  const deleteOptions = scopeOptions({ kind: 'event', action: 'delete', item: event, tz }).options
+  const deleteScopes = scopeOptions({ kind: 'event', action: 'delete', item: event, tz })
+  const deleteOptions = deleteScopes.options
+  // "This and following events" ends the series before this event (FR-17).
   const deleteScoped = (scope: Scope) => {
     switch (scope) {
       case 'this':
         deleteOccurrence.mutate(event)
         break
+      case 'following':
+        deleteFollowing.mutate(event)
+        break
       case 'all':
         del.mutate(event)
         break
-      case 'following':
-        throw new Error('"This and following events" is not offered for events yet')
     }
     openDetail(null)
   }
@@ -173,8 +177,9 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
             deleteScope={
               deleteOptions.length > 1
                 ? {
-                    items: eventScopeItems(t, event, deleteOptions, prefs, now),
+                    items: eventScopeItems(t, event, deleteOptions, prefs, now, 'delete'),
                     color: colors.solid,
+                    missing: eventScopeMissing(t, deleteScopes),
                     onChoose: deleteScoped,
                   }
                 : undefined

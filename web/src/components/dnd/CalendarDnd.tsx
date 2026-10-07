@@ -27,6 +27,7 @@ import {
   UNDO_EVENT_KEY,
   usePendingSeries,
   useMoveEvent,
+  useMoveFollowing,
   useMoveOccurrence,
   useUpdateTodo,
   type MoveVars,
@@ -52,7 +53,15 @@ import { formatEventSpan, formatPickerDate } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
 import { draggedWhen } from '@/lib/quickCreate'
-import { eventScopeHint, eventScopeItems, scopeOptions, type Scope, type ScopeHint, type ScopeResult } from '@/lib/scope'
+import {
+  eventScopeHint,
+  eventScopeItems,
+  eventScopeMissing,
+  scopeOptions,
+  type Scope,
+  type ScopeHint,
+  type ScopeResult,
+} from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
 
@@ -76,6 +85,8 @@ interface Asking extends MoveVars {
   change: boolean
   /** What the answer can be (`scopeOptions`), two options or more. */
   options: Scope[]
+  /** What took "This and following events" away (`scopeOptions`), for the question to say. */
+  missing?: ScopeResult['missing']
   /** Where the drop ended, for the question to point at while the event's tile isn't shown. */
   at: DOMRect
 }
@@ -160,6 +171,7 @@ function ScopeQuestion({
           question={change ? t('scope.event.change') : t('scope.event.move')}
           items={eventScopeItems(t, event, options, prefs, now)}
           color={color}
+          missing={eventScopeMissing(t, asking)}
           onChoose={onChoose}
           onCancel={onCancel}
           onPreview={onPreview}
@@ -304,7 +316,8 @@ export function CalendarDnd({
   })
 
   // FR-17: a dropped event of a series waits for the answer which events move, shown at its new
-  // place meanwhile. `reach`: the option with the focus or the pointer; "All events" rings the series.
+  // place meanwhile. `reach`: the option with the focus or the pointer; "All events" rings the
+  // series, "This and following events" its events from the dropped one on.
   const [asking, setAsking] = useState<Asking | null>(null)
   const [reach, setReach] = useState<Scope | null>(null)
   // The moves of a series run one after another, each with the ETag the one before got
@@ -313,6 +326,7 @@ export function CalendarDnd({
   const series = moving?.recurring ? moving.id : undefined
   const move = useMoveEvent(series)
   const moveOccurrence = useMoveOccurrence(series)
+  const moveFollowing = useMoveFollowing(series)
   // "Only this event" until its move settles: keeps the event at its new place until the
   // optimistic update is in, instead of jumping back for a moment (NFR-26).
   const [held, setHeld] = useState<ScopePreview | null>(null)
@@ -470,7 +484,7 @@ export function CalendarDnd({
       // when there is a choice; the one thing it can do, it does right away. An invitation to one
       // event of a series (an override without its series) is a single event to Lucid.
       const change = d.type === 'resize'
-      const { options } = dropScopes(d, result, tz)
+      const { options, missing } = dropScopes(d, result, tz)
       const [only] = options
       if (options.length > 1) {
         const r = e.active.rect.current.translated ?? e.active.rect.current.initial
@@ -482,6 +496,7 @@ export function CalendarDnd({
           ...result.times,
           change,
           options,
+          missing,
           at: r ? new DOMRect(r.left, r.top, r.width, r.height) : new DOMRect(),
         })
       } else if (only) {
@@ -508,15 +523,16 @@ export function CalendarDnd({
     setReach(null)
   }
 
-  // "Only this event" moves the event optimistically (NFR-26); "All events" moves the series and
-  // shows its saving state until it is reloaded. Either is detached from its hook right away, like
-  // a task's drop: the series' scope goes with the question.
+  // "Only this event" moves the event optimistically (NFR-26); "This and following events" splits
+  // the series there and "All events" moves it, both showing its saving state until it is
+  // reloaded. Each is detached from its hook right away, like a task's drop: the series' scope
+  // goes with the question.
   function saveScope(scope: Scope, vars: MoveVars) {
     const { event, start, end } = vars
     switch (scope) {
       case 'this': {
         const key = event.key
-        setHeld({ key, id: event.id, start, end, reach: 'this' })
+        setHeld({ key, id: event.id, from: event.recurrenceId ?? '', start, end, reach: 'this' })
         // A detached mutation tells only its own promise that it has settled.
         const release = () => {
           setHeld((h) => (h?.key === key ? null : h))
@@ -525,12 +541,14 @@ export function CalendarDnd({
         moveOccurrence.reset()
         break
       }
+      case 'following':
+        moveFollowing.mutate(vars)
+        moveFollowing.reset()
+        break
       case 'all':
         move.mutate(vars)
         move.reset()
         break
-      case 'following':
-        throw new Error('"This and following events" is not offered for events yet')
     }
   }
 
@@ -549,7 +567,16 @@ export function CalendarDnd({
   const resize = preview?.type === 'resize' ? preview.event : null
   const scope = useMemo(
     () =>
-      asking ? { key: asking.event.key, id: asking.event.id, start: asking.start, end: asking.end, reach } : null,
+      asking
+        ? {
+            key: asking.event.key,
+            id: asking.event.id,
+            from: asking.event.recurrenceId ?? '',
+            start: asking.start,
+            end: asking.end,
+            reach,
+          }
+        : null,
     [asking, reach],
   )
   const state = useMemo(

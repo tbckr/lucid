@@ -268,8 +268,9 @@ describe('EventEditor', () => {
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
 
-  // A new rule can only be the whole series' (FR-17), whatever day the event moves to with it.
-  it('saves a new rule for the whole series without asking', async () => {
+  // At the first event, a new rule can only be the whole series' (FR-17), whatever day the event
+  // moves to with it: there is nothing before it to keep.
+  it('saves a new rule at the first event without asking', async () => {
     const user = userEvent.setup()
     const event = toCalEvent(
       apiEvent({ id: 'e1', recurring: true, first: true, rrule: 'FREQ=MONTHLY;BYMONTHDAY=25', recurrenceId: '2026-09-25T08:00:00Z' }),
@@ -294,6 +295,99 @@ describe('EventEditor', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull()
     })
+  })
+
+  // FR-17: at a later event, a new rule reaches this and the following events, or all of them.
+  it('asks this and following or all for a new rule at a later event', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    // The split's answer: the event in the new series, and the old series' new ETag.
+    const answer = fetch.getMockImplementation()!
+    fetch.mockImplementation((input, init) =>
+      urlOf(input).includes('/following/')
+        ? Promise.resolve(jsonResponse(200, { event: apiEvent({ id: 'e2' }), etag: '"2"' }))
+        : answer(input, init),
+    )
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    // Two options: a question, no hint.
+    expect(within(dialog).queryByText('Applies to every event in the series.')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    const [following, all, cancel] = within(question).getAllByRole('button')
+    expect(following).toHaveAccessibleName('This and following events')
+    expect(following).toHaveAccessibleDescription(
+      /^From Fri, Sep 25(, 2026)? on, as a series of its own\. Earlier ones stay as they are\.$/,
+    )
+    expect(all).toHaveAccessibleName('All events')
+    expect(all).toHaveAccessibleDescription('Past ones too.')
+    expect(cancel).toHaveAccessibleName('Cancel')
+    // A new rule deletes nothing: the dots stay in the calendar's color, and the smallest change has the focus.
+    expect(Array.from(following!.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual([
+      'none',
+      'none',
+      '#3b82f6',
+      '#3b82f6',
+      '#3b82f6',
+    ])
+    await waitFor(() => {
+      expect(following).toHaveFocus()
+    })
+
+    await user.click(following!)
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const puts = fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    const [url, init] = puts[0]!
+    expect(urlOf(url)).toBe(`/api/v1/events/e1/following/${encodeURIComponent('2026-09-25T08:00:00Z')}`)
+    expect(bodyOf(init)).toHaveProperty('rrule', 'FREQ=DAILY')
+    expect(bodyOf(init)).not.toHaveProperty('instanceStart')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+
+  // FR-17: removing the rule deletes events, this and the following ones' or all others; the
+  // question says so in red and starts on Cancel, as a delete does.
+  it('asks in red when the rule is removed from a later event', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    const [following, all, cancel] = within(question).getAllByRole('button')
+    expect(following).toHaveAccessibleName('This and following events')
+    expect(following).toHaveAccessibleDescription(
+      /^From Fri, Sep 25(, 2026)? on, only this event stays\. Earlier ones stay as they are\.$/,
+    )
+    expect(all).toHaveAccessibleName('All events')
+    expect(all).toHaveAccessibleDescription('Only this event stays. All others are deleted.')
+    const red = 'var(--destructive)'
+    expect(Array.from(following!.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(['none', 'none', red, red, red])
+    expect(Array.from(all!.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(Array(5).fill(red))
+    await waitFor(() => {
+      expect(cancel).toHaveFocus()
+    })
+  })
+
+  it('says in the question that attendees keep the series from being split', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, hasAttendees: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    expect(within(question).queryByRole('button', { name: 'This and following events' })).toBeNull()
+    expect(question).toHaveAccessibleDescription("With attendees, the series can't be split.")
   })
 
   // FR-17: Apple writes an explicit "INTERVAL=1" the presets would otherwise

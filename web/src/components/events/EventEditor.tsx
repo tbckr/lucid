@@ -14,7 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateEvent, useUpdateEvent, useUpdateOccurrence, useVisibleCalendars } from '@/hooks/queries'
+import {
+  useCreateEvent,
+  useUpdateEvent,
+  useUpdateFollowing,
+  useUpdateOccurrence,
+  useVisibleCalendars,
+} from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
@@ -34,7 +40,17 @@ import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
-import { eventScopeHint, eventScopeItems, glyphSlots, scopeOptions, type Scope, type ScopeResult } from '@/lib/scope'
+import {
+  eventScopeHint,
+  eventScopeItems,
+  eventScopeMissing,
+  glyphSlots,
+  scopeOptions,
+  type Scope,
+  type ScopeAction,
+  type ScopeNotes,
+  type ScopeResult,
+} from '@/lib/scope'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
@@ -97,11 +113,14 @@ function EditorForm({
   const tz = useMemo(() => browserTimeZone(), [])
   const now = useMemo(() => new Date(), [])
   const event = editor.mode === 'edit' ? editor.event : undefined
+  // Only an occurrence of a series asks which events a save changes, or says it beforehand (FR-17).
+  const occurrence = event?.recurring && event.recurrenceId ? event : undefined
   // A save of a series waits for its other writes, and takes the ETag they got (FR-17).
   const series = event?.recurring ? event.id : undefined
   const create = useCreateEvent()
   const update = useUpdateEvent(series)
   const updateOccurrence = useUpdateOccurrence(series)
+  const updateFollowing = useUpdateFollowing(series)
   const id = useId()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const kindRef = useRef<HTMLButtonElement>(null)
@@ -109,9 +128,15 @@ function EditorForm({
   const askedBefore = useRef(false)
   // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
   const initial = event ? editFormValues(event, tz) : null
-  // A save of a series waiting for the answer which events change (FR-17): what it saves, and
-  // the options, two or more.
-  const [asking, setAsking] = useState<{ input: EventInput; options: Scope[] } | null>(null)
+  // A save of a series waiting for the answer which events change (FR-17): what it saves, the
+  // options, two or more, what took "This and following events" away, and what the notes say it
+  // does.
+  const [asking, setAsking] = useState<{
+    input: EventInput
+    options: Scope[]
+    missing?: ScopeResult['missing']
+    notes: ScopeNotes
+  } | null>(null)
 
   const form = useForm<EventFormValues>({
     resolver: zodResolver(eventFormSchema),
@@ -127,7 +152,7 @@ function EditorForm({
     control,
     name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
   })
-  const pending = create.isPending || update.isPending || updateOccurrence.isPending
+  const pending = create.isPending || update.isPending || updateOccurrence.isPending || updateFollowing.isPending
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
@@ -140,8 +165,8 @@ function EditorForm({
     else setFocus('title')
   }, [editor, setFocus])
 
-  // The footer's scope question keeps the focus on "Only this event"; once it closes again, the
-  // focus goes back to Save (NFR-27).
+  // The footer's scope question takes the focus itself; once it closes again, the focus goes back
+  // to Save (NFR-27).
   useEffect(() => {
     if (asking) {
       askedBefore.current = true
@@ -190,31 +215,32 @@ function EditorForm({
     })
   }, [asking, subscribe, cancelAsk])
 
+  // What a save of `values` does to the series (FR-17): a changed rule or all-day flag is a `rule`
+  // change, anything else a `change`.
+  const saveAction = (values: EventFormValues): ScopeAction =>
+    initial && keepsRuleAndAllDay(values, initial) ? 'change' : 'rule'
+
   // Which events of a series a save of `values` (sent as `input`) can reach (FR-17): a changed
-  // rule or all-day flag is the whole series', and a day the series can't follow only this
-  // event's. Empty for a single event.
+  // rule or all-day flag this and the following events' or the whole series', and a day the
+  // series can't follow only this event's. Empty for anything but an occurrence of a series.
   const saveScopes = (values: EventFormValues, input: EventInput): ScopeResult =>
-    event && initial
-      ? scopeOptions({
-          kind: 'event',
-          action: keepsRuleAndAllDay(values, initial) ? 'change' : 'rule',
-          item: event,
-          to: new Date(input.start),
-          tz,
-        })
+    occurrence
+      ? scopeOptions({ kind: 'event', action: saveAction(values), item: occurrence, to: new Date(input.start), tz })
       : { options: [] }
 
-  // "Only this event" saves an override of the occurrence; "All events" the series (FR-17).
+  // "Only this event" saves an override of the occurrence; "This and following events" splits the
+  // series there, and "All events" saves the series (FR-17).
   const saveScope = (scope: Scope, e: CalEvent, input: EventInput) => {
     switch (scope) {
       case 'this':
         updateOccurrence.mutate({ event: e, input: occurrenceInput(input) }, { onSuccess: onDone })
         break
+      case 'following':
+        updateFollowing.mutate({ event: e, input }, { onSuccess: onDone })
+        break
       case 'all':
         update.mutate({ event: e, input }, { onSuccess: onDone })
         break
-      case 'following':
-        throw new Error('"This and following events" is not offered for events yet')
     }
   }
 
@@ -223,10 +249,12 @@ function EditorForm({
     if (event) {
       // A series asks which events to change only when there is a choice (FR-17). The one thing
       // a save can do, it does right away; the footer has said which beforehand.
-      const { options } = saveScopes(values, input)
+      const { options, missing } = saveScopes(values, input)
       const [only] = options
       if (options.length > 1) {
-        setAsking({ input, options })
+        // Without a rule, the series' events but this one go, from here on or all (FR-17).
+        const notes = saveAction(values) === 'rule' && values.recurrence === 'none' ? 'ruleRemoved' : 'change'
+        setAsking({ input, options, missing, notes })
         onScopeOpenChange?.(cancelAsk)
         return
       }
@@ -274,9 +302,11 @@ function EditorForm({
 
   // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
   // with the form: the watched fields above re-render the editor whenever the answer can change.
+  // Only for an occurrence of a series, so a single event's values aren't read before they are
+  // validated.
   const formValues = getValues()
-  const hint = event
-    ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, event)), recurrence === 'none')
+  const hint = occurrence
+    ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, occurrence)), recurrence === 'none')
     : null
 
   const titleError = err('title')
@@ -513,8 +543,11 @@ function EditorForm({
           <div className="w-full">
             <ScopeChoice
               question={t('scope.event.change')}
-              items={eventScopeItems(t, event, asking.options, prefs, now)}
+              items={eventScopeItems(t, event, asking.options, prefs, now, asking.notes)}
               color={colors.solid}
+              // A save without a rule deletes events, and asks like a delete (FR-17).
+              tone={asking.notes === 'ruleRemoved' ? 'destructive' : 'default'}
+              missing={eventScopeMissing(t, asking)}
               onChoose={onChooseScope}
               onCancel={cancelAsk}
             />

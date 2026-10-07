@@ -306,7 +306,14 @@ describe('withScopePreview (FR-17)', () => {
   )
 
   it('shows only the dropped event at the times of the drop', () => {
-    const scope = { key: 'e1@25', id: 'e1', start: '2026-09-27T09:00:00.000Z', end: '2026-09-27T10:00:00.000Z', reach: 'all' as const }
+    const scope = {
+      key: 'e1@25',
+      id: 'e1',
+      from: '2026-09-25T08:00:00Z',
+      start: '2026-09-27T09:00:00.000Z',
+      end: '2026-09-27T10:00:00.000Z',
+      reach: 'all' as const,
+    }
     const [moved, other, own] = withScopePreview([first, second, task], scope)
     expect(moved?.startsAt).toEqual(new Date(2026, 8, 27, 11))
     expect(moved?.endsAt).toEqual(new Date(2026, 8, 27, 12))
@@ -316,7 +323,14 @@ describe('withScopePreview (FR-17)', () => {
   })
 
   it('places an all-day event on local days, as loading it would', () => {
-    const scope = { key: 'e2@25', id: 'e2', start: '2026-09-27T00:00:00.000Z', end: '2026-09-28T00:00:00.000Z', reach: null }
+    const scope = {
+      key: 'e2@25',
+      id: 'e2',
+      from: '2026-09-25T00:00:00Z',
+      start: '2026-09-27T00:00:00.000Z',
+      end: '2026-09-28T00:00:00.000Z',
+      reach: null,
+    }
     const [moved] = withScopePreview([holiday], scope)
     expect(moved?.startsAt).toEqual(day(27))
     expect(moved?.endsAt).toEqual(day(28))

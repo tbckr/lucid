@@ -147,10 +147,12 @@ export function DetailActions({
   onDelete: () => void
   /**
    * The question which events of a series to delete (FR-17): the options it offers
-   * (`eventScopeItems`), the series' calendar color, and what a choice deletes. Given only where
-   * there is a choice; a single event, a task and a series with one option ask the plain `confirm`.
+   * (`eventScopeItems`), the series' calendar color, why an option is missing
+   * (`eventScopeMissing`), and what a choice deletes. Always given for an event of a series,
+   * which has two options or more: the plain `confirm` would delete the whole series. A single
+   * event and a task ask the plain `confirm`.
    */
-  deleteScope?: { items: ScopeItem[]; color: string; onChoose: (scope: Scope) => void }
+  deleteScope?: { items: ScopeItem[]; color: string; missing?: string; onChoose: (scope: Scope) => void }
   /**
    * Reports how to cancel the scope question while it is open, or `null` once it isn't, so the
    * surrounding popover can route Escape to it instead of closing (NFR-27): Radix's dismissable
@@ -183,6 +185,7 @@ export function DetailActions({
         question={t('scope.event.delete')}
         items={deleteScope.items}
         color={deleteScope.color}
+        missing={deleteScope.missing}
         onChoose={deleteScope.onChoose}
         onCancel={cancel}
       />

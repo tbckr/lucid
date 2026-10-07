@@ -148,12 +148,14 @@ export function withDrop(drag: DragData, result: DropResult): DragData {
 /**
  * An event of a series dropped at new times while the user picks which
  * events move (FR-10, FR-17): `key` is the dropped occurrence, `id` its
- * series, and `reach` the option that has the focus or the pointer, null
+ * series, `from` its `recurrenceId`, where "This and following events"
+ * starts, and `reach` the option that has the focus or the pointer, null
  * while none has.
  */
 export interface ScopePreview {
   key: string
   id: string
+  from: string
   start: string
   end: string
   reach: Scope | null

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
 import { useDndState } from '@/components/dnd/dndState'
 import { type EventColors } from '@/hooks/useCalendarColors'
-import { type DragBinding, type DragData } from '@/lib/dnd'
+import { type DragBinding, type DragData, type ScopePreview } from '@/lib/dnd'
 import { eventTitle, type CalEvent } from '@/lib/events'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -24,7 +24,7 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   const { pendingKeys, pendingSeries, scope, scopeAnchor } = useDndState()
   const pending = pendingKeys.has(event.key) || pendingSeries.has(event.id)
   const asked = scope?.key === event.key
-  const ringed = asked || (scope?.reach === 'all' && scope.id === event.id)
+  const ringed = asked || (scope !== null && reaches(scope, event))
   // The drag overlay shows the dropped event for a moment after the drop, then is gone: as the
   // one tile of it that can't be dragged, it doesn't anchor the question.
   const anchors = asked && !drag.disabled
@@ -71,6 +71,24 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
     isDragging,
     pending,
     ringed,
+  }
+}
+
+/**
+ * Whether the option of the scope question with the focus or the pointer reaches `event` too
+ * (FR-17): "All events" every event of the series, "This and following events" those of it from
+ * the asked one on, by recurrence ID, which an event changed on its own keeps.
+ */
+function reaches(scope: ScopePreview, event: CalEvent): boolean {
+  if (scope.id !== event.id) return false
+  switch (scope.reach) {
+    case 'all':
+      return true
+    case 'following':
+      return !!event.recurrenceId && Date.parse(event.recurrenceId) >= Date.parse(scope.from)
+    case 'this':
+    case null:
+      return false
   }
 }
 

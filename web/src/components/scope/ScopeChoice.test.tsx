@@ -100,7 +100,11 @@ describe('ScopeChoice', () => {
 
   it('reports the option in focus or under the pointer', async () => {
     const user = userEvent.setup()
-    const { onPreview } = setup()
+    // Cancel has the focus, so the pointer leaving a row leaves no option in focus.
+    const { onPreview } = setup({ tone: 'destructive' })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    })
     const all = screen.getByRole('button', { name: 'All events' })
 
     await user.hover(all)
@@ -113,6 +117,33 @@ describe('ScopeChoice', () => {
     expect(onPreview).toHaveBeenLastCalledWith('all')
     all.blur()
     expect(onPreview).toHaveBeenLastCalledWith(null)
+  })
+
+  it('keeps the preview of the focused option when the pointer leaves', async () => {
+    const user = userEvent.setup()
+    const { onPreview } = setup()
+    const only = screen.getByRole('button', { name: 'Only this event' })
+    await waitFor(() => {
+      expect(only).toHaveFocus()
+    })
+    const all = screen.getByRole('button', { name: 'All events' })
+
+    await user.hover(all)
+    expect(onPreview).toHaveBeenLastCalledWith('all')
+    await user.unhover(all)
+    expect(onPreview).toHaveBeenLastCalledWith('this')
+  })
+
+  it('says why an option is missing', () => {
+    setup({ missing: "With attendees, the series can't be split." })
+    const dialog = screen.getByRole('alertdialog', { name: question })
+    expect(dialog).toHaveAccessibleDescription("With attendees, the series can't be split.")
+    expect(dialog).toHaveTextContent("With attendees, the series can't be split.")
+  })
+
+  it('says nothing is missing when nothing is', () => {
+    setup()
+    expect(screen.getByRole('alertdialog', { name: question })).not.toHaveAttribute('aria-describedby')
   })
 
   it('is an alert dialog named by its question', () => {

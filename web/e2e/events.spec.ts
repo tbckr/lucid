@@ -489,8 +489,8 @@ test('changes the rule from an event changed on its own, which keeps its title',
   await expect(exception.getByRole('img', { name: 'Repeating event, changed individually' })).toBeVisible()
   await expect(block).toHaveCount(0)
 
-  // Only its rule: a new rule can only reach all events, so the editor says so before saving and
-  // asks nothing.
+  // Only its rule: at the series' first event, a new rule can only reach all events, so the editor
+  // says so before saving and asks nothing.
   await exception.click()
   await page.getByRole('dialog', { name: own }).getByRole('button', { name: 'Edit event' }).click()
   await editor.getByRole('combobox', { name: 'Repeat' }).click()
