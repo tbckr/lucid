@@ -47,10 +47,10 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "invalid input")
 	case errors.Is(err, domain.ErrSeriesMoveUnsupported):
 		middleware.WriteError(w, http.StatusBadRequest, codeSeriesMoveUnsupported,
-			"this series can't move like this, only this event can")
+			"this series can't move like this, only this one can")
 	case errors.Is(err, domain.ErrSeriesSplitUnsupported):
 		middleware.WriteError(w, http.StatusBadRequest, codeSeriesSplitUnsupported,
-			"this series can't be split, only this event or all events can change")
+			"this series can't be split, only this one or all can change")
 	case errors.Is(err, domain.ErrForbiddenTarget):
 		s.sec.Log(r, middleware.EventSSRFBlocked, slog.String("error", err.Error()))
 		middleware.WriteError(w, http.StatusBadRequest, codeForbiddenTarget,

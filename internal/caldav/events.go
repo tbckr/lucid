@@ -783,11 +783,11 @@ func applyChangedEventFields(master, ov *ical.Component, in domain.EventInput) (
 	return changedOverride
 }
 
-// Why "all events" refuses to move a series (FR-17). Each is a
-// domain.ErrSeriesMoveUnsupported: only the edited event can move there.
+// Why "all events" refuses to move a series, besides errMoveFixedDays
+// (FR-17). Each is a domain.ErrSeriesMoveUnsupported: only the edited event
+// can move there.
 var (
-	errMoveFixedDays = fmt.Errorf("%w: the series' rule fixes its days or times", domain.ErrSeriesMoveUnsupported)
-	errMoveOffDay    = fmt.Errorf("%w: the event is not on the day of the month its series repeats on",
+	errMoveOffDay = fmt.Errorf("%w: the event is not on the day of the month its series repeats on",
 		domain.ErrSeriesMoveUnsupported)
 	errMoveOffMonth = fmt.Errorf("%w: the move puts a date of the series on a day its month lacks",
 		domain.ErrSeriesMoveUnsupported)

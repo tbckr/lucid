@@ -408,7 +408,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case ruleSet:
 		var from todoOcc
 		if series != nil {
-			from = series.reported(cur.Status)
+			from, _ = series.reported(cur.Status)
 			if entries, err = s.convertDoneOverrides(ctx, calPath, cal, series, series.refsFrom(from.rid), now); err != nil {
 				return domain.Todo{}, nil, err
 			}
@@ -443,11 +443,8 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	case series == nil:
 		applyTodoDates(c.Props, in)
 	case edit == ruleKeep && !unchanged:
-		// Every move through the API stays in the window; an undo restores
-		// the resource as read and is no move (FR-17, A-13).
-		if err := series.checkMove(cur, in); err != nil {
-			return domain.Todo{}, nil, err
-		}
+		// A move the rule cannot follow fails before anything is written;
+		// an undo restores the resource as read and is no move (FR-17).
 		if err := series.move(cal, cur.Status, in); err != nil {
 			return domain.Todo{}, nil, err
 		}

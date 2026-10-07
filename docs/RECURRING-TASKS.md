@@ -800,15 +800,21 @@ interval rule by any later one too (FR-16, FR-17). The API is described in
   missing, completed masters, and completed copies as tasks of their own.
   Because Lucid reads overrides anyway, a later switch of the write model
   stays cheap.
-- **Why in order, and why a move window**: under the rolling model the master
-  *is* the current occurrence, so only it can be completed or moved. With a
-  rule on fixed days, a move past the next occurrence would drop the
-  occurrences in between, and a move before the current one would bring it
-  back (see [Moving one occurrence](#moving-one-occurrence)). The server
-  refuses such a move, whatever the client, counting the rule's days in the
-  series' zone: the days of the occurrences' `RECURRENCE-ID`s, which differ
-  from the dates another client moved them to; the UI shows the window it
-  reports.
+- **Why in order, and how a series on fixed days moves**: under the rolling
+  model the master *is* the current occurrence, so only it can be completed
+  or moved, and moving it moves the series. A rule on fixed days does not
+  follow a new `DTSTART` by itself (see
+  [Moving one occurrence](#moving-one-occurrence)): its later occurrences
+  would stay on their days, so a move past the next one would drop the
+  occurrences in between, and one before the current occurrence's own day
+  would bring that day back. So the series moves as far as its rule can
+  follow, as an event series does for "all events": a weekly rule's days
+  rotate with the move, so that every later occurrence moves by the same
+  distance, and any other rule on fixed days moves within the day only. The
+  server refuses any other move, whatever the client, counting days from the
+  current occurrence's `RECURRENCE-ID` in the series' zone. The last repeat
+  has no later one to keep in step: it moves to any day, and the rule ends
+  there.
 
 ### Reading
 
@@ -929,43 +935,69 @@ the series with a start equal to its due date from the first completion on.
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
 `DUE` gets a `DTSTART` here too), and drops that occurrence's override and
-KDE's pending occurrence. What refers to later occurrences stays with them:
+KDE's pending occurrence. The rule follows the move as far as it can,
+decided as for an event series' "all events" (see
+[RECURRING-EVENTS.md](RECURRING-EVENTS.md)), from the current occurrence's
+`RECURRENCE-ID` to the new `DTSTART`, both on the wall clock of the series'
+zone:
 
-- With an interval rule, their overrides (`RECURRENCE-ID`, `DTSTART`, `DUE`),
-  `EXDATE`s and an `UNTIL` from the moved occurrence on move by the same
-  amount, in the wall clock of the series, so across a change of daylight
-  saving time too, and by whole periods of the rule as well: a weekly series
-  moved a week earlier also ends a week earlier. With a monthly or yearly
-  rule the amount is counted in calendar months, then days, because its
-  occurrences keep their day of the month: a series moved from 10 March to
-  10 April moves an override of 10 June to 10 July.
-- With fixed days they move by the change in time of day only, because the
-  rule's days stay.
-- A move between all-day and timed dates converts every override
-  (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
-  value type, earlier ones too: RFC 5545 requires `UNTIL` and
-  `RECURRENCE-ID` in `DTSTART`'s value type, and a done override or an
-  `EXDATE` in the old one would match no occurrence in readers that follow
-  it. A date gets the new time of day in the series' zone (an `UNTIL` in
-  UTC), and a date-time becomes its date in the series' zone. With an
-  interval rule, the later ones first move by the change in date; with
-  fixed days they stay on their days.
+- An interval rule stays as it is: it recurs from the new `DTSTART`.
+- A weekly rule whose only other part is `BYDAY` with plain weekdays rotates
+  them by the change in date, so `BYDAY=MO,TH` moved from Monday to Tuesday
+  becomes `BYDAY=TU,FR`, and the new `DTSTART` is one of its days again.
+  With an `INTERVAL` above 1 that holds only where the start and every day
+  stay in one week (counted from `WKST`); any other such move is refused.
+- Any other rule on fixed days (`BYMONTHDAY`, `BYDAY` with an ordinal,
+  `BYMONTH`, `BYSETPOS`, more `BY` parts) moves within the day only, and
+  keeps its time of day where it fixes one (`BYHOUR`, `BYMINUTE`,
+  `BYSECOND`).
 
-A current occurrence **off the rule** moves on its own: its override takes
-the new dates, and the master and its rule stay as they are, since the
-occurrence is none of the rule's.
+A move the rule cannot follow is refused with `series_move_unsupported`
+before anything is written: only that repeat could move there.
 
-With an interval rule, `DTSTART` stays on the rule, and a `COUNT` no longer
-counts the occurrences before the moved one. With fixed days, the new
-`DTSTART` can lie off the rule's days, where readers disagree on what a
-`COUNT` counts, so the `COUNT` first becomes the `UNTIL` of the series' last
-occurrence, as for a completion, and then moves like any `UNTIL`. In a
-`TZID` Lucid cannot resolve, the `COUNT` stays, lowered as with an interval
-rule (see Limits). An `UNTIL` that would end before the new date moves onto
-it: clients built on ical.js, such as Thunderbird, hide a task whose
-`DTSTART` lies after its `UNTIL`. On fixed days the backend refuses a move
-that leaves the move window (see Limits), in the series' zone; an undo
-restores the resource as read and is no move.
+What refers to later occurrences moves with them, by the same amount: their
+overrides (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE`s and an `UNTIL` from
+the moved occurrence on, in the wall clock of the series, so across a change
+of daylight saving time too, and by whole periods of the rule as well: a
+weekly series moved a week earlier also ends a week earlier. With a monthly
+or yearly interval rule the amount is counted in calendar months, then days,
+because its occurrences keep their day of the month: a series moved from 10
+March to 10 April moves an override of 10 June to 10 July. What refers to
+earlier occurrences, such as other apps' completions, stays where it is.
+
+A move between all-day and timed dates converts every override
+(`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
+value type, earlier ones too: RFC 5545 requires `UNTIL` and `RECURRENCE-ID`
+in `DTSTART`'s value type, and a done override or an `EXDATE` in the old one
+would match no occurrence in readers that follow it. A date gets the new
+time of day in the series' zone (an `UNTIL` in UTC), and a date-time becomes
+its date in the series' zone. The later ones first move by the change in
+date.
+
+`DTSTART` stays on the rule, so a `COUNT` stays a `COUNT`, without the
+occurrences before the moved one, which the new `DTSTART` leaves behind. An
+`UNTIL` that would end before the new date moves onto it: clients built on
+ical.js, such as Thunderbird, hide a task whose `DTSTART` lies after its
+`UNTIL`. An undo restores the resource as read and is no move.
+
+The **last repeat** moves to any date, also off a rule on fixed days: no
+later occurrence has to keep in step with it. The rule then ends at it, with
+an `UNTIL` at the new `DTSTART` in the form RFC 5545 wants for it (a date
+for an all-day series, floating for a floating one, UTC otherwise) in place
+of a `COUNT` or an `UNTIL`, so that it stays the only occurrence and no rule
+day comes back after it. In a `TZID` Lucid cannot resolve, that `UNTIL`
+would be off by the zone's offset, so the rule ends with `COUNT=1` instead.
+
+A current occurrence **off the rule** moves the series by the distance it
+moves from where it is shown, as an event series moves from an exception.
+The rule cannot take its place, since it is none of the rule's occurrences:
+it moves by that distance from its last occurrence before it, as from a
+current occurrence (rule, `COUNT`, `UNTIL`, later references), with the
+moved occurrence's override among the later references, which then takes
+the new dates. That rule occurrence, done or excluded since the one off the
+rule is current, stays out with an `EXDATE` at its new place, and an
+override that completed it stays where it is. A change of the due alone
+changes only the occurrence off the rule.
 
 **Undo** restores the todo's resource exactly as it was read before the
 write that returned `undoToken` (a snapshot, kept server-side under the
@@ -1021,36 +1053,17 @@ keeps the properties and components Lucid does not know.
 
 - Only the current occurrence can be completed, so occurrences are completed
   in order. Later ones are a preview, and none can be skipped.
-- Only an occurrence off the rule can be moved on its own. Moving any other
-  occurrence moves the series from the current occurrence on. With an
-  interval rule the later occurrences move along, so in the calendar any of
-  them can be dragged as well, like an occurrence of a recurring event: the
-  series moves by the distance it was dragged, from the current occurrence
-  on. Where the later occurrences stay (fixed days, or a current occurrence
-  off the rule), only the current one can be dragged. With fixed days a move
-  stays from the start of the current occurrence's rule day to before the
-  start of the next occurrence's rule day, both in the series' zone, or
-  before the next occurrence itself when it falls on the same day (several
-  repeats a day); the time of day is free within those days. The rule days
-  are those of the occurrences' `RECURRENCE-ID`s: where another client
-  moved the current or the next occurrence to another date, the window
-  keeps to the rule's days, not to the dates they are shown on, so that no
-  rule instance is skipped or brought back. The server refuses any other
-  move, and the calendar, the editor and the date picker in the task list
-  keep to the window it reports. The last repeat has no next occurrence to
-  stay before, so it can move to a later day, but not to an earlier one. A
-  current occurrence off the rule moves alone, so it stays before the next
-  occurrence the same way, also with an interval rule, and has no rule day
-  of its own to stay from: it can move to an earlier day.
-- The move window is counted in the series' zone; the UI converts it to the
-  browser's. Removing a series' time where the two zones differ can land right
-  on an edge: the UI can refuse an edit on the current occurrence's own day
-  that the server would in fact accept, or let it through the editor and
-  answer with a `400` on the next repeat's day. Either way nothing wrong is
-  stored. The same holds near midnight for a repeat another client gave a time
-  in an all-day series: the server reports its window as the rule's dates at
-  midnight UTC, but checks the date the new time has in the zone it is written
-  in.
+- No occurrence moves on its own: moving the current one, one off the rule
+  too, moves the series from it on. With an interval rule the later
+  occurrences move along, so in the calendar any of them can be dragged as
+  well, like an occurrence of a recurring event: the series moves by the
+  distance it was dragged, from the current occurrence on. On fixed days the
+  series moves only as far as its rule can follow (see Writing): a weekly
+  rule rotates its days, but a monthly rule on the 15th, for example, can't
+  move to the 16th, and a rule with `BYHOUR` can't change its time; the
+  server refuses such a move. Only the last repeat moves to any day. The
+  days count from the current occurrence's `RECURRENCE-ID` in the series'
+  zone, not from the date another client moved it to.
 - A view reports at most the first 1,000 occurrences of a series within the
   requested window; a sub-hourly series can have more, and the rest does
   not show.
@@ -1059,11 +1072,17 @@ keeps the properties and components Lucid does not know.
 - A series in a `TZID` Lucid cannot resolve is read at its wall clock as
   UTC, so its `COUNT` stays a `COUNT`: an `UNTIL` computed from that wall
   clock would end the series one occurrence early in a reader that knows a
-  zone west of UTC. A move on fixed days that leaves `DTSTART` off the
-  rule's days then keeps the `COUNT` too, and no form ends such a series
-  alike in every reader: one that counts `DTSTART` as the first occurrence,
-  as RFC 5545 and Lucid do, ends it where Lucid does; one that counts
-  `COUNT` rule days besides `DTSTART` shows one occurrence more.
+  zone west of UTC. Its last repeat, moved, ends the rule with `COUNT=1` for
+  the same reason. Moved off a rule on fixed days, it leaves `DTSTART` off
+  the rule's days, and no form ends such a series alike in every reader: one
+  that counts `DTSTART` as the first occurrence, as RFC 5545 and Lucid do,
+  ends it where Lucid does; one that counts `COUNT` rule days besides
+  `DTSTART` shows one occurrence more.
+- The last repeat moved off a rule on fixed days leaves `DTSTART` off the
+  rule's days, with the `UNTIL` on it: RFC 5545 calls such a set undefined.
+  Readers that include `DTSTART` as an occurrence, as Lucid and Tasks.org do
+  (see [Under the rolling model](#under-the-rolling-model)), show the moved
+  repeat and nothing after it; one that leaves it out shows none.
 - A move of a `MONTHLY` or `YEARLY` interval series shifts the references to
   later occurrences, and its `UNTIL`, by calendar months and days. Where the
   shifted day does not exist in the month it lands in, it runs over into
@@ -1115,6 +1134,10 @@ The UI speaks of *repeats*, never of copies or overrides. For those who want
 to know more, an ⓘ next to the repeat in the editor explains that a completed
 repeat stays as its own entry while the task moves on to the next one, and
 that repeats are completed in order.
+
+The move window the date pickers and dragging keep to below is no longer
+reported by the backend, which moves a series as far as its rule can follow
+(see Writing); the UI part follows.
 
 - **Calendar views**: the current occurrence looks like any task, with a
   checkbox and ⟳, and can be dragged. Upcoming ones are pencilled in: a dashed

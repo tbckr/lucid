@@ -95,6 +95,12 @@ func TestErrorMapping(t *testing.T) {
 		{fmt.Errorf("get: %w", context.DeadlineExceeded), http.StatusBadGateway, codeUpstreamError},
 		{errors.New("unexpected"), http.StatusInternalServerError, codeInternal},
 	}
+	// The messages of the series refusals are neutral, for events and tasks
+	// alike (FR-17).
+	messages := map[string]string{
+		codeSeriesMoveUnsupported:  "this series can't move like this, only this one can",
+		codeSeriesSplitUnsupported: "this series can't be split, only this one or all can change",
+	}
 	for _, tt := range tests {
 		t.Run(tt.code+"/"+tt.err.Error(), func(t *testing.T) {
 			t.Parallel()
@@ -102,8 +108,12 @@ func TestErrorMapping(t *testing.T) {
 			c := h.login(t)
 			h.svc.err = tt.err
 			w := h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars"})
+			body := w.Body.String()
 			expectError(t, w, tt.status, tt.code)
-			if strings.Contains(w.Body.String(), "unexpected") {
+			if msg, ok := messages[tt.code]; ok && !strings.Contains(body, `"message":"`+msg+`"`) {
+				t.Errorf("body = %s; want the message %q", body, msg)
+			}
+			if strings.Contains(body, "unexpected") {
 				t.Error("internal error details leaked")
 			}
 			if errors.Is(tt.err, domain.ErrForbiddenTarget) && !strings.Contains(h.logs.String(), middleware.EventSSRFBlocked) {
@@ -595,6 +605,7 @@ func TestTodos(t *testing.T) {
 		{"update no if-match", req{method: http.MethodPut, path: "/api/v1/todos/t1", body: todoBody}, nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
 		{"update invalid", req{method: http.MethodPut, path: "/api/v1/todos/t1", body: `{"title":""}`, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
 		{"update conflict", req{method: http.MethodPut, path: "/api/v1/todos/t1", body: todoBody, headers: ifMatch}, domain.ErrConflict, http.StatusConflict, codeConflict, "UpdateTodo"},
+		{"update move unsupported", req{method: http.MethodPut, path: "/api/v1/todos/t1", body: todoBody, headers: ifMatch}, fmt.Errorf("%w: fixed days", domain.ErrSeriesMoveUnsupported), http.StatusBadRequest, codeSeriesMoveUnsupported, "UpdateTodo"},
 		{"update long id", req{method: http.MethodPut, path: "/api/v1/todos/" + strings.Repeat("t", 1100), body: todoBody, headers: ifMatch}, nil, http.StatusBadRequest, codeInvalidInput, ""},
 		{"delete", req{method: http.MethodDelete, path: "/api/v1/todos/t1", headers: ifMatch}, nil, http.StatusNoContent, "", "DeleteTodo"},
 		{"delete no if-match", req{method: http.MethodDelete, path: "/api/v1/todos/t1"}, nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},

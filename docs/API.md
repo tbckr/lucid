@@ -29,8 +29,8 @@ This is the contract between the frontend (`web/`) and the Go backend
   |--------|-----------------------|------------------------------------------------|
   | 400    | `invalid_input`       | Validation failed (`message` says why)         |
   | 400    | `forbidden_target`    | Server URL points to a blocked (internal) net  |
-  | 400    | `series_move_unsupported` | "All events" or "this and following events" can't move the series like this; only the event can |
-  | 400    | `series_split_unsupported` | The series can't be split at an occurrence ("this and following events"); only the event or all events can change |
+  | 400    | `series_move_unsupported` | This series can't move like this, only this one can |
+  | 400    | `series_split_unsupported` | This series can't be split, only this one or all can change |
   | 401    | `unauthenticated`     | No/expired session → show login                |
   | 401    | `invalid_credentials` | Login rejected by the CalDAV server            |
   | 403    | `csrf_invalid`        | Missing/wrong CSRF token                       |
@@ -446,8 +446,7 @@ and the token is kept. A refusal (`4xx`) is answered as above.
   "due": "2025-01-07T00:00:00Z", "dueAllDay": true, "priority": 1,
   "status": "NEEDS-ACTION", "completed": null,
   "rrule": "FREQ=WEEKLY", "recurring": true, "fixedDays": false, "ruleUnsupported": false,
-  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true },
-  "moveWindow": null } ] }
+  "next": { "start": null, "startAllDay": false, "due": "2025-01-14T00:00:00Z", "dueAllDay": true } } ] }
 ```
 
 `priority`: `0` = none, `1` = highest … `9` = lowest (RFC 5545). `status`:
@@ -467,8 +466,8 @@ completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 
-`rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and `moveWindow`
-describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
+`rrule`, `recurring`, `fixedDays`, `ruleUnsupported` and `next` describe a
+recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
 
 - `rrule` is the stored `RRULE` (RFC 5545), empty for a non-recurring todo.
 - `recurring` is `true` for any such series, evaluable or not.
@@ -485,32 +484,6 @@ describe a recurring series (VTODO with `RRULE` or `RDATE`, FR-17):
   series is not recurring, or `ruleUnsupported`). Its value types are its own:
   an override can change `start`/`due` between a date and a time independently
   of the current occurrence's or the master's.
-- `moveWindow` (`{ "from", "until" }`) is where a move of the current
-  occurrence must keep its anchor (`start`, else `due`): from `from` on and
-  before `until`, see `PUT` below. Its bounds are the **rule's days**, the
-  days of the current and the next occurrence's `RECURRENCE-ID` in the
-  series' zone; they differ from `start`/`due` and `next` when another
-  client moved those occurrences to other dates. A series on fixed days has
-  one: `from` is the start of the current occurrence's rule day and `until`
-  the start of `next`'s rule day, or `next`'s own `RECURRENCE-ID` instant
-  when it falls on the current occurrence's rule day (several repeats a
-  day, such as `BYHOUR=9,17`); `until` is `null` for the last repeat. A
-  current occurrence off the rule (see `PUT`) moves on its own, so with a
-  `next` it has the same `until` in any series, and `from` is `null`: it has
-  no rule day of its own to stay from; without a `next`, its move is free.
-  `moveWindow` is `null` where a move is free, and for a series that is
-  completed, cancelled or `ruleUnsupported`. When the current occurrence is
-  all-day, `from` and `until` are dates, written as midnight UTC like `start`
-  and `due`; a `next` on the current occurrence's own rule day then ends the
-  window with that day, and the server still holds a time of day before `next`
-  (see `PUT`). Otherwise they are instants. The series' zone need not be the
-  client's, so a day of the client's can lie partly inside the window. A timed
-  current occurrence of an all-day series, one another client gave a time,
-  gets the rule's dates at midnight UTC as instants, while the server checks a
-  time by its date in the zone it is written in (see `PUT`): near midnight in
-  a zone other than UTC, a client that checks the instants can refuse a move
-  the server accepts, or send one the server refuses with `400`. Nothing wrong
-  is stored either way.
 
 For an open recurring todo, `start` and `due` are not the series' stored
 `DTSTART`/`DUE`: they are those of its **current occurrence**, the oldest one
@@ -600,35 +573,43 @@ For a recurring todo, these edits are handled specially:
   as usual, also from an occurrence off the rule.
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
-  (a series without `start` recurs on `due`). What refers to later
-  occurrences stays with them: with an interval rule, their overrides,
-  `EXDATE`s and an `UNTIL` from the current occurrence on move by the same
-  amount, whole periods of the rule included, in the wall clock of the
-  series (counted in calendar months, then days, for a `MONTHLY` or
-  `YEARLY` rule); with fixed days by the change in time of day only,
-  because the rule's days stay. A change between all-day and timed dates
-  converts every override (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and
-  the `UNTIL` to the new value type: a date gets the new time of day in the
-  series' zone (an `UNTIL` in UTC), a date-time becomes its date in the
-  series' zone. With an interval rule, the later ones also move by the
-  change in date; with fixed days they stay on their days. The override of
-  the current occurrence goes. A `COUNT` no longer counts the rule's
-  instances before the moved occurrence, and an `UNTIL` that would end
-  before the new dates moves onto them. A current occurrence off the rule
-  moves on its own: its override takes the new dates, and the series stays.
-  A move whose anchor (`start`, else `due`) leaves `moveWindow` is
-  `400 invalid_input`, and nothing is written: before `from`, message *"a
-  repeat on fixed days cannot move before its own day"*; from `until` on, *"a
-  repeat on fixed days must stay before its next repeat"*. The check counts
-  the rule's days in the series' own value type, so a time given to an all-day
-  current occurrence of a timed series must still stay before a `next` on the
-  same day. An anchor of the other value type than the series counts on its
-  day: a date as that day in the series' zone, a time on its date in the zone
-  it is written in (the series' own, or `timezone` for an all-day series that
-  gains a time). The last repeat completed with new dates moves the master and
-  is checked the same way; an earlier one leaves them on its completed copy,
-  which is no move. A move together with a new `rrule` starts the series over
-  and is not checked, nor is the undo below, which restores the resource.
+  (a series without `start` recurs on `due`), and the override of the
+  current occurrence goes. The rule follows as far as it can, counted from
+  the current occurrence's `RECURRENCE-ID` to the new start in the series'
+  zone: an interval rule stays as it is; a weekly rule whose only other part
+  is `BYDAY` with plain weekdays rotates its days by the move (`BYDAY=MO,TH`
+  moved from a Monday to a Tuesday becomes `BYDAY=TU,FR`; with an `INTERVAL`
+  above 1, only where the start and every day stay in one week); any other
+  rule on fixed days moves only within the day, and to another time of day
+  only without `BYHOUR`, `BYMINUTE` or `BYSECOND`. A move the rule cannot
+  follow is `400 series_move_unsupported`, and nothing is written. What
+  refers to later occurrences moves with them: their overrides, `EXDATE`s and an
+  `UNTIL` from the current occurrence on move by the same amount, whole
+  periods of the rule included, in the wall clock of the series (counted in
+  calendar months, then days, for a `MONTHLY` or `YEARLY` rule); earlier
+  ones, such as other clients' completions, stay. A change between all-day
+  and timed dates converts every override (`RECURRENCE-ID`, `DTSTART`,
+  `DUE`), `EXDATE` and the `UNTIL` to the new value type: a date gets the
+  new time of day in the series' zone (an `UNTIL` in UTC), a date-time
+  becomes its date in the series' zone; the later ones first move by the
+  change in date. A `COUNT` no longer counts the rule's instances before the
+  moved occurrence, and an `UNTIL` that would end before the new dates moves
+  onto them.
+  The **last repeat** (a current occurrence with `next: null`) moves to any
+  date, also off a rule on fixed days: the rule then ends at it, with an
+  `UNTIL` at the new start in the form RFC 5545 wants with `DTSTART`'s (a
+  date, floating, or UTC) in place of a `COUNT` or an `UNTIL`; in a `TZID`
+  Lucid cannot resolve, with `COUNT=1` instead. Completing the last repeat
+  with new dates moves it the same way; an earlier one leaves them on its
+  completed copy, which is no move. A current occurrence **off the rule**
+  moves the series by the distance it moves from where it is shown, as an
+  event series moves from an exception: the rule moves by that distance
+  from its last instance before the occurrence, as above, with an `EXDATE`
+  that keeps this instance (done or excluded, as the occurrence is current)
+  out at its new place, and the occurrence's override moves along and takes
+  the new dates. A change of its `due` alone changes only the occurrence. A
+  move together with a new `rrule` starts the series over, and the undo
+  below restores the resource: neither is such a move.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay and an `UNTIL` take the new value type when the dates

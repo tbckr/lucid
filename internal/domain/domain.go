@@ -28,10 +28,11 @@ var (
 	// ErrUnsupportedComponent means the target calendar does not accept the
 	// component type (e.g. an event in a calendar that only holds todos).
 	ErrUnsupportedComponent = errors.New("component type not supported by calendar")
-	// ErrSeriesMoveUnsupported means "all events" of a recurring series, or
-	// "this and following events" as a series of their own, cannot move as
-	// asked without some of them landing elsewhere than the edited one, so
-	// only that event can move (FR-17).
+	// ErrSeriesMoveUnsupported means "all events" of a recurring series,
+	// "this and following events" as a series of their own, or a task series
+	// from its current repeat, cannot move as asked without some of them
+	// landing elsewhere than the edited one, so only that event or repeat
+	// can move (FR-17).
 	ErrSeriesMoveUnsupported = errors.New("series move unsupported")
 	// ErrSeriesSplitUnsupported means a recurring series cannot be split at
 	// an occurrence ("this and following events"): it has an ORGANIZER or an
@@ -225,19 +226,15 @@ type Todo struct {
 
 	// RRule, Recurring, FixedDays and RuleUnsupported describe a recurring
 	// series (FR-17). Next is the earliest open occurrence after the current
-	// one, or nil if this is the last. MoveWindow bounds a move of the
-	// current occurrence; nil when a move is free, and for a series that is
-	// completed, cancelled or ruleUnsupported. CompletedCopy is the
-	// just-completed occurrence, returned only by the PUT that completes it,
-	// so the client can show it alongside the advanced series without a
-	// refetch.
-	RRule           string      `json:"rrule"`
-	Recurring       bool        `json:"recurring"`
-	FixedDays       bool        `json:"fixedDays"`
-	RuleUnsupported bool        `json:"ruleUnsupported"`
-	Next            *TodoDates  `json:"next"`
-	MoveWindow      *MoveWindow `json:"moveWindow"`
-	CompletedCopy   *Todo       `json:"completedCopy,omitempty"`
+	// one, or nil if this is the last. CompletedCopy is the just-completed
+	// occurrence, returned only by the PUT that completes it, so the client
+	// can show it alongside the advanced series without a refetch.
+	RRule           string     `json:"rrule"`
+	Recurring       bool       `json:"recurring"`
+	FixedDays       bool       `json:"fixedDays"`
+	RuleUnsupported bool       `json:"ruleUnsupported"`
+	Next            *TodoDates `json:"next"`
+	CompletedCopy   *Todo      `json:"completedCopy,omitempty"`
 	// HasAttendees reports that a VTODO of the resource, the series or one of
 	// its overrides, has an ORGANIZER or an ATTENDEE: a server that schedules
 	// implicitly may have told others of a change, so Lucid hands out no undo
@@ -266,22 +263,6 @@ type TodoDates struct {
 	StartAllDay bool       `json:"startAllDay"`
 	Due         *time.Time `json:"due"`
 	DueAllDay   bool       `json:"dueAllDay"`
-}
-
-// MoveWindow is where a move of a series' current occurrence must keep its
-// anchor (start, else due), [From, Until), by the rule's days in the series'
-// zone (FR-17): a series on fixed days keeps its later repeats on their days,
-// so its current one stays from the day of its own RECURRENCE-ID to before
-// the day of the next one's. Those are the rule's days, which differ from
-// Start and Next's dates when another client moved those occurrences. A
-// current occurrence off the rule moves alone, in any series: it stays before
-// the next one the same way, but has no day of its own to stay from (From
-// nil), and without a next one its move is free. When the current occurrence
-// is all-day, From and Until are dates at midnight UTC, as all-day dates are
-// written.
-type MoveWindow struct {
-	From  *time.Time `json:"from"`  // start of the current occurrence's rule day, series zone; nil for an occurrence off the rule
-	Until *time.Time `json:"until"` // start of next's rule day; next's instant if on the same day; nil for the last repeat
 }
 
 // Occurrence states (FR-17).
@@ -556,8 +537,10 @@ type CalendarService interface {
 	ListTodoOccurrences(ctx context.Context, calendarID string, start, end time.Time) ([]TodoOccurrence, error)
 	CreateTodo(ctx context.Context, calendarID string, in TodoInput) (Todo, error)
 	// UpdateTodo replaces the todo. etag must match (If-Match), otherwise
-	// ErrConflict. The change of a recurring todo returns the snapshot that
-	// RestoreTodo undoes it with, or nil when it cannot be undone (FR-17).
+	// ErrConflict. A move of a series that its rule cannot follow is
+	// ErrSeriesMoveUnsupported, and nothing is written. The change of a
+	// recurring todo returns the snapshot that RestoreTodo undoes it with, or
+	// nil when it cannot be undone (FR-17).
 	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, *Snapshot, error)
 	// RestoreTodo undoes a change of a todo by writing back the resource as
 	// the change read it, unless the todo changed since (ErrConflict), and

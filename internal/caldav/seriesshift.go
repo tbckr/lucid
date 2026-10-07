@@ -1,14 +1,24 @@
 package caldav
 
-// This file decides which moves of a recurring series' RRULE "All events"
-// may perform (FR-17). See docs/RECURRING-EVENTS.md for the client survey
-// and the decisions behind the three cases below.
+// This file decides which moves of a recurring series' RRULE "All events",
+// and a move of a task series, may perform (FR-17). See
+// docs/RECURRING-EVENTS.md for the client survey and the decisions behind
+// the three cases below, and docs/RECURRING-TASKS.md for tasks.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tbckr/lucid/internal/domain"
 )
+
+// errMoveFixedDays refuses a move of a series, of events or of tasks, that
+// seriesShift does not allow: its rule fixes days or times the move would
+// leave. It is a domain.ErrSeriesMoveUnsupported, so only the edited event
+// or repeat can move there (FR-17).
+var errMoveFixedDays = fmt.Errorf("%w: the series' rule fixes its days or times", domain.ErrSeriesMoveUnsupported)
 
 // weekdayCodes are the two-letter RRULE weekday codes, in time.Weekday
 // order (Sunday first), used to rotate BYDAY values in seriesShift (FR-17).

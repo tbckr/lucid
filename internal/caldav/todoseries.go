@@ -38,10 +38,6 @@ var (
 	errRuleUnsupported error = &domain.ValidationError{Msg: "the repeat rule cannot be evaluated"}
 	// errRuleNeedsDate rejects a series without a date to recur from (FR-17).
 	errRuleNeedsDate error = &domain.ValidationError{Msg: "a repeating task needs a start or due date"}
-	// errBeforeWindow and errPastWindow reject a move that leaves the move
-	// window of the current occurrence, see moveWindow (FR-17, A-13).
-	errBeforeWindow error = &domain.ValidationError{Msg: "a repeat on fixed days cannot move before its own day"}
-	errPastWindow   error = &domain.ValidationError{Msg: "a repeat on fixed days must stay before its next repeat"}
 )
 
 // todoSeries is a recurring VTODO and what other clients recorded in it, as
@@ -239,11 +235,17 @@ func (s *todoSeries) refsFrom(t time.Time) func(d dateValue) bool {
 }
 
 // zoneKnown reports whether Lucid knows the zone the anchor of s is written
-// in: it has no TZID, or one Lucid resolves (FR-17). Lucid reads the wall
-// clock of any other TZID as UTC, so an instant it derives from the series,
-// such as an UNTIL, would be off by the zone's offset.
+// in, see knownZone (FR-17).
 func (s *todoSeries) zoneKnown() bool {
-	return s.anchor.param == "" || s.anchor.tzid != ""
+	return knownZone(s.anchor)
+}
+
+// knownZone reports whether Lucid knows the zone d is written in: it has no
+// TZID, or one Lucid resolves (FR-17). Lucid reads the wall clock of any
+// other TZID as UTC, so an instant it derives from d, such as an UNTIL,
+// would be off by the zone's offset.
+func knownZone(d dateValue) bool {
+	return d.param == "" || d.tzid != ""
 }
 
 // ruleHasFixedDays reports whether a series recurs on fixed days rather than
@@ -451,14 +453,16 @@ func (s *todoSeries) current() (cur todoOcc, next *todoOcc, err error) {
 
 // reported returns the occurrence whose dates a todo read from s with the
 // given status reports (see setSeries): the current occurrence of an open
-// series, else one at the anchor, of which only rid is set (FR-17).
-func (s *todoSeries) reported(status string) todoOcc {
+// series, else one at the anchor, of which only rid is set (FR-17). last
+// reports whether it is the series' last open occurrence: open itself, with
+// no open one after it.
+func (s *todoSeries) reported(status string) (occ todoOcc, last bool) {
 	if status != domain.TodoCompleted && status != domain.TodoCancelled {
-		if cur, _, err := s.current(); err == nil && !cur.rid.IsZero() {
-			return cur
+		if cur, next, err := s.current(); err == nil && !cur.rid.IsZero() {
+			return cur, !cur.done && next == nil
 		}
 	}
-	return todoOcc{rid: s.anchor.t}
+	return todoOcc{rid: s.anchor.t}, false
 }
 
 // setSeries fills the series fields of t, a todo read from s.master, and
@@ -489,91 +493,6 @@ func (s *todoSeries) setSeries(t *domain.Todo) {
 			Due: utcPtr(next.due), DueAllDay: next.dueAllDay,
 		}
 	}
-	t.MoveWindow = s.moveWindow(cur, next)
-}
-
-// ridWindow returns the window a move of the current occurrence cur, with
-// the next one next (nil for the last), must keep its anchor in, [from,
-// until), by the rule's days, or ok false where a move is free (FR-17, A-13,
-// A-14, A-15):
-//   - on fixed days the later repeats stay on their days, so cur stays from
-//     the start of its own day to the start of next's day, or to next itself
-//     when next falls on cur's day (several repeats a day). The last repeat
-//     only stays from its own day on (until zero): before it, its day would
-//     come back as a repeat still to do;
-//   - a repeat off the rule moves alone (A-10), so with a next one it stays
-//     before it the same way in any series, or it would come after it. It
-//     has no rule day of its own to stay from (from zero): an earlier day
-//     brings nothing back. Without a next one it moves freely.
-//
-// The days are those of the RECURRENCE-IDs, cur.rid and next.rid, never of
-// the dates another client moved the occurrences to: the window keeps the
-// rule's instances in order, and only those lie on the rule's days. Next is
-// the one current returns, in RECURRENCE-ID order, so an open override off
-// the rule is not passed either. Days count in the series' zone and value
-// type (A-11), see dayStart.
-func (s *todoSeries) ridWindow(cur todoOcc, next *todoOcc) (from, until time.Time, ok bool) {
-	if cur.offGrid && next == nil || !cur.offGrid && !s.fixedDays {
-		return time.Time{}, time.Time{}, false
-	}
-	day := s.dayStart(cur.rid)
-	if !cur.offGrid {
-		from = day
-	}
-	if next != nil {
-		until = s.dayStart(next.rid)
-		if until.Equal(day) {
-			until = next.rid
-		}
-	}
-	return from, until, true
-}
-
-// dayStart returns the start of the day of the rule instance t: its date in
-// an all-day series, at midnight UTC as dates are written, else midnight of
-// its date in the series' zone (A-11).
-func (s *todoSeries) dayStart(t time.Time) time.Time {
-	day := s.dayOf(t)
-	if s.anchor.allDay {
-		return day
-	}
-	y, m, d := day.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc())
-}
-
-// moveWindow returns the window of ridWindow as the todo reports it, or nil
-// where a move is free (FR-17): in UTC, and in the value type the todo
-// reports its dates in, cur's own. An all-day cur of a timed series (an
-// override of the other value type) counts dates, at midnight UTC as all-day
-// dates are written: the rule's days by date, and a next on cur's own day
-// ends the window with that day, the nearest a date comes to it; checkMove
-// still holds the time of day before it.
-func (s *todoSeries) moveWindow(cur todoOcc, next *todoOcc) *domain.MoveWindow {
-	from, until, ok := s.ridWindow(cur, next)
-	if !ok {
-		return nil
-	}
-	toDates := occAnchorAllDay(cur) && !s.anchor.allDay
-	w := &domain.MoveWindow{}
-	if !from.IsZero() {
-		if toDates {
-			from = s.dayOf(from)
-		}
-		from = from.UTC()
-		w.From = &from
-	}
-	if !until.IsZero() {
-		if toDates {
-			day := s.dayOf(until)
-			if day.Equal(s.dayOf(cur.rid)) {
-				day = day.AddDate(0, 0, 1)
-			}
-			until = day
-		}
-		until = until.UTC()
-		w.Until = &until
-	}
-	return w
 }
 
 // occAnchorAllDay reports whether the anchor of o (see occAnchor) is a date.
@@ -582,53 +501,6 @@ func occAnchorAllDay(o todoOcc) bool {
 		return o.startAllDay
 	}
 	return o.dueAllDay
-}
-
-// checkMove returns errBeforeWindow or errPastWindow when moving the todo t,
-// read from s, to the dates of in leaves the move window t reports, see
-// moveWindow, and nil when its anchor (start, else due) stays inside, or t
-// has no window (FR-17, A-13). It checks against the window by the rule's
-// days (see ridWindow), in the series' value type, so that a next on the
-// current occurrence's day holds the time of day also when that occurrence
-// was made a date. An anchor of the other value type than the series counts
-// on its day: a date as that day in the series' zone, a time on its date in
-// the zone the move writes it in (see writeSeriesDates): the series' own,
-// or in's zone for a series that gains a time.
-func (s *todoSeries) checkMove(t domain.Todo, in domain.TodoInput) error {
-	at, allDay := in.Start, in.StartAllDay
-	if at == nil {
-		at, allDay = in.Due, in.DueAllDay
-	}
-	if t.MoveWindow == nil || at == nil {
-		return nil
-	}
-	cur, next, err := s.current()
-	if err != nil {
-		return errRuleUnsupported
-	}
-	from, until, ok := s.ridWindow(cur, next)
-	if !ok {
-		return nil
-	}
-	anchor := *at
-	switch {
-	case s.anchor.allDay && !allDay:
-		loc := s.anchor.loc()
-		if l := loadLocation(in.Timezone); l != nil {
-			loc = l
-		}
-		anchor = civilDate(anchor.In(loc))
-	case !s.anchor.allDay && allDay:
-		y, m, d := anchor.UTC().Date()
-		anchor = time.Date(y, m, d, 0, 0, 0, 0, s.anchor.loc())
-	}
-	switch {
-	case !from.IsZero() && anchor.Before(from):
-		return errBeforeWindow
-	case !until.IsZero() && !anchor.Before(until):
-		return errPastWindow
-	}
-	return nil
 }
 
 func utcPtr(t *time.Time) *time.Time {
@@ -709,71 +581,67 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 
 // move moves the series s from the occurrence a todo with the given status
 // reports (see reported) to the dates of in (FR-10, FR-17), so that the
-// moved occurrence is the current one and the others stay as they were:
+// moved occurrence is the current one and the later ones move with it:
 //   - the dates become DTSTART and DUE in the form the series is written in;
 //   - the override of the moved occurrence and KDE's pending occurrence go;
-//   - with fixed days, a COUNT first becomes the UNTIL of the series' last
-//     occurrence as read: the new DTSTART can lie off the rule's days, where
-//     readers disagree on what a COUNT counts;
-//   - a COUNT that stays, of an interval rule (whose DTSTART stays on it)
-//     or in a zone Lucid cannot resolve (see zoneKnown), no longer counts
-//     the occurrences before the moved one, which the new DTSTART leaves
-//     behind;
+//   - the rule follows as seriesShift says, from the moved occurrence's rule
+//     date to the new DTSTART, both on the wall clock of the series' zone: a
+//     weekly rule's days rotate with the move, any other rule on fixed days
+//     moves only within its day, and only to another time of day where it
+//     fixes none. A move it cannot follow is errMoveFixedDays;
+//   - a COUNT no longer counts the occurrences before the moved one, which
+//     the new DTSTART, on the rule, leaves behind;
 //   - an UNTIL from the moved occurrence on and the references to later
-//     occurrences (their overrides with their dates, EXDATEs) move along,
-//     see refShift and movedRule;
+//     occurrences (their overrides with their dates, EXDATEs) move by the
+//     whole distance, see refShift and movedRule, as the rule's later
+//     instances move; earlier ones, such as other apps' completions, stay;
 //   - a move that adds or removes the time moves them by its change in
 //     date only (see refShift), then rewrites UNTIL and the references in
 //     the new value type, see retypeRefs;
 //   - an UNTIL before the new DTSTART moves onto it.
 //
-// An occurrence off the rule (see todoOcc.offGrid) is no instance of it: it
-// moves on its own, its override taking the dates of in, and the series
-// stays as it is (A-10). A rule Lucid cannot evaluate (of a completed
-// series) only gets its dates moved, and its references converted. It
-// fails, without changing anything, when in has no date or the rule cannot
-// be walked up to the moved occurrence.
+// The series' last open occurrence moves to any date instead, on fixed days
+// too: seriesShift does not decide, and the rule ends there, see endAt, so
+// that it stays the only one. The references, to done occurrences only,
+// stay where they are. A current occurrence off the rule (see
+// todoOcc.offGrid) moves the series as moveOffRule says. A rule Lucid cannot
+// evaluate (of a completed series) only gets its dates moved, and its
+// references converted. It fails, without changing anything, when in has no
+// date, the rule cannot follow the move, or the rule cannot be walked up to
+// the moved occurrence.
 //
 // Where the moved occurrence lies in the series (the instances before it)
 // is decided on the series as read, s: once shifted, the rewritten rule no
 // longer says where the moved occurrence lay.
 func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput) error {
-	start := cmp.Or(in.Start, in.Due)
+	start, form := seriesStart(s.master, in, true)
 	if start == nil {
 		return errRuleNeedsDate
 	}
 	c := s.master
-	occ := s.reported(status)
-	if occ.offGrid {
-		// Without a start, DTSTART = DUE, as for the series.
-		moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
-		if moved.start == nil {
-			moved.start, moved.startAllDay = in.Due, in.DueAllDay
-		}
-		s.setEntryDates(occ.override, moved)
-		return nil
-	}
-	rid := occ.rid
 	p := c.Props.Get(ical.PropRecurrenceRule)
 	evaluable := p != nil && s.err == nil && s.rrule != ""
+	occ, last := s.reported(status)
+	last = last && evaluable
+	if occ.offGrid && evaluable && !last {
+		return s.moveOffRule(cal, occ, in)
+	}
+	rid := occ.rid
+	to, _ := parseDateProp(seriesDateProp(nil, ical.PropDateTimeStart, *start, form)) // as writeSeriesDates writes it
 	rule, before := s.rrule, 0
-	if evaluable {
+	if evaluable && !last {
+		var ok bool
+		if rule, ok = seriesShift(rule, rid.In(s.anchor.loc()), to.t.In(to.loc())); !ok {
+			return errMoveFixedDays
+		}
 		var err error
 		if before, err = s.instancesBefore(rid); err != nil {
 			return errRuleUnsupported
 		}
-		if s.fixedDays && hasRulePart(rule, "COUNT") && s.zoneKnown() {
-			last, err := s.ruleEnd()
-			if err != nil {
-				return errRuleUnsupported
-			}
-			rule = countToUntil(rule, last, s.startForm)
-		}
 	}
 	writeSeriesDates(cal, c, in, true)
-	to, _ := parseDateProp(c.Props.Get(ical.PropDateTimeStart)) // as just written
 	var shift func(dateValue) time.Time
-	if evaluable {
+	if evaluable && !last {
 		shift = s.refShift(rid, to)
 		p.Value = movedRule(rule, before, rid, shift)
 	}
@@ -783,11 +651,61 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 		s.shiftLaterRefs(cal, rid, shift)
 	}
 	s.retypeRefs(cal, to)
-	// UNTIL never ends before the moved series starts, compared in the
-	// value type and zone the series now has.
-	if loc := to.loc(); evaluable && untilBefore(p.Value, *start, loc) {
-		p.Value = untilAt(p.Value, *start, loc)
+	// The last occurrence ends the rule; else UNTIL never ends before the
+	// moved series starts, compared in the value type and zone the series
+	// now has.
+	switch loc := to.loc(); {
+	case last:
+		p.Value = endAt(p.Value, to)
+	case evaluable && untilBefore(p.Value, to.t, loc):
+		p.Value = untilAt(p.Value, to.t, loc)
 	}
+	return nil
+}
+
+// moveOffRule moves the series s, whose current occurrence occ lies off the
+// rule (see todoOcc.offGrid), by the distance occ moves from where it is
+// shown (its start, else its due) to the dates of in, as an event series
+// moves from an exception (FR-17). occ is none of the rule's instances, so
+// the rule cannot be anchored on it, or a rule on fixed days would start
+// off its days and an interval rule would recur from another day. It moves
+// from its last instance before occ, prev, instead, as move moves it from
+// an occurrence: its days as seriesShift says, its COUNT and UNTIL, and the
+// later references by the whole distance, occ's override among them, which
+// then takes the dates of in. prev is done, excluded or cancelled, as occ is
+// current: an EXDATE keeps it out at its new place, and what records it
+// stays where it is. A move that keeps occ's start (else due), such as a
+// change of its due alone, changes occ's dates only. It fails, without
+// changing anything, as move does.
+func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) error {
+	// Without a start, DTSTART = DUE, as for the series.
+	moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
+	if moved.start == nil {
+		moved.start, moved.startAllDay = in.Due, in.DueAllDay
+	}
+	loc := s.anchor.loc()
+	shift := s.shiftBetween(
+		dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)},
+		dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)})
+	if shift != nil {
+		// occ lies after the anchor, an instance of the rule: prev exists.
+		prev, n, err := s.lastBefore(occ.rid)
+		if err != nil || n == 0 {
+			return errRuleUnsupported
+		}
+		to := shift(dateValue{t: prev.In(loc), allDay: s.anchor.allDay})
+		rule, ok := seriesShift(s.rrule, prev.In(loc), to.In(loc))
+		if !ok {
+			return errMoveFixedDays
+		}
+		c := s.master
+		s.anchorAt(cal, to)
+		c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, n-1, prev, shift) // n-1 before prev
+		c.Props.Del(propKDEPending)
+		s.shiftLaterRefs(cal, prev, shift)
+		c.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, to, s.startForm))
+	}
+	s.setEntryDates(occ.override, moved)
 	return nil
 }
 
@@ -795,53 +713,61 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 // t, counted as walk and ruleEnd count them (see ruleIterator): an anchor
 // off the rule counts too, as it does against a COUNT (FR-17).
 func (s *todoSeries) instancesBefore(t time.Time) (int, error) {
+	_, n, err := s.lastBefore(t)
+	return n, err
+}
+
+// lastBefore returns the last occurrence of the rule of s before t, zero if
+// none, and the number of occurrences before t, prev included, counted as
+// instancesBefore counts them (FR-17).
+func (s *todoSeries) lastBefore(t time.Time) (prev time.Time, before int, err error) {
 	next, err := s.ruleIterator()
 	if err != nil {
-		return 0, err
+		return time.Time{}, 0, err
 	}
 	for n := range maxRRuleIterations {
 		i, ok := next()
 		if !ok || !i.Before(t) {
-			return n, nil
+			return prev, n, nil
 		}
+		prev = i
 	}
-	return 0, errRRuleCap
+	return time.Time{}, 0, errRRuleCap
 }
 
 // refShift returns how moving the occurrence rid to to, the new anchor as
-// written, moves the references to later occurrences, or nil when they stay
-// (FR-17):
-//   - for an interval rule by the move, in the wall clock of the series, as
-//     the rule's instances move, by whole periods too: a monthly or yearly
-//     rule by its calendar months and then days, whose instances keep their
-//     day of the month, any other by its calendar days;
-//   - for fixed days by its change in time of day only, as the instances
-//     stay on the rule's days.
-//
-// A move that changes the value type (a time added or removed) moves them
-// by its change in date only, from rid's date in the series' zone to to's in
-// its own, and with fixed days not at all. They keep their value type, which
-// retypeRefs changes afterwards, setting the time of day.
+// written, moves the references to later occurrences, see shiftBetween
+// (FR-17).
 func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) time.Time {
-	retyped := to.allDay != s.anchor.allDay
-	if retyped && s.fixedDays {
-		return nil
-	}
-	// Without a change of the value type, to's zone is the series' own:
-	// writeSeriesDates keeps the form.
+	return s.shiftBetween(dateValue{t: rid.In(s.anchor.loc()), allDay: s.anchor.allDay}, to)
+}
+
+// shiftBetween returns how a move from `from` to `to` moves the values of
+// the series s, or nil when they stay (FR-17): in the wall clock of the
+// series, as the rule's instances move, by whole periods too. A monthly or
+// yearly interval rule moves them by its calendar months and then days,
+// whose instances keep their day of the month; any other rule by its
+// calendar days, where a weekly rule on fixed days rotates its days with
+// them (see seriesShift, which lets any other rule on fixed days move within
+// the day only).
+//
+// A move between a date and a time moves them by its change in date only,
+// from from's date to to's, each in its own zone: the series' for a time of
+// the series. They keep their value type, which retypeRefs changes
+// afterwards, setting the time of day.
+func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) time.Time {
 	loc := s.anchor.loc()
-	from, dest := rid.In(loc), to.t.In(to.loc())
+	start, dest := from.t.In(from.loc()), to.t.In(to.loc())
 	var months, days, secs int
-	switch freq := strings.ToUpper(rulePart(s.rrule, "FREQ")); {
-	case s.fixedDays:
-	case freq == "MONTHLY" || freq == "YEARLY":
-		months = (dest.Year()-from.Year())*12 + int(dest.Month()) - int(from.Month())
-		days = dest.Day() - from.Day()
+	switch strings.ToUpper(rulePart(s.rrule, "FREQ")) {
+	case "MONTHLY", "YEARLY":
+		months = (dest.Year()-start.Year())*12 + int(dest.Month()) - int(start.Month())
+		days = dest.Day() - start.Day()
 	default:
-		days = int(civilDate(dest).Sub(civilDate(from)) / (24 * time.Hour))
+		days = int(civilDate(dest).Sub(civilDate(start)) / (24 * time.Hour))
 	}
-	if !retyped {
-		secs = secondOfDay(dest) - secondOfDay(from)
+	if from.allDay == to.allDay {
+		secs = secondOfDay(dest) - secondOfDay(start)
 	}
 	if months == 0 && days == 0 && secs == 0 {
 		return nil
@@ -1154,24 +1080,55 @@ func countToUntil(rrule string, last time.Time, f dateForm) string {
 	if !hasRulePart(rrule, "COUNT") {
 		return rrule
 	}
-	var until string
+	return withEnd(rrule, "UNTIL="+untilValue(last, f))
+}
+
+// endAt returns rrule ending at to, the new DTSTART as written of a series
+// moved at its last occurrence, so that the moved occurrence stays its only
+// one and no instance of the rule comes back on its old day (FR-17): an
+// UNTIL at to in the form DTSTART's needs (see untilValue) takes the place
+// of its COUNT and UNTIL. In a zone Lucid cannot resolve (see knownZone)
+// that UNTIL would be off by the zone's offset, so the rule ends with
+// COUNT=1 instead, DTSTART being its first occurrence.
+func endAt(rrule string, to dateValue) string {
+	if !knownZone(to) {
+		return withEnd(rrule, "COUNT=1")
+	}
+	return withEnd(rrule, "UNTIL="+untilValue(to.t, to.form()))
+}
+
+// untilValue returns the UNTIL value at t for a DTSTART written in the form
+// f, as RFC 5545 3.3.10 wants it: a DATE for an all-day series, floating for
+// a floating one, UTC otherwise (FR-17).
+func untilValue(t time.Time, f dateForm) string {
 	switch {
 	case f.allDay:
-		until = "UNTIL=" + last.UTC().Format(icalDate)
+		return t.UTC().Format(icalDate)
 	case f.floating:
-		until = "UNTIL=" + last.UTC().Format(icalDateTime)
+		return t.UTC().Format(icalDateTime)
 	default:
-		until = "UNTIL=" + last.UTC().Format(icalDateTimeUTC)
+		return t.UTC().Format(icalDateTimeUTC)
 	}
+}
+
+// withEnd returns rrule with its COUNT and UNTIL replaced by end, a rule
+// part such as "COUNT=1", written where the first of them was, else last
+// (FR-17).
+func withEnd(rrule, end string) string {
 	var out []string
+	placed := false
 	for part := range strings.SplitSeq(rrule, ";") {
 		switch rulePartKey(part) {
-		case "COUNT":
-			out = append(out, until)
-		case "UNTIL":
+		case "COUNT", "UNTIL":
+			if !placed {
+				out, placed = append(out, end), true
+			}
 		default:
 			out = append(out, part)
 		}
+	}
+	if !placed {
+		out = append(out, end)
 	}
 	return strings.Join(out, ";")
 }
@@ -1265,13 +1222,21 @@ func seriesForm(f dateForm, allDay, keep bool, tz string) dateForm {
 // form of the dates c has, else only a TZID stays and timed dates take the
 // zone of in (see seriesForm).
 func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool) {
-	startForm, dueForm, ok := storedForms(c)
-	keep = keep && ok
-	start, startAllDay := in.Start, in.StartAllDay
-	if start == nil {
-		start, startAllDay = in.Due, in.DueAllDay
-	}
-	setSeriesDate(cal, c, ical.PropDateTimeStart, start, seriesForm(startForm, startAllDay, keep, in.Timezone))
-	setSeriesDate(cal, c, ical.PropDue, in.Due, seriesForm(dueForm, in.DueAllDay, keep, in.Timezone))
+	start, startForm := seriesStart(c, in, keep)
+	_, dueForm, ok := storedForms(c)
+	setSeriesDate(cal, c, ical.PropDateTimeStart, start, startForm)
+	setSeriesDate(cal, c, ical.PropDue, in.Due, seriesForm(dueForm, in.DueAllDay, keep && ok, in.Timezone))
 	c.Props.Del(ical.PropDuration)
+}
+
+// seriesStart returns the DTSTART writeSeriesDates writes for in on the
+// recurring todo c, in's start, else its due, nil if neither, and the form
+// it writes it in (FR-17).
+func seriesStart(c *ical.Component, in domain.TodoInput, keep bool) (*time.Time, dateForm) {
+	startForm, _, ok := storedForms(c)
+	start, allDay := in.Start, in.StartAllDay
+	if start == nil {
+		start, allDay = in.Due, in.DueAllDay
+	}
+	return start, seriesForm(startForm, allDay, keep && ok, in.Timezone)
 }
