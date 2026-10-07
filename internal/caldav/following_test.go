@@ -583,16 +583,16 @@ func TestSplitAtRDate(t *testing.T) {
 			nStart: "DTSTART:20250326T090000Z", nEnd: "DTEND:20250326T100000Z", shownAsBefore: true,
 		},
 		{
-			// A single event has no events to override: N is R as the series
-			// has it, and UpdateFollowing writes the event as edited into it.
+			// A single event has no events to override: N is R as shown, the
+			// override laid over the master (see TestSplitOffSingleEvent).
 			name:   "the last RDATE, overridden",
 			master: []string{"RRULE:FREQ=WEEKLY;COUNT=3", "RDATE:20250326T090000Z"},
 			overrides: [][]string{{
-				"RECURRENCE-ID:20250326T090000Z", "DTSTART:20250326T100000Z", "DTEND:20250326T110000Z",
+				"RECURRENCE-ID:20250326T090000Z", "DTSTART:20250326T140000Z", "DTEND:20250326T150000Z",
 				"SUMMARY:At R",
 			}},
 			sRule: "FREQ=WEEKLY;COUNT=3", nRule: "",
-			nStart: "DTSTART:20250326T090000Z", nEnd: "DTEND:20250326T100000Z",
+			nStart: "DTSTART:20250326T140000Z", nEnd: "DTEND:20250326T150000Z", shownAsBefore: true,
 		},
 	}
 	for _, tt := range tests {
@@ -867,5 +867,120 @@ func TestWithCount(t *testing.T) {
 		if got := withCount(tt.rule, 3); got != tt.want {
 			t.Errorf("withCount(%q, 3) = %q; want %q", tt.rule, got, tt.want)
 		}
+	}
+}
+
+// TestSplitOffSingleEvent splits a series at its last RDATE, R, with no
+// event of its rule after it, where N is a single event (FR-17). An override
+// at R is the event as shown, so it is laid over N's master: its properties
+// and components replace the master's of the same name, its DTSTART, DTEND
+// and DURATION together where ListEvents shows the override at its own
+// times, while N keeps its own UID, SEQUENCE and timestamps. A single event
+// shows no overrides, so an override off the rule after R goes.
+func TestSplitOffSingleEvent(t *testing.T) {
+	t.Parallel()
+	master := []string{
+		"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY;COUNT=3",
+		"RDATE:20250326T090000Z", "CATEGORIES:Work",
+		"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Series alarm", "TRIGGER:-PT15M", "END:VALARM",
+	}
+	atR := []string{
+		"RECURRENCE-ID:20250326T090000Z", "SEQUENCE:5", "CREATED:20240101T000000Z",
+		"LAST-MODIFIED:20250201T000000Z", "DTSTART:20250326T140000Z", "DURATION:PT30M", "SUMMARY:At R",
+		"CATEGORIES:Home",
+		"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:R alarm", "TRIGGER:-PT5M", "END:VALARM",
+	}
+	orphan := []string{
+		"RECURRENCE-ID:20250402T090000Z", "DTSTART:20250402T090000Z", "DTEND:20250402T100000Z",
+		"SUMMARY:Orphan",
+	}
+	own := map[string]string{
+		ical.PropUID:           "UID:" + splitUID,
+		ical.PropSequence:      "SEQUENCE:0",
+		ical.PropDateTimeStamp: "DTSTAMP:20250601T120000Z",
+		ical.PropCreated:       "CREATED:20250601T120000Z",
+		ical.PropLastModified:  "LAST-MODIFIED:20250601T120000Z",
+	}
+	with := func(extra map[string]string) map[string]string {
+		out := maps.Clone(own)
+		maps.Copy(out, extra)
+		return out
+	}
+	tests := []struct {
+		name      string
+		overrides [][]string
+		want      map[string]string // N's master; a property not named is absent
+		alarms    []string          // the descriptions of N's master's VALARMs
+		shown     []string          // nil: as the series showed them
+	}{
+		{
+			name:      "full override",
+			overrides: [][]string{atR},
+			want: with(map[string]string{
+				ical.PropDateTimeStart: "DTSTART:20250326T140000Z", ical.PropDuration: "DURATION:PT30M",
+				ical.PropSummary: "SUMMARY:At R", ical.PropCategories: "CATEGORIES:Home",
+			}),
+			alarms: []string{"R alarm"},
+		},
+		{
+			// Without a DTSTART, ListEvents shows the override at the
+			// series' times, which N keeps.
+			name:      "override without times",
+			overrides: [][]string{{"RECURRENCE-ID:20250326T090000Z", "SUMMARY:At R", "DTEND:20250326T110000Z"}},
+			want: with(map[string]string{
+				ical.PropDateTimeStart: "DTSTART:20250326T090000Z", ical.PropDateTimeEnd: "DTEND:20250326T100000Z",
+				ical.PropSummary: "SUMMARY:At R", ical.PropCategories: "CATEGORIES:Work",
+			}),
+			alarms: []string{"Series alarm"},
+		},
+		{
+			name:      "an override off the rule after R",
+			overrides: [][]string{atR, orphan},
+			want: with(map[string]string{
+				ical.PropDateTimeStart: "DTSTART:20250326T140000Z", ical.PropDuration: "DURATION:PT30M",
+				ical.PropSummary: "SUMMARY:At R", ical.PropCategories: "CATEGORIES:Home",
+			}),
+			alarms: []string{"R alarm"},
+			shown: []string{
+				"2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Series", "2025-03-10T09:00:00Z/2025-03-10T10:00:00Z Series",
+				"2025-03-17T09:00:00Z/2025-03-17T10:00:00Z Series", "2025-03-26T14:00:00Z/2025-03-26T14:30:00Z At R",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw := seriesICS(master, tt.overrides...)
+			s, n := splitAt(t, mustParse(t, raw), date(2025, 3, 26, 9, 0))
+			nm := mainComponent(n, ical.CompEvent)
+			for _, name := range []string{
+				ical.PropUID, ical.PropSequence, ical.PropDateTimeStamp, ical.PropCreated, ical.PropLastModified,
+				ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration,
+				ical.PropSummary, ical.PropCategories, ical.PropRecurrenceRule, ical.PropRecurrenceDates,
+			} {
+				if got := propLine(nm, name); got != tt.want[name] {
+					t.Errorf("N's %s = %q; want %q", name, got, tt.want[name])
+				}
+			}
+			var alarms []string
+			for _, c := range nm.Children {
+				alarms = append(alarms, c.Name+" "+text(c.Props, ical.PropDescription))
+			}
+			var want []string
+			for _, a := range tt.alarms {
+				want = append(want, ical.CompAlarm+" "+a)
+			}
+			if !slices.Equal(alarms, want) {
+				t.Errorf("N's master has %q; want %q", alarms, want)
+			}
+			if got := overridesIn(n); got != nil {
+				t.Errorf("N's overrides = %q; want none", got)
+			}
+			if tt.shown == nil {
+				checkShownAsBefore(t, raw, s, n)
+			} else if got := shownIn(t, s, n); !slices.Equal(got, tt.shown) {
+				t.Errorf("S and N show %q; want %q", got, tt.shown)
+			}
+		})
 	}
 }

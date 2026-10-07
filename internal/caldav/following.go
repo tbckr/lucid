@@ -7,6 +7,7 @@ package caldav
 
 import (
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -122,7 +123,7 @@ func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, 
 //     property left without values goes too (see keepDates).
 //   - The overrides whose RECURRENCE-ID is rid or later go, by that instant,
 //     whatever their own DTSTART: an occurrence before rid moved past it
-//     stays (Review Focus 3).
+//     stays.
 //
 // It fails, changing nothing, for a rule Lucid cannot walk to rid (see
 // placeInRule) and for a rid at or before DTSTART (errSplitAtStart). It
@@ -175,10 +176,15 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 // An rid that is no occurrence of the rule, an RDATE (or an override off
 // the rule), stays one of N, which starts at the rule's first occurrence
 // after it. If there is none, N has no RRULE and starts at rid, keeping the
-// later RDATEs; without those it is a single event at rid, so the EXDATEs
-// and the overrides go too (see removeRecurrence).
+// later RDATEs. Without those it is a single event, the event rid as shown:
+// an override at rid is laid over the master (see layOver), and the EXDATEs
+// and the other overrides go, as a single event shows none (see
+// removeRecurrence); so does an override off the rule after rid.
 //
-// It fails for a rule Lucid cannot walk to rid (see placeInRule).
+// It fails for a rule Lucid cannot walk to rid (see placeInRule). It does
+// not check that the series can end before rid: callers call splitOff
+// first, on the series as read, and then endBefore, which changes cal in
+// place and refuses an rid at or before DTSTART (errSplitAtStart).
 func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time, uid string, now time.Time) (*ical.Calendar, error) {
 	before, start, err := placeInRule(master, tm, rid)
 	if err != nil {
@@ -212,14 +218,12 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	keepDates(nm, ical.PropExceptionDates, later)
 	keepDates(nm, ical.PropRecurrenceDates, later)
 
-	if start.IsZero() {
+	offRule := start.IsZero()
+	if offRule {
 		start = rid
 		nm.Props.Del(ical.PropRecurrenceRule)
 		// DTSTART is rid now.
 		keepDates(nm, ical.PropRecurrenceDates, func(t time.Time) bool { return t.After(rid) })
-		if !isRecurring(nm) {
-			removeRecurrence(n, nm)
-		}
 	}
 	if p := nm.Props.Get(ical.PropRecurrenceRule); p != nil {
 		p.Value = lowerCount(rruleString(nm), before)
@@ -229,8 +233,49 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 		end := tm.dur.addTo(start)
 		shiftDatePropBy(p, func(dateValue) time.Time { return end })
 	}
+	if offRule && !isRecurring(nm) {
+		if ov := findOverride(n, nm, rid); ov != nil {
+			layOver(nm, ov)
+		}
+		removeRecurrence(n, nm)
+	}
 	masterFirst(n, nm)
 	return n, nil
+}
+
+// layOver writes the override ov over master, which becomes the single
+// event ov shows (FR-17): ov's properties and components replace master's
+// of the same name, as ListEvents shows ov's own title and the series'
+// where it has none. DTSTART, DTEND and DURATION go together: ov's where
+// ListEvents shows ov at its own times, which takes a DTSTART, else
+// master's. master keeps its UID, SEQUENCE, DTSTAMP, CREATED and
+// LAST-MODIFIED, and gets no RECURRENCE-ID.
+func layOver(master, ov *ical.Component) {
+	_, err := parseTiming(ov)
+	ownTimes := err == nil
+	if ownTimes {
+		for _, name := range []string{ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration} {
+			master.Props.Del(name)
+		}
+	}
+	for name, props := range ov.Props {
+		switch name {
+		case ical.PropUID, ical.PropRecurrenceID, ical.PropSequence, ical.PropDateTimeStamp, ical.PropCreated,
+			ical.PropLastModified:
+			continue
+		case ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration:
+			if !ownTimes {
+				continue
+			}
+		}
+		master.Props[name] = props
+	}
+	replaced := map[string]bool{}
+	for _, c := range ov.Children {
+		replaced[c.Name] = true
+	}
+	master.Children = slices.DeleteFunc(master.Children, func(c *ical.Component) bool { return replaced[c.Name] })
+	master.Children = append(master.Children, ov.Children...)
 }
 
 // copyComponent returns a copy of c and its components that shares nothing
