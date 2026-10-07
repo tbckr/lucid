@@ -29,7 +29,7 @@ This is the contract between the frontend (`web/`) and the Go backend
   |--------|-----------------------|------------------------------------------------|
   | 400    | `invalid_input`       | Validation failed (`message` says why)         |
   | 400    | `forbidden_target`    | Server URL points to a blocked (internal) net  |
-  | 400    | `series_move_unsupported` | "All events" can't move the series like this; only the event can |
+  | 400    | `series_move_unsupported` | "All events" or "this and following events" can't move the series like this; only the event can |
   | 400    | `series_split_unsupported` | The series can't be split at an occurrence ("this and following events"); only the event or all events can change |
   | 401    | `unauthenticated`     | No/expired session → show login                |
   | 401    | `invalid_credentials` | Login rejected by the CalDAV server            |
@@ -258,6 +258,63 @@ Once the resource is deleted: `204` without a body, an `ETag` header or an
 `etag` the server does not tell answers `204` as well. Errors: as for the
 `PUT` above.
 
+### `PUT /api/v1/events/{eventId}/following/{recurrenceId}` (header `If-Match`)
+
+Changes this occurrence and the following ones as a series of their own
+("This and following events"). The series ends before `recurrenceId`, as the
+`DELETE` below ends it, and a new series, a resource with a UID of its own,
+goes on from it: a copy of the series with `DTSTART` at `recurrenceId`, the
+rule's `COUNT` lowered by the events before it (an `UNTIL` stays), and the
+`EXDATE` and `RDATE` values and the overrides from `recurrenceId` on, by the
+`RECURRENCE-ID` of an override, never by its own date. Neither refers to the
+other. `recurrenceId` is the occurrence's `recurrenceId`: RFC 3339, UTC, whole
+seconds, URL-encoded.
+
+Body: `EventInput`; `instanceStart` is ignored, `recurrenceId` is the edited
+occurrence. The change applies to the new series as
+`PUT /api/v1/events/{eventId}` with `instanceStart` applies it to all events
+(distance, edited exception, fields, time zone, see there). `rrule` is the
+new series' rule: sent as the series has it (`rrule` of the event in the
+list), the new series keeps the rule it inherits, with its lowered `COUNT`,
+so a move does not count as a new rule; `""` makes the new series a single
+event at `start`; any other rule is the new series' own.
+
+At the series' first event (`first` in the event list above) there is nothing
+before it, so this is "all events": it is `PUT /api/v1/events/{eventId}` with
+`instanceStart` set to `recurrenceId`, and no new series is created.
+
+Response `200`:
+
+```json
+{ "event": { "id": "...", "etag": "\"abc\"", "first": true, "...": "..." },
+  "etag": "\"def\"", "undoToken": "..." }
+```
+
+- `event`: the edited occurrence in the new series, as the event list shows
+  it, with the new series' `id` and `etag`. At the series' first event it is
+  the occurrence in the series itself (`event.id` is `eventId`).
+- `etag`: the series' new ETag, to send with its next write, `""` when the
+  CalDAV server tells none. At the first event it is `event.etag`.
+- `undoToken`: as for `PUT /events/{id}` above. The undo writes the series
+  back as it was and deletes the new series, unless that changed since (see
+  the undo below). There is none when the series' new `etag` is unknown.
+
+The new series is written first, with `If-None-Match: *`, and then the
+series, with `If-Match`. If the series' write fails, the new series is
+deleted again where that write is known not to have landed: the server
+refused it, or the series still has its ETag. Where its ETag changed, the
+split counts as saved: `200` with `etag` `""` and no `undoToken`. Where the
+ETag cannot be read, the new series stays and the error is answered.
+
+Errors, with nothing written:
+- `400 invalid_input`: as for `PUT …/occurrences/…` above, and an invalid
+  `rrule`.
+- `400 series_split_unsupported`: as for the `DELETE` below.
+- `400 series_move_unsupported`: the new series can't follow the move, as for
+  `PUT /events/{id}` above.
+- `404 not_found`, `409 conflict`, `428 precondition_required`: as for the
+  `DELETE` below.
+
 ### `DELETE /api/v1/events/{eventId}/following/{recurrenceId}` (header `If-Match`)
 
 Ends the series before this occurrence ("This and following events"): the
@@ -313,9 +370,12 @@ it. Response `200`:
 { "etag": "\"ghi\"" }
 ```
 
-`etag` is the resource's new ETag, for the client's next write of the series;
-`copyKept: true` would report a resource the change had created that could
-not be removed; no change of an event creates one, so it is not set today.
+`etag` is the resource's new ETag, for the client's next write of the series.
+The undo of "this and following events" (`PUT …/following/…`) also deletes
+the new series, with `If-Match` of the ETag the split gave it; if another app
+changed it since, or its ETag was unknown, it stays, and the answer has
+`copyKept: true`. No other change of an event creates a resource, so it is
+omitted there.
 
 | Status | code             | Meaning                                                                      |
 |--------|------------------|-------------------------------------------------------------------------------|

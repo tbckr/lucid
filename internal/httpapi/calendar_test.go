@@ -27,6 +27,7 @@ func TestUnauthenticated(t *testing.T) {
 		{method: http.MethodPost, path: "/api/v1/calendars/c1/events", body: eventBody},
 		{method: http.MethodPut, path: "/api/v1/events/e1", body: eventBody, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: "/api/v1/events/e1", headers: map[string]string{"If-Match": `"1"`}},
+		{method: http.MethodPut, path: followingPath, body: eventBody, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodDelete, path: followingPath, headers: map[string]string{"If-Match": `"1"`}},
 		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"},
 		{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"},
@@ -409,6 +410,99 @@ func TestDeleteFollowingWrites(t *testing.T) {
 			}
 			if tt.call != "" && (h.svc.gotID != "e1" || h.svc.gotETag != `"etag-1"` || !h.svc.gotRID.Equal(wantRID)) {
 				t.Errorf("got id %q etag %q rid %v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingWrites checks the route that changes an event and the
+// following ones as a series of their own: the path values and the body reach
+// the service, and its errors answer as for the other event writes, a series
+// it cannot split as 400 series_split_unsupported and a move the new series
+// cannot follow as 400 series_move_unsupported (FR-17).
+func TestUpdateFollowingWrites(t *testing.T) {
+	t.Parallel()
+	const path = followingPath
+	ifMatch := map[string]string{"If-Match": `"etag-1"`}
+	wantRID := time.Date(2025, 3, 10, 8, 0, 0, 0, time.UTC)
+	put := func(path, body string, headers map[string]string) req {
+		return req{method: http.MethodPut, path: path, body: body, headers: headers}
+	}
+	tests := []struct {
+		name   string
+		rq     req
+		svcErr error
+		status int
+		code   string
+		call   string
+	}{
+		{"put", put(path, eventBody, ifMatch), nil, http.StatusOK, "", "UpdateFollowing"},
+		{"put encoded", put("/api/v1/events/e1/following/2025-03-10T08%3A00%3A00Z", eventBody, ifMatch), nil, http.StatusOK, "", "UpdateFollowing"},
+		{"put split unsupported", put(path, eventBody, ifMatch), fmt.Errorf("%w: has attendees", domain.ErrSeriesSplitUnsupported), http.StatusBadRequest, codeSeriesSplitUnsupported, "UpdateFollowing"},
+		{"put move unsupported", put(path, eventBody, ifMatch), fmt.Errorf("%w: fixed days", domain.ErrSeriesMoveUnsupported), http.StatusBadRequest, codeSeriesMoveUnsupported, "UpdateFollowing"},
+		{"put not found", put(path, eventBody, ifMatch), domain.ErrNotFound, http.StatusNotFound, codeNotFound, "UpdateFollowing"},
+		{"put conflict", put(path, eventBody, ifMatch), domain.ErrConflict, http.StatusConflict, codeConflict, "UpdateFollowing"},
+		{"put bad id", put("/api/v1/events/e1/following/x", eventBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put fractional seconds", put("/api/v1/events/e1/following/2025-03-10T08:00:00.5Z", eventBody, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put invalid", put(path, `{"title":"x"}`, ifMatch), nil, http.StatusBadRequest, codeInvalidInput, ""},
+		{"put no if-match", put(path, eventBody, nil), nil, http.StatusPreconditionRequired, codePreconditionRequired, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, nil)
+			c := h.login(t)
+			h.svc.err = tt.svcErr
+			w := h.do(t, c, tt.rq)
+			if tt.code != "" {
+				expectError(t, w, tt.status, tt.code)
+			} else {
+				decode(t, w, tt.status, nil)
+			}
+			if got := strings.Join(h.svc.calls, ","); got != tt.call {
+				t.Fatalf("calls = %q, want %q", got, tt.call)
+			}
+			if tt.call != "" && (h.svc.gotID != "e1" || h.svc.gotETag != `"etag-1"` || !h.svc.gotRID.Equal(wantRID) ||
+				h.svc.gotEvent.Title != "Lunch") {
+				t.Errorf("got id %q etag %q rid %v input %+v", h.svc.gotID, h.svc.gotETag, h.svc.gotRID, h.svc.gotEvent)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingAnswer checks what changing an event and the following
+// ones answers: 200 with the edited event in the new series, the old series'
+// new ETag for the client's next write of it (NFR-26), and the undo token if
+// there is a snapshot (FR-17).
+func TestUpdateFollowingAnswer(t *testing.T) {
+	t.Parallel()
+	type answer struct {
+		Event     domain.Event `json:"event"`
+		ETag      string       `json:"etag"`
+		UndoToken *string      `json:"undoToken"`
+	}
+	for _, withSnapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("snapshot %v", withSnapshot), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, withUndo)
+			c := h.login(t)
+			if withSnapshot {
+				h.svc.updateFollowingSnapshot = eventSnapshot("e1")
+			}
+			var got answer
+			decode(t, h.do(t, c, req{method: http.MethodPut, path: followingPath, body: eventBody, headers: eventIfMatch}),
+				http.StatusOK, &got)
+			if got.Event.ID != "n1" || got.Event.Title != "Lunch" || got.Event.ETag != `"n"` || got.ETag != `"4"` {
+				t.Errorf("answer = %+v; want the event in the new series n1 and the old series' etag", got)
+			}
+			if withSnapshot && (got.UndoToken == nil || len(*got.UndoToken) != 43) {
+				t.Errorf("undoToken = %v; want a token of length 43", got.UndoToken)
+			}
+			if !withSnapshot && got.UndoToken != nil {
+				t.Errorf("undoToken = %q; want none without a snapshot", *got.UndoToken)
+			}
+			if got.Event.UndoToken != "" {
+				t.Errorf("event's undoToken = %q; want it on the answer only", got.Event.UndoToken)
 			}
 		})
 	}
@@ -869,6 +963,11 @@ var eventChanges = []eventChange{
 			f.followingETag = `"5"`
 		},
 		req{method: http.MethodDelete, path: followingPath, headers: eventIfMatch},
+	},
+	{
+		"change this and following events",
+		func(f *fakeService, snap *domain.Snapshot) { f.updateFollowingSnapshot = snap },
+		req{method: http.MethodPut, path: followingPath, headers: eventIfMatch, body: eventBody},
 	},
 }
 

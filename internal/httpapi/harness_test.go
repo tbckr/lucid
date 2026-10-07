@@ -64,10 +64,12 @@ type fakeService struct {
 	// occurrenceETag and followingETag are the ETags DeleteOccurrence and
 	// DeleteFollowing return: "" as for a deleted resource.
 	occurrenceETag, followingETag string
-	// updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot and
-	// deleteFollowingSnapshot are returned as the snapshot of UpdateEvent,
-	// UpdateOccurrence, DeleteOccurrence and DeleteFollowing, if set.
-	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot, deleteFollowingSnapshot *domain.Snapshot
+	// updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot,
+	// deleteFollowingSnapshot and updateFollowingSnapshot are returned as the
+	// snapshot of UpdateEvent, UpdateOccurrence, DeleteOccurrence,
+	// DeleteFollowing and UpdateFollowing, if set.
+	updateEventSnapshot, occurrenceSnapshot, deleteOccurrenceSnapshot, deleteFollowingSnapshot,
+	updateFollowingSnapshot *domain.Snapshot
 
 	calls    []string
 	gotCal   string
@@ -178,6 +180,19 @@ func (f *fakeService) DeleteFollowing(_ context.Context, id, etag string, rid ti
 		return "", nil, err
 	}
 	return next, snap, nil
+}
+
+// UpdateFollowing answers with the edited event in a new series "n1" and the
+// old series' new ETag "4".
+func (f *fakeService) UpdateFollowing(_ context.Context, id, etag string, rid time.Time, in domain.EventInput) (domain.FollowingResult, *domain.Snapshot, error) {
+	f.mu.Lock()
+	f.gotID, f.gotETag, f.gotRID, f.gotEvent = id, etag, rid, in
+	snap := f.updateFollowingSnapshot
+	f.mu.Unlock()
+	if err := f.record("UpdateFollowing"); err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	return domain.FollowingResult{Event: domain.Event{ID: "n1", Title: in.Title, ETag: `"n"`}, ETag: `"4"`}, snap, nil
 }
 
 func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, error) {

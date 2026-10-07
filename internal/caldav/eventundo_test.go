@@ -3,7 +3,9 @@ package caldav
 import (
 	"context"
 	"net/http"
+	"path"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +121,17 @@ func eventActions() []eventAction {
 			_, snap, err := e.svc.DeleteFollowing(ctx, ev.ID, ev.ETag, *ev.RecurrenceID)
 			return domain.Event{}, snap, err
 		}},
+		{"this and following moved", func(ctx context.Context, e *env, ev domain.Event) (domain.Event, *domain.Snapshot, error) {
+			// An hour later, but a day for an all-day event.
+			d := time.Hour
+			if ev.AllDay {
+				d = 24 * time.Hour
+			}
+			in := eventInputOf(ev)
+			in.Start, in.End = ev.Start.Add(d), ev.End.Add(d)
+			res, snap, err := e.svc.UpdateFollowing(ctx, ev.ID, ev.ETag, *ev.RecurrenceID, in)
+			return res.Event, snap, err
+		}},
 	}
 }
 
@@ -165,6 +178,85 @@ func TestRestoreEvent(t *testing.T) {
 			})
 		}
 	}
+}
+
+// TestRestoreSplit undoes "this and following events" (FR-17; spec section
+// 6): the series S is written back as the split read it, and the new series
+// N goes, as it has the ETag the split gave it. If another app changed N
+// since, N stays, and the restore reports it (Review Focus 4): deleting it
+// would lose that change.
+func TestRestoreSplit(t *testing.T) {
+	t.Parallel()
+	// split moves the fourth event of the weekly standup and the following
+	// ones an hour later, and returns S's ID, S as seeded, N's path and the
+	// snapshot.
+	split := func(t *testing.T, e *env) (id, seeded, nPath string, snap domain.Snapshot) {
+		t.Helper()
+		id = e.put(t, "work", "series.ics", weeklyStandup()...)
+		seeded = storedObject(t, e, id)
+		ev := shownEvent(t, e, "work", date(2025, 3, 24, 8, 0))
+		in := eventInputOf(ev)
+		in.Start, in.End = ev.Start.Add(time.Hour), ev.End.Add(time.Hour)
+		res, s, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, *ev.RecurrenceID, in)
+		mustNoErr(t, err)
+		if s == nil {
+			t.Fatal("UpdateFollowing returned no snapshot")
+		}
+		return id, seeded, mustDecode(t, e, res.Event.ID), *s
+	}
+
+	t.Run("the new series as the split left it", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, seeded, _, snap := split(t, e)
+		e.mock.ResetCounts()
+
+		res, err := e.svc.RestoreEvent(t.Context(), snap)
+		mustNoErr(t, err)
+		if res.ETag == "" || res.CopyKept {
+			t.Errorf("restore = %+v; want the new ETag and the new series gone", res)
+		}
+		if got := storedObject(t, e, id); got != seeded {
+			t.Errorf("restored series:\n%s\nwant the seeded one:\n%s", got, seeded)
+		}
+		if paths := e.mock.ObjectPaths(e.paths["work"]); !slices.Equal(paths, []string{mustDecode(t, e, id)}) {
+			t.Errorf("objects = %v; want the series only", paths)
+		}
+		if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 2 {
+			t.Errorf("%d writes; want S's PUT and N's DELETE", n)
+		}
+		// The cache shows the undo at once: R is back at its time.
+		if shown := listedEvents(t, e); len(shown) != 9 ||
+			!slices.Contains(shown, "2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup") {
+			t.Errorf("shown after the undo = %q; want the nine events of the series as seeded", shown)
+		}
+	})
+
+	t.Run("the new series changed since", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id, seeded, nPath, snap := split(t, e)
+		n, ok := e.mock.Object(nPath)
+		if !ok {
+			t.Fatalf("no new series at %s", nPath)
+		}
+		changed := strings.Replace(n, "SUMMARY:Standup", "SUMMARY:Retro", 1)
+		if _, err := e.mock.PutObject(e.paths["work"], path.Base(nPath), changed); err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		res, err := e.svc.RestoreEvent(t.Context(), snap)
+		mustNoErr(t, err)
+		if res.ETag == "" || !res.CopyKept {
+			t.Errorf("restore = %+v; want the new ETag and the new series kept", res)
+		}
+		if got := storedObject(t, e, id); got != seeded {
+			t.Errorf("restored series:\n%s\nwant the seeded one:\n%s", got, seeded)
+		}
+		if got, _ := e.mock.Object(nPath); got != changed {
+			t.Errorf("new series:\n%s\nwant it as the other app changed it:\n%s", got, changed)
+		}
+	})
 }
 
 // An undo writes nothing over a later change of the series, and only

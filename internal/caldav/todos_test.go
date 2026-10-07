@@ -1656,7 +1656,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 			copyPath = paths[1]
 		}
 		checkStored(t, "log", logs.String(),
-			[]string{"could not remove the entry of a completed repeat", "path=" + copyPath, "error="}, []string{"Series"})
+			[]string{"could not remove an entry a change created", "path=" + copyPath, "error="}, []string{"Series"})
 	})
 
 	// The client may go away between the two PUTs (a closed tab): the copy
@@ -4200,7 +4200,7 @@ func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
 		copyPath = paths[1]
 	}
 	checkStored(t, "log", logs.String(),
-		[]string{"keeping the entry of a completed repeat whose etag is unknown", "path=" + copyPath}, []string{"Series"})
+		[]string{"keeping an entry a change created whose etag is unknown", "path=" + copyPath}, []string{"Series"})
 }
 
 // answerCreateWithFailingETagReadback makes mock strip the ETag from any PUT

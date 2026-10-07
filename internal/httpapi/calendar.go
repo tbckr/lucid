@@ -66,13 +66,14 @@ func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) 
 	return id, true
 }
 
-// pathTime returns the path parameter name parsed as RFC 3339. The API only
-// ever emits whole seconds, so a value with fractional seconds is rejected
-// too, even though time.Parse would otherwise accept it.
-func pathTime(w http.ResponseWriter, r *http.Request, name string) (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339, r.PathValue(name))
+// pathRecurrenceID returns the path parameter recurrenceId, an occurrence's
+// recurrence ID, parsed as RFC 3339. The API only ever emits whole seconds,
+// so a value with fractional seconds is rejected too, even though time.Parse
+// would otherwise accept it.
+func pathRecurrenceID(w http.ResponseWriter, r *http.Request) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339, r.PathValue("recurrenceId"))
 	if err != nil || t.Nanosecond() != 0 {
-		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "invalid "+name)
+		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, "invalid recurrenceId")
 		return time.Time{}, false
 	}
 	return t, true
@@ -235,7 +236,7 @@ func (s *Server) handleUpdateOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rid, ok := pathTime(w, r, "recurrenceId")
+	rid, ok := pathRecurrenceID(w, r)
 	if !ok {
 		return
 	}
@@ -279,7 +280,7 @@ func (s *Server) handleDeleteOccurrence(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	rid, ok := pathTime(w, r, "recurrenceId")
+	rid, ok := pathRecurrenceID(w, r)
 	if !ok {
 		return
 	}
@@ -303,6 +304,50 @@ func (s *Server) answerDeleted(w http.ResponseWriter, r *http.Request, next stri
 	middleware.WriteJSON(w, http.StatusOK, deletedOccurrence{ETag: next, UndoToken: s.storeUndo(r, snap)})
 }
 
+// followingResponse answers a change of an occurrence and the following ones
+// (FR-17): the edited occurrence in the new series, the old series' new ETag,
+// "" when the server told none, for the client's next write of it (NFR-26),
+// and the token that undoes the split.
+type followingResponse struct {
+	Event     domain.Event `json:"event"`
+	ETag      string       `json:"etag"`
+	UndoToken string       `json:"undoToken,omitempty"`
+}
+
+// handleUpdateFollowing changes an occurrence of a recurring series and the
+// following ones as a series of their own ("this and following events"): the
+// series ends before it, and a new one goes on from it with the change
+// (FR-17). At the series' first event that is all events. instanceStart in
+// the body is ignored: recurrenceId is the occurrence.
+func (s *Server) handleUpdateFollowing(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "eventId")
+	if !ok {
+		return
+	}
+	svc, ok := s.service(w, r)
+	if !ok {
+		return
+	}
+	etag, ok := ifMatch(w, r)
+	if !ok {
+		return
+	}
+	rid, ok := pathRecurrenceID(w, r)
+	if !ok {
+		return
+	}
+	var in domain.EventInput
+	if !s.decodeValid(w, r, &in) {
+		return
+	}
+	res, snap, err := svc.UpdateFollowing(r.Context(), id, etag, rid, in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	middleware.WriteJSON(w, http.StatusOK, followingResponse{Event: res.Event, ETag: res.ETag, UndoToken: s.storeUndo(r, snap)})
+}
+
 // handleDeleteFollowing ends a recurring series before one of its occurrences
 // ("this and following events"): the rule ends just before it, and the later
 // exceptions and overrides go. It answers as handleDeleteOccurrence does:
@@ -322,7 +367,7 @@ func (s *Server) handleDeleteFollowing(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rid, ok := pathTime(w, r, "recurrenceId")
+	rid, ok := pathRecurrenceID(w, r)
 	if !ok {
 		return
 	}

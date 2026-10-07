@@ -7,6 +7,7 @@ package caldav
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -444,4 +445,111 @@ func (s *service) DeleteFollowing(ctx context.Context, eventID, etag string, rec
 	err = s.deleteObject(ctx, fs.objPath, etag)
 	s.invalidate(fs.calPath)
 	return "", nil, err
+}
+
+// UpdateFollowing implements domain.CalendarService: it changes the event of
+// the recurring series at recurrenceID and the following ones as a series of
+// their own (FR-17; spec section 4 "Teilen"). The series S ends before it, as
+// DeleteFollowing ends it, and the new series N, a resource with a UID of its
+// own, goes on from it (see splitOff), changed by in as UpdateEvent changes
+// all events of a series from that event (see applySeriesEdit). in's rule is
+// N's rule, except that S's rule as read, sent unchanged, keeps the one N
+// inherits, with its COUNT lowered: an edit that keeps the rule does not take
+// N's lower COUNT for a new one. A rule removed makes N the single event
+// entered. At the series' first event, which is all of them, it is
+// UpdateEvent with the event as instanceStart.
+//
+// Nothing is written for a change it refuses: a series loadFollowing
+// refuses, a split it cannot compute (ErrSeriesSplitUnsupported) and a move
+// N cannot follow (ErrSeriesMoveUnsupported). Then it writes N, with
+// If-None-Match, and S, with If-Match etag; if S's write fails, N goes again
+// where S's is known not to have landed, see settleWrite (A-01). It returns
+// the edited event in N, as ListEvents shows it, S's new ETag, so the
+// client's next write of S does not conflict with this one (NFR-26), and the
+// snapshot RestoreEvent undoes the split with: S as read, and N as the
+// resource the change created, which the undo deletes.
+func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time, in domain.EventInput) (domain.FollowingResult, *domain.Snapshot, error) {
+	if s.err != nil {
+		return domain.FollowingResult{}, nil, s.err
+	}
+	rr, err := normalizeEventInput(in)
+	if err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	fs, err := s.loadFollowing(ctx, eventID, etag, recurrenceID)
+	if err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	rid := fs.rid
+	in.InstanceStart = &rid
+	if fs.first {
+		ev, snap, err := s.UpdateEvent(ctx, eventID, etag, in)
+		if err != nil {
+			return domain.FollowingResult{}, nil, err
+		}
+		return domain.FollowingResult{Event: ev, ETag: ev.ETag}, snap, nil
+	}
+
+	cal, master, tm := fs.cal, fs.master, fs.tm
+	// Judged on S as read, before endBefore ends its rule.
+	ruleKept := rr == rruleString(master)
+	now := s.p.now().UTC()
+	uid := newUID()
+	// splitOff reads the series as it is; endBefore changes it in place.
+	n, err := splitOff(cal, master, tm, rid, uid, now)
+	if err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	if err := endBefore(cal, master, tm, rid); err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	nm := mainComponent(n, master.Name)
+	switch {
+	case ruleKept:
+		// "" once N has no RRULE left: then N moves by its RDATEs, or, a
+		// single event, takes the dates entered.
+		rr = rruleString(nm)
+	case rr == "":
+		// Also N's RDATEs go, which applySeriesEdit would move along.
+		removeRecurrence(n, nm)
+	}
+	instance, moved, err := applySeriesEdit(n, nm, in, rr, now)
+	if err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	// N is new: its SEQUENCE stays 0, while S's goes up.
+	bumpChangeProps(master, now)
+	masterFirst(cal, master)
+
+	calendarID := encodeID(fs.calPath)
+	created := calObject{path: objectPath(fs.calPath, uid+".ics"), cal: n}
+	// Located before anything is written, from N as it is written; the ETag
+	// follows from the write.
+	ev, err := editedEvent(created, calendarID, nm, instance, moved, in)
+	if err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+
+	defer s.invalidate(fs.calPath)
+	if created.etag, err = s.putObject(ctx, created.path, n, "", true); err != nil {
+		return domain.FollowingResult{}, nil, err
+	}
+	next, err := s.putObject(ctx, fs.objPath, cal, etag, false)
+	if err != nil {
+		// nil: saved all the same, with S's new ETag unknown.
+		err = s.settleWrite(ctx, fs.objPath, etag, err)
+	}
+	if err != nil {
+		if !errors.Is(err, errWriteUnverified) {
+			s.removeEntries(ctx, fs.calPath, []calObject{created})
+		}
+		return domain.FollowingResult{}, nil, err
+	}
+	ev.ETag = created.etag
+	// The series has no attendees, or loadFollowing had refused it.
+	snap := s.eventSnapshot(eventID, fs.raw, next, false)
+	if snap != nil {
+		snap.Created = []domain.CreatedRef{{ID: encodeID(created.path), ETag: created.etag}}
+	}
+	return domain.FollowingResult{Event: ev, ETag: next}, snap, nil
 }

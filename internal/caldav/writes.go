@@ -20,12 +20,13 @@ import (
 const copyRemovalTimeout = 10 * time.Second
 
 // removeEntries deletes the entries in calPath a change created before its
-// master was not written, a completed copy or the entries of other apps'
-// completions, unless they changed since (FR-17). One whose ETag is unknown
-// stays, logged: a delete could not tell it from one another client changed
-// since, so it never weakens its precondition to If-Match: *. It runs on
-// after the request is cancelled: a closed tab would leave the entries next
-// to the occurrences they were made from.
+// master was not written, a completed copy, the entries of other apps'
+// completions or the new series of a split, unless they changed since
+// (FR-17). One whose ETag is unknown stays, logged: a delete could not tell
+// it from one another client changed since, so it never weakens its
+// precondition to If-Match: *. It runs on after the request is cancelled: a
+// closed tab would leave the entries next to the occurrences they were made
+// from.
 func (s *service) removeEntries(ctx context.Context, calPath string, entries []calObject) {
 	if len(entries) == 0 {
 		return
@@ -34,13 +35,13 @@ func (s *service) removeEntries(ctx context.Context, calPath string, entries []c
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
 	defer cancel()
 	for _, o := range entries {
-		// Paths and errors only, never task content.
+		// Paths and errors only, never calendar content.
 		if o.etag == "" {
-			s.p.log.WarnContext(ctx, "keeping the entry of a completed repeat whose etag is unknown", "path", o.path)
+			s.p.log.WarnContext(ctx, "keeping an entry a change created whose etag is unknown", "path", o.path)
 			continue
 		}
 		if err := s.deleteObject(dctx, o.path, o.etag); err != nil {
-			s.p.log.WarnContext(ctx, "could not remove the entry of a completed repeat", "path", o.path, "error", err)
+			s.p.log.WarnContext(ctx, "could not remove an entry a change created", "path", o.path, "error", err)
 		}
 	}
 }
@@ -53,7 +54,8 @@ var errWriteUnverified = errors.New("the write could not be verified")
 
 // settleWrite settles the failure err of the PUT of objPath with If-Match
 // etag, the master write of a change that wrote other objects before it, a
-// completed copy or the entries of other apps' completions (FR-17, A-01):
+// completed copy, the entries of other apps' completions or the new series
+// of a split (FR-17, A-01):
 //   - the server refused it (see writeRefused): the write was not applied,
 //     and err is returned, so that the caller removes what it wrote before;
 //   - an ambiguous failure, and the master's ETag is no longer etag: the
@@ -82,7 +84,7 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 	current, verr := s.objectETag(vctx, objPath)
 	switch {
 	case verr != nil || current == "":
-		// Paths and errors only, never task content.
+		// Paths and errors only, never calendar content.
 		s.p.log.WarnContext(ctx, "keeping what a change wrote before a write that could not be verified",
 			"path", objPath, "error", err, "verification_error", verr)
 		return fmt.Errorf("%w: %w", err, errWriteUnverified)

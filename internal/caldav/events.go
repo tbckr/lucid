@@ -522,17 +522,34 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if wasRecurring {
 		snap = s.eventSnapshot(eventID, raw, o.etag, attendees)
 	}
-	calendarID := encodeID(calPath)
-	if moved != nil {
-		if ev, ok := shownAt(o, calendarID, *moved, in.Start, in.End); ok {
-			return ev, snap, nil
-		}
-	}
-	ev, err := eventAt(o, calendarID, master, instance)
+	ev, err := editedEvent(o, encodeID(calPath), master, instance, moved, in)
 	if err != nil {
 		return domain.Event{}, nil, err
 	}
 	return ev, snap, nil
+}
+
+// editedEvent returns the event that a change through applySeriesEdit left
+// in o, whose master is master, for the answer (FR-17): after a move of the
+// series, the event ListEvents shows at moved, else eventAt's event at
+// instance, with First and HasAttendees as expandObject sets them, so the
+// answer tells the client what the list does.
+func editedEvent(o calObject, calendarID string, master *ical.Component, instance, moved *time.Time, in domain.EventInput) (domain.Event, error) {
+	if moved != nil {
+		if ev, ok := shownAt(o, calendarID, *moved, in.Start, in.End); ok {
+			return ev, nil
+		}
+	}
+	ev, err := eventAt(o, calendarID, master, instance)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	// As expandObject sets them; eventAt parsed the timing already.
+	ev.HasAttendees = hasAttendees(o.cal)
+	if tm, err := parseTiming(master); err == nil && ev.RecurrenceID != nil {
+		ev.First = ev.RecurrenceID.Equal(firstOccurrence(o.cal, master, tm))
+	}
+	return ev, nil
 }
 
 // applySeriesEdit applies the change in, whose normalized rule is rr, to the

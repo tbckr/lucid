@@ -28,9 +28,10 @@ var (
 	// ErrUnsupportedComponent means the target calendar does not accept the
 	// component type (e.g. an event in a calendar that only holds todos).
 	ErrUnsupportedComponent = errors.New("component type not supported by calendar")
-	// ErrSeriesMoveUnsupported means "all events" of a recurring series cannot
-	// move as asked without some of them landing elsewhere than the edited
-	// one, so only that event can move (FR-17).
+	// ErrSeriesMoveUnsupported means "all events" of a recurring series, or
+	// "this and following events" as a series of their own, cannot move as
+	// asked without some of them landing elsewhere than the edited one, so
+	// only that event can move (FR-17).
 	ErrSeriesMoveUnsupported = errors.New("series move unsupported")
 	// ErrSeriesSplitUnsupported means a recurring series cannot be split at
 	// an occurrence ("this and following events"): it has an ORGANIZER or an
@@ -438,6 +439,14 @@ type EventRestore struct {
 	CopyKept bool   `json:"copyKept,omitempty"` // a resource the change created stays, as it changed since
 }
 
+// FollowingResult answers a change of an occurrence of a series and the
+// following ones ("this and following events", FR-17), see
+// CalendarService.UpdateFollowing.
+type FollowingResult struct {
+	Event Event  // the edited occurrence, in the new series
+	ETag  string // the old series' new ETag, "" when the server tells none
+}
+
 // CalendarService is bound to one account. Implementations must be safe for
 // concurrent use.
 type CalendarService interface {
@@ -491,6 +500,25 @@ type CalendarService interface {
 	// occurrence ListEvents shows nowhere (an EXDATE, a cancelled override) is
 	// ErrNotFound. etag must match (If-Match), otherwise ErrConflict (FR-17).
 	DeleteFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time) (string, *Snapshot, error)
+	// UpdateFollowing changes the occurrence at recurrenceID of the recurring
+	// series eventID and the following ones ("this and following events") as
+	// a series of their own: the series ends before it, as DeleteFollowing
+	// ends it, and a new series, a resource with a UID of its own, goes on
+	// from it, changed as UpdateEvent changes all events of a series from
+	// recurrenceID. in.InstanceStart is ignored, and in.RRule is the new
+	// series' rule, except that the series' own rule as stored, sent
+	// unchanged, keeps the rule the new series inherits, with its COUNT
+	// lowered by the events before it. At the
+	// series' first event that is all events: UpdateEvent with in.InstanceStart
+	// at recurrenceID. It returns the edited occurrence, in the new series
+	// (in the series itself at its first event), the series' new ETag, "" when
+	// the server tells none, and the snapshot RestoreEvent undoes the change
+	// with, which also deletes the new series: nil when the series' new ETag
+	// is unknown. A series DeleteFollowing refuses is refused alike, and a
+	// move the new series cannot follow is ErrSeriesMoveUnsupported; nothing
+	// is written then. etag must match (If-Match), otherwise ErrConflict
+	// (FR-17).
+	UpdateFollowing(ctx context.Context, eventID, etag string, recurrenceID time.Time, in EventInput) (FollowingResult, *Snapshot, error)
 
 	ListTodos(ctx context.Context, calendarID string) ([]Todo, error)
 	// ListTodoOccurrences returns the occurrences of open, readable recurring

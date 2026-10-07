@@ -3,6 +3,7 @@ package caldav
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1170,6 +1171,60 @@ func TestUpdateSeriesRDateOnly(t *testing.T) {
 		{title: "Lecture", start: date(2025, 3, 5, 11, 0), end: date(2025, 3, 5, 12, 0), rid: ptr(date(2025, 3, 5, 11, 0))},
 		{title: "Lecture", start: date(2025, 3, 10, 11, 0), end: date(2025, 3, 10, 12, 0), rid: ptr(date(2025, 3, 10, 11, 0))},
 	})
+}
+
+// TestUpdateEventAnswerTellsFirstAndAttendees checks that the answer of a
+// save tells First and HasAttendees as ListEvents does, also where it is no
+// event ListEvents showed at a moved recurrence ID: a new rule, or a single
+// event (FR-17). "This and following events" at a series' first event answers
+// with it.
+func TestUpdateEventAnswerTellsFirstAndAttendees(t *testing.T) {
+	t.Parallel()
+	organizer := "ORGANIZER:mailto:boss@example.com"
+	weekly := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Standup", organizer,
+		"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY", "END:VEVENT",
+	}
+	tests := []struct {
+		name      string
+		lines     []string
+		rid       *time.Time // nil: the single event
+		rule      string
+		wantFirst bool
+	}{
+		{"a new rule from the first event", weekly, ptr(date(2025, 3, 3, 9, 0)), "FREQ=WEEKLY;COUNT=5", true},
+		{"a new rule from the second event", weekly, ptr(date(2025, 3, 10, 9, 0)), "FREQ=WEEKLY;COUNT=5", false},
+		{"a moved series", weekly, ptr(date(2025, 3, 3, 9, 0)), "FREQ=WEEKLY", true},
+		{"a single event", []string{
+			"BEGIN:VEVENT", "UID:once", "DTSTAMP:20240101T000000Z", "SUMMARY:Once", "ATTENDEE:mailto:me@example.com",
+			"DTSTART:20250310T090000Z", "DTEND:20250310T100000Z", "END:VEVENT",
+		}, nil, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "event.ics", tt.lines...)
+			evs := listed(t, e, "work", date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+			i := slices.IndexFunc(evs, func(ev domain.Event) bool {
+				return tt.rid == nil || (ev.RecurrenceID != nil && ev.RecurrenceID.Equal(*tt.rid))
+			})
+			if i < 0 {
+				t.Fatalf("no event at %v in %+v", tt.rid, evs)
+			}
+			in := eventInputOf(evs[i])
+			in.Title, in.RRule = "Changed", tt.rule
+			if tt.rule == "FREQ=WEEKLY" {
+				in.Start, in.End = in.Start.Add(time.Hour), in.End.Add(time.Hour)
+			}
+			got, _, err := e.svc.UpdateEvent(t.Context(), id, evs[i].ETag, in)
+			mustNoErr(t, err)
+			if got.First != tt.wantFirst || !got.HasAttendees {
+				t.Errorf("answer first %v, attendees %v; want first %v, attendees true", got.First, got.HasAttendees,
+					tt.wantFirst)
+			}
+		})
+	}
 }
 
 // listed returns the events of slug's calendar listed for [from, to).

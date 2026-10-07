@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1372,6 +1373,688 @@ func TestDeleteFollowingWriteFails(t *testing.T) {
 			}
 			if shown := listedEvents(t, e); len(shown) < 5 {
 				t.Errorf("shown = %q; want the whole series", shown)
+			}
+		})
+	}
+}
+
+// followingChange is what UpdateFollowing answered for a series seeded with
+// updateFollowing, and what the server saw of it.
+type followingChange struct {
+	id, seeded string
+	res        domain.FollowingResult
+	snap       *domain.Snapshot
+	err        error
+	puts       int
+	deletes    int
+}
+
+// updateFollowing seeds lines as a resource in the calendar "work", shows its
+// events once, as a client does, and then changes the event at rid and the
+// following ones with UpdateFollowing: with what the client sends to save
+// that event as it is shown, changed by edit.
+func updateFollowing(t *testing.T, e *env, lines []string, rid time.Time, edit func(in *domain.EventInput)) followingChange {
+	t.Helper()
+	id := e.put(t, "work", "series.ics", lines...)
+	ev := shownEvent(t, e, "work", rid)
+	seeded := storedObject(t, e, id)
+	in := eventInputOf(ev)
+	edit(&in)
+	e.mock.ResetCounts()
+	res, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+	return followingChange{
+		id: id, seeded: seeded, res: res, snap: snap, err: err,
+		puts: e.mock.Count(http.MethodPut), deletes: e.mock.Count(http.MethodDelete),
+	}
+}
+
+// laterBy returns an edit that moves the event by d.
+func laterBy(d time.Duration) func(in *domain.EventInput) {
+	return func(in *domain.EventInput) { in.Start, in.End = in.Start.Add(d), in.End.Add(d) }
+}
+
+// newSeriesIn returns the ID and the stored data of the one resource in the
+// calendar "work" besides the series id: the new series of a split.
+func newSeriesIn(t *testing.T, e *env, id string) (nid, data string) {
+	t.Helper()
+	sPath := mustDecode(t, e, id)
+	var others []string
+	for _, p := range e.mock.ObjectPaths(e.paths["work"]) {
+		if p != sPath {
+			others = append(others, p)
+		}
+	}
+	if len(others) != 1 {
+		t.Fatalf("resources besides the series = %q; want the new series", others)
+	}
+	data, _ = e.mock.Object(others[0])
+	return encodeID(others[0]), data
+}
+
+// shownAs writes ev as listedEvents does: its start, end and title.
+func shownAs(ev domain.Event) string {
+	return ev.Start.Format(time.RFC3339) + "/" + ev.End.Format(time.RFC3339) + " " + ev.Title
+}
+
+// TestUpdateFollowing checks that UpdateFollowing changes an event and the
+// following ones as a series of their own, N, a resource with a UID of its
+// own, while the series S ends before it: two PUTs, N's first, the change
+// applied to N as "all events" applies it to a series, and S's RRULE ending
+// just before R, its SEQUENCE up (FR-17; spec section 4 "Teilen"). The
+// answer is the edited event in N, as ListEvents shows it, with S's new
+// ETag, and the snapshot that undoes the split: S as read, and N as the
+// resource the change created.
+func TestUpdateFollowing(t *testing.T) {
+	t.Parallel()
+	// S as stored after each split: the three events before March 24.
+	const sRule = "RRULE:FREQ=WEEKLY;UNTIL=20250324T075959Z"
+	before := []string{
+		"2025-03-03T08:00:00Z/2025-03-03T09:00:00Z Standup", "2025-03-10T08:00:00Z/2025-03-10T09:00:00Z Standup",
+		"2025-03-17T08:00:00Z/2025-03-17T09:00:00Z Standup",
+	}
+	// weekly returns N's events in March and April at start to end, in UTC
+	// before the change to summer time on March 30, and an hour earlier
+	// after it, as a series on Berlin's wall clock shows them.
+	weekly := func(start, end string) []string {
+		var out []string
+		for _, day := range []string{"03-24", "03-31", "04-07", "04-14", "04-21", "04-28"} {
+			s, e := start, end
+			if day != "03-24" {
+				s, e = earlier(t, s), earlier(t, e)
+			}
+			out = append(out, "2025-"+day+"T"+s+"Z/2025-"+day+"T"+e+"Z Standup")
+		}
+		return out
+	}
+	tests := []struct {
+		name      string
+		edit      func(in *domain.EventInput)
+		nHas      []string // in N as stored
+		nLacks    []string
+		shownN    []string // N's events in March and April
+		answer    string   // the edited event, as shownAs writes it
+		recurring bool     // whether the answer is an event of a series, N's first
+	}{
+		{
+			// instanceStart is ignored, also one that names another event.
+			name: "moved an hour later",
+			edit: func(in *domain.EventInput) {
+				laterBy(time.Hour)(in)
+				in.InstanceStart = ptr(date(2025, 3, 10, 8, 0))
+			},
+			nHas: []string{
+				"DTSTART;TZID=Europe/Berlin:20250324T100000", "DTEND;TZID=Europe/Berlin:20250324T110000",
+				"RRULE:FREQ=WEEKLY\r\n",
+			},
+			shownN:    weekly("09:00:00", "10:00:00"),
+			answer:    "2025-03-24T09:00:00Z/2025-03-24T10:00:00Z Standup",
+			recurring: true,
+		},
+		{
+			name: "resized",
+			edit: func(in *domain.EventInput) {
+				in.End = in.End.Add(30 * time.Minute)
+				in.InstanceStart = nil
+			},
+			nHas: []string{
+				"DTSTART;TZID=Europe/Berlin:20250324T090000", "DTEND;TZID=Europe/Berlin:20250324T103000",
+				"RRULE:FREQ=WEEKLY\r\n",
+			},
+			shownN:    weekly("08:00:00", "09:30:00"),
+			answer:    "2025-03-24T08:00:00Z/2025-03-24T09:30:00Z Standup",
+			recurring: true,
+		},
+		{
+			// The rule entered is N's; S keeps its own.
+			name:   "a new rule",
+			edit:   func(in *domain.EventInput) { in.RRule = "FREQ=DAILY;COUNT=3" },
+			nHas:   []string{"DTSTART;TZID=Europe/Berlin:20250324T090000", "RRULE:FREQ=DAILY;COUNT=3"},
+			nLacks: []string{"FREQ=WEEKLY"},
+			shownN: []string{
+				"2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup", "2025-03-25T08:00:00Z/2025-03-25T09:00:00Z Standup",
+				"2025-03-26T08:00:00Z/2025-03-26T09:00:00Z Standup",
+			},
+			answer:    "2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup",
+			recurring: true,
+		},
+		{
+			// N is the single event R, stored in UTC like every single
+			// event (FR-18).
+			name:   "no rule",
+			edit:   func(in *domain.EventInput) { in.RRule = "" },
+			nHas:   []string{"DTSTART:20250324T080000Z", "DTEND:20250324T090000Z"},
+			nLacks: []string{"RRULE:FREQ=WEEKLY", "RDATE", "EXDATE"},
+			shownN: []string{"2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup"},
+			answer: "2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup",
+		},
+		{
+			name: "made all-day",
+			edit: func(in *domain.EventInput) {
+				in.AllDay, in.Start, in.End = true, date(2025, 3, 24, 0, 0), date(2025, 3, 25, 0, 0)
+			},
+			nHas: []string{"DTSTART;VALUE=DATE:20250324", "DTEND;VALUE=DATE:20250325", "RRULE:FREQ=WEEKLY\r\n"},
+			shownN: []string{
+				"2025-03-24T00:00:00Z/2025-03-25T00:00:00Z Standup", "2025-03-31T00:00:00Z/2025-04-01T00:00:00Z Standup",
+				"2025-04-07T00:00:00Z/2025-04-08T00:00:00Z Standup", "2025-04-14T00:00:00Z/2025-04-15T00:00:00Z Standup",
+				"2025-04-21T00:00:00Z/2025-04-22T00:00:00Z Standup", "2025-04-28T00:00:00Z/2025-04-29T00:00:00Z Standup",
+			},
+			answer:    "2025-03-24T00:00:00Z/2025-03-25T00:00:00Z Standup",
+			recurring: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, weeklyStandup(), date(2025, 3, 24, 8, 0), tt.edit)
+			mustNoErr(t, got.err)
+			if got.puts != 2 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want two PUTs", got.puts, got.deletes)
+			}
+
+			stored := mustParse(t, storedObject(t, e, got.id))
+			master := mainComponent(stored, ical.CompEvent)
+			if line := propLine(master, ical.PropRecurrenceRule); line != sRule {
+				t.Errorf("S's RRULE = %q; want %q", line, sRule)
+			}
+			if line := propLine(master, ical.PropSequence); line != "SEQUENCE:1" {
+				t.Errorf("S's %s; want SEQUENCE:1", line)
+			}
+			nid, nData := newSeriesIn(t, e, got.id)
+			checkStored(t, "N", nData, append([]string{"SUMMARY:Standup", "SEQUENCE:0"}, tt.nHas...),
+				append([]string{"UID:series"}, tt.nLacks...))
+			if shown, want := listedEvents(t, e), slices.Concat(before, tt.shownN); !slices.Equal(shown, want) {
+				t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+			}
+
+			ev := got.res.Event
+			if shownAs(ev) != tt.answer || ev.ID != nid || ev.CalendarID != e.cals["work"] {
+				t.Errorf("answer = %s in %s; want %s in the new series %s", shownAs(ev), ev.ID, tt.answer, nid)
+			}
+			if want := storedETag(t, e, mustDecode(t, e, nid)); ev.ETag != want {
+				t.Errorf("answer's ETag = %q; want N's %q", ev.ETag, want)
+			}
+			if ev.Recurring != tt.recurring || ev.First != tt.recurring || (ev.RecurrenceID != nil) != tt.recurring {
+				t.Errorf("answer recurring %v, first %v, recurrence ID %v; want all %v",
+					ev.Recurring, ev.First, ev.RecurrenceID, tt.recurring)
+			}
+			if tt.recurring && !ev.RecurrenceID.Equal(ev.Start) {
+				t.Errorf("answer's recurrence ID = %v; want its start, N's first event", ev.RecurrenceID)
+			}
+			if want := storedETag(t, e, mustDecode(t, e, got.id)); got.res.ETag != want {
+				t.Errorf("ETag = %q; want S's stored %q", got.res.ETag, want)
+			}
+
+			if got.snap == nil {
+				t.Fatal("no snapshot")
+			}
+			wantCreated := []domain.CreatedRef{{ID: nid, ETag: ev.ETag}}
+			if got.snap.Kind != domain.SnapshotEvent || got.snap.ID != got.id || got.snap.ETag != got.res.ETag ||
+				string(got.snap.Data) != got.seeded || !slices.Equal(got.snap.Created, wantCreated) {
+				t.Errorf("snapshot = %+v; want S as seeded, with its ETag after the change, and N created", got.snap)
+			}
+		})
+	}
+}
+
+// earlier returns the clock time hh:mm:ss an hour earlier.
+func earlier(t *testing.T, clock string) string {
+	t.Helper()
+	c, err := time.Parse(time.TimeOnly, clock)
+	mustNoErr(t, err)
+	return c.Add(-time.Hour).Format(time.TimeOnly)
+}
+
+// TestUpdateFollowingFirst checks that "this and following events" at the
+// first event the series shows is "all events": UpdateEvent with the event
+// as instanceStart, one PUT and no new resource, also where the client's view
+// is stale and an earlier event is gone (FR-17). The answer is the event in
+// the series, ListEvents' first, with the series' new ETag, and the
+// snapshot UpdateEvent hands out, which creates nothing.
+func TestUpdateFollowingFirst(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		lines  []string
+		rid    time.Time
+		edit   func(in *domain.EventInput)
+		has    []string // in the series as stored
+		answer string
+	}{
+		{
+			name: "DTSTART", lines: weeklyStandup(), rid: date(2025, 3, 3, 8, 0), edit: laterBy(time.Hour),
+			has:    []string{"DTSTART;TZID=Europe/Berlin:20250303T100000", "RRULE:FREQ=WEEKLY\r\n"},
+			answer: "2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Standup",
+		},
+		{
+			name:  "DTSTART excluded",
+			lines: weeklyStandup("EXDATE;TZID=Europe/Berlin:20250303T090000"), rid: date(2025, 3, 10, 8, 0),
+			edit:   laterBy(time.Hour),
+			has:    []string{"DTSTART;TZID=Europe/Berlin:20250303T100000", "EXDATE;TZID=Europe/Berlin:20250303T100000"},
+			answer: "2025-03-10T09:00:00Z/2025-03-10T10:00:00Z Standup",
+		},
+		{
+			name: "a new rule", lines: weeklyStandup(), rid: date(2025, 3, 3, 8, 0),
+			edit:   func(in *domain.EventInput) { in.RRule = "FREQ=DAILY;COUNT=3" },
+			has:    []string{"DTSTART;TZID=Europe/Berlin:20250303T090000", "RRULE:FREQ=DAILY;COUNT=3"},
+			answer: "2025-03-03T08:00:00Z/2025-03-03T09:00:00Z Standup",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, tt.lines, tt.rid, tt.edit)
+			mustNoErr(t, got.err)
+			if got.puts != 1 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want one PUT", got.puts, got.deletes)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			checkStored(t, "series", storedObject(t, e, got.id), tt.has, []string{"UNTIL"})
+
+			ev := got.res.Event
+			if shownAs(ev) != tt.answer || ev.ID != got.id || !ev.First {
+				t.Errorf("answer = %s in %s, first %v; want %s in the series %s, its first", shownAs(ev), ev.ID, ev.First,
+					tt.answer, got.id)
+			}
+			if want := storedETag(t, e, mustDecode(t, e, got.id)); got.res.ETag != want || ev.ETag != want {
+				t.Errorf("ETag = %q, answer's %q; want the series' stored %q for both", got.res.ETag, ev.ETag, want)
+			}
+			if got.snap == nil || got.snap.ID != got.id || string(got.snap.Data) != got.seeded || got.snap.Created != nil {
+				t.Errorf("snapshot = %+v; want the series as seeded, nothing created", got.snap)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingRefuses checks that UpdateFollowing writes nothing for a
+// change it refuses (FR-17): a move N cannot follow as a series, which "all
+// events" refuses the same way (ErrSeriesMoveUnsupported), a series it cannot
+// split (ErrSeriesSplitUnsupported, see loadFollowing), an event the series
+// does not show (ErrNotFound) and input it cannot save (ErrInvalidInput).
+func TestUpdateFollowingRefuses(t *testing.T) {
+	t.Parallel()
+	monthly := func(rule string) []string {
+		return []string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+			"DTSTART:20250115T090000Z", "DTEND:20250115T100000Z", rule, "END:VEVENT",
+		}
+	}
+	tests := []struct {
+		name  string
+		lines []string
+		rid   time.Time
+		edit  func(in *domain.EventInput)
+		want  error
+	}{
+		// N repeats on the 15th: a rule on fixed days cannot move to another.
+		// Both are domain.ErrSeriesMoveUnsupported.
+		{
+			"fixed days, to another day", monthly("RRULE:FREQ=MONTHLY;BYMONTHDAY=15"), date(2025, 3, 15, 9, 0),
+			laterBy(24 * time.Hour), errMoveFixedDays,
+		},
+		// "All events" refuses it alike.
+		{
+			"fixed days, at the first event", []string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Rent",
+				"DTSTART:20250315T090000Z", "DTEND:20250315T100000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15", "END:VEVENT",
+			}, date(2025, 3, 15, 9, 0), laterBy(24 * time.Hour), errMoveFixedDays,
+		},
+		// From March 15 to 31, N's April event would land on April 31.
+		{
+			"onto a day its months lack", monthly("RRULE:FREQ=MONTHLY"), date(2025, 3, 15, 9, 0),
+			laterBy(16 * 24 * time.Hour), errMoveOffMonth,
+		},
+		{
+			"attendees", weeklyStandup("ATTENDEE:mailto:me@example.com"), date(2025, 3, 24, 8, 0),
+			laterBy(time.Hour), domain.ErrSeriesSplitUnsupported,
+		},
+		{
+			"an EXRULE", weeklyStandup("EXRULE:FREQ=WEEKLY;INTERVAL=2"), date(2025, 3, 24, 8, 0),
+			laterBy(time.Hour), domain.ErrSeriesSplitUnsupported,
+		},
+		{
+			"end before start", weeklyStandup(), date(2025, 3, 24, 8, 0),
+			func(in *domain.EventInput) { in.End = in.Start.Add(-time.Hour) }, domain.ErrInvalidInput,
+		},
+		{
+			"an invalid rule", weeklyStandup(), date(2025, 3, 24, 8, 0),
+			func(in *domain.EventInput) { in.RRule = "FREQ=SOMETIMES" }, domain.ErrInvalidInput,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, tt.lines, tt.rid, tt.edit)
+			mustErr(t, got.err, tt.want)
+			if got.puts != 0 || got.deletes != 0 {
+				t.Errorf("%d PUTs and %d DELETEs; want none", got.puts, got.deletes)
+			}
+			if got.snap != nil || got.res.ETag != "" || got.res.Event.ID != "" {
+				t.Errorf("answered %+v and a snapshot: %v; want neither with an error", got.res, got.snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			if now := storedObject(t, e, got.id); now != got.seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, got.seeded)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingCannotSplit checks that a split UpdateFollowing cannot
+// compute is ErrSeriesSplitUnsupported, with nothing written (FR-17): a rule
+// it cannot walk to R within maxRRuleIterations events, where splitOff
+// fails, and an R before DTSTART that is not the first event, where
+// endBefore does. ListEvents does not show the first, so the request is made
+// as a client with a stale view would.
+func TestUpdateFollowingCannotSplit(t *testing.T) {
+	t.Parallel()
+	utc := func(extra ...string) []string {
+		return slices.Concat([]string{
+			"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+			"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z",
+		}, extra, []string{"END:VEVENT"})
+	}
+	for _, tt := range []struct {
+		name  string
+		lines []string
+		rid   time.Time
+	}{
+		{"a rule beyond the iteration cap", utc("RRULE:FREQ=SECONDLY", "RDATE:20250310T090000Z"), date(2025, 3, 10, 9, 0)},
+		{
+			"an RDATE before DTSTART, with one before it", utc("RRULE:FREQ=WEEKLY", "RDATE:20250224T090000Z,20250301T090000Z"),
+			date(2025, 3, 1, 9, 0),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", tt.lines...)
+			seeded := storedObject(t, e, id)
+			in := domain.EventInput{Title: "Standup", Start: tt.rid.Add(time.Hour), End: tt.rid.Add(2 * time.Hour), RRule: "FREQ=WEEKLY"}
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateFollowing(t.Context(), id, storedETag(t, e, mustDecode(t, e, id)), tt.rid, in)
+			mustErr(t, err, domain.ErrSeriesSplitUnsupported)
+			if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 || snap != nil {
+				t.Errorf("%d writes and a snapshot: %v; want neither", n, snap != nil)
+			}
+			if now := storedObject(t, e, id); now != seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, seeded)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingNotFound checks that UpdateFollowing answers ErrNotFound
+// for an event the series does not show, and ErrConflict for a stale ETag,
+// writing nothing (FR-17).
+func TestUpdateFollowingNotFound(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		lines []string
+		etag  func(shown string) string
+		rid   time.Time
+		want  error
+	}{
+		{
+			"excluded", weeklyStandup("EXDATE;TZID=Europe/Berlin:20250324T090000"), func(s string) string { return s },
+			date(2025, 3, 24, 8, 0), domain.ErrNotFound,
+		},
+		{"not an event", weeklyStandup(), func(s string) string { return s }, date(2025, 3, 25, 8, 0), domain.ErrNotFound},
+		{"stale ETag", weeklyStandup(), func(string) string { return `"stale"` }, date(2025, 3, 24, 8, 0), domain.ErrConflict},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", tt.lines...)
+			seeded := storedObject(t, e, id)
+			ev := shownEvent(t, e, "work", date(2025, 3, 17, 8, 0))
+			in := eventInputOf(ev)
+			in.Start, in.End = tt.rid, tt.rid.Add(time.Hour)
+			e.mock.ResetCounts()
+			_, snap, err := e.svc.UpdateFollowing(t.Context(), id, tt.etag(ev.ETag), tt.rid, in)
+			mustErr(t, err, tt.want)
+			if snap != nil {
+				t.Error("returned a snapshot with an error")
+			}
+			if n := e.mock.Count(http.MethodPut) + e.mock.Count(http.MethodDelete); n != 0 {
+				t.Errorf("%d writes; want none", n)
+			}
+			if now := storedObject(t, e, id); now != seeded {
+				t.Errorf("the resource changed:\n%s\nwant\n%s", now, seeded)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingKeepsCountBoundary is Review Focus 1 through the whole
+// write: a series of ten weekly events moved an hour later from its fourth
+// keeps ten events, three in S and seven in N, none lost or doubled, also
+// where an EXDATE excludes the second, which still counts against the COUNT
+// (FR-17; RFC 5545 section 3.3.10).
+func TestUpdateFollowingKeepsCountBoundary(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		extra []string
+		want  []string
+	}{
+		{"all ten", nil, []string{
+			"03-03 09", "03-10 09", "03-17 09", "03-24 10", "03-31 10", "04-07 10", "04-14 10",
+			"04-21 10", "04-28 10", "05-05 10",
+		}},
+		{"the second excluded", []string{"EXDATE:20250310T090000Z"}, []string{
+			"03-03 09", "03-17 09", "03-24 10",
+			"03-31 10", "04-07 10", "04-14 10", "04-21 10", "04-28 10", "05-05 10",
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			lines := slices.Concat([]string{
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup",
+				"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY;COUNT=10",
+			}, tt.extra, []string{"END:VEVENT"})
+			got := updateFollowing(t, e, lines, date(2025, 3, 24, 9, 0), laterBy(time.Hour))
+			mustNoErr(t, got.err)
+			_, nData := newSeriesIn(t, e, got.id)
+			checkStored(t, "N", nData, []string{"RRULE:FREQ=WEEKLY;COUNT=7\r\n"}, nil)
+			checkStored(t, "S", storedObject(t, e, got.id), []string{"RRULE:FREQ=WEEKLY;UNTIL=20250324T085959Z\r\n"}, nil)
+
+			evs, err := e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 7, 1, 0, 0))
+			mustNoErr(t, err)
+			var shown []string
+			for i := range evs {
+				shown = append(shown, evs[i].Start.Format("01-02 15"))
+			}
+			slices.Sort(shown)
+			if !slices.Equal(shown, tt.want) {
+				t.Errorf("events at %q; want %q", shown, tt.want)
+			}
+		})
+	}
+}
+
+// answerCreateWith makes mock answer every PUT that creates a resource
+// (If-None-Match: *) with status, and counts in toS the PUTs of the resource
+// sPath.
+func answerCreateWith(mock *caldavtest.Server, sPath string, status int, toS *atomic.Int32) {
+	mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPut {
+			return false
+		}
+		if r.URL.Path == sPath {
+			toS.Add(1)
+		}
+		if r.Header.Get("If-None-Match") != "*" {
+			return false
+		}
+		w.WriteHeader(status)
+		return true
+	})
+}
+
+// TestUpdateFollowingWriteFailures checks the two writes of a split when the
+// second one, S's, fails (FR-17, A-01; spec section 4 "Teilen" step 5): N is
+// deleted again where S's write is known not to have landed, by the server's
+// refusal or by S's unchanged ETag; the split counts as saved, with S's ETag
+// unknown and no snapshot, where S's ETag changed; and N stays, logged, with
+// the error where S's ETag cannot be read. When N cannot be created, S is not
+// written at all.
+func TestUpdateFollowingWriteFailures(t *testing.T) {
+	t.Parallel()
+	rid := date(2025, 3, 24, 8, 0)
+	for _, tc := range []struct {
+		name           string
+		apply          bool
+		status         int
+		propfindStatus int
+		wantErr        error // nil: the split is saved
+		wantObjects    int
+		wantDeletes    int
+	}{
+		{name: "refused with 412", status: http.StatusPreconditionFailed, wantErr: domain.ErrConflict, wantObjects: 1, wantDeletes: 1},
+		{name: "502, its ETag unchanged", status: http.StatusBadGateway, wantErr: domain.ErrUpstream, wantObjects: 1, wantDeletes: 1},
+		{name: "applied, then 502", apply: true, status: http.StatusBadGateway, wantObjects: 2},
+		{
+			name: "502, its ETag unreadable", status: http.StatusBadGateway, propfindStatus: http.StatusInternalServerError,
+			wantErr: domain.ErrUpstream, wantObjects: 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			seeded := storedObject(t, e, id)
+			sPath := mustDecode(t, e, id)
+			ev := shownEvent(t, e, "work", rid)
+			answerPutWith(e.mock, sPath, tc.apply, tc.status, tc.propfindStatus)
+			e.mock.ResetCounts()
+			in := eventInputOf(ev)
+			laterBy(time.Hour)(&in)
+			res, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+			if tc.wantErr != nil {
+				mustErr(t, err, tc.wantErr)
+				if now := storedObject(t, e, id); now != seeded {
+					t.Errorf("S = %q; want it unchanged: %q", now, seeded)
+				}
+				if res.Event.ID != "" || res.ETag != "" || snap != nil {
+					t.Errorf("answered %+v and a snapshot: %v; want neither with an error", res, snap != nil)
+				}
+			} else {
+				mustNoErr(t, err)
+				nid, _ := newSeriesIn(t, e, id)
+				if res.ETag != "" || snap != nil || res.Event.ID != nid {
+					t.Errorf("answered %+v and a snapshot: %v; want the event in N, S's ETag unknown and no snapshot",
+						res, snap != nil)
+				}
+				checkStored(t, "S", storedObject(t, e, id), []string{"UNTIL=20250324T075959Z"}, nil)
+			}
+			if n := len(e.mock.ObjectPaths(e.paths["work"])); n != tc.wantObjects {
+				t.Errorf("%d objects; want %d", n, tc.wantObjects)
+			}
+			if n := e.mock.Count(http.MethodDelete); n != tc.wantDeletes {
+				t.Errorf("%d DELETEs; want %d", n, tc.wantDeletes)
+			}
+		})
+	}
+
+	// A write that lands but whose new ETag the server tells neither in its
+	// answer nor when asked is saved, with S's ETag unknown and no snapshot:
+	// an undo could not tell its own change from another client's.
+	t.Run("S's new ETag unknown", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "work", "series.ics", weeklyStandup()...)
+		ev := shownEvent(t, e, "work", rid)
+		answerWithoutETag(e.mock, mustDecode(t, e, id))
+		in := eventInputOf(ev)
+		laterBy(time.Hour)(&in)
+		res, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+		mustNoErr(t, err)
+		nid, _ := newSeriesIn(t, e, id)
+		if res.ETag != "" || snap != nil || res.Event.ID != nid || res.Event.ETag == "" {
+			t.Errorf("answered %+v and a snapshot: %v; want the event in N with N's ETag, S's unknown, no snapshot",
+				res, snap != nil)
+		}
+	})
+
+	for _, tc := range []struct {
+		status int
+		want   error
+	}{
+		{http.StatusPreconditionFailed, domain.ErrConflict},
+		{http.StatusBadGateway, domain.ErrUpstream},
+	} {
+		t.Run("creating N fails with "+http.StatusText(tc.status), func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", weeklyStandup()...)
+			seeded := storedObject(t, e, id)
+			ev := shownEvent(t, e, "work", rid)
+			var toS atomic.Int32
+			answerCreateWith(e.mock, mustDecode(t, e, id), tc.status, &toS)
+			in := eventInputOf(ev)
+			laterBy(time.Hour)(&in)
+			_, snap, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, rid, in)
+			mustErr(t, err, tc.want)
+			if n := toS.Load(); n != 0 || snap != nil {
+				t.Errorf("%d PUTs of S and a snapshot: %v; want neither", n, snap != nil)
+			}
+			if paths := e.mock.ObjectPaths(e.paths["work"]); len(paths) != 1 {
+				t.Errorf("objects = %v; want the series only", paths)
+			}
+			if now := storedObject(t, e, id); now != seeded {
+				t.Errorf("S = %q; want it unchanged: %q", now, seeded)
+			}
+		})
+	}
+}
+
+// TestUpdateFollowingAtRDate splits a series at an RDATE after the last event
+// of its rule, where N has no RRULE left but the later RDATE (FR-17; spec
+// section 4 "Teilen" steps 2 and 3): sent with the series' rule, unchanged,
+// N moves as a series of RDATEs, both of its events; sent without a rule, N
+// is the single event entered, and the later RDATE goes with the rule.
+func TestUpdateFollowingAtRDate(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Lecture",
+		"DTSTART:20250303T090000Z", "DTEND:20250303T100000Z", "RRULE:FREQ=WEEKLY;COUNT=2",
+		"RDATE:20250320T090000Z,20250327T090000Z", "END:VEVENT",
+	}
+	s := []string{"2025-03-03T09:00:00Z/2025-03-03T10:00:00Z Lecture", "2025-03-10T09:00:00Z/2025-03-10T10:00:00Z Lecture"}
+	for _, tt := range []struct {
+		name   string
+		edit   func(in *domain.EventInput)
+		shownN []string
+	}{
+		{"the rule kept", laterBy(time.Hour), []string{
+			"2025-03-20T10:00:00Z/2025-03-20T11:00:00Z Lecture", "2025-03-27T10:00:00Z/2025-03-27T11:00:00Z Lecture",
+		}},
+		{"the rule removed", func(in *domain.EventInput) {
+			laterBy(time.Hour)(in)
+			in.RRule = ""
+		}, []string{"2025-03-20T10:00:00Z/2025-03-20T11:00:00Z Lecture"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, lines, date(2025, 3, 20, 9, 0), tt.edit)
+			mustNoErr(t, got.err)
+			_, nData := newSeriesIn(t, e, got.id)
+			checkStored(t, "N", nData, nil, []string{"RRULE"})
+			if shown, want := listedEvents(t, e), slices.Concat(s, tt.shownN); !slices.Equal(shown, want) {
+				t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+			}
+			if want := tt.shownN[0]; shownAs(got.res.Event) != want {
+				t.Errorf("answer = %s; want %s", shownAs(got.res.Event), want)
 			}
 		})
 	}
