@@ -782,6 +782,29 @@ func TestTodoOriginFieldsAndDetachedCopy(t *testing.T) {
 	}
 }
 
+// A task reports the zone its series recurs in, and a repeat whether it lies
+// off its series' rule; both are left out where they do not apply (FR-17).
+func TestTodoTimezoneAndOffRuleInJSON(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	c := h.login(t)
+	h.svc.todos = []domain.Todo{{ID: "t1", Title: "Zoned", Timezone: "Europe/Berlin"}, {ID: "t2", Title: "Plain"}}
+	h.svc.occurrences = []domain.TodoOccurrence{
+		{Key: "t1@off", TodoID: "t1", Title: "Off", OffRule: true},
+		{Key: "t1@on", TodoID: "t1", Title: "On"},
+	}
+	w := h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"})
+	decode(t, w, http.StatusOK, nil)
+	if body := w.Body.String(); strings.Count(body, `"timezone"`) != 1 || !strings.Contains(body, `"timezone":"Europe/Berlin"`) {
+		t.Errorf("todos: want the zone of the zoned task only: %s", body)
+	}
+	w = h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos/occurrences?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"})
+	decode(t, w, http.StatusOK, nil)
+	if body := w.Body.String(); strings.Count(body, `"offRule"`) != 1 || !strings.Contains(body, `"offRule":true`) {
+		t.Errorf("occurrences: want offRule on the repeat off the rule only: %s", body)
+	}
+}
+
 // withUndo gives a harness an undo store, the way cmd/lucid/main.go does.
 func withUndo(o *Options) { o.Undo = undo.New(undo.Options{}) }
 

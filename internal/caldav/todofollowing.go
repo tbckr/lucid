@@ -223,10 +223,10 @@ func (s *todoSeries) leaveCompletions(cal *ical.Calendar, from func(rid dateValu
 //   - The new series N, a resource with a UID of its own, goes on from R
 //     (see splitTodoOff), changed by in as UpdateTodo changes a series from
 //     its current repeat, which R is in N: the rule edit, the move and the
-//     fields, see applyTodoEdit. in carries R's fields as shown, its
-//     override's own where it has them, and only those that differ go into
-//     N's master and R's override, see applyShownFields, as for an event
-//     series; where in removes the rule, N is R alone and takes them all.
+//     fields, see applyTodoEdit. in carries S's fields with the user's
+//     edits, and only those that differ from S's go into N's master and R's
+//     override, see applyEditedFields, so that R keeps what another app gave
+//     it alone; where in removes the rule, N is R alone and takes them all.
 //     N is open, its checklist unchecked, as a series a completion rolls on
 //     (see rolledInput): in echoes S's progress, which belongs to S's
 //     current repeat.
@@ -306,7 +306,7 @@ func (s *service) UpdateTodoFollowing(ctx context.Context, todoID, etag string, 
 	if err != nil {
 		return domain.TodoFollowing{}, nil, err
 	}
-	edit.asShown = true
+	edit.onlyEdited = true
 	// N has no completions of other apps to turn into entries: they left
 	// the series above. And the edit, open, completes nothing.
 	if _, _, err := applyTodoEdit(n, nm, edit, now); err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -4182,6 +4183,219 @@ func TestTodoReportsAttendeesAndOrigin(t *testing.T) {
 			if got := listedTodo(t, e, id).DetachedFrom; got != "" {
 				t.Errorf("listed DetachedFrom = %q; want none", got)
 			}
+		})
+	}
+}
+
+// A task reports the zone of its anchor, its start, else its due, as an
+// event reports the zone of its start: the zone a series recurs in, whose
+// wall clock a client reads a move in. A date, a time in UTC or floating,
+// and a zone Lucid cannot resolve report none (FR-16, FR-17).
+func TestTodoReportsTimezone(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		want      string
+	}{
+		{"a start in a zone", []string{"DTSTART;TZID=Europe/Berlin:20250310T090000"}, nil, "Europe/Berlin"},
+		{"a prefixed zone", []string{"DTSTART;TZID=/mozilla.org/20050126_1/Europe/Berlin:20250310T090000"}, nil, "Europe/Berlin"},
+		{"a due alone", []string{"DUE;TZID=America/New_York:20250310T090000"}, nil, "America/New_York"},
+		{
+			"the start's over the due's",
+			[]string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=America/New_York:20250310T090000"},
+			nil, "Europe/Berlin",
+		},
+		{"a series", []string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY"}, nil, "Europe/Berlin"},
+		{"a series anchored on its due", []string{"DUE;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY"}, nil, "Europe/Berlin"},
+		{
+			// The series recurs in its own zone, wherever another app put its
+			// current repeat.
+			"a series whose current repeat another app put in another zone",
+			[]string{"DTSTART;TZID=Europe/Berlin:20250310T090000", "RRULE:FREQ=WEEKLY"},
+			[][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20250310T090000", "DTSTART;TZID=America/New_York:20250310T090000"}},
+			"Europe/Berlin",
+		},
+		{"UTC", []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}, nil, ""},
+		{"floating", []string{"DTSTART:20250310T090000"}, nil, ""},
+		{"all-day", []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY"}, nil, ""},
+		{"an unknown zone", []string{"DTSTART;TZID=Mars/Olympus:20250310T090000"}, nil, ""},
+		{"no date", nil, nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			if got := listedTodo(t, e, id); got.Timezone != tc.want {
+				t.Errorf("Timezone = %q; want %q (%+v)", got.Timezone, tc.want, got)
+			}
+		})
+	}
+}
+
+// A repeat reports whether its RECURRENCE-ID lies off the rule, as an
+// override another app left there (A-10): no series can go on from it, so a
+// client offers no "this and following" there. The rule's repeats and the
+// overrides on them, of either value type, lie on it, and so does an
+// override whose RECURRENCE-ID lies past the window but whose dates lie
+// inside it, which the listing reaches without walking the rule there
+// (FR-17).
+func TestTodoOccurrenceOffRule(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	// Sundays from 2 March.
+	id := seedSeries(t, e, []string{"DTSTART:20250302T090000Z", "RRULE:FREQ=WEEKLY"},
+		[]string{"RECURRENCE-ID;VALUE=DATE:20250309", "SUMMARY:Dated"},
+		[]string{"RECURRENCE-ID:20250311T090000Z", "SUMMARY:Tuesday"},
+		[]string{"RECURRENCE-ID:20250316T090000Z", "DTSTART:20250317T090000Z", "SUMMARY:Sunday"},
+		[]string{"RECURRENCE-ID:20250325T090000Z", "DTSTART:20250319T090000Z", "SUMMARY:Late Tuesday"},
+		[]string{"RECURRENCE-ID:20250330T090000Z", "DTSTART:20250318T090000Z", "SUMMARY:Late Sunday"},
+		[]string{"RECURRENCE-ID;VALUE=DATE:20250406", "DTSTART:20250320T090000Z", "SUMMARY:Late dated"})
+	occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 3, 21, 0, 0))
+	mustNoErr(t, err)
+	var got []string
+	for _, o := range occs {
+		if o.TodoID != id {
+			t.Fatalf("repeat of another todo: %+v", o)
+		}
+		got = append(got, fmt.Sprintf("%s %s %v", o.RecurrenceID.Format("01-02"), o.Title, o.OffRule))
+	}
+	want := []string{
+		"03-02 Series false", "03-09 Dated false", "03-11 Tuesday true", "03-16 Sunday false",
+		"03-30 Late Sunday false", "03-25 Late Tuesday true", "04-06 Late dated false",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("repeats:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// todoFields are the title, the notes with the checklist, and the priority
+// of a VTODO as stored: its SUMMARY, DESCRIPTION and PRIORITY.
+type todoFields struct{ title, notes, priority string }
+
+// storedFields returns the fields of the master of the todo id as stored,
+// and those of its overrides by their RECURRENCE-ID as written.
+func storedFields(t *testing.T, e *env, id string) (master todoFields, overrides map[string]todoFields) {
+	t.Helper()
+	cal := mustParse(t, storedObject(t, e, id))
+	m := mainComponent(cal, ical.CompToDo)
+	of := func(c *ical.Component) todoFields {
+		return todoFields{text(c.Props, ical.PropSummary), text(c.Props, ical.PropDescription), text(c.Props, ical.PropPriority)}
+	}
+	overrides = map[string]todoFields{}
+	for _, c := range cal.Children {
+		if c.Name == ical.CompToDo && c != m {
+			overrides[c.Props.Get(ical.PropRecurrenceID).Value] = of(c)
+		}
+	}
+	return of(m), overrides
+}
+
+// checkFields fails the test unless the todo id is stored with the fields
+// master and the overrides overrides, by their RECURRENCE-ID.
+func checkFields(t *testing.T, e *env, id string, master todoFields, overrides map[string]todoFields) {
+	t.Helper()
+	gotMaster, gotOverrides := storedFields(t, e, id)
+	if gotMaster != master {
+		t.Errorf("master = %+v; want %+v", gotMaster, master)
+	}
+	if !maps.Equal(gotOverrides, overrides) {
+		t.Errorf("overrides = %+v; want %+v", gotOverrides, overrides)
+	}
+}
+
+// A change of a series from its current repeat R writes the body's fields
+// into the series, and those that differ from the series as stored into R's
+// override too, where another app gave R one that the change keeps: the
+// body carries the series' fields with the user's edits, so a field left as
+// the series has it keeps R's own value, and an edited one shows at R as at
+// every other repeat. The checklist counts with the state of its items, the
+// progress of R. A move from R's rule date drops R's override; one from
+// where another app shows R moves it along (FR-17).
+func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
+	t.Parallel()
+	series := todoFields{"Series", "Series notes\n\n- [ ] s", "5"}
+	own := todoFields{"Own", "Own notes\n\n- [x] o", "1"}
+	const rid = "20250310T090000Z"
+	for _, tc := range []struct {
+		name      string
+		own       []string // R's own fields, the default where nil
+		shown     []string // R's own dates, where another app moved R
+		edit      func(in *domain.TodoInput)
+		master    todoFields
+		overrides map[string]todoFields
+	}{
+		{name: "the series' fields leave R's own", master: series, overrides: map[string]todoFields{rid: own}},
+		{
+			name:      "a changed title goes into R too",
+			edit:      func(in *domain.TodoInput) { in.Title = "New" },
+			master:    todoFields{"New", series.notes, "5"},
+			overrides: map[string]todoFields{rid: {"New", own.notes, "1"}},
+		},
+		{
+			name:      "changed notes go into R too, with its own checklist",
+			edit:      func(in *domain.TodoInput) { in.Description = "New notes" },
+			master:    todoFields{"Series", "New notes\n\n- [ ] s", "5"},
+			overrides: map[string]todoFields{rid: {"Own", "New notes\n\n- [x] o", "1"}},
+		},
+		{
+			name:      "a changed priority goes into R too",
+			edit:      func(in *domain.TodoInput) { in.Priority = 2 },
+			master:    todoFields{"Series", series.notes, "2"},
+			overrides: map[string]todoFields{rid: {"Own", own.notes, "2"}},
+		},
+		{
+			name:      "a checked item goes into R too, with its own notes",
+			edit:      func(in *domain.TodoInput) { in.Checklist = []domain.ChecklistItem{{Text: "s", Done: true}} },
+			master:    todoFields{"Series", "Series notes\n\n- [x] s", "5"},
+			overrides: map[string]todoFields{rid: {"Own", "Own notes\n\n- [x] s", "1"}},
+		},
+		{
+			// R without notes of its own takes the series' with the item.
+			name:      "a checked item goes into R without notes of its own",
+			own:       []string{"SUMMARY:Own"},
+			edit:      func(in *domain.TodoInput) { in.Checklist = []domain.ChecklistItem{{Text: "s", Done: true}} },
+			master:    todoFields{"Series", "Series notes\n\n- [x] s", "5"},
+			overrides: map[string]todoFields{rid: {"Own", "Series notes\n\n- [x] s", ""}},
+		},
+		{
+			name: "a move from R's rule date drops R's override",
+			edit: func(in *domain.TodoInput) {
+				in.Title = "New"
+				shiftedBy(24 * time.Hour)(in)
+			},
+			master:    todoFields{"New", series.notes, "5"},
+			overrides: map[string]todoFields{},
+		},
+		{
+			name:  "a move from where another app shows R moves R's override along",
+			shown: []string{"DTSTART:20250312T090000Z"},
+			edit: func(in *domain.TodoInput) {
+				in.Title = "New"
+				shiftedBy(time.Hour)(in)
+			},
+			master:    todoFields{"New", series.notes, "5"},
+			overrides: map[string]todoFields{"20250310T100000Z": {"New", own.notes, "1"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			own := tc.own
+			if own == nil {
+				own = []string{"SUMMARY:Own", `DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1"}
+			}
+			id := seedSeries(t, e, []string{`DESCRIPTION:Series notes\n\n- [ ] s`, "PRIORITY:5", "DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
+				slices.Concat([]string{"RECURRENCE-ID:" + rid}, own, tc.shown))
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			if tc.edit != nil {
+				tc.edit(&in)
+			}
+			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkFields(t, e, id, tc.master, tc.overrides)
 		})
 	}
 }

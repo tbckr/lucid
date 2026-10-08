@@ -819,8 +819,9 @@ interval rule by any later one too (FR-16, FR-17). The API is described in
 ### Reading
 
 - A `VTODO` with `RRULE` recurs from its `DTSTART`, or from its `DUE` when it
-  has no `DTSTART` (Tasks.org), in the time zone of its `TZID`. The due of an
-  occurrence is its start plus the master's `DUE − DTSTART` (or `DURATION`).
+  has no `DTSTART` (Tasks.org), in the time zone of its `TZID`, which the API
+  reports as the task's `timezone`. The due of an occurrence is its start
+  plus the master's `DUE − DTSTART` (or `DURATION`).
 - `DTSTART` is the first occurrence, also where the rule does not match it,
   and it counts against a `COUNT`, as RFC 5545 §3.3.10 says: `DTSTART` on a
   Tuesday with `BYDAY=MO,TH;COUNT=3` gives that Tuesday and the next two
@@ -849,7 +850,9 @@ interval rule by any later one too (FR-16, FR-17). The API is described in
   there the overrides of the occurrences it moves back past, and a monthly
   series moved to a day that some months lack can send one there (see
   Limits). A completed one stays done where it was; an open one can become
-  the current occurrence.
+  the current occurrence. The API marks it, and one after the last
+  occurrence, `offRule`: no series can go on from it (see "This and
+  following repeats" below).
 - A completed or cancelled master is shown once, as a completed task, and not
   expanded. Completed copies, Lucid's or another client's, are tasks of their
   own.
@@ -1013,12 +1016,13 @@ Lucid splits the series at R, by `RECURRENCE-ID`, and writes no
 3. The change applies to the new series as a change of the series applies
    from its current occurrence, which R is there: new dates move it as
    under Moving below, as far as its rule can follow, and a move it can't
-   follow is refused before anything is written. The request carries R's
-   fields as R shows them, an override's own where it has them, and only
-   those that differ apply: they go into the new series and into R's
-   override, the others stay as the new series inherited them, so that a
-   title another app gave R alone does not become the title of every
-   occurrence. The checklist counts by the text of its items. Its status
+   follow is refused before anything is written. The request carries the
+   series' title, notes, checklist and priority with the user's edits, and
+   only those that differ from the series' apply: they go into the new
+   series and into R's override, the others stay as the new series
+   inherited them, and R keeps its own, so that a title another app gave R
+   alone stays R's and does not become the title of every occurrence. The
+   checklist counts by the text of its items. Its status
    and its checklist's state are those of a series that rolls on, though:
    open, every item unchecked. A request without a rule, or with
    the rule the series has, compared case-insensitively, keeps the rule the
@@ -1079,6 +1083,18 @@ it, on the detached task, with the series' `UID`, and Lucid reports it as
 that carries it removes it, as the task is then a series of its own, and the
 new series of a split doesn't take it from the series it goes on from. Other
 clients don't read it.
+
+**Changing the fields** of a series from its current occurrence writes them
+into the master. The request carries the series' title, notes, checklist
+and priority with the user's edits: one that differs from the series' as
+stored, the checklist also by the state of its items, the current
+occurrence's progress, goes into the current occurrence's override too,
+where another app gave it one that the change keeps, and one left as the
+series has it keeps the occurrence's own value. So a title another app gave
+that occurrence alone stays, as for an event series changed from an
+exception (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)). A move from the
+occurrence's place in the rule drops its override (below); one from where
+another app shows it moves the override along.
 
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
@@ -1163,7 +1179,12 @@ rule cannot take its place: it moves by that distance from its last
 occurrence before it instead. That rule occurrence, done or excluded since
 the one off the rule is current, stays out at its new place: its `EXDATE`
 moves along, or a new one excludes it there, and an override that completed
-it stays where it is. A change of the due alone changes only the occurrence
+it stays where it is. Saved between all-day and timed, an occurrence shown
+in the series' own value type changes the series' value type, as any move
+does: the series takes the dates saved, on the date its rule moves to, and
+every reference converts as above, earlier ones too. One another app
+already shows in the other value type keeps the series' type: only that
+occurrence was of it. A change of the due alone changes only the occurrence
 another app moved. The last repeat moves to any date, as above, wherever it
 is shown.
 

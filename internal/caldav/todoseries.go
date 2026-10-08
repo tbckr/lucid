@@ -192,6 +192,16 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	return s
 }
 
+// ridOf returns the RECURRENCE-ID of the override o as placeRef places it:
+// by instant in the anchor's value type, else by the date it is written
+// with (A-11).
+func (s *todoSeries) ridOf(o seriesOverride) dateValue {
+	if o.day.IsZero() {
+		return dateValue{t: o.rid, allDay: s.anchor.allDay}
+	}
+	return dateValue{t: o.day, allDay: !s.anchor.allDay}
+}
+
 // dayOf returns the date of the instant t in the series' zone (A-11).
 func (s *todoSeries) dayOf(t time.Time) time.Time {
 	return civilDate(t.In(s.anchor.loc()))
@@ -746,10 +756,18 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 // instance before occ instead, done, excluded or cancelled, as occ is
 // current: its EXDATE moves along to the new anchor, or an EXDATE there
 // keeps it out, and an override of it stays where it is. The references
-// before prev stay, but for an EXDATE from the new anchor on, as in move. A
-// move that keeps occ's start (else due), such as a change of its due alone,
-// changes occ's dates only. It returns the overrides it left in place, for
-// keepApart, and fails, without changing anything, as move does.
+// before prev stay, but for an EXDATE from the new anchor on, as in move.
+//
+// An occurrence shown in the series' value type that in moves between a date
+// and a time changes the series' value type, as a move of any current
+// occurrence does: the master takes in's dates moved onto the date of prev
+// moved (see datesOn), the move between a date and a time moving the rule
+// and the references by its change in date only, and then the references
+// convert, earlier ones too, see retypeRefs. One another app already shows in
+// the other value type keeps the series' type. A move that keeps occ's start
+// (else due), such as a change of its due alone, changes occ's dates only.
+// It returns the overrides it left in place, for keepApart, and fails,
+// without changing anything, as move does.
 func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) ([]*ical.Component, error) {
 	// Without a start, DTSTART = DUE, as for the series.
 	moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
@@ -757,10 +775,11 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		moved.start, moved.startAllDay = in.Due, in.DueAllDay
 	}
 	loc := s.anchor.loc()
-	shift := s.shiftBetween(
-		dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)},
-		dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)})
-	if shift == nil {
+	shown := dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)}
+	dest := dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)}
+	retype := shown.allDay == s.anchor.allDay && dest.allDay != s.anchor.allDay
+	shift := s.shiftBetween(shown, dest)
+	if shift == nil && !retype {
 		s.setEntryDates(occ.override, moved)
 		return nil, nil
 	}
@@ -768,8 +787,20 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	if err != nil {
 		return nil, errRuleUnsupported
 	}
-	to := shift(dateValue{t: prev.In(loc), allDay: s.anchor.allDay})
-	rule, ok := seriesShift(s.rrule, prev.In(loc), to.In(loc))
+	to := prev.In(loc)
+	if shift != nil {
+		to = shift(dateValue{t: to, allDay: s.anchor.allDay})
+	}
+	// The master's new DTSTART, as written: to, or, retyped, in's start
+	// (else due) on to's date.
+	start := dateValue{t: to.In(loc), allDay: s.anchor.allDay}
+	var dates domain.TodoInput
+	if retype {
+		dates = datesOn(in, civilDate(to.In(loc)))
+		t, form := seriesStart(s.master, dates, true)
+		start, _ = parseDateProp(seriesDateProp(nil, ical.PropDateTimeStart, *t, form))
+	}
+	rule, ok := seriesShift(s.rrule, prev.In(loc), start.t.In(start.loc()))
 	if !ok {
 		return nil, errMoveFixedDays
 	}
@@ -786,15 +817,52 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	dropExdates(c, func(d dateValue) bool {
 		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, anchor))
 	})
-	s.anchorAt(cal, to)
+	if retype {
+		writeSeriesDates(cal, c, dates, true)
+	} else {
+		s.anchorAt(cal, to)
+	}
 	c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, before, prev, shift)
 	c.Props.Del(propKDEPending)
-	s.shiftRefs(cal, moves, shift)
+	if shift != nil {
+		s.shiftRefs(cal, moves, shift)
+	}
 	if occ.offGrid {
 		c.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, to, s.startForm))
 	}
-	s.setEntryDates(occ.override, moved)
+	entry := s
+	if retype {
+		s.retypeRefs(cal, start)
+		// occ's override takes in's dates in the forms the series has now.
+		entry = newTodoSeries(cal, c)
+	}
+	entry.setEntryDates(occ.override, moved)
 	return stayed, nil
+}
+
+// datesOn returns in with its dates moved onto day, a date, by whole days,
+// for a series retyped from an occurrence shown on another day (FR-17): its
+// start, else its due, falls on day at its own wall-clock time in the zone of
+// in (UTC for a date, see seriesForm), and the due keeps its distance to it.
+func datesOn(in domain.TodoInput, day time.Time) domain.TodoInput {
+	anchor, allDay := in.Start, in.StartAllDay
+	if anchor == nil {
+		anchor, allDay = in.Due, in.DueAllDay
+	}
+	zone := time.UTC
+	if l := loadLocation(in.Timezone); l != nil && !allDay {
+		zone = l
+	}
+	days := int(day.Sub(civilDate(anchor.In(zone))) / (24 * time.Hour))
+	move := func(t *time.Time) *time.Time {
+		if t == nil {
+			return nil
+		}
+		m := t.In(zone).AddDate(0, 0, days)
+		return &m
+	}
+	in.Start, in.Due = move(in.Start), move(in.Due)
+	return in
 }
 
 // movedFrom returns the instance of the rule of s that moveShown moves the

@@ -630,112 +630,6 @@ func TestUpdateTodoFollowing(t *testing.T) {
 			[]string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250324T085959Z\r\n"}, []string{"RECURRENCE-ID"})
 	})
 
-	// The body carries R's fields as shown, its override's own where it has
-	// them: only those that differ go into N, into its master and into R's
-	// override, so that R's own title does not become the title of every
-	// repeat of N; the others stay as N inherited them. The checklist counts
-	// by its items' text, as N's are unchecked anyway. Without a rule, N is
-	// R alone, and takes the body as it is (FR-17).
-	type fields struct{ title, notes, priority string }
-	for _, tc := range []struct {
-		name             string
-		by               time.Duration
-		rule             *string
-		edit             func(in *domain.TodoInput)
-		master, override fields
-		rid              time.Time // of R's override in N, zero for none
-	}{
-		{
-			name:     "R's own fields stay R's",
-			by:       24 * time.Hour,
-			master:   fields{"Series", "Series notes\n\n- [ ] s", "5"},
-			override: fields{"Own", "Own notes\n\n- [x] o", "1"},
-			rid:      date(2025, 3, 25, 9, 0),
-		},
-		{
-			name:     "a changed title goes into N and R",
-			by:       24 * time.Hour,
-			edit:     func(in *domain.TodoInput) { in.Title = "Renamed" },
-			master:   fields{"Renamed", "Series notes\n\n- [ ] s", "5"},
-			override: fields{"Renamed", "Own notes\n\n- [x] o", "1"},
-			rid:      date(2025, 3, 25, 9, 0),
-		},
-		{
-			name: "changed notes, checklist and priority go into N and R",
-			edit: func(in *domain.TodoInput) {
-				in.Description, in.Priority = "New notes", 2
-				in.Checklist = []domain.ChecklistItem{{Text: "o", Done: true}, {Text: "p"}}
-			},
-			master:   fields{"Series", "New notes\n\n- [ ] o\n- [ ] p", "2"},
-			override: fields{"Own", "New notes\n\n- [ ] o\n- [ ] p", "2"},
-			rid:      fourthRepeat,
-		},
-		{
-			name:     "a checklist item's state alone is no change",
-			edit:     func(in *domain.TodoInput) { in.Checklist = []domain.ChecklistItem{{Text: "o"}} },
-			master:   fields{"Series", "Series notes\n\n- [ ] s", "5"},
-			override: fields{"Own", "Own notes\n\n- [x] o", "1"},
-			rid:      fourthRepeat,
-		},
-		{
-			name:   "without a rule, N is R as sent",
-			rule:   ptr(""),
-			master: fields{"Own", "Own notes\n\n- [ ] o", "1"},
-		},
-	} {
-		t.Run("fields: "+tc.name, func(t *testing.T) {
-			t.Parallel()
-			e := newEnv(t, caldavtest.Options{})
-			id := seedSeries(t, e, append([]string{`DESCRIPTION:Series notes\n\n- [ ] s`, "PRIORITY:5"}, weeklyFromMarch3...),
-				[]string{
-					"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250324T150000Z", "SUMMARY:Own",
-					`DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1",
-				})
-			if r := listedRepeat(t, e, id, fourthRepeat); r.Title != "Own" {
-				t.Fatalf("R = %+v; want it listed with its own title", r)
-			}
-			res, _ := updateTodoFollowing(t, e, id, fourthRepeat, func(in *domain.TodoInput) {
-				// R as shown: the client sends what it shows of R.
-				in.Title, in.Description, in.Priority = "Own", "Own notes", 1
-				in.Checklist = []domain.ChecklistItem{{Text: "o", Done: true}}
-				shiftedBy(tc.by)(in)
-				if tc.edit != nil {
-					tc.edit(in)
-				}
-				if tc.rule != nil {
-					*in = withRule(*in, *tc.rule)
-				}
-			})
-			n := mustParse(t, storedObject(t, e, res.Todo.ID))
-			master := mainComponent(n, ical.CompToDo)
-			of := func(c *ical.Component) fields {
-				return fields{text(c.Props, ical.PropSummary), text(c.Props, ical.PropDescription), text(c.Props, ical.PropPriority)}
-			}
-			if got := of(master); got != tc.master {
-				t.Errorf("N's master = %+v; want %+v", got, tc.master)
-			}
-			var overrides []*ical.Component
-			for _, c := range n.Children {
-				if c.Name == ical.CompToDo && c != master {
-					overrides = append(overrides, c)
-				}
-			}
-			switch {
-			case tc.rid.IsZero() && len(overrides) != 0:
-				t.Errorf("N has %d overrides; want none", len(overrides))
-			case tc.rid.IsZero():
-			case len(overrides) != 1:
-				t.Errorf("N has %d overrides; want R's", len(overrides))
-			default:
-				rid, err := parseDateProp(overrides[0].Props.Get(ical.PropRecurrenceID))
-				mustNoErr(t, err)
-				if got := of(overrides[0]); got != tc.override || !rid.t.Equal(tc.rid) {
-					t.Errorf("R's override at %v = %+v; want %+v at %v", rid.t, got, tc.override, tc.rid)
-				}
-			}
-		})
-	}
-
 	// The rule of the body is N's: S's own, in any case, keeps the rule N
 	// inherits, with its lowered COUNT; any other is N's new rule, from R
 	// on, and "" makes N the single task at R (FR-17).
@@ -936,6 +830,112 @@ func TestUpdateTodoFollowing(t *testing.T) {
 			mustWriteNothing(t, e, id, seeded)
 		})
 	}
+}
+
+// The body of a write to a later repeat R and the repeats after it carries
+// the series' fields with the user's edits: only those that differ from the
+// series go into the new series N, into its master and into R's override,
+// so that a field left as the series has it keeps the value another app
+// gave R alone, and R's own title does not become the title of every repeat
+// of N. The checklist counts by its items' text, as N's are unchecked
+// anyway. Without a rule, N is R alone, and takes the body as it is (FR-17).
+func TestTodoFollowingComparesWithSeries(t *testing.T) {
+	t.Parallel()
+	series := todoFields{"Series", "Series notes\n\n- [ ] s", "5"}
+	own := todoFields{"Own", "Own notes\n\n- [x] o", "1"}
+	// R, shown at 15:00 by its override, moved a day later: its override
+	// moves along with N.
+	const moved = "20250325T090000Z"
+	day := shiftedBy(24 * time.Hour)
+	for _, tc := range []struct {
+		name      string
+		edit      func(in *domain.TodoInput)
+		rule      *string
+		master    todoFields
+		overrides map[string]todoFields // R's in N, by its RECURRENCE-ID
+	}{
+		{name: "the series' fields leave R's own", edit: day, master: series, overrides: map[string]todoFields{moved: own}},
+		{
+			name: "a changed title goes into N and R",
+			edit: func(in *domain.TodoInput) {
+				day(in)
+				in.Title = "New"
+			},
+			master:    todoFields{"New", series.notes, "5"},
+			overrides: map[string]todoFields{moved: {"New", own.notes, "1"}},
+		},
+		{
+			name: "changed notes go into N and R, each with its own checklist",
+			edit: func(in *domain.TodoInput) {
+				day(in)
+				in.Description = "New notes"
+			},
+			master:    todoFields{"Series", "New notes\n\n- [ ] s", "5"},
+			overrides: map[string]todoFields{moved: {"Own", "New notes\n\n- [x] o", "1"}},
+		},
+		{
+			name: "a changed priority goes into N and R",
+			edit: func(in *domain.TodoInput) {
+				day(in)
+				in.Priority = 2
+			},
+			master:    todoFields{"Series", series.notes, "2"},
+			overrides: map[string]todoFields{moved: {"Own", own.notes, "2"}},
+		},
+		{
+			name: "a changed checklist goes into N and R, each with its own notes",
+			edit: func(in *domain.TodoInput) {
+				in.Checklist = []domain.ChecklistItem{{Text: "s"}, {Text: "p"}}
+			},
+			master:    todoFields{"Series", "Series notes\n\n- [ ] s\n- [ ] p", "5"},
+			overrides: map[string]todoFields{"20250324T090000Z": {"Own", "Own notes\n\n- [ ] s\n- [ ] p", "1"}},
+		},
+		{
+			name:      "a checklist item's state alone is no change",
+			edit:      func(in *domain.TodoInput) { in.Checklist = []domain.ChecklistItem{{Text: "s", Done: true}} },
+			master:    series,
+			overrides: map[string]todoFields{"20250324T090000Z": own},
+		},
+		{
+			name:      "without a rule, N is R as sent",
+			edit:      func(in *domain.TodoInput) { in.Title = "New" },
+			rule:      ptr(""),
+			master:    todoFields{"New", series.notes, "5"},
+			overrides: map[string]todoFields{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, append([]string{`DESCRIPTION:Series notes\n\n- [ ] s`, "PRIORITY:5"}, weeklyFromMarch3...),
+				[]string{
+					"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250324T150000Z", "SUMMARY:Own",
+					`DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1",
+				})
+			if r := listedRepeat(t, e, id, fourthRepeat); r.Title != "Own" {
+				t.Fatalf("R = %+v; want it listed with its own title", r)
+			}
+			res, _ := updateTodoFollowing(t, e, id, fourthRepeat, func(in *domain.TodoInput) {
+				// The series' fields, as a client sends them, and the edit.
+				tc.edit(in)
+				if tc.rule != nil {
+					*in = withRule(*in, *tc.rule)
+				}
+			})
+			checkFields(t, e, res.Todo.ID, tc.master, tc.overrides)
+		})
+	}
+
+	// A field left as the series has it is not written into N at all: it
+	// keeps the form another app wrote it in, here a checklist with "*"
+	// (FR-17).
+	t.Run("the fields left as they are keep their form in N", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, append([]string{`DESCRIPTION:Notes\n\n* [ ] a`, "PRIORITY:05"}, weeklyFromMarch3...))
+		res, _ := updateTodoFollowing(t, e, id, fourthRepeat, func(in *domain.TodoInput) { in.Title = "New" })
+		checkFields(t, e, res.Todo.ID, todoFields{"New", "Notes\n\n* [ ] a", "05"}, map[string]todoFields{})
+	})
 }
 
 // unsplittableSeries are task series a write to a repeat and the ones after

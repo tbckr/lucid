@@ -1,12 +1,14 @@
 package caldav
 
 import (
+	"cmp"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/emersion/go-ical"
 
+	"github.com/tbckr/lucid/internal/caldav/caldavtest"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -421,6 +423,268 @@ func TestRefusedMoveLeavesCalendar(t *testing.T) {
 			if after := encodeCal(t, cal); after != before {
 				t.Errorf("calendar after the refused move:\n%s\nwant it as it was:\n%s", after, before)
 			}
+		})
+	}
+}
+
+// moveShownCase is a series whose current repeat another app shows away from
+// its RECURRENCE-ID, saved with the dates start and due (none where zero)
+// with "all" from the zone tz (Berlin where empty), and what the series
+// stores and lists from 1 March to 1 April 2025 afterwards (FR-17).
+type moveShownCase struct {
+	name       string
+	master     []string
+	overrides  [][]string
+	start, due time.Time
+	allDay     bool
+	tz         string
+	stored     []string
+	lacks      []string
+	next       time.Time
+	nextAllDay bool
+	dates      []time.Time
+	states     []string
+}
+
+// checkMoveShown saves the current repeat of the series of tc with tc's
+// dates, as a client in tc's zone saves it, and checks the outcome.
+func checkMoveShown(t *testing.T, tc moveShownCase) {
+	t.Helper()
+	e := newEnv(t, caldavtest.Options{})
+	id := seedSeries(t, e, tc.master, tc.overrides...)
+	f := listedTodo(t, e, id)
+	in := editInput(&f)
+	in.Start, in.Due, in.StartAllDay, in.DueAllDay = &tc.start, nil, tc.allDay, tc.allDay
+	if !tc.due.IsZero() {
+		in.Due = &tc.due
+	}
+	in.Timezone = cmp.Or(tc.tz, "Europe/Berlin")
+	got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+	mustNoErr(t, err)
+	if !sameTime(got.Start, &tc.start) || got.StartAllDay != tc.allDay || got.Next == nil ||
+		!sameTime(got.Next.Start, &tc.next) || got.Next.StartAllDay != tc.nextAllDay {
+		t.Errorf("saved series = %+v, next %+v; want the repeat at %v, then %v", got, got.Next, tc.start, tc.next)
+	}
+	checkStored(t, "series", storedObject(t, e, id), tc.stored, tc.lacks)
+	occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	mustNoErr(t, err)
+	checkTodoOccurrences(t, occs, tc.dates, tc.states)
+}
+
+// A current repeat another app shows away from its RECURRENCE-ID, saved
+// between all-day and timed with "all", changes the value type of the whole
+// series, as a move of any current repeat does: the series takes the dates
+// saved, moved from where the repeat is shown onto the rule's date, and
+// every reference converts, earlier ones too, the overrides (RECURRENCE-ID,
+// DTSTART, DUE), the EXDATEs and the UNTIL; a date gets the new time of day
+// in the zone saved, and a time becomes its date (FR-17). A repeat whose
+// override already has the other value type is no change of the series'
+// type.
+func TestMoveShownRetypes(t *testing.T) {
+	t.Parallel()
+	done, upcoming, current := domain.OccurrenceDone, domain.OccurrenceUpcoming, domain.OccurrenceCurrent
+	timed := []string{
+		"DTSTART:20250303T090000Z", "DUE:20250303T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250331T090000Z",
+		"EXDATE:20250317T090000Z",
+	}
+	// Monday the 10th, shown on Wednesday the 12th; the 3rd is done.
+	timedOverrides := [][]string{
+		{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+		{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z", "SUMMARY:Moved"},
+		{"RECURRENCE-ID:20250324T090000Z", "SUMMARY:Later"},
+	}
+	saved := moveShownCase{
+		name:      "a timed series saved all-day on the day shown",
+		master:    timed,
+		overrides: timedOverrides,
+		start:     date(2025, 3, 12, 0, 0), due: date(2025, 3, 12, 0, 0), allDay: true,
+		stored: []string{
+			"DTSTART;VALUE=DATE:20250310", "DUE;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250331\r\n",
+			"EXDATE;VALUE=DATE:20250317", "RECURRENCE-ID;VALUE=DATE:20250303", "RECURRENCE-ID;VALUE=DATE:20250310",
+			"DTSTART;VALUE=DATE:20250312", "DUE;VALUE=DATE:20250312", "RECURRENCE-ID;VALUE=DATE:20250324", "SUMMARY:Moved",
+		},
+		lacks:      []string{"T090000", "T100000"},
+		next:       date(2025, 3, 24, 0, 0),
+		nextAllDay: true,
+		dates:      []time.Time{date(2025, 3, 3, 0, 0), date(2025, 3, 12, 0, 0), date(2025, 3, 24, 0, 0), date(2025, 3, 31, 0, 0)},
+		states:     []string{done, current, upcoming, upcoming},
+	}
+	// West of UTC, a date saved is the evening before in the zone saved
+	// from: it counts as written.
+	west := saved
+	west.name, west.tz = "a timed series saved all-day on the day shown, west of UTC", "America/New_York"
+	for _, tc := range []moveShownCase{
+		saved,
+		west,
+		{
+			// The days rotate by the day it moved, and the references move
+			// by it, before they convert.
+			name:      "a timed series saved all-day a day after the day shown",
+			master:    timed,
+			overrides: timedOverrides,
+			start:     date(2025, 3, 13, 0, 0), due: date(2025, 3, 13, 0, 0), allDay: true,
+			stored: []string{
+				"DTSTART;VALUE=DATE:20250311", "DUE;VALUE=DATE:20250311", "BYDAY=TU", "UNTIL=20250401\r\n",
+				"EXDATE;VALUE=DATE:20250318", "RECURRENCE-ID;VALUE=DATE:20250303", "RECURRENCE-ID;VALUE=DATE:20250311",
+				"DTSTART;VALUE=DATE:20250313", "DUE;VALUE=DATE:20250313", "RECURRENCE-ID;VALUE=DATE:20250325",
+			},
+			lacks:      []string{"T090000", "T100000", "BYDAY=MO"},
+			next:       date(2025, 3, 25, 0, 0),
+			nextAllDay: true,
+			dates:      []time.Time{date(2025, 3, 3, 0, 0), date(2025, 3, 13, 0, 0), date(2025, 3, 25, 0, 0)},
+			states:     []string{done, current, upcoming},
+		},
+		{
+			// 14:00 to 15:00 in Berlin, an hour ahead of UTC in March before
+			// the 30th.
+			name: "an all-day series saved timed on the day shown",
+			master: []string{
+				"DTSTART;VALUE=DATE:20250303", "DUE;VALUE=DATE:20250303", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250324",
+				"EXDATE;VALUE=DATE:20250317",
+			},
+			overrides: [][]string{
+				{"RECURRENCE-ID;VALUE=DATE:20250303", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART;VALUE=DATE:20250312", "DUE;VALUE=DATE:20250312", "SUMMARY:Moved"},
+				{"RECURRENCE-ID;VALUE=DATE:20250324", "SUMMARY:Later"},
+			},
+			start: date(2025, 3, 12, 13, 0), due: date(2025, 3, 12, 14, 0),
+			stored: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T140000", "DUE;TZID=Europe/Berlin:20250310T150000",
+				"RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250324T130000Z\r\n", "EXDATE;TZID=Europe/Berlin:20250317T140000",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250303T140000", "RECURRENCE-ID;TZID=Europe/Berlin:20250310T140000",
+				"DTSTART;TZID=Europe/Berlin:20250312T140000", "DUE;TZID=Europe/Berlin:20250312T150000",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250324T140000", "BEGIN:VTIMEZONE",
+			},
+			lacks:  []string{"VALUE=DATE"},
+			next:   date(2025, 3, 24, 13, 0),
+			dates:  []time.Time{date(2025, 3, 3, 13, 0), date(2025, 3, 12, 13, 0), date(2025, 3, 24, 13, 0)},
+			states: []string{done, current, upcoming},
+		},
+		{
+			// Monday the 24th, shown on Monday the 31st, after Berlin went
+			// to summer time on the 30th: the series starts at 14:00 on the
+			// wall clock there too.
+			name:      "an all-day series saved timed across a change of summer time",
+			master:    []string{"DTSTART;VALUE=DATE:20250324", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250324", "DTSTART;VALUE=DATE:20250331"}},
+			start:     date(2025, 3, 31, 12, 0),
+			stored: []string{
+				"DTSTART;TZID=Europe/Berlin:20250324T140000", "RECURRENCE-ID;TZID=Europe/Berlin:20250324T140000",
+				"DTSTART;TZID=Europe/Berlin:20250331T140000",
+			},
+			lacks:  []string{"VALUE=DATE", "DUE"},
+			next:   date(2025, 3, 31, 12, 0),
+			dates:  []time.Time{date(2025, 3, 31, 12, 0), date(2025, 3, 31, 12, 0)},
+			states: []string{current, upcoming},
+		},
+		{
+			// Monday the 10th lies off a rule from Sunday the 9th, which is
+			// excluded: the rule's date the series moves from, and its
+			// EXDATE stays there, converted.
+			name:      "a repeat off the rule saved all-day on the day shown",
+			master:    []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY", "EXDATE:20250309T090000Z"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z"}},
+			start:     date(2025, 3, 12, 0, 0), allDay: true,
+			stored: []string{
+				"DTSTART;VALUE=DATE:20250309", "RRULE:FREQ=WEEKLY\r\n", "EXDATE;VALUE=DATE:20250309",
+				"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART;VALUE=DATE:20250312",
+			},
+			lacks:      []string{"T090000", "DUE"},
+			next:       date(2025, 3, 16, 0, 0),
+			nextAllDay: true,
+			dates:      []time.Time{date(2025, 3, 12, 0, 0), date(2025, 3, 16, 0, 0), date(2025, 3, 23, 0, 0), date(2025, 3, 30, 0, 0)},
+			states:     []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			// Another app made the repeat all-day: saved timed on its day,
+			// it takes the series' value type, which stays as it is.
+			name:   "a repeat of the other value type saved in the series' own",
+			master: []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART;VALUE=DATE:20250312", "DUE;VALUE=DATE:20250312"},
+			},
+			start: date(2025, 3, 12, 13, 0), due: date(2025, 3, 12, 14, 0),
+			stored: []string{
+				"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T130000Z", "DUE:20250312T140000Z",
+			},
+			lacks: []string{"VALUE=DATE"},
+			next:  date(2025, 3, 17, 9, 0),
+			dates: []time.Time{
+				date(2025, 3, 12, 13, 0), date(2025, 3, 17, 9, 0), date(2025, 3, 24, 9, 0), date(2025, 3, 31, 9, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			// Dragged a day later, all-day as another app made it: the
+			// series moves by that day and stays timed.
+			name:   "a repeat of the other value type moved a day keeps the series' type",
+			master: []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART;VALUE=DATE:20250312", "DUE;VALUE=DATE:20250312"},
+			},
+			start: date(2025, 3, 13, 0, 0), due: date(2025, 3, 13, 0, 0), allDay: true,
+			stored: []string{
+				"DTSTART:20250311T090000Z", "DUE:20250311T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=TU\r\n",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART;VALUE=DATE:20250313", "DUE;VALUE=DATE:20250313",
+			},
+			lacks:  []string{"BYDAY=MO", "RECURRENCE-ID;VALUE=DATE"},
+			next:   date(2025, 3, 18, 9, 0),
+			dates:  []time.Time{date(2025, 3, 13, 0, 0), date(2025, 3, 18, 9, 0), date(2025, 3, 25, 9, 0)},
+			states: []string{current, upcoming, upcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkMoveShown(t, tc)
+		})
+	}
+}
+
+// A repeat whose override another app wrote with a DATE RECURRENCE-ID in a
+// timed series, as for the repeat on that date (A-11), shown on another
+// day, moves the series by the distance it moves from where it is shown, as
+// one with a RECURRENCE-ID of the series' own value type does: from the
+// rule's repeat on that date, the RECURRENCE-ID moving along by the change
+// in date, in its own value type (FR-17).
+func TestMoveShownDateRid(t *testing.T) {
+	t.Parallel()
+	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent
+	master := []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"}
+	// Monday the 10th, shown on Wednesday the 12th.
+	shown := [][]string{{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z", "SUMMARY:Dated"}}
+	for _, tc := range []moveShownCase{
+		{
+			name:  "an hour later",
+			start: date(2025, 3, 12, 10, 0), due: date(2025, 3, 12, 11, 0),
+			stored: []string{
+				"DTSTART:20250310T100000Z", "DUE:20250310T110000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART:20250312T100000Z", "DUE:20250312T110000Z", "SUMMARY:Dated",
+			},
+			lacks: []string{"T090000Z"},
+			next:  date(2025, 3, 17, 10, 0),
+			dates: []time.Time{
+				date(2025, 3, 12, 10, 0), date(2025, 3, 17, 10, 0), date(2025, 3, 24, 10, 0), date(2025, 3, 31, 10, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			name:  "a day later",
+			start: date(2025, 3, 13, 9, 0), due: date(2025, 3, 13, 10, 0),
+			stored: []string{
+				"DTSTART:20250311T090000Z", "DUE:20250311T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=TU\r\n",
+				"RECURRENCE-ID;VALUE=DATE:20250311", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z", "SUMMARY:Dated",
+			},
+			lacks:  []string{"BYDAY=MO", "20250310", "20250312"},
+			next:   date(2025, 3, 18, 9, 0),
+			dates:  []time.Time{date(2025, 3, 13, 9, 0), date(2025, 3, 18, 9, 0), date(2025, 3, 25, 9, 0)},
+			states: []string{current, upcoming, upcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.master, tc.overrides = master, shown
+			checkMoveShown(t, tc)
 		})
 	}
 }

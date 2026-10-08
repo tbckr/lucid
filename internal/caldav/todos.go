@@ -46,7 +46,8 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 // todoFromObject converts the todo c of o into a Todo. A recurring todo
 // reports its current and next occurrence; any todo of the resource, c or one
 // of its overrides, with an ORGANIZER or an ATTENDEE makes it report
-// attendees (FR-16, FR-17).
+// attendees (FR-16, FR-17). Its zone is that of its anchor, DTSTART, else
+// DUE, as an event's is that of its DTSTART: the zone a series recurs in.
 func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.Todo {
 	desc, checklist := splitChecklist(text(c.Props, ical.PropDescription))
 	t := domain.Todo{
@@ -64,11 +65,14 @@ func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.To
 	start, startErr := parseDateProp(c.Props.Get(ical.PropDateTimeStart))
 	if startErr == nil {
 		st := start.t.UTC()
-		t.Start, t.StartAllDay = &st, start.allDay
+		t.Start, t.StartAllDay, t.Timezone = &st, start.allDay, start.tzid
 	}
 	if d, err := parseDateProp(c.Props.Get(ical.PropDue)); err == nil {
 		due := d.t.UTC()
 		t.Due, t.DueAllDay = &due, d.allDay
+		if startErr != nil {
+			t.Timezone = d.tzid
+		}
 	} else if p := c.Props.Get(ical.PropDuration); p != nil && startErr == nil {
 		// DUE and DURATION are exclusive (RFC 5545); report the end as due (FR-16).
 		if dur, err := parseDuration(p.Value); err == nil {
@@ -214,7 +218,9 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 	}
 
 	// Overrides beyond the RECURRENCE-ID the walk stopped at: it never
-	// visited them, so they were not yet checked against the window.
+	// visited them, so they were not yet checked against the window, nor
+	// against the rule's instances, which tell whether one lies off the
+	// rule, as one past its end does too (A-10).
 	for _, o := range s.overrides {
 		if len(occs) >= maxInstancesPerSeries {
 			break
@@ -222,7 +228,9 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 		if s.place(o, s.anchor.t) < 0 || s.place(o, stopRid) <= 0 {
 			continue
 		}
-		if occ, ok := s.overrideOcc(o); ok {
+		if occ, ok := s.overrideOcc(o); ok && occOverlaps(occ, start, end) {
+			on, _ := s.onInstance(s.ridOf(o))
+			occ.offGrid = !on
 			add(occ, stateOf(occ))
 		}
 	}
@@ -256,7 +264,7 @@ func occOverlaps(o todoOcc, from, to time.Time) bool {
 
 // todoOccurrenceOf converts one occurrence of the series identified by
 // todoID into a TodoOccurrence. Title is the override's SUMMARY, else the
-// master's (FR-16, FR-17).
+// master's; OffRule is o.offGrid (FR-16, FR-17).
 func todoOccurrenceOf(o todoOcc, todoID, calendarID, masterTitle, state string) domain.TodoOccurrence {
 	rid := o.rid.UTC()
 	title := masterTitle
@@ -276,6 +284,7 @@ func todoOccurrenceOf(o todoOcc, todoID, calendarID, masterTitle, state string) 
 		Due:          utcPtr(o.due),
 		DueAllDay:    o.dueAllDay,
 		State:        state,
+		OffRule:      o.offGrid,
 	}
 }
 
@@ -326,8 +335,10 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 }
 
 // UpdateTodo implements domain.CalendarService. Unknown properties and
-// components are preserved. The change of a recurring todo returns a
-// snapshot of the resource as read, see snapshot (FR-17).
+// components are preserved. The fields of in replace the todo's; those that
+// differ from the series' go into the override of its current repeat too,
+// see applyTodoEdit. The change of a recurring todo returns a snapshot of
+// the resource as read, see snapshot (FR-17).
 func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain.TodoInput) (_ domain.Todo, _ *domain.Snapshot, err error) {
 	if s.err != nil {
 		return domain.Todo{}, nil, s.err
@@ -432,12 +443,12 @@ type todoEdit struct {
 	// The completions other apps recorded in them become entries of their
 	// own before, see convertDoneOverrides.
 	drop func(rid dateValue) bool
-	// asShown says that in carries the fields of the current occurrence as
-	// shown, its override's own where it has them, as the body of a write to
-	// a later repeat R does for N, whose current occurrence R is (see
-	// UpdateTodoFollowing): only the fields that differ apply, see
-	// applyShownFields, while the series recurs.
-	asShown bool
+	// onlyEdited says that only the fields of in that differ from the master
+	// as read, cur's, apply to it while the series recurs, see
+	// applyEditedFields, as for the new series N of a split, which keeps the
+	// fields it inherited where in leaves them as they are (see
+	// UpdateTodoFollowing); else in's fields replace the master's.
+	onlyEdited bool
 }
 
 // newTodoEdit decides the update in of the todo c in cal, read as cur
@@ -473,13 +484,14 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 
 // applyTodoEdit applies the update e to the todo c in cal, in memory, as
 // UpdateTodo writes it (FR-17): the rule edit, then the dates, then the
-// fields, see applyTodoFields, or, for e.asShown while c recurs, those that
-// differ from the occurrence as shown, see applyShownFields. It does no
-// I/O: before it, the caller turns the completions other apps recorded in
-// the overrides e.drop reports into entries of their own, see
-// convertDoneOverrides, cloned from e.series as read; after it, the caller
-// bumps the change properties and writes. It returns the todo's series as
-// edited, nil once it does not recur.
+// fields, see applyTodoFields, or, for e.onlyEdited while c recurs, those
+// that differ from the master as read; those go into the override of the
+// current occurrence as read too, while the edit keeps it, see
+// applyEditedFields. It does no I/O: before it, the caller turns the
+// completions other apps recorded in the overrides e.drop reports into
+// entries of their own, see convertDoneOverrides, cloned from e.series as
+// read; after it, the caller bumps the change properties and writes. It
+// returns the todo's series as edited, nil once it does not recur.
 //
 // An update that completes the current occurrence of an open series with a
 // next one stops after the rule edit, and reports complete: the caller
@@ -493,12 +505,12 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 // applied in cal then, which the caller does not write.
 func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.Time) (series *todoSeries, complete bool, err error) {
 	series = e.series
-	// The override of the occurrence in shows, as read: the rule edit and
-	// the move may drop it.
-	var shown *ical.Component
-	if e.asShown && series != nil {
+	// The override of the occurrence in describes, as read: the rule edit
+	// and the move may drop it.
+	var ov *ical.Component
+	if series != nil {
 		occ, _ := series.reported(e.cur.Status)
-		shown = occ.override
+		ov = occ.override
 	}
 	switch e.rule {
 	case ruleRemove:
@@ -546,9 +558,11 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		// would restart there and lose its overrides. A new rule wrote them
 		// already (FR-17).
 	}
-	if e.asShown && series != nil {
-		applyShownFields(cal, c, shown, e.in, now)
+	if e.onlyEdited && series != nil {
+		applyEditedFields(c, ov, e.in, e.cur)
+		applyTodoStatus(c, e.in, now)
 	} else {
+		applyEditedFields(nil, ov, e.in, e.cur)
 		applyTodoFields(c, e.in, now)
 	}
 	return series, false, nil
@@ -1093,64 +1107,62 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	applyTodoStatus(c, in, now)
 }
 
-// applyShownFields writes the title, notes, checklist and priority of in
-// into the master c of a series in cal, each only where it differs from the
-// current occurrence as shown: the override ov's own value where it has
-// one, else c's, as read, and then in's status (FR-17). It is the edit of
-// the new series N of a split, whose body carries the fields of its first
-// repeat R as shown, as applyChangedEventFields writes an event's: R's own
-// title does not become every repeat's, and a field the client changed
-// goes into R's override ov too, unless the edit dropped ov from cal. The
-// notes and the checklist, which share DESCRIPTION, count on their own,
-// the checklist by the text of its items: N's are unchecked anyway (see
-// rolledInput). ov is nil where R has no override.
-func applyShownFields(cal *ical.Calendar, c, ov *ical.Component, in domain.TodoInput, now time.Time) {
-	shownText := func(name string) string {
-		v := text(c.Props, name)
+// applyEditedFields writes the title, notes, checklist and priority of in
+// that differ from cur, the master of a series as read, each on its own,
+// into that master c, unless c is nil, and into the override ov of the
+// series' current repeat R as read, unless ov is nil: an override the edit
+// dropped from cal takes them for nothing, so only one it keeps shows them
+// (FR-17). The body of a write to a series carries the series' fields with
+// the user's edits: a field left as the series has it keeps the value
+// another app gave R alone, as an exception's own title stays in an event
+// series (see applyChangedEventFields), and an edited one shows at R as at
+// every other repeat. UpdateTodo, a change of the series from R, passes no
+// c, as the master takes every field of in, see applyTodoFields; the new
+// series N of a split passes its master, which keeps the fields it
+// inherited as they are written. In ov an empty value stays, as the
+// override's own, see setTextKept. The notes and the checklist, which share
+// DESCRIPTION, count on their own, so R keeps its own notes where only the
+// checklist changed, and the other way round. The checklist counts with the
+// state of its items, the progress of R; for N, in and its master are
+// unchecked (see rolledInput and reopen), so only the text of its items can
+// differ there.
+func applyEditedFields(c, ov *ical.Component, in domain.TodoInput, cur domain.Todo) {
+	notesEdited, listEdited := in.Description != cur.Description, !slices.Equal(in.Checklist, cur.Checklist)
+	edited := func(desc string) string {
+		notes, list := splitChecklist(desc)
+		if notesEdited {
+			notes = in.Description
+		}
+		if listEdited {
+			list = in.Checklist
+		}
+		return joinChecklist(notes, list)
+	}
+	if in.Title != cur.Title {
+		if c != nil {
+			setText(c.Props, ical.PropSummary, in.Title)
+		}
 		if ov != nil {
-			v = textOr(ov.Props, name, v)
-		}
-		return v
-	}
-	shownPriority := todoPriority(c.Props)
-	if ov != nil && ov.Props.Get(ical.PropPriority) != nil {
-		shownPriority = todoPriority(ov.Props)
-	}
-	desc := shownText(ical.PropDescription)
-	notes, list := splitChecklist(desc)
-	notesChanged := in.Description != notes
-	listChanged := !slices.EqualFunc(in.Checklist, list, func(a, b domain.ChecklistItem) bool { return a.Text == b.Text })
-	inOv := ov != nil && slices.Contains(cal.Children, ov)
-
-	if title := in.Title; title != shownText(ical.PropSummary) {
-		setText(c.Props, ical.PropSummary, title)
-		if inOv {
-			setTextKept(ov.Props, ical.PropSummary, title)
+			setTextKept(ov.Props, ical.PropSummary, in.Title)
 		}
 	}
-	if notesChanged || listChanged {
-		changed := func(desc string) string {
-			notes, list := splitChecklist(desc)
-			if notesChanged {
-				notes = in.Description
-			}
-			if listChanged {
-				list = in.Checklist
-			}
-			return joinChecklist(notes, list)
+	if notesEdited || listEdited {
+		if c != nil {
+			setText(c.Props, ical.PropDescription, edited(text(c.Props, ical.PropDescription)))
 		}
-		if inOv {
-			setTextKept(ov.Props, ical.PropDescription, changed(desc))
+		if ov != nil {
+			own := textOr(ov.Props, ical.PropDescription, joinChecklist(cur.Description, cur.Checklist))
+			setTextKept(ov.Props, ical.PropDescription, edited(own))
 		}
-		setText(c.Props, ical.PropDescription, changed(text(c.Props, ical.PropDescription)))
 	}
-	if in.Priority != shownPriority {
-		setPriority(c.Props, in.Priority)
-		if inOv {
+	if in.Priority != cur.Priority {
+		if c != nil {
+			setPriority(c.Props, in.Priority)
+		}
+		if ov != nil {
 			setPriority(ov.Props, in.Priority)
 		}
 	}
-	applyTodoStatus(c, in, now)
 }
 
 // todoPriority returns the PRIORITY of props, 0 (undefined) where it has

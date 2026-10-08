@@ -469,6 +469,13 @@ completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
 the original property, including its `TZID`.
 
+`timezone` is the IANA zone of the todo's anchor, its `DTSTART`, else its
+`DUE`, as its `TZID` names it, like an event's `timezone` for its start: the
+zone a series recurs in, whose wall clock its moves count in (see `PUT`
+below). It is omitted for a date, a date-time in UTC (`Z`) or floating, and
+a `TZID` the backend can't resolve. A series reports its own zone, whatever
+zone another client gave its current occurrence.
+
 `rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and
 `recurrenceId` describe a recurring series (VTODO with `RRULE` or `RDATE`,
 FR-17):
@@ -537,6 +544,13 @@ another CalDAV client, kept in the list as history). Use `key` as the React
 key / occurrence identity; `todoId` identifies the underlying resource, like
 a todo's `id`.
 
+`offRule` is `true` for an occurrence whose `recurrenceId` lies after the
+series' start on none of its rule's occurrences: an override another client
+left there, such as a move of an interval series to an earlier day leaves
+behind, or one past the rule's end. No series can go on from it, so
+`PUT`/`DELETE /todos/{todoId}/following/{recurrenceId}` refuse it
+(`series_split_unsupported`). It is omitted otherwise.
+
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
 Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone" }` → `201` `Todo`.
@@ -559,6 +573,16 @@ it.
 
 For a recurring todo, these edits are handled specially:
 
+- **Changing fields** of an open series: the body carries the series'
+  `title`, `description`, `checklist` and `priority` with the user's edits,
+  and replaces the series' own. A field counts as changed when it differs
+  from the series' as stored, the checklist also by the state of its items,
+  the current occurrence's progress. A changed one goes into the current
+  occurrence's override too, where another client gave it one that the change
+  keeps (a change of the fields alone, or a move of an occurrence another
+  client moved, below); an unchanged one leaves the occurrence's own value.
+  So a title another client gave the current occurrence alone stays, unless
+  the title changes.
 - **Completing the current occurrence** (`status: COMPLETED` on an open
   series): the backend creates a completed copy — a clone of the occurrence
   as stored, so it can carry an override's own title and notes, under its
@@ -633,6 +657,11 @@ For a recurring todo, these edits are handled specially:
   instance before it; that instance, done or excluded as the occurrence is
   current, stays out at its new place by its `EXDATE`, which moves along, or
   a new one. The occurrence's override moves along and takes the new dates.
+  Saved between all-day and timed, an occurrence shown in the series' own
+  value type changes the series' type, as any move does: the series takes
+  the saved dates on the date its rule moves to, and every override,
+  `EXDATE` and the `UNTIL` convert as above. One another client already
+  shows in the other value type keeps the series' type.
   A change of its `due` alone changes only the occurrence; the last repeat
   moves to any date as above, wherever it is shown. A move together with a
   new `rrule` starts the series over, and the undo below restores the
@@ -782,14 +811,15 @@ repeat open (`NEEDS-ACTION`, `IN-PROCESS`, or absent): `COMPLETED` or
 the new series as `PUT /todos/{todoId}` changes a series from its current
 repeat, which the repeat is in the new series: new dates move it, the rule
 following as far as it can (see "Moving the series" there). The body carries
-the repeat's fields as shown, an override's own where it has them (`title`
-as `GET .../todos/occurrences` lists it), and only the changed ones apply:
-title, notes, checklist (by the text of its items) and priority that differ
-from the repeat as shown go into the new series and into the repeat's
-override, if it has one; the others stay as the new series inherited them.
-So a title another client gave the repeat alone does not become the title of
-every repeat. With `rrule: ""`, the new series is the repeat alone and takes
-the body's fields as they are. Its status and its checklist's state are
+the series' fields, `title`, `description`, `checklist` and `priority` as the
+todo has them, with the user's edits, and only the changed ones apply: a
+field counts as changed when it differs from the series' (the checklist by
+the text of its items), and goes into the new series and into the repeat's
+override, if it has one; the others stay as the new series inherited them,
+and the repeat keeps its own. So a title another client gave the repeat
+alone stays the repeat's, and does not become the title of every repeat.
+With `rrule: ""`, the new series is the repeat alone and takes the body's
+fields as they are. Its status and its checklist's state are
 those of a series that rolls on, though: `NEEDS-ACTION`, every item
 unchecked, whatever the body says. `start` is handled as there: a body without it, or without any date,
 takes the repeat's `start`. `rrule` is the new series' rule: absent, or sent
