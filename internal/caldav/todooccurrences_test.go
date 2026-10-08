@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"cmp"
 	"net/http"
 	"path"
 	"reflect"
@@ -236,8 +237,8 @@ func TestDetachTodoOccurrence(t *testing.T) {
 		checkStored(t, "copy", storedDetached(t, e, &got), []string{
 			"DTSTART;TZID=Europe/Berlin:20250310T100000", "DUE;TZID=Europe/Berlin:20250310T110000", "BEGIN:VTIMEZONE",
 			"SUMMARY:Renamed", "X-LUCID-DETACHED-FROM:r\r\n", "STATUS:NEEDS-ACTION", `DESCRIPTION:Notes\n\n- [x] a`,
-			"PRIORITY:3", "BEGIN:VALARM", "TRIGGER:-PT15M", "DESCRIPTION:Reminder", "X-FOO:bar",
-		}, []string{"RRULE:FREQ=WEEKLY", "\r\nUID:r\r\n", "PERCENT-COMPLETE", "COMPLETED", "RECURRENCE-ID"})
+			"PRIORITY:3", "PERCENT-COMPLETE:40", "BEGIN:VALARM", "TRIGGER:-PT15M", "DESCRIPTION:Reminder", "X-FOO:bar",
+		}, []string{"RRULE:FREQ=WEEKLY", "\r\nUID:r\r\n", "COMPLETED", "RECURRENCE-ID"})
 		if n := len(e.mock.ObjectPaths(e.paths["tasks"])); n != 2 {
 			t.Errorf("%d objects; want the series and the detached task", n)
 		}
@@ -249,6 +250,73 @@ func TestDetachTodoOccurrence(t *testing.T) {
 			t.Errorf("snapshot = %+v; want the seeded series, and the copy as one that may not stay", snap)
 		}
 	})
+
+	// The detached copy is the repeat, still open, with its progress: its
+	// stored open status and a PERCENT-COMPLETE below 100 stay, and a status
+	// the body changes from the series' applies like any changed field;
+	// only what would mark it done goes. The series rolls on open, without
+	// PERCENT-COMPLETE (FR-17).
+	for _, tc := range []struct {
+		name       string
+		master     []string
+		overrides  [][]string
+		status     string // the body's, "" for the series' as listed
+		want       string // the copy's status
+		has, lacks []string
+	}{
+		{
+			name:   "the series' progress stays",
+			master: []string{"STATUS:IN-PROCESS", "PERCENT-COMPLETE:40"},
+			want:   domain.TodoInProcess,
+			has:    []string{"STATUS:IN-PROCESS", "PERCENT-COMPLETE:40"},
+		},
+		{
+			// The body echoes the series' status, which the repeat's own
+			// differs from: no change.
+			name:      "an override's own progress stays",
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "STATUS:IN-PROCESS", "PERCENT-COMPLETE:40"}},
+			want:      domain.TodoInProcess,
+			has:       []string{"STATUS:IN-PROCESS", "PERCENT-COMPLETE:40"},
+		},
+		{
+			name:   "a status the body changes applies",
+			status: domain.TodoInProcess,
+			want:   domain.TodoInProcess,
+			has:    []string{"STATUS:IN-PROCESS"},
+			lacks:  []string{"PERCENT-COMPLETE"},
+		},
+		{
+			name:   "a status the body changes back applies",
+			master: []string{"STATUS:IN-PROCESS", "PERCENT-COMPLETE:40"},
+			status: domain.TodoNeedsAction,
+			want:   domain.TodoNeedsAction,
+			has:    []string{"STATUS:NEEDS-ACTION", "PERCENT-COMPLETE:40"},
+		},
+		{
+			name:   "what marks it done goes",
+			master: []string{"STATUS:IN-PROCESS", "PERCENT-COMPLETE:100", "COMPLETED:20250301T100000Z"},
+			want:   domain.TodoInProcess,
+			has:    []string{"STATUS:IN-PROCESS"},
+			lacks:  []string{"PERCENT-COMPLETE", "COMPLETED:"},
+		},
+	} {
+		t.Run("progress: "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, append([]string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}, tc.master...), tc.overrides...)
+			got, _ := detachCurrent(t, e, id, func(f *domain.Todo) domain.TodoInput {
+				in := editInput(f)
+				in.Status = cmp.Or(tc.status, in.Status)
+				return in
+			})
+			if c := got.DetachedCopy; c == nil || c.Status != tc.want || c.Completed != nil {
+				t.Errorf("detached copy = %+v; want it %s", c, tc.want)
+			}
+			checkStored(t, "copy", storedDetached(t, e, &got), tc.has, tc.lacks)
+			checkStored(t, "series", storedObject(t, e, id), []string{"STATUS:NEEDS-ACTION"},
+				[]string{"PERCENT-COMPLETE", "COMPLETED:", "IN-PROCESS"})
+		})
+	}
 
 	// An override's own fields and alarms are the repeat's: the copy takes
 	// them, and the series keeps its own (FR-17).

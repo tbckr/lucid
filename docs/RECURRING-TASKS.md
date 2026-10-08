@@ -939,9 +939,12 @@ completion, in the same steps, but leaves the occurrence open:
 1. The detached task under a new UID (`If-None-Match: *`), a clone of the
    occurrence as stored like a completed copy, with the request's dates and
    the fields the client changed, the checklist with its state. Unlike a
-   completed copy it stays open (`STATUS:NEEDS-ACTION`, without `COMPLETED`
-   or `PERCENT-COMPLETE`), and it keeps its alarms: copies of the
-   override's own where it has any, else of the series'. It records where it
+   completed copy it stays open, with the occurrence's progress: its stored
+   status, `NEEDS-ACTION` or `IN-PROCESS`, and a `PERCENT-COMPLETE` below
+   100 stay, a status the client changed from the series' applies like the
+   other fields, and only a `COMPLETED` date and a `PERCENT-COMPLETE` of 100
+   go. It keeps its alarms: copies of the override's own where it has any,
+   else of the series'. It records where it
    came from in `X-LUCID-DETACHED-FROM`, the series' `UID`, so that the UI
    can say so. No other client reads it; to them it is a plain task. A
    series that carries such a property itself, as a detached task another

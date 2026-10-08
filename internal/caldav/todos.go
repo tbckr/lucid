@@ -732,10 +732,10 @@ func (s *service) writeOffCurrent(ctx context.Context, objPath, calPath, etag st
 //     and the fields of in that differ from cur's (see applyChangedFields),
 //     the checklist with its state. A completed one is marked completed and
 //     has no alarms, since a done task must not ring. A detached one keeps
-//     the occurrence's alarms, is open (STATUS:NEEDS-ACTION, without
-//     COMPLETED or PERCENT-COMPLETE), and carries the UID of the series it
-//     was detached from (propDetachedFrom), set over one it may have cloned
-//     from the series, never added next to it.
+//     the occurrence's alarms, stays open with the progress it has (see
+//     keepOpen), with in's status where it differs from cur's, and carries
+//     the UID of the series it was detached from (propDetachedFrom), set
+//     over one it may have cloned from the series, never added next to it.
 //   - The series rolls on, see rollPast, and is open (STATUS:NEEDS-ACTION,
 //     without COMPLETED or PERCENT-COMPLETE). On a completion it takes in's
 //     fields, its checklist unchecked: the client edited the series it was
@@ -768,7 +768,12 @@ func (s *service) splitOffCurrent(cal *ical.Calendar, c *ical.Component, series 
 	if completed {
 		markCompleted(cc, now)
 	} else {
-		markOpen(cc)
+		keepOpen(cc)
+		// The status is the series' as read, unless the client changed it,
+		// as for the other fields; it leaves the repeat open (requireOpen).
+		if status := cmp.Or(in.Status, domain.TodoNeedsAction); status != cur.Status {
+			cc.Props.Set(rawProp(ical.PropStatus, status))
+		}
 		// TEXT is the value type of an X- property (RFC 5545 section
 		// 3.8.8.2), which go-ical would write out as VALUE=TEXT.
 		origin := ical.NewProp(propDetachedFrom)
@@ -806,6 +811,24 @@ func rolledInput(in domain.TodoInput) domain.TodoInput {
 	}
 	in.Checklist = list
 	return in
+}
+
+// keepOpen leaves c, the clone of an open repeat, open with the progress
+// it has (FR-17): a STATUS of NEEDS-ACTION or IN-PROCESS and a
+// PERCENT-COMPLETE below 100 stay; any other status becomes NEEDS-ACTION,
+// and COMPLETED and a PERCENT-COMPLETE of 100 go.
+func keepOpen(c *ical.Component) {
+	switch strings.ToUpper(strings.TrimSpace(text(c.Props, ical.PropStatus))) {
+	case domain.TodoNeedsAction, domain.TodoInProcess:
+	default:
+		c.Props.Set(rawProp(ical.PropStatus, domain.TodoNeedsAction))
+	}
+	c.Props.Del(ical.PropCompleted)
+	if p := c.Props.Get(ical.PropPercentComplete); p != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(p.Value)); err == nil && n >= 100 {
+			c.Props.Del(ical.PropPercentComplete)
+		}
+	}
 }
 
 // markOpen sets STATUS:NEEDS-ACTION and removes COMPLETED and

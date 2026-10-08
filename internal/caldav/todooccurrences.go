@@ -154,11 +154,12 @@ func requireOpen(in domain.TodoInput) error {
 // current repeat at recurrenceID of a task series as a task of its own,
 // changed by in, while the series rolls on (FR-17; spec section 5
 // "Ablösen"). The task is the repeat as stored, as completing it would copy
-// it, but open, with its alarms and the series' UID as its origin; the series
-// rolls as on a completion, keeping its own title, notes and priority, see
-// splitOffCurrent. It writes the task, with If-None-Match, and then the
-// series, with If-Match etag; if the series cannot be written, the task goes
-// again as far as Lucid can tell, see writeCreatedThenMaster (A-01).
+// it, but open, with its progress, its alarms and the series' UID as its
+// origin (see keepOpen); the series rolls as on a completion, keeping its
+// own title, notes and priority, see splitOffCurrent. It writes the task,
+// with If-None-Match, and then the series, with If-Match etag; if the series
+// cannot be written, the task goes again as far as Lucid can tell, see
+// writeCreatedThenMaster (A-01).
 //
 // in.RRule is the series' and ignored, and in's dates are filled in as
 // UpdateTodo fills them in, see fillTodoDates. At the series' last repeat,

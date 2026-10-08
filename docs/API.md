@@ -689,8 +689,11 @@ without it, or without any date, takes the repeat's `start`.
   It takes the body's dates and the fields the body changes (title, notes,
   checklist with its state, priority), over an override's own. It keeps the
   repeat's alarms: an override's own where it has any, else the series'. It
-  is open (`STATUS:NEEDS-ACTION`, without `COMPLETED` or `PERCENT-COMPLETE`),
-  and its `X-LUCID-DETACHED-FROM` is the series' `UID` (`detachedFrom`).
+  stays open with the repeat's progress: its stored status, `NEEDS-ACTION`
+  or `IN-PROCESS`, and a `PERCENT-COMPLETE` below 100 stay, and a `status`
+  that differs from the series' (`status` of the todo) applies, like the
+  other changed fields; a `COMPLETED` date and a `PERCENT-COMPLETE` of 100
+  go. Its `X-LUCID-DETACHED-FROM` is the series' `UID` (`detachedFrom`).
 - **The series** rolls on as after a completion, to its next repeat, also
   from a repeat off the rule, whose override goes. Its title, notes and
   priority stay as stored, whatever the body says, as only the detached
