@@ -57,7 +57,8 @@ interface Asking {
  * the line below the month says why and nothing is saved. Where the answer
  * does not depend on the day, that line says beforehand what a move reaches.
  * A task that does not repeat, and the last repeat, are saved as they are
- * through `onChange`, as is every task without `onScope`.
+ * through `onChange`, as is every task without `onScope`. A series without a
+ * start keeps its due date, the date it repeats from.
  */
 export function DuePicker({
   todo,
@@ -270,17 +271,20 @@ export function DuePicker({
                   aria-label={t('tasks.dueTime')}
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="justify-start text-muted-foreground"
-                onClick={(e) => {
-                  save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
-                }}
-              >
-                <XIcon aria-hidden />
-                {t('tasks.removeDue')}
-              </Button>
+              {/* A repeating task needs a date to repeat from: a series without a start keeps its due date (FR-17). */}
+              {!(todo.recurring && !todo.start) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-start text-muted-foreground"
+                  onClick={(e) => {
+                    save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
+                  }}
+                >
+                  <XIcon aria-hidden />
+                  {t('tasks.removeDue')}
+                </Button>
+              )}
             </div>
           )}
         </div>

@@ -1480,10 +1480,11 @@ export const END_TODO_KEY = [...UPDATE_TODO_KEY, 'end'] as const
  * answer is the rolled series with the detached task, both put into the list
  * at once; its new ETag is noted within the mutation, so a write queued
  * behind it in the series' scope already uses it (NFR-26). The toast says
- * where the series goes on, its current repeat now, and its Undo takes the
- * detached task back, until a write of that task, which makes the server
- * refuse the Undo, takes it away (`noteSplit`). With the `id` of the series,
- * after its other writes.
+ * where the series goes on, its current repeat now, and the day the repeat
+ * moved to; one that moved to no date at all, its due date removed, is said
+ * to have changed. Its Undo takes the detached task back, until a write of
+ * that task, which makes the server refuse the Undo, takes it away
+ * (`noteSplit`). With the `id` of the series, after its other writes.
  */
 export function useDetachTodo(id?: string) {
   const qc = useQueryClient()
@@ -1504,6 +1505,8 @@ export function useDetachTodo(id?: string) {
       putTodo(qc, todo.calendarId, answer)
       // The server refuses the Undo once the detached task changed, as the series restored would show the repeat twice.
       if (answer.detachedCopy) noteSplit(qc, todo.id, answer.detachedCopy.id, ctx.generation)
+      // The day it moved to; none where its dates were removed, which is said like a change.
+      const to = moved ? anchorOf(input) : null
       const after = {
         etag: answer.etag,
         undoToken: answer.undoToken,
@@ -1512,8 +1515,8 @@ export function useDetachTodo(id?: string) {
       }
       if (!answer.detachedCopy) {
         // The series had no next repeat by now, so the server changed its last one as a single task, which asks
-        // nothing: said like such a change, and only where it moved.
-        if (moved) todoToast(qc, t, todo, t('tasks.movedToLast', { date: toastDay(anchorOf(input), prefs) }), after)
+        // nothing: said like such a change, and only where it moved to a day.
+        if (to) todoToast(qc, t, todo, t('tasks.movedToLast', { date: toastDay(to, prefs) }), after)
         return
       }
       const next = toastDay(anchorOf(answer), prefs)
@@ -1521,8 +1524,8 @@ export function useDetachTodo(id?: string) {
         qc,
         t,
         todo,
-        moved
-          ? t('scope.toast.detachedMoved', { date: toastDay(anchorOf(input), prefs), next })
+        to
+          ? t('scope.toast.detachedMoved', { date: toastDay(to, prefs), next })
           : t('scope.toast.detachedChanged', { next }),
         after,
         { slots: taskGlyphSlots('this', repeat.at), color: todoColor(qc, todo.calendarId) },

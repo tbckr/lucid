@@ -247,6 +247,21 @@ describe('DuePicker', () => {
       expect(dialog).not.toBeInTheDocument()
     })
 
+    // A repeating task needs a date to repeat from: the server refuses a series without one.
+    it('keeps the due date of a series without a start', async () => {
+      const { dialog } = await open(series)
+      expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toBeInTheDocument()
+      expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
+    })
+
+    it('removes the due date of a series with a start', async () => {
+      const dated = { ...series, start: '2026-10-05T00:00:00Z', startAllDay: true }
+      const { user, onScope, dialog } = await open(dated)
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ start: '2026-10-05T00:00:00Z', due: null }))
+    })
+
     it('says nothing beforehand for a series without attendees', async () => {
       const { dialog } = await open({ ...series, rrule: 'FREQ=WEEKLY', fixedDays: false })
       expect(within(dialog).queryByText(/repeats/)).toBeNull()

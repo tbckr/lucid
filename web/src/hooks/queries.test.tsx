@@ -3061,6 +3061,30 @@ describe('task scope writes', () => {
       expect(success).toHaveBeenCalledTimes(1)
     })
 
+    // The due date removed from a series dated by it alone: no day is left to say it moved to.
+    it('says a repeat changed on its own where it moved to no date', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const undated = { ...detached, due: null, dueAllDay: false }
+      const { wrap } = setup(jsonResponse(200, { ...rolled, undoToken: 'tok', detachedCopy: undated }))
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({
+          todo: series,
+          repeat: current,
+          input: todoToInput(series, { due: null, dueAllDay: false }),
+          moved: true,
+        })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(
+        toastOf(success.mock.calls, 'Changed as a task of its own. The series goes on Thu, Oct 8.'),
+      ).toMatchObject({ id: 'series:t2', action: 'Undo' })
+      expect(success).toHaveBeenCalledTimes(1)
+    })
+
     // The server hands out no token where it can't tell the detached task's ETag, or with attendees.
     it('offers no undo without a token', async () => {
       const success = vi.spyOn(toast, 'success')
