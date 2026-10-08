@@ -2,14 +2,14 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { type ScopeItem } from '@/lib/scope'
+import { glyphSlots, taskGlyphSlots, type ScopeItem } from '@/lib/scope'
 import { renderWithProviders } from '@/test/render'
 import { ScopeChoice } from './ScopeChoice'
 
 const question = 'This event repeats. Which events should move?'
 const items: ScopeItem[] = [
-  { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 17.' },
-  { scope: 'all', label: 'All events', note: 'Past ones too.' },
+  { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 17.', slots: glyphSlots('this') },
+  { scope: 'all', label: 'All events', note: 'Past ones too.', slots: glyphSlots('all') },
 ]
 
 function setup(props: Partial<ComponentProps<typeof ScopeChoice>> = {}) {
@@ -49,6 +49,22 @@ describe('ScopeChoice', () => {
       Array.from(row!.querySelectorAll('circle')).map((c) => c.getAttribute('fill'))
     expect(filled(only)).toEqual(['none', 'none', '#3b82f6', 'none', 'none'])
     expect(filled(all)).toEqual(Array(5).fill('#3b82f6'))
+  })
+
+  it('draws the reach each option names, done repeats as checks', () => {
+    setup({
+      items: [
+        { scope: 'this', label: 'Only this repeat', note: 'Becomes a task of its own.', slots: taskGlyphSlots('this', 'current') },
+        { scope: 'all', label: 'All repeats', note: 'Done ones stay.', slots: taskGlyphSlots('all', 'current') },
+      ],
+    })
+    const [only, all] = screen.getAllByRole('button')
+    const filled = (row: HTMLElement | undefined) =>
+      Array.from(row!.querySelectorAll('circle')).map((c) => c.getAttribute('fill'))
+    expect(filled(only)).toEqual(['#3b82f6', 'none', 'none'])
+    expect(filled(all)).toEqual(Array(3).fill('#3b82f6'))
+    expect(only!.querySelectorAll('path')).toHaveLength(2)
+    expect(all!.querySelectorAll('path')).toHaveLength(2)
   })
 
   it('draws the dots of a delete in red', () => {

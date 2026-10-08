@@ -1,7 +1,9 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { moveAllRefusal, seriesShift } from './seriesShift'
+import { type TaskDates, type TaskRepeat } from './calendarTasks'
+import { moveAllRefusal, seriesShift, taskMoveRefusal } from './seriesShift'
+import { todo } from '@/test/fixtures'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
 interface SeriesShiftCase {
@@ -158,5 +160,169 @@ describe('moveAllRefusal', () => {
       startsAt: new Date(2026, 2, 15),
     }
     expect(moveAllRefusal(event, new Date('2026-03-16T00:00:00Z'), 'Europe/Berlin')).toBe('fixedDays')
+  })
+})
+
+// FR-17: the shift check of a task series is the events' `seriesShift`, measured from a repeat's RECURRENCE-ID by
+// the distance its shown dates move.
+describe('taskMoveRefusal', () => {
+  /**
+   * A repeat of the series `rrule` (in `timezone`) named `rid`, shown on `shown`; the current repeat is named
+   * `current` and shown on `currentShown`, else on `shown`.
+   */
+  function repeat(p: {
+    rrule: string
+    timezone?: string
+    current: string
+    currentShown?: TaskDates
+    rid: string
+    shown: TaskDates
+    at?: TaskRepeat['at']
+  }): TaskRepeat {
+    return {
+      todo: todo({
+        rrule: p.rrule,
+        recurring: true,
+        timezone: p.timezone,
+        recurrenceId: p.current,
+        ...(p.currentShown ?? p.shown),
+      }),
+      recurrenceId: p.rid,
+      at: p.at ?? 'current',
+      last: false,
+      offRule: false,
+      shown: p.shown,
+    }
+  }
+  const timed = (due: string): TaskDates => ({ start: null, startAllDay: false, due, dueAllDay: false })
+  const date = (day: string): TaskDates => ({ start: null, startAllDay: false, due: `${day}T00:00:00Z`, dueAllDay: true })
+
+  it('lets an all-day weekly series follow from Monday to Tuesday', () => {
+    const monday = repeat({
+      rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+      current: '2026-03-09T00:00:00Z',
+      rid: '2026-03-09T00:00:00Z',
+      shown: date('2026-03-09'),
+    })
+    expect(taskMoveRefusal(monday, date('2026-03-10'), 'repeat', 'Europe/Berlin')).toBeNull()
+  })
+
+  it('reads an all-day repeat by its UTC date west of UTC too', () => {
+    const originalTz = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const fifteenth = repeat({
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+        current: '2026-03-15T00:00:00Z',
+        rid: '2026-03-15T00:00:00Z',
+        shown: date('2026-03-15'),
+      })
+      expect(taskMoveRefusal(fifteenth, date('2026-03-15'), 'repeat', 'America/New_York')).toBeNull()
+      expect(taskMoveRefusal(fifteenth, date('2026-03-16'), 'repeat', 'America/New_York')).toBe('fixedDays')
+    } finally {
+      process.env.TZ = originalTz
+    }
+  })
+
+  it('counts the days of a timed series in its own zone, not the browser\'s', () => {
+    // 23:30 in Berlin on Monday, 9 March; an hour later is Tuesday there, but still Monday in New York.
+    const late = {
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
+      current: '2026-03-09T22:30:00Z',
+      rid: '2026-03-09T22:30:00Z',
+      shown: timed('2026-03-09T22:30:00Z'),
+    }
+    const hourLater = timed('2026-03-09T23:30:00Z')
+    expect(taskMoveRefusal(repeat({ ...late, timezone: 'Europe/Berlin' }), hourLater, 'repeat', 'America/New_York')).toBe(
+      'fixedDays',
+    )
+    // Without a zone of its own (UTC or floating), the browser's.
+    expect(taskMoveRefusal(repeat(late), hourLater, 'repeat', 'America/New_York')).toBeNull()
+  })
+
+  it('measures from the recurrence ID by the distance the shown dates move', () => {
+    // A repeat at 23:30 on the 9th in Berlin, which another app shows at 10:00 instead: an hour later moves the rule
+    // from 23:30 past midnight, off its day; a quarter of an hour later keeps it there.
+    const elsewhere = repeat({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
+      timezone: 'Europe/Berlin',
+      current: '2026-03-09T22:30:00Z',
+      rid: '2026-03-09T22:30:00Z',
+      shown: timed('2026-03-09T09:00:00Z'),
+    })
+    expect(taskMoveRefusal(elsewhere, timed('2026-03-09T10:00:00Z'), 'repeat', 'Europe/Berlin')).toBe('fixedDays')
+    expect(taskMoveRefusal(elsewhere, timed('2026-03-09T09:15:00Z'), 'repeat', 'Europe/Berlin')).toBeNull()
+  })
+
+  it('measures "all" from a later repeat from the current repeat\'s recurrence ID', () => {
+    // Daily in March and April, stored in UTC, read in Berlin: the current repeat at 23:30 on Saturday the 28th,
+    // the next at 00:30 on Monday the 30th, as summer time began in between.
+    const later = repeat({
+      rrule: 'FREQ=DAILY;BYMONTH=3,4',
+      current: '2026-03-28T22:30:00Z',
+      currentShown: timed('2026-03-28T22:30:00Z'),
+      rid: '2026-03-29T22:30:00Z',
+      shown: timed('2026-03-29T22:30:00Z'),
+      at: 'upcoming',
+    })
+    const halfHourLater = timed('2026-03-29T23:00:00Z')
+    // From the later repeat it stays on its day, from the current one it moves past midnight.
+    expect(taskMoveRefusal(later, halfHourLater, 'repeat', 'Europe/Berlin')).toBeNull()
+    expect(taskMoveRefusal(later, halfHourLater, 'current', 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('blames the times when the rule fixes them and the clock moves', () => {
+    const nine = repeat({
+      rrule: 'FREQ=DAILY;BYHOUR=9',
+      timezone: 'Europe/Berlin',
+      current: '2026-03-09T08:00:00Z',
+      rid: '2026-03-09T08:00:00Z',
+      shown: timed('2026-03-09T08:00:00Z'),
+    })
+    expect(taskMoveRefusal(nine, timed('2026-03-09T09:00:00Z'), 'repeat', 'Europe/Berlin')).toBe('fixedTimes')
+    expect(taskMoveRefusal(nine, timed('2026-03-10T09:00:00Z'), 'repeat', 'Europe/Berlin')).toBe('fixedTimes')
+    // Another day at the same time: the rule fixes no days, but it lets no move change the day either.
+    expect(taskMoveRefusal(nine, timed('2026-03-10T08:00:00Z'), 'repeat', 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('anchors on the start, else the due', () => {
+    const spanning = repeat({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+      timezone: 'Europe/Berlin',
+      current: '2026-03-15T08:00:00Z',
+      rid: '2026-03-15T08:00:00Z',
+      shown: { start: '2026-03-15T08:00:00Z', startAllDay: false, due: '2026-03-16T08:00:00Z', dueAllDay: false },
+    })
+    // Only the due moves: the start, which anchors it, stays on its day.
+    const longer = { start: '2026-03-15T08:00:00Z', startAllDay: false, due: '2026-03-18T08:00:00Z', dueAllDay: false }
+    expect(taskMoveRefusal(spanning, longer, 'repeat', 'Europe/Berlin')).toBeNull()
+    const startLater = { ...longer, start: '2026-03-16T08:00:00Z' }
+    expect(taskMoveRefusal(spanning, startLater, 'repeat', 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('moves a repeat between a time and a date by its change of date alone', () => {
+    // A repeat of 09:00 on the 15th in Berlin, which another app moved to 10:00, made an all-day task on the same day:
+    // no day moves, as on the server. Counting the hours, the rule would go back to 23:00 on the 14th.
+    const moved = repeat({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+      timezone: 'Europe/Berlin',
+      current: '2026-03-15T08:00:00Z',
+      rid: '2026-03-15T08:00:00Z',
+      shown: timed('2026-03-15T09:00:00Z'),
+    })
+    expect(taskMoveRefusal(moved, date('2026-03-15'), 'repeat', 'Europe/Berlin')).toBeNull()
+    expect(taskMoveRefusal(moved, date('2026-03-16'), 'repeat', 'Europe/Berlin')).toBe('fixedDays')
+  })
+
+  it('has nothing to refuse without dates to move to', () => {
+    const fifteenth = repeat({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+      current: '2026-03-15T00:00:00Z',
+      rid: '2026-03-15T00:00:00Z',
+      shown: date('2026-03-15'),
+    })
+    expect(
+      taskMoveRefusal(fifteenth, { start: null, startAllDay: false, due: null, dueAllDay: false }, 'repeat', 'Europe/Berlin'),
+    ).toBeNull()
   })
 })

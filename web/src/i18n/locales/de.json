@@ -205,11 +205,26 @@
       "allNote": "Auch vergangene.",
       "allRuleRemovedNote": "Nur dieser Termin bleibt. Alle anderen werden gelöscht."
     },
+    "task": {
+      "move": "Diese Aufgabe wiederholt sich. Welche Wiederholungen verschieben?",
+      "change": "Diese Aufgabe wiederholt sich. Welche Wiederholungen ändern?",
+      "delete": "Diese Aufgabe wiederholt sich. Welche Wiederholungen löschen?",
+      "this": "Nur diese Wiederholung",
+      "thisNote": "Wird eine eigene Aufgabe. Die Serie geht am {{next}} weiter.",
+      "thisDeleteNote": "Wird übersprungen. Die Serie geht am {{next}} weiter.",
+      "following": "Diese und alle folgenden",
+      "followingRuleRemovedNote": "Ab {{date}} bleibt nur diese Wiederholung. Frühere bleiben, wie sie sind.",
+      "all": "Alle Wiederholungen",
+      "allNote": "Erledigte bleiben.",
+      "allDeleteNote": "Erledigte und aus der Serie gelöste bleiben."
+    },
     "followingNote": "Ab {{date}} als eigene Serie. Frühere bleiben, wie sie sind.",
     "followingDeleteNote": "Die Serie endet vor dem {{date}}.",
     "followingRuleRemovedNote": "Ab {{date}} bleibt nur dieser Termin. Frühere bleiben, wie sie sind.",
     "missing": {
-      "attendees": "Mit Teilnehmenden lässt sich die Serie nicht teilen."
+      "attendees": "Mit Teilnehmenden lässt sich die Serie nicht teilen.",
+      "attendeesTask": "Mit Teilnehmenden kann keine Wiederholung eine eigene Aufgabe werden.",
+      "taskThis": "Einzeln geht nur die aktuelle Wiederholung."
     },
     "reason": {
       "fixedDays": "Die Serie bleibt auf ihren Tagen.",
@@ -218,7 +233,13 @@
     "hint": {
       "eventThis": "Nur dieser Termin. {{reason}}",
       "eventAll": "Gilt für alle Termine der Serie.",
-      "eventRuleRemoved": "Die Serie wird zu diesem einen Termin. Alle anderen werden gelöscht."
+      "eventRuleRemoved": "Die Serie wird zu diesem einen Termin. Alle anderen werden gelöscht.",
+      "taskThis": "Nur diese Wiederholung. Sie wird eine eigene Aufgabe.",
+      "taskAll": "Gilt ab dieser Wiederholung. Erledigte bleiben.",
+      "taskAllMove": "Verschiebt alle Wiederholungen.",
+      "taskRuleRemoved": "Die Aufgabe wiederholt sich dann nicht mehr. Kommende Wiederholungen entfallen.",
+      "taskFollowing": "Diese und alle folgenden, als eigene Serie.",
+      "none": "Lässt sich nicht verschieben. {{reason}}"
     },
     "toast": {
       "thisMoved": "Nur dieser Termin verschoben.",

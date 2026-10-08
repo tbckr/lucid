@@ -1,4 +1,5 @@
 import { formatInTimeZone } from 'date-fns-tz'
+import { type TaskDates, type TaskRepeat } from './calendarTasks'
 import { utcToZoned } from './dates'
 import { type CalEvent } from './events'
 
@@ -6,8 +7,9 @@ import { type CalEvent } from './events'
  * `seriesShift` mirrors `internal/caldav/seriesshift.go` (FR-17): when a
  * user drags one occurrence of a series, it decides whether the whole series
  * can follow it, and with which RRULE; `moveAllRefusal` asks it about a move
- * and says why not. The two implementations of `seriesShift` are checked
- * against the same case table, `internal/caldav/testdata/series-shift.json`.
+ * of an event and `taskMoveRefusal` about one of a task's repeat, and both
+ * say why not. The two implementations of `seriesShift` are checked against
+ * the same case table, `internal/caldav/testdata/series-shift.json`.
  */
 
 /** RRULE weekday codes, in `Date#getDay()` order (Sunday first). */
@@ -234,6 +236,21 @@ function allDayWallClock(date: Date): string {
 export type ShiftReason = 'fixedDays' | 'fixedTimes'
 
 /**
+ * Why the rule `rule` cannot follow its series from the wall clock `from` to
+ * `to`, or `null` if it can (FR-17). A refusal is `'fixedTimes'` when the
+ * rule fixes the clock itself (BYHOUR, BYMINUTE or BYSECOND) and the move
+ * changes the clock — that is what the user can change — and `'fixedDays'`
+ * otherwise.
+ */
+function shiftRefusal(rule: string, from: string, to: string): ShiftReason | null {
+  if (seriesShift(rule, from, to) !== null) return null
+  const f = parseWallClock(from)
+  const t = parseWallClock(to)
+  const clockChanged = f.hh !== t.hh || f.mm !== t.mm
+  return hasClockParts(rule) && clockChanged ? 'fixedTimes' : 'fixedDays'
+}
+
+/**
  * Why a series cannot follow its event all the way to `newStart` (FR-17), or
  * `null` if it can: `seriesShift` of the event's rule from its current
  * wall-clock start to `newStart`'s. All-day events have no real zone, so
@@ -261,10 +278,71 @@ export function moveAllRefusal(
     from = wallClock(event.startsAt, zone)
     to = wallClock(newStart, zone)
   }
-  if (seriesShift(event.rrule, from, to) !== null) return null
+  return shiftRefusal(event.rrule, from, to)
+}
 
-  const f = parseWallClock(from)
-  const t = parseWallClock(to)
-  const clockChanged = f.hh !== t.hh || f.mm !== t.mm
-  return hasClockParts(event.rrule) && clockChanged ? 'fixedTimes' : 'fixedDays'
+/** The date that places a task's dates (start, else due) as written, with its value type; `null` without one. */
+function taskAnchor(d: TaskDates): { at: string; allDay: boolean } | null {
+  if (d.start) return { at: d.start, allDay: d.startAllDay }
+  if (d.due) return { at: d.due, allDay: d.dueAllDay }
+  return null
+}
+
+/** A wire date as a wall-clock string: a date (all-day) by its UTC date, a time in `zone`. */
+function taskWallClock(at: string, allDay: boolean, zone: string): string {
+  return allDay ? allDayWallClock(new Date(at)) : wallClock(new Date(at), zone)
+}
+
+/** Minutes from 1970-01-01T00:00 to the wall-clock string `s`, counted on the wall clock, which has no DST. */
+function wallMinutes(s: string): number {
+  const { days, hh, mm } = parseWallClock(s)
+  return days * 1440 + hh * 60 + mm
+}
+
+/** The wall-clock string `minutes` after `s`. */
+function addWallMinutes(s: string, minutes: number): string {
+  return new Date((wallMinutes(s) + minutes) * 60_000).toISOString().slice(0, 16)
+}
+
+/**
+ * Why a task series cannot follow its `repeat` to the dates `to` (FR-17), or
+ * `null` if it can, classified as `moveAllRefusal` classifies it. The rule
+ * moves from the RECURRENCE-ID of the repeat, or, `from: 'current'` for
+ * "all repeats" from a later repeat, of the series' current repeat
+ * (`todo.recurrenceId`), by the distance the repeat moves: from the dates it
+ * is shown on to `to`, each anchored on its start, else its due, in days and
+ * minutes on the wall clock. That is the distance of an override another app
+ * moved too, as the server measures it.
+ *
+ * Wall clocks are read in the series' zone (`todo.timezone`), else in
+ * `browserZone`; a date, all-day, by its UTC date. A RECURRENCE-ID is read in
+ * the value type of the repeat it names, as shown. A move between a date and
+ * a time moves by its change of date alone, as on the server. An off-rule
+ * current repeat moves from its RECURRENCE-ID too, where the server takes the
+ * rule's instance before it; where they disagree, the server refuses the
+ * write. No dates to move to, or none shown, is no move here.
+ */
+export function taskMoveRefusal(
+  repeat: TaskRepeat,
+  to: TaskDates,
+  from: 'repeat' | 'current',
+  browserZone: string,
+): ShiftReason | null {
+  const shown = taskAnchor(repeat.shown)
+  const moved = taskAnchor(to)
+  if (!shown || !moved) return null
+  // Left out, or empty, for a date, a time in UTC or a floating one.
+  const zone = (repeat.todo.timezone ?? '') || browserZone
+  const before = wallMinutes(taskWallClock(shown.at, shown.allDay, zone))
+  const after = wallMinutes(taskWallClock(moved.at, moved.allDay, zone))
+  const distance =
+    shown.allDay === moved.allDay ? after - before : (Math.floor(after / 1440) - Math.floor(before / 1440)) * 1440
+
+  // The current repeat's dates are the series' own.
+  const [rid, named] =
+    from === 'current' && repeat.todo.recurrenceId
+      ? [repeat.todo.recurrenceId, repeat.todo]
+      : [repeat.recurrenceId, repeat.shown]
+  const ridWall = taskWallClock(rid, taskAnchor(named)?.allDay ?? shown.allDay, zone)
+  return shiftRefusal(repeat.todo.rrule, ridWall, addWallMinutes(ridWall, distance))
 }

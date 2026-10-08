@@ -35,7 +35,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
-import { followingStart, glyphSlots, type Scope } from '@/lib/scope'
+import { followingStart, glyphSlots, type GlyphSlot, type Scope } from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
@@ -554,9 +554,10 @@ async function undoEventChange(
  * token is dropped by `latestUndoToken` once a later write started; a token on
  * `event`, or one cached with it, is from an earlier answer and never offered.
  * The ID is the series', so a later change replaces this toast and its Undo.
- * Its icon shows the events the change reached, `look.reach`, in the
- * series' calendar color, or in red (`look.tone`) for events deleted, as
- * the question or the hint before the change drew them.
+ * Its icon shows the events the change reached, `look.slots` (`glyphSlots`
+ * of the option chosen), in the series' calendar color, or in red
+ * (`look.tone`) for events deleted, as the question or the hint before the
+ * change drew them.
  */
 function eventToast(
   qc: QueryClient,
@@ -564,14 +565,14 @@ function eventToast(
   event: CalEvent,
   message: string,
   after: { etag: string; undoToken?: string | null; generation: number },
-  look: { reach: Scope; color: string; tone?: 'default' | 'destructive' },
+  look: { slots: GlyphSlot[]; color: string; tone?: 'default' | 'destructive' },
 ): void {
   const { etag, generation } = after
   const undoToken = latestUndoToken(qc, event.id, generation, after.undoToken)
   toast.success(message, {
     id: seriesToastId(event.id),
     duration: ACTION_TOAST_MS,
-    icon: createElement(ScopeGlyph, { slots: glyphSlots(look.reach), color: look.color, tone: look.tone }),
+    icon: createElement(ScopeGlyph, { slots: look.slots, color: look.color, tone: look.tone }),
     // Sonner's icon box is 16px wide; the glyph is 44px.
     classNames: { icon: 'w-auto!' },
     // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
@@ -631,7 +632,7 @@ export function useUpdateEvent(series?: string) {
           t('scope.toast.allChanged'),
           { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
           {
-            reach: 'all',
+            slots: glyphSlots('all'),
             color: colorsOf(event.calendarId).solid,
             // Red where the series became this one event, deleting all the others.
             tone: removesRule(event, input) ? 'destructive' : 'default',
@@ -743,7 +744,7 @@ export function useMoveEvent(series?: string) {
           event,
           t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved'),
           { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
-          { reach: 'all', color: colorsOf(event.calendarId).solid },
+          { slots: glyphSlots('all'), color: colorsOf(event.calendarId).solid },
         )
       } else {
         // Keep the new ETag so a follow-up drag does not conflict.
@@ -837,7 +838,7 @@ export function useMoveOccurrence(series?: string) {
         event,
         t(change ? 'scope.toast.thisChanged' : 'scope.toast.thisMoved'),
         { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
-        { reach: 'this', color: colorsOf(event.calendarId).solid },
+        { slots: glyphSlots('this'), color: colorsOf(event.calendarId).solid },
       )
     },
     onError: (err, { event }, ctx) => {
@@ -870,7 +871,7 @@ export function useUpdateOccurrence(series?: string) {
         event,
         t('scope.toast.thisChanged'),
         { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation },
-        { reach: 'this', color: colorsOf(event.calendarId).solid },
+        { slots: glyphSlots('this'), color: colorsOf(event.calendarId).solid },
       )
     },
     onError: (err, { event }) => {
@@ -917,7 +918,7 @@ export function useDeleteOccurrence(series?: string) {
         event,
         t('scope.toast.thisDeleted'),
         { etag: res?.etag ?? '', undoToken: res?.undoToken, generation: ctx.generation },
-        { reach: 'this', color: colorsOf(event.calendarId).solid, tone: 'destructive' },
+        { slots: glyphSlots('this'), color: colorsOf(event.calendarId).solid, tone: 'destructive' },
       )
       if (res) setSeriesEtag(qc, event, res.etag)
     },
@@ -997,7 +998,7 @@ export function useMoveFollowing(series?: string) {
           ? t(change ? 'scope.toast.allChanged' : 'scope.toast.allMoved')
           : t(change ? 'scope.toast.followingChanged' : 'scope.toast.followingMoved', { date }),
         { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
-        { reach, color: colorsOf(event.calendarId).solid },
+        { slots: glyphSlots(reach), color: colorsOf(event.calendarId).solid },
       )
     },
     onError: (err, { event }) => {
@@ -1036,7 +1037,7 @@ export function useUpdateFollowing(series?: string) {
           ? t('scope.toast.allChanged')
           : t(removed ? 'scope.toast.ended' : 'scope.toast.followingChanged', { date }),
         { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
-        { reach, color: colorsOf(event.calendarId).solid, tone: removed ? 'destructive' : 'default' },
+        { slots: glyphSlots(reach), color: colorsOf(event.calendarId).solid, tone: removed ? 'destructive' : 'default' },
       )
     },
     onError: (err, { event }) => {
@@ -1076,7 +1077,7 @@ export function useDeleteFollowing(series?: string) {
         event,
         t('scope.toast.ended', { date: followingDay(event, prefs) }),
         { etag: res?.etag ?? '', undoToken: res?.undoToken, generation: ctx.generation },
-        { reach: 'following', color: colorsOf(event.calendarId).solid, tone: 'destructive' },
+        { slots: glyphSlots('following'), color: colorsOf(event.calendarId).solid, tone: 'destructive' },
       )
     },
     onError: (err, event) => {

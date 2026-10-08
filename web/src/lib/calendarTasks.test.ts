@@ -6,9 +6,11 @@ import {
   anchorOf,
   canComplete,
   canDrag,
+  currentRepeat,
   movedTodo,
   occurrenceTask,
   recurringLabel,
+  repeatOf,
   shiftedTask,
   toCalTask,
 } from './calendarTasks'
@@ -288,6 +290,74 @@ describe('occurrenceTask', () => {
 
   it('is null without dates', () => {
     expect(occurrenceTask(occurrence({ start: null, due: null }), todo())).toBeNull()
+  })
+})
+
+describe('repeatOf', () => {
+  const series = todo({
+    rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+    recurring: true,
+    due: allDay('2026-09-24'),
+    dueAllDay: true,
+    recurrenceId: allDay('2026-09-24'),
+    next: { due: allDay('2026-09-28'), dueAllDay: true },
+  })
+
+  it('names the current repeat by its recurrence ID, with the dates it is shown on', () => {
+    const occ = occurrence({ recurrenceId: allDay('2026-09-24'), due: allDay('2026-09-25'), state: 'current' })
+    expect(repeatOf(occurrenceTask(occ, series)!)).toEqual({
+      todo: series,
+      recurrenceId: allDay('2026-09-24'),
+      at: 'current',
+      last: false,
+      offRule: false,
+      shown: { start: null, startAllDay: false, due: allDay('2026-09-25'), dueAllDay: true },
+    })
+  })
+
+  it('names a later repeat, and whether it is off the rule', () => {
+    const occ = occurrence({ recurrenceId: allDay('2026-10-01'), due: allDay('2026-10-01'), state: 'upcoming', offRule: true })
+    expect(repeatOf(occurrenceTask(occ, series)!)).toMatchObject({ at: 'upcoming', last: false, offRule: true })
+  })
+
+  it('marks the current repeat of a series without a next one as the last', () => {
+    const last = { ...series, next: null }
+    expect(repeatOf(occurrenceTask(occurrence({ state: 'current' }), last)!)?.last).toBe(true)
+  })
+
+  it('has no repeat for a plain task or a done repeat', () => {
+    expect(repeatOf(toCalTask(todo({ due: allDay('2026-09-25'), dueAllDay: true }))!)).toBeNull()
+    expect(repeatOf(occurrenceTask(occurrence({ state: 'done' }), series)!)).toBeNull()
+  })
+})
+
+describe('currentRepeat', () => {
+  it('is the current repeat of a series, shown on the series\' own dates', () => {
+    const series = todo({
+      rrule: 'FREQ=DAILY',
+      recurring: true,
+      start: '2026-09-25T07:00:00Z',
+      due: '2026-09-25T08:00:00Z',
+      recurrenceId: '2026-09-25T07:00:00Z',
+      next: { start: '2026-09-26T07:00:00Z', due: '2026-09-26T08:00:00Z' },
+    })
+    expect(currentRepeat(series)).toEqual({
+      todo: series,
+      recurrenceId: '2026-09-25T07:00:00Z',
+      at: 'current',
+      last: false,
+      offRule: false,
+      shown: { start: '2026-09-25T07:00:00Z', startAllDay: false, due: '2026-09-25T08:00:00Z', dueAllDay: false },
+    })
+  })
+
+  it('is the last repeat without a next one', () => {
+    const series = todo({ rrule: 'FREQ=DAILY', recurring: true, due: allDay('2026-09-25'), dueAllDay: true })
+    expect(currentRepeat({ ...series, recurrenceId: allDay('2026-09-25') })?.last).toBe(true)
+  })
+
+  it('is null for a todo without a current repeat', () => {
+    expect(currentRepeat(todo({ due: allDay('2026-09-25'), dueAllDay: true }))).toBeNull()
   })
 })
 

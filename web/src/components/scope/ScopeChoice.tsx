@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { glyphSlots, type Scope, type ScopeItem } from '@/lib/scope'
+import { type Scope, type ScopeItem } from '@/lib/scope'
 import { ScopeGlyph } from './ScopeGlyph'
 
 /**
- * Asks which events of a series a change is for (FR-17). One option per row,
- * from the smallest reach down to the largest, each with its reach as dots
- * and a line on what it reaches; a click or Enter on a row chooses it. One
- * component used after dropping an occurrence, in the editor's footer and
- * before deleting, so the three look alike.
+ * Asks which events or repeats of a series a change is for (FR-17). One
+ * option per row, from the smallest reach down to the largest, each with its
+ * reach as dots and a line on what it reaches; a click or Enter on a row
+ * chooses it. One component used after dropping an occurrence, in the
+ * editor's footer and before deleting, for events and tasks, so they all
+ * look alike.
  *
  * Accessibility (NFR-27): `role="alertdialog"`, labelled by the question and
  * described by the line on a missing option. Each row is named by its label
@@ -28,13 +29,16 @@ export function ScopeChoice({
   onPreview,
 }: {
   question: string
-  /** The options, smallest reach first (`eventScopeItems`). */
+  /** The options, smallest reach first, each with its reach glyph (`eventScopeItems`, `taskScopeItems`). */
   items: ScopeItem[]
   /** The series' calendar color, for the dots of the events an option reaches. */
   color: string
   /** `destructive` when the change deletes events: the dots of the events an option reaches are red. */
   tone?: 'default' | 'destructive'
-  /** Why an option the user could expect is not offered (`eventScopeMissing`), said below the options. */
+  /**
+   * Why an option the user could expect is not offered (`eventScopeMissing`, `taskScopeMissing`), said below the
+   * options.
+   */
   missing?: string
   onChoose: (scope: Scope) => void
   onCancel: () => void
@@ -91,7 +95,7 @@ export function ScopeChoice({
             }}
             onMouseLeave={() => onPreview?.(focused.current)}
           >
-            <ScopeGlyph slots={glyphSlots(item.scope)} color={color} tone={tone} />
+            <ScopeGlyph slots={item.slots} color={color} tone={tone} />
             <span id={`${id}-${item.scope}`} className="text-sm font-medium">
               {item.label}
             </span>

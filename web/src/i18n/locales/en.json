@@ -205,11 +205,26 @@
       "allNote": "Past ones too.",
       "allRuleRemovedNote": "Only this event stays. All others are deleted."
     },
+    "task": {
+      "move": "This task repeats. Which repeats should move?",
+      "change": "This task repeats. Which repeats should change?",
+      "delete": "This task repeats. Which repeats should be deleted?",
+      "this": "Only this repeat",
+      "thisNote": "Becomes a task of its own. The series goes on {{next}}.",
+      "thisDeleteNote": "Skipped. The series goes on {{next}}.",
+      "following": "This and following repeats",
+      "followingRuleRemovedNote": "From {{date}} on, only this repeat stays. Earlier ones stay as they are.",
+      "all": "All repeats",
+      "allNote": "Done ones stay.",
+      "allDeleteNote": "Done and detached ones stay."
+    },
     "followingNote": "From {{date}} on, as a series of its own. Earlier ones stay as they are.",
     "followingDeleteNote": "The series ends before {{date}}.",
     "followingRuleRemovedNote": "From {{date}} on, only this event stays. Earlier ones stay as they are.",
     "missing": {
-      "attendees": "With attendees, the series can't be split."
+      "attendees": "With attendees, the series can't be split.",
+      "attendeesTask": "With attendees, a repeat can't become a task of its own.",
+      "taskThis": "Only the current repeat can be changed on its own."
     },
     "reason": {
       "fixedDays": "The series stays on its days.",
@@ -218,7 +233,13 @@
     "hint": {
       "eventThis": "Only this event. {{reason}}",
       "eventAll": "Applies to every event in the series.",
-      "eventRuleRemoved": "The series becomes this one event. All others are deleted."
+      "eventRuleRemoved": "The series becomes this one event. All others are deleted.",
+      "taskThis": "Only this repeat. It becomes a task of its own.",
+      "taskAll": "Applies from this repeat on. Done ones stay.",
+      "taskAllMove": "Moves all repeats.",
+      "taskRuleRemoved": "The task stops repeating. Upcoming repeats are removed.",
+      "taskFollowing": "This and following repeats, as a series of their own.",
+      "none": "Can't move. {{reason}}"
     },
     "toast": {
       "thisMoved": "Only this event moved.",

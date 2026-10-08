@@ -140,6 +140,62 @@ export function occurrenceTask(occ: TodoOccurrence, todo: Todo): CalTask | null 
 }
 
 /**
+ * The open repeat of a task series a change starts from (FR-17): the series
+ * `todo`, the repeat's RECURRENCE-ID, which the writes to it name, whether it
+ * is the current repeat or a later one, and the dates it is `shown` on, which
+ * an override can have moved from its RECURRENCE-ID. `last` marks the current
+ * repeat of a series without a next one, which acts as a single task.
+ * `offRule` marks a repeat on none of the rule's instances, from which no
+ * series can go on.
+ */
+export interface TaskRepeat {
+  todo: Todo
+  recurrenceId: string
+  at: 'current' | 'upcoming'
+  last: boolean
+  offRule: boolean
+  shown: TaskDates
+}
+
+/**
+ * The repeat a calendar entry shows (FR-17), or `null` for a plain task and
+ * a done repeat, which no change of the series starts from. The shown dates
+ * are the occurrence's wire dates; a drag preview keeps those of the pick-up,
+ * so the dates it moves to come from the drop.
+ */
+export function repeatOf(task: CalTask): TaskRepeat | null {
+  const occ = task.occurrence
+  if (!occ || occ.state === 'done') return null
+  return {
+    todo: task.todo,
+    recurrenceId: occ.recurrenceId,
+    at: occ.state,
+    last: occ.state === 'current' && !task.todo.next,
+    offRule: occ.offRule,
+    shown: { start: occ.start, startAllDay: occ.startAllDay, due: occ.due, dueAllDay: occ.dueAllDay },
+  }
+}
+
+/**
+ * The current repeat of `todo`, as the task list shows it (FR-17): named by
+ * `todo.recurrenceId` and shown on the series' own dates, which are the
+ * current repeat's. `null` without one, for a task that does not repeat or a
+ * series that is done. Whether it lies off the rule is not reported for it,
+ * and matters only for a later repeat.
+ */
+export function currentRepeat(todo: Todo): TaskRepeat | null {
+  if (!todo.recurrenceId) return null
+  return {
+    todo,
+    recurrenceId: todo.recurrenceId,
+    at: 'current',
+    last: !todo.next,
+    offRule: false,
+    shown: { start: todo.start, startAllDay: todo.startAllDay, due: todo.due, dueAllDay: todo.dueAllDay },
+  }
+}
+
+/**
  * Whether a task can be completed (FR-15, FR-17): a plain task unless its
  * rule can't be read; an occurrence only when it is the current one, so
  * repeats are completed in order.

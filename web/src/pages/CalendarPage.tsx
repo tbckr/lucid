@@ -32,7 +32,6 @@ import { eachDay, stepDate, visibleRange } from '@/lib/dates'
 import { overlapsRange, type CalItem } from '@/lib/events'
 import { formatPeriodTitle } from '@/lib/format'
 import { navigate } from '@/lib/router'
-import { glyphSlots } from '@/lib/scope'
 import { type ShortcutAction } from '@/lib/shortcuts'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
@@ -273,7 +272,7 @@ export function CalendarPage() {
               // The dots sit on the first line, and a wrapped line lines up with the text, not under them.
               const pill = hint && (
                 <LimitPill className="absolute top-full left-0 mt-1 flex items-start gap-1.5">
-                  <ScopeGlyph inverted slots={glyphSlots(hint.reach)} className="mt-[3px] shrink-0" />
+                  <ScopeGlyph inverted slots={hint.slots} className="mt-[3px] shrink-0" />
                   <span>{hint.text}</span>
                 </LimitPill>
               )

@@ -44,7 +44,6 @@ import {
   eventScopeHint,
   eventScopeItems,
   eventScopeMissing,
-  glyphSlots,
   scopeOptions,
   type Scope,
   type ScopeAction,
@@ -558,7 +557,7 @@ function EditorForm({
               // Left of the buttons; on narrow screens, where they stack, above them. Save names it
               // as its description (NFR-27).
               <p id={`${id}-hint`} className="mr-auto flex items-center gap-2 text-xs font-medium text-muted-foreground max-sm:order-last">
-                <ScopeGlyph slots={glyphSlots(hint.reach)} tone={hint.tone} color={colors.solid} className="shrink-0" />
+                <ScopeGlyph slots={hint.slots} tone={hint.tone} color={colors.solid} className="shrink-0" />
                 {hint.text}
               </p>
             )}

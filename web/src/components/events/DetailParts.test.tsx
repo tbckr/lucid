@@ -2,13 +2,13 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { type ScopeItem } from '@/lib/scope'
+import { glyphSlots, type ScopeItem } from '@/lib/scope'
 import { renderWithProviders } from '@/test/render'
 import { DetailActions } from './DetailParts'
 
 const items: ScopeItem[] = [
-  { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 17.' },
-  { scope: 'all', label: 'All events', note: 'Past ones too.' },
+  { scope: 'this', label: 'Only this event', note: 'Only Mon, Mar 17.', slots: glyphSlots('this') },
+  { scope: 'all', label: 'All events', note: 'Past ones too.', slots: glyphSlots('all') },
 ]
 
 function setup(props: Partial<ComponentProps<typeof DetailActions>> = {}) {
