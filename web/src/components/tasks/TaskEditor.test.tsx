@@ -748,6 +748,32 @@ describe('TaskEditor', () => {
         expect(body).toMatchObject({ due: '2026-10-06T00:00:00.000Z' })
       })
 
+      // FR-17: from a later repeat, "all repeats" reaches the current repeat before it too, which the footer says.
+      it('says in the footer at a later repeat with attendees that a change reaches the current repeat too', async () => {
+        const user = userEvent.setup()
+        const shared = { ...series, hasAttendees: true }
+        const { fetch, dialog } = await openTask(shared, undefined, later(shared, '2026-10-08T00:00:00Z'))
+
+        await user.click(within(dialog).getByRole('radio', { name: 'High' }))
+        const text =
+          "Applies to all repeats, the current one too. Done ones stay. With attendees, the series can't be split."
+        const hint = within(dialog).getByText(text)
+        expect(Array.from(hint.querySelectorAll('svg > *'), (m) => (m.tagName === 'path' ? '✓' : 'dot'))).toEqual([
+          '✓',
+          'dot',
+          'dot',
+          'dot',
+          'dot',
+        ])
+        expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(text)
+
+        await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+        expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+        const { path, body } = await wrote(fetch, 'PUT')
+        expect(path).toBe('/api/v1/todos/t1')
+        expect(body).toMatchObject({ priority: 1 })
+      })
+
       it('saves the last repeat as a single task, without a question or a hint', async () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(last)

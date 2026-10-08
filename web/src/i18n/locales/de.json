@@ -237,6 +237,7 @@
       "eventRuleRemoved": "Die Serie wird zu diesem einen Termin. Alle anderen werden gelöscht.",
       "taskThis": "Nur diese Wiederholung. Sie wird eine eigene Aufgabe.",
       "taskAll": "Gilt ab dieser Wiederholung. Erledigte bleiben.",
+      "taskAllFromLater": "Gilt für alle Wiederholungen, auch die aktuelle. Erledigte bleiben.",
       "taskAllMove": "Verschiebt alle Wiederholungen.",
       "taskRuleRemoved": "Die Aufgabe wiederholt sich dann nicht mehr. Kommende Wiederholungen entfallen.",
       "taskFollowing": "Diese und alle folgenden, als eigene Serie.",

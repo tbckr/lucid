@@ -880,16 +880,30 @@ describe('taskScopeHint', () => {
     })
   })
 
-  it('says that any other change applies from this repeat on, drawn from where it is', () => {
-    expect(taskScopeHint(t, { options: ['all'] }, 'change', false, 'upcoming')).toEqual({
+  it('says that any other change at the current repeat applies from it on', () => {
+    expect(taskScopeHint(t, { options: ['all'] }, 'change', false, 'current')).toEqual({
       text: 'Applies from this repeat on. Done ones stay.',
       reach: 'all',
-      slots: taskGlyphSlots('all', 'upcoming'),
+      slots: taskGlyphSlots('all', 'current'),
       tone: 'default',
     })
     expect(taskScopeHint(t, { options: ['all'] }, 'rule', false, 'current')?.text).toBe(
       'Applies from this repeat on. Done ones stay.',
     )
+  })
+
+  // FR-17: from a later repeat, "all repeats" reaches the current one before it too (✓ ● ● ● ●).
+  it('says that any other change at a later repeat reaches the current one too', () => {
+    expect(taskScopeHint(t, { options: ['all'] }, 'change', false, 'upcoming')).toEqual({
+      text: 'Applies to all repeats, the current one too. Done ones stay.',
+      reach: 'all',
+      slots: taskGlyphSlots('all', 'upcoming'),
+      tone: 'default',
+    })
+    expect(taskScopeHint(t, { options: ['all'] }, 'rule', false, 'upcoming')?.text).toBe(
+      'Applies to all repeats, the current one too. Done ones stay.',
+    )
+    expect(taskScopeHint(t, { options: ['all'] }, 'move', false, 'upcoming')?.text).toBe('Moves all repeats.')
   })
 
   it('warns in red that a removed rule removes the upcoming repeats', () => {
@@ -915,13 +929,13 @@ describe('taskScopeHint', () => {
       "Moves all repeats. With attendees, a repeat can't become a task of its own.",
     )
     expect(taskScopeHint(t, { options: ['all'], missing: 'attendees' }, 'change', false, 'upcoming')?.text).toBe(
-      "Applies from this repeat on. Done ones stay. With attendees, the series can't be split.",
+      "Applies to all repeats, the current one too. Done ones stay. With attendees, the series can't be split.",
     )
   })
 
   it('never adds that only the current repeat goes on its own', () => {
     expect(taskScopeHint(t, { options: ['all'], missing: 'taskThis' }, 'change', false, 'upcoming')?.text).toBe(
-      'Applies from this repeat on. Done ones stay.',
+      'Applies to all repeats, the current one too. Done ones stay.',
     )
   })
 
@@ -935,6 +949,9 @@ describe('taskScopeHint', () => {
     )
     expect(taskScopeHint(de, { options: ['following'] }, 'move', false, 'upcoming')?.text).toBe(
       'Diese und alle folgenden, als eigene Serie.',
+    )
+    expect(taskScopeHint(de, { options: ['all'] }, 'change', false, 'upcoming')?.text).toBe(
+      'Gilt für alle Wiederholungen, auch die aktuelle. Erledigte bleiben.',
     )
   })
 

@@ -237,6 +237,7 @@
       "eventRuleRemoved": "The series becomes this one event. All others are deleted.",
       "taskThis": "Only this repeat. It becomes a task of its own.",
       "taskAll": "Applies from this repeat on. Done ones stay.",
+      "taskAllFromLater": "Applies to all repeats, the current one too. Done ones stay.",
       "taskAllMove": "Moves all repeats.",
       "taskRuleRemoved": "The task stops repeating. Upcoming repeats are removed.",
       "taskFollowing": "This and following repeats, as a series of their own.",

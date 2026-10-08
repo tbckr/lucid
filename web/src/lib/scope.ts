@@ -420,9 +420,11 @@ export function eventScopeHint(t: TFunction, result: ScopeResult, ruleRemoved: b
  * question asks, for a single task, for a refused move, which says why
  * (`scope.hint.none`), and for a delete, which asks to confirm instead
  * (`tasks.confirmDeleteSeries`). "All repeats" says that a move moves them
- * all, and warns in red that a removed rule removes the upcoming ones. Where
- * attendees took the other option away, a second sentence says so; "only
- * this repeat", missing at every later repeat, is not worth one.
+ * all, warns in red that a removed rule removes the upcoming ones, and says
+ * that any other change applies from the current repeat on, or, from a later
+ * repeat, to the current one before it too. Where attendees took the other
+ * option away, a second sentence says so; "only this repeat", missing at
+ * every later repeat, is not worth one.
  */
 export function taskScopeHint(
   t: TFunction,
@@ -434,16 +436,18 @@ export function taskScopeHint(
   const [only] = result.options
   if (result.options.length !== 1 || !only || action === 'delete') return null
   const missing = result.missing === 'taskThis' ? undefined : taskScopeMissing(t, result)
-  const hint = (key: 'taskThis' | 'taskFollowing' | 'taskAll' | 'taskAllMove' | 'taskRuleRemoved'): string =>
-    missing ? `${t(`scope.hint.${key}`)} ${missing}` : t(`scope.hint.${key}`)
+  type Key = 'taskThis' | 'taskFollowing' | 'taskAll' | 'taskAllFromLater' | 'taskAllMove' | 'taskRuleRemoved'
+  const hint = (key: Key): string => (missing ? `${t(`scope.hint.${key}`)} ${missing}` : t(`scope.hint.${key}`))
   const slots = taskGlyphSlots(only, at)
   switch (only) {
     case 'this':
       return { text: hint('taskThis'), reach: 'this', slots, tone: 'default' }
     case 'following':
       return { text: hint('taskFollowing'), reach: 'following', slots, tone: 'default' }
-    case 'all':
+    case 'all': {
       if (ruleRemoved) return { text: hint('taskRuleRemoved'), reach: 'all', slots, tone: 'destructive' }
-      return { text: hint(action === 'move' ? 'taskAllMove' : 'taskAll'), reach: 'all', slots, tone: 'default' }
+      const key = action === 'move' ? 'taskAllMove' : at === 'upcoming' ? 'taskAllFromLater' : 'taskAll'
+      return { text: hint(key), reach: 'all', slots, tone: 'default' }
+    }
   }
 }
