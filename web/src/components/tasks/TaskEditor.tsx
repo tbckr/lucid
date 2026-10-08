@@ -332,6 +332,12 @@ export function TaskEditor({
         update.mutate({ todo, input: editInput(v) }, { onSuccess: onDone })
         return
       }
+      // A save that changes nothing at a repeat writes nothing: "only this repeat" would make a task
+      // of its own of it and move the series on (FR-17).
+      if (plan.action === 'change' && !Object.values(editedFields(opened, v)).some(Boolean)) {
+        onDone()
+        return
+      }
       // A series asks which repeats a save reaches only where there is a choice; the one thing it
       // can do, it does right away, as the footer said beforehand (FR-17).
       const { options, reason } = plan.result

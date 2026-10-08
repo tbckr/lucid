@@ -625,6 +625,41 @@ describe('TaskEditor', () => {
         expect(body).toMatchObject({ due: '2026-10-06T08:00:00.000Z', dueAllDay: false, title: 'Water the flowers' })
       })
 
+      // A later repeat another app moved to a time, in an all-day series: its time is not the user's change.
+      it("keeps the series' dates when all repeats change only fields at a repeat of another shape", async () => {
+        const user = userEvent.setup()
+        const thursday = {
+          ...later(series, '2026-10-08T00:00:00Z'),
+          shown: { start: null, startAllDay: false, due: '2026-10-08T07:00:00Z', dueAllDay: false },
+        }
+        const { fetch, dialog } = await openTask(series, undefined, thursday)
+        expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('9:00 AM')
+
+        await user.click(within(dialog).getByRole('radio', { name: 'High' }))
+        await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+        await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All repeats' }))
+
+        const { path, body } = await wrote(fetch, 'PUT')
+        expect(path).toBe('/api/v1/todos/t1')
+        expect(body).toMatchObject({ priority: 1, start: null, due: '2026-10-05T00:00:00Z', dueAllDay: true })
+      })
+
+      // FR-17: "only this repeat" would make a task of its own and roll the series; an untouched repeat stays as it is.
+      it.each([
+        ['the current repeat', undefined],
+        ['a later repeat', later(series, '2026-10-08T00:00:00Z')],
+      ])('closes without asking or saving when nothing changed at %s', async (_, repeat) => {
+        const user = userEvent.setup()
+        const { fetch, dialog } = await openTask(series, undefined, repeat)
+
+        await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+        expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+        await waitFor(() => {
+          expect(screen.queryByRole('dialog')).toBeNull()
+        })
+        expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT' || init?.method === 'DELETE')).toBe(false)
+      })
+
       it('warns in red, without asking, that removing the rule at the current repeat removes later ones', async () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(series)
@@ -784,6 +819,7 @@ describe('TaskEditor', () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(series)
 
+        await user.click(within(dialog).getByRole('radio', { name: 'High' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
         within(dialog).getByRole('alertdialog')
         await user.keyboard('{Escape}')
@@ -807,6 +843,7 @@ describe('TaskEditor', () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(series)
 
+        await user.click(within(dialog).getByRole('radio', { name: 'High' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
         within(dialog).getByRole('alertdialog', { name: changeQuestion })
         await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
@@ -816,7 +853,7 @@ describe('TaskEditor', () => {
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
         const question = within(dialog).getByRole('alertdialog', { name: moveQuestion })
         await user.click(within(question).getByRole('button', { name: 'All repeats' }))
-        expect((await wrote(fetch, 'PUT')).body).toMatchObject({ due: '2026-10-06T00:00:00.000Z' })
+        expect((await wrote(fetch, 'PUT')).body).toMatchObject({ due: '2026-10-06T00:00:00.000Z', priority: 1 })
       })
     })
 

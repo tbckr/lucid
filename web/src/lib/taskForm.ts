@@ -154,16 +154,20 @@ export interface EditedFields {
   priority?: boolean
 }
 
-/** The fields of `values` that differ from `opened`, the values the editor opened with (FR-17). */
+/**
+ * The fields of `values` that differ from `opened`, the values the editor
+ * opened with (FR-17). Texts compare trimmed, as a save trims them, so a stray
+ * space is no edit.
+ */
 export function editedFields(opened: TaskFormValues, values: TaskFormValues): Required<EditedFields> {
   const sameItems =
     opened.checklist.length === values.checklist.length &&
     opened.checklist.every((c, i) => {
       const item = values.checklist[i]
-      return item?.text === c.text && item.done === c.done
+      return item?.text.trim() === c.text.trim() && item.done === c.done
     })
   return {
-    title: values.title !== opened.title,
+    title: values.title.trim() !== opened.title.trim(),
     description: values.description !== opened.description,
     checklist: !sameItems,
     priority: values.priority !== opened.priority,

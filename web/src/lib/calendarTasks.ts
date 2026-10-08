@@ -254,34 +254,51 @@ function wallDistance(from: Date, to: Date): { days: number; minutes: number } {
   return { days: differenceInCalendarDays(to, from), minutes: minutesOf(to) - minutesOf(from) }
 }
 
+/** Whether a date of a repeat stays as it was shown: both absent, or the same instant with the same value type. */
+function sameDate(
+  a: string | null | undefined,
+  aAllDay: boolean,
+  b: string | null | undefined,
+  bAllDay: boolean,
+): boolean {
+  if (!a || !b) return !a && !b
+  return aAllDay === bAllDay && Date.parse(a) === Date.parse(b)
+}
+
 /**
  * The series' own dates, its current repeat's, for "all repeats" chosen at its
- * later `repeat`, changed from the dates it is shown on to `to` (FR-17): each
- * of start and due moves by as much as the repeat's own moved, on the wall
- * clock, as a drag moves them (`movedDates`), so the series moves by the
- * user's change rather than to the repeat's day. A date the repeat gains,
- * or turns between a date and a time, is the repeat's new one, moved back by
- * the distance from the repeat to the current one; one it loses goes.
+ * later `repeat`, changed from the dates it is shown on to `to` (FR-17). A
+ * date the user left as it was shown stays the series' own, value type and
+ * all, even where another app gave the repeat dates of another shape; with
+ * nothing moved, these are the series' dates as they are. A date that moved
+ * moves the series' own by as much, on the wall clock, as a drag moves them
+ * (`movedDates`), so the series moves by the user's change rather than to
+ * the repeat's day. A date the repeat gains, or turns between a date and a
+ * time, is the repeat's new one, moved back by the distance from the repeat
+ * to the current one; one it loses goes.
  */
 export function allRepeatsDates(repeat: TaskRepeat, to: TaskDates): Required<TaskDates> {
   const series = repeat.todo
   const shown = anchorOf(repeat.shown)
   const own = anchorOf(series)
   const back = shown && own ? wallDistance(shown, own) : { days: 0, minutes: 0 }
-  const field = (which: 'start' | 'due') => {
+  const field = (which: 'start' | 'due'): [string | null, boolean] => {
     const flag = which === 'start' ? 'startAllDay' : 'dueAllDay'
     const next = to[which]
     const allDay = to[flag]
-    if (!next) return null
     const was = repeat.shown[which]
     const value = series[which]
+    if (sameDate(was, repeat.shown[flag], next, allDay)) return [value ?? null, series[flag]]
+    if (!next) return [null, allDay]
     if (was && value && repeat.shown[flag] === allDay && series[flag] === allDay) {
       const by = wallDistance(shownAt(was, allDay), shownAt(next, allDay))
-      return movedDate(value, allDay, by.days, by.minutes)
+      return [movedDate(value, allDay, by.days, by.minutes), allDay]
     }
-    return movedDate(next, allDay, back.days, back.minutes)
+    return [movedDate(next, allDay, back.days, back.minutes), allDay]
   }
-  return { start: field('start'), startAllDay: to.startAllDay, due: field('due'), dueAllDay: to.dueAllDay }
+  const [start, startAllDay] = field('start')
+  const [due, dueAllDay] = field('due')
+  return { start, startAllDay, due, dueAllDay }
 }
 
 /**

@@ -361,5 +361,11 @@ describe('taskForm', () => {
       expect(editedFields(opened, { ...opened, checklist: [{ text: 'Hose', done: false }] }).checklist).toBe(true)
       expect(editedFields(opened, { ...opened, checklist: [] }).checklist).toBe(true)
     })
+
+    // The save trims them, so a stray space is no edit.
+    it('compares the title and the checklist texts trimmed', () => {
+      const spaced = { ...opened, title: ' Own  ', checklist: [{ text: 'Can ', done: false }] }
+      expect(editedFields(opened, spaced)).toMatchObject({ title: false, checklist: false })
+    })
   })
 })

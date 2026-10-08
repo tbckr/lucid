@@ -407,7 +407,34 @@ describe('allRepeatsDates', () => {
 
   it('keeps the series\' dates where the repeat\'s stay', () => {
     const repeat = thursday(series, timed('2026-10-08T07:00:00Z'))
-    expect(allRepeatsDates(repeat, repeat.shown)).toEqual(timed('2026-10-05T07:00:00.000Z'))
+    expect(allRepeatsDates(repeat, repeat.shown)).toEqual(timed('2026-10-05T07:00:00Z'))
+  })
+
+  // A later repeat another app gave dates of another shape: what the user leaves as it is stays the series' own.
+  it('keeps an all-day series all-day where a later repeat shown at a time stays', () => {
+    const days = todo({ ...series, due: allDay('2026-10-05'), dueAllDay: true, recurrenceId: allDay('2026-10-05') })
+    const repeat = thursday(days, timed('2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(repeat, repeat.shown)).toEqual({
+      start: null,
+      startAllDay: false,
+      due: allDay('2026-10-05'),
+      dueAllDay: true,
+    })
+  })
+
+  it("keeps the series without a start where a later repeat's own start stays", () => {
+    const repeat = thursday(series, timed('2026-10-08T07:00:00Z', '2026-10-08T06:00:00Z'))
+    expect(allRepeatsDates(repeat, repeat.shown)).toEqual(timed('2026-10-05T07:00:00Z'))
+    // Only the due date moves: the series' moves as far, and it still has no start.
+    expect(allRepeatsDates(repeat, timed('2026-10-08T08:00:00Z', '2026-10-08T06:00:00Z'))).toEqual(
+      timed('2026-10-05T08:00:00.000Z'),
+    )
+  })
+
+  it('keeps the series\' start where a later repeat without one stays', () => {
+    const span = todo({ ...series, start: '2026-10-05T06:00:00Z' })
+    const repeat = thursday(span, timed('2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(repeat, repeat.shown)).toEqual(timed('2026-10-05T07:00:00Z', '2026-10-05T06:00:00Z'))
   })
 
   it('keeps the wall-clock time where the series and the repeat lie across the DST change', () => {
@@ -423,7 +450,7 @@ describe('allRepeatsDates', () => {
     const span = todo({ ...series, start: '2026-10-05T07:00:00Z', due: '2026-10-05T08:00:00Z' })
     const repeat = thursday(span, timed('2026-10-08T08:00:00Z', '2026-10-08T07:00:00Z'))
     expect(allRepeatsDates(repeat, timed('2026-10-08T09:00:00Z', '2026-10-08T07:00:00Z'))).toEqual(
-      timed('2026-10-05T09:00:00.000Z', '2026-10-05T07:00:00.000Z'),
+      timed('2026-10-05T09:00:00.000Z', '2026-10-05T07:00:00Z'),
     )
   })
 
@@ -443,7 +470,7 @@ describe('allRepeatsDates', () => {
   it('removes a date the repeat loses', () => {
     const span = todo({ ...series, start: '2026-10-05T06:00:00Z' })
     const repeat = thursday(span, timed('2026-10-08T07:00:00Z', '2026-10-08T06:00:00Z'))
-    expect(allRepeatsDates(repeat, timed('2026-10-08T07:00:00Z'))).toEqual(timed('2026-10-05T07:00:00.000Z'))
+    expect(allRepeatsDates(repeat, timed('2026-10-08T07:00:00Z'))).toEqual(timed('2026-10-05T07:00:00Z'))
   })
 })
 

@@ -237,6 +237,8 @@ describe('EditorDialog', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openSeries()
 
+      // A Save that changes nothing asks nothing (FR-17).
+      await user.click(within(dialog).getByRole('radio', { name: 'High' }))
       await user.click(within(dialog).getByRole('button', { name: button }))
       within(dialog).getByRole('alertdialog', { name: question })
       await user.keyboard('{Escape}')
@@ -250,6 +252,7 @@ describe('EditorDialog', () => {
       const user = userEvent.setup()
       const { dialog } = await openSeries()
 
+      await user.click(within(dialog).getByRole('radio', { name: 'High' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
       within(dialog).getByRole('alertdialog')
       await user.click(within(dialog).getByRole('button', { name: 'Close' }))
