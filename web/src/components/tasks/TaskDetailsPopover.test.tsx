@@ -1,5 +1,6 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
@@ -375,17 +376,29 @@ describe('TaskDetailsPopover', () => {
         expect(useUi.getState().detail).toBeNull()
       })
 
+      // FR-17: the toast draws in red the reach of the "All repeats" chosen, from the repeat it was chosen at.
+      const red = 'var(--destructive)'
       it.each([
-        ['current', '2026-10-05'],
-        ['upcoming', '2026-10-08'],
-      ] as const)('deletes the whole series with All repeats from the %s repeat', async (state, date) => {
+        ['current', '2026-10-05', ['✓', '✓', red, red, red]],
+        ['upcoming', '2026-10-08', ['✓', red, red, red, red]],
+      ] as const)('deletes the whole series with All repeats from the %s repeat', async (state, date, marks) => {
         const user = userEvent.setup()
+        const success = vi.spyOn(toast, 'success')
         const { dialog, fetch } = await open(repeatAt(date, state), 'Water the flowers')
         await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
         await user.click(within(within(dialog).getByRole('alertdialog', { name: question })).getByRole('button', { name: 'All repeats' }))
         await awaitDelete(fetch)
         expect(deletes(fetch)).toEqual(['/api/v1/todos/t1'])
         expect(useUi.getState().detail).toBeNull()
+
+        await waitFor(() => {
+          expect(success).toHaveBeenCalledWith('Task deleted', expect.objectContaining({ id: 'series:t1' }))
+        })
+        const [, options] = success.mock.calls.filter(([m]) => m === 'Task deleted').at(-1)!
+        const { container } = render(<>{options?.icon}</>)
+        expect(Array.from(container.querySelectorAll('svg > *'), (m) => (m.tagName === 'path' ? '✓' : m.getAttribute('fill')))).toEqual(
+          marks,
+        )
       })
 
       // Review Focus 3: the last repeat is a single task.
@@ -413,9 +426,14 @@ describe('TaskDetailsPopover', () => {
         expect(within(dialog).queryByRole('alertdialog')).toBeNull()
         const alert = within(dialog).getByRole('alert')
         expect(alert).toHaveTextContent('This task repeats. Delete all repeats? Completed ones stay.')
+        const success = vi.spyOn(toast, 'success')
         await user.click(within(alert).getByRole('button', { name: 'Delete task' }))
         await awaitDelete(fetch)
         expect(deletes(fetch)).toEqual(['/api/v1/todos/t1'])
+        // A delete only confirmed keeps its plain toast.
+        await waitFor(() => {
+          expect(success).toHaveBeenCalledWith('Task deleted')
+        })
       })
 
       it('skips the current repeat of a series with attendees, which detaches nothing', async () => {

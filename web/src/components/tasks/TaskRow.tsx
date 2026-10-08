@@ -164,7 +164,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
                 question={t('tasks.confirmDelete')}
                 action={t('tasks.delete')}
                 onConfirm={() => {
-                  del.mutate(todo)
+                  del.mutate({ todo })
                 }}
               >
                 <Button

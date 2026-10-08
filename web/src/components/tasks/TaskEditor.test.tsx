@@ -873,6 +873,30 @@ describe('TaskEditor', () => {
         expect((await wrote(fetch, 'DELETE')).path).toBe(followingPath('2026-10-08T00:00:00Z'))
       })
 
+      // FR-17: "All repeats" of the footer's question says so as the series' toast, its reach in red.
+      it('deletes all repeats from a later repeat, drawing the reach in red', async () => {
+        const user = userEvent.setup()
+        const success = vi.spyOn(toast, 'success')
+        const { fetch, dialog } = await openTask(series, undefined, later(series, '2026-10-08T00:00:00Z'))
+
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+        const question = within(dialog).getByRole('alertdialog', {
+          name: 'This task repeats. Which repeats should be deleted?',
+        })
+        await user.click(within(question).getByRole('button', { name: 'All repeats' }))
+        expect((await wrote(fetch, 'DELETE')).path).toBe('/api/v1/todos/t1')
+
+        await waitFor(() => {
+          expect(success).toHaveBeenCalledWith('Task deleted', expect.objectContaining({ id: 'series:t1' }))
+        })
+        const [, options] = success.mock.calls.filter(([m]) => m === 'Task deleted').at(-1)!
+        const { container } = render(<>{options?.icon}</>)
+        const red = 'var(--destructive)'
+        expect(Array.from(container.querySelectorAll('svg > *'), (m) => (m.tagName === 'path' ? '✓' : m.getAttribute('fill')))).toEqual(
+          ['✓', red, red, red, red],
+        )
+      })
+
       it('deletes the last repeat after the plain question', async () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(last)

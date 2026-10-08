@@ -19,7 +19,7 @@ import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { anchorOf, canComplete, recurringLabel, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
 import { formatEventWhen, formatPickerDate } from '@/lib/format'
-import { scopeOptions, taskScopeItems, taskScopeMissing, type Scope, type ScopeResult } from '@/lib/scope'
+import { scopeOptions, taskGlyphSlots, taskScopeItems, taskScopeMissing, type Scope, type ScopeResult } from '@/lib/scope'
 import { isDone, isOverdue, priorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -114,7 +114,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
         end.mutate({ todo, repeat })
         break
       case 'all':
-        del.mutate(todo)
+        del.mutate({ todo, look: { slots: taskGlyphSlots('all', repeat.at) } })
         break
     }
     openDetail(null)
@@ -263,7 +263,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
               openTaskEditor({ mode: 'edit', todo, repeat: repeat ?? undefined })
             }}
             onDelete={() => {
-              del.mutate(todo)
+              del.mutate({ todo })
               openDetail(null)
             }}
             deleteScope={

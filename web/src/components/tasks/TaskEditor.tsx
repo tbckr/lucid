@@ -391,7 +391,7 @@ export function TaskEditor({
         end.mutate({ todo, repeat }, { onSuccess: onDone })
         break
       case 'all':
-        del.mutate(todo, { onSuccess: onDone })
+        del.mutate({ todo, look: { slots: taskGlyphSlots('all', repeat.at) } }, { onSuccess: onDone })
         break
     }
     setConfirmDelete(false)
@@ -828,7 +828,7 @@ export function TaskEditor({
                 variant="destructive"
                 disabled={del.isPending}
                 onClick={() => {
-                  if (todo) del.mutate(todo, { onSuccess: onDone })
+                  if (todo) del.mutate({ todo }, { onSuccess: onDone })
                 }}
               >
                 {del.isPending && <Spinner />}

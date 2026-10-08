@@ -1718,27 +1718,49 @@ export function usePendingSeries(): ReadonlySet<string> {
 }
 
 /**
+ * A delete of the task `todo`. `look`: the repeats "all repeats" reaches from
+ * the repeat it was chosen at (`taskGlyphSlots`), drawn in red in the toast,
+ * as every write of a series that asked draws its reach (FR-17); left out
+ * where the delete asked nothing, a single task or the last repeat, or only
+ * confirmed, whose toast has no icon.
+ */
+export interface DeleteTodoVars {
+  todo: Todo
+  look?: { slots: GlyphSlot[] }
+}
+
+/**
  * Deletes a task. With the task's `id`, it waits for the updates of that task
  * still on their way (`todoScope`), so a task checked and deleted at once does
- * not conflict with its own check.
+ * not conflict with its own check. "All repeats" chosen at a repeat says so
+ * as the series' toast, without Undo: the resource is gone (FR-17; spec §6).
  */
 export function useDeleteTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
     ...todoScope(id),
-    mutationFn: (todo: Todo) => endpoints.deleteTodo(todo.id, currentEtag(qc, todo)),
-    onMutate: (todo) => {
-      startSeriesWrite(qc, todo.id)
-    },
-    onSuccess: (_d, todo) => {
-      toast.success(t('tasks.deleted'))
+    mutationFn: ({ todo }: DeleteTodoVars) => endpoints.deleteTodo(todo.id, currentEtag(qc, todo)),
+    onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
+    onSuccess: (_d, { todo, look }, ctx) => {
+      if (look) {
+        todoToast(
+          qc,
+          t,
+          todo,
+          t('tasks.deleted'),
+          { etag: '', generation: ctx.generation },
+          { slots: look.slots, color: todoColor(qc, todo.calendarId), tone: 'destructive' },
+        )
+      } else {
+        toast.success(t('tasks.deleted'))
+      }
       removeTodo(qc, todo)
     },
-    onError: (err, todo) => {
+    onError: (err, { todo }) => {
       reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
     },
-    onSettled: (_d, _e, todo) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+    onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
   })
 }
 

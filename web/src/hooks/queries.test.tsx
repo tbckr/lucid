@@ -2880,7 +2880,7 @@ describe('useDeleteTodo', () => {
     toast.success('Moved to Thu, Oct 8.', { id: 'series:x', action: { label: 'Undo', onClick: () => undefined } })
 
     act(() => {
-      result.current.mutate(series)
+      result.current.mutate({ todo: series })
     })
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledTimes(1)
@@ -2915,7 +2915,7 @@ describe('useDeleteTodo', () => {
     })
     const shown = queryClient.getQueryData<TodoList>(queryKeys.todos('c1'))!.todos[0]!
     act(() => {
-      result.current.del.mutate(shown)
+      result.current.del.mutate({ todo: shown })
     })
     await new Promise((r) => setTimeout(r, 20))
     expect(fetch).toHaveBeenCalledTimes(1)
@@ -2928,6 +2928,55 @@ describe('useDeleteTodo', () => {
     expect(urlOf(url)).toBe('/api/v1/todos/x')
     expect(init?.method).toBe('DELETE')
     expect((init?.headers as Record<string, string>)['If-Match']).toBe('"2"')
+  })
+
+  /** A client showing `deleting`, and a server that deletes it. */
+  function deleting(t: Todo) {
+    api.setCsrfToken('tok')
+    const queryClient = eventClient()
+    queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [t], corrupted: [] })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+      Promise.resolve(
+        init?.method === 'DELETE' ? new Response(null, { status: 204 }) : jsonResponse(200, { todos: [], corrupted: [] }),
+      ),
+    )
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    return renderHook(() => useDeleteTodo(t.id), { wrapper: wrap }).result
+  }
+
+  // FR-17: "all repeats" of a delete looks like every other series write, as the end that deleted the task does.
+  it('draws the reach of "all repeats" in red, without undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const series = todo({ id: 'x', calendarId: 'c1', etag: '"2"', recurring: true })
+    const result = deleting(series)
+
+    act(() => {
+      result.current.mutate({ todo: series, look: { slots: taskGlyphSlots('all', 'upcoming') } })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Task deleted')
+    expect(shown).toMatchObject({ id: 'series:x', duration: 8000 })
+    expect(shown.action).toBeUndefined()
+    const red = 'var(--destructive)'
+    expect(marksOf(shown.icon)).toEqual(['✓', red, red, red, red])
+  })
+
+  it('says a task that asked nothing was deleted, without an icon', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const single = todo({ id: 'x', calendarId: 'c1', etag: '"2"' })
+    const result = deleting(single)
+
+    act(() => {
+      result.current.mutate({ todo: single })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(success).toHaveBeenCalledWith('Task deleted')
   })
 })
 
