@@ -3129,6 +3129,41 @@ describe('task scope writes', () => {
       expect(cached()?.[0]).not.toHaveProperty('copyKept')
     })
 
+    // FR-17: the server refuses the undo of a detach once the detached task changed, as the series
+    // restored would show the repeat twice; a write of the detached task takes the detach's Undo away.
+    it("takes the detach's undo away once the detached task changes", async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { queryClient, wrap, writes } = setup(
+        jsonResponse(200, { ...rolled, undoToken: 'tok', detachedCopy: detached }),
+        new Promise<Response>(() => undefined),
+      )
+      const { result } = renderHook(() => ({ detach: useDetachTodo('t2'), ofDetached: useUpdateTodo('d1') }), {
+        wrapper: wrap,
+      })
+
+      act(() => {
+        result.current.detach.mutate({ todo: series, repeat: current, input: toTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(seriesToastAction('t2')?.label).toBe('Undo')
+      })
+      const message = 'Moved to Tue, Oct 6 as a task of its own. The series goes on Thu, Oct 8.'
+      expect(toastOf(success.mock.calls, message).action).toBe('Undo')
+
+      // Checked off, as from the task list.
+      act(() => {
+        result.current.ofDetached.mutate({ todo: detached, input: todoToInput(detached, { status: 'COMPLETED' }) })
+      })
+      await waitFor(() => {
+        expect(writes()).toHaveLength(2)
+      })
+      // The detach's toast stays, without Undo.
+      const shown = toast.getToasts().find((x) => x.id === 'series:t2')
+      expect(shown && 'title' in shown ? shown.title : undefined).toBe(message)
+      expect(seriesToastAction('t2')).toBeUndefined()
+      expect(queryClient.isMutating()).toBe(1)
+    })
+
     it('skips the current repeat, and says what is next up', async () => {
       const success = vi.spyOn(toast, 'success')
       const { wrap, writes, cached } = setup(
@@ -3329,6 +3364,32 @@ describe('task scope writes', () => {
       expect(cached()?.map((x) => x.id)).toEqual(['t2', 't9'])
     })
 
+    // With the rule removed, the new series is the repeat alone: a task of its own, not a series.
+    it('tells that the task of its own stays after an undo of a split that removed the rule', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const warning = vi.spyOn(toast, 'warning')
+      const single = { ...split, rrule: '', recurring: false, next: null }
+      const { queryClient, wrap, cached } = setup(
+        jsonResponse(200, { todo: single, series: ended, undoToken: 'tok' }),
+        jsonResponse(200, { ...series, etag: '"6"', copyKept: true }),
+      )
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later, input: { ...toLaterTuesday, rrule: '' }, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [ended, single], corrupted: [] })
+      act(toastOf(success.mock.calls, 'The series now ends before Mon, Oct 12.').click)
+
+      await waitFor(() => {
+        expect(warning).toHaveBeenCalledWith('Undone. The detached task was changed in another app and stays.')
+      })
+      expect(cached()?.map((x) => x.id)).toEqual(['t2', 't9'])
+    })
+
     // FR-17: the server refuses the undo of a split once the new series changed.
     it("takes the split's undo away once the new series changes", async () => {
       const success = vi.spyOn(toast, 'success')
@@ -3407,6 +3468,29 @@ describe('task scope writes', () => {
       expect(marksOf(shown.icon)).toEqual(['✓', '✓', red, red, red])
       expect(success).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it('reads the theme for a toast when it shows, and observes none while the hooks are held', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const media = vi.spyOn(window, 'matchMedia')
+    const { wrap } = setup(jsonResponse(200, { ...rolled, undoToken: 'tok' }))
+    const { result } = renderHook(useScopeWrites, { wrapper: wrap })
+    expect(media).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.skip.mutate({ todo: series, repeat: current })
+    })
+    await waitFor(() => {
+      expect(result.current.skip.isSuccess).toBe(true)
+    })
+    expect(media).toHaveBeenCalledWith('(prefers-color-scheme: dark)')
+    expect(marksOf(toastOf(success.mock.calls, 'Skipped. Next up: Thu, Oct 8').icon)).toEqual([
+      '✓',
+      '✓',
+      red,
+      'none',
+      'none',
+    ])
   })
 
   const firsts: [string, (h: ScopeWrites) => void, () => Response, string][] = [

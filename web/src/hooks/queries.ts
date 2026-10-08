@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
-import { useIsDark } from '@/hooks/useTheme'
+import { isDarkNow } from '@/hooks/useTheme'
 import { isApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList, type TodoOccurrenceList } from '@/lib/api/endpoints'
 import {
@@ -368,16 +368,21 @@ function seriesToastId(id: string): string {
   return `series:${id}`
 }
 
-/** The split of the old series `series` by its write `generation` (`startSeriesWrite`). */
+/**
+ * The write `generation` (`startSeriesWrite`) of the old series `series` that
+ * created a resource which may not stay when the write is undone.
+ */
 interface SplitOf {
   series: string
   generation: number
 }
 
 /**
- * The split that made each new series, by the new series' ID (FR-17): the
- * server refuses the Undo of a split once the new series changed, which the
- * restored old series would otherwise list a second time.
+ * The write that created each resource which may not stay when the write is
+ * undone, by the resource's ID (FR-17): the new series of a split, or the
+ * task a detach made of a series' current repeat. The server refuses the
+ * Undo of the write once that resource changed, which the restored old series
+ * would otherwise list a second time.
  */
 const splits = new WeakMap<QueryClient, Map<string, SplitOf>>()
 
@@ -392,10 +397,12 @@ function splitsOf(qc: QueryClient): Map<string, SplitOf> {
 
 /**
  * Notes that the write `generation` of the series `seriesId`, an event's or a
- * task's, split it, as its answer is of the new series `newId` (FR-17), so a
- * write of the new series takes the split's Undo away (`startSeriesWrite`).
- * An answer of the same series is no split: the server changed the whole
- * series, at what is its first event or current repeat by now.
+ * task's, created `newId`, a resource that may not stay when the write is
+ * undone (FR-17): the new series of a split, or the task a detach made of the
+ * current repeat. A write of it takes the Undo of the write away
+ * (`startSeriesWrite`), as the server would refuse that Undo. An answer of
+ * the same series is no split: the server changed the whole series, at what
+ * is its first event or current repeat by now.
  */
 function noteSplit(qc: QueryClient, seriesId: string, newId: string, generation: number): void {
   if (newId !== seriesId) splitsOf(qc).set(newId, { series: seriesId, generation })
@@ -407,9 +414,10 @@ function noteSplit(qc: QueryClient, seriesId: string, newId: string, generation:
  * stays, but loses its Undo in place: dismissed, sonner 2.0.8 would also
  * remove a toast of the same ID shown within its next two animation frames,
  * as this write's own toast is when the server answers fast. A write of the
- * new series of a split counts as one of the old series too while the split
- * is the old series' latest write, as it makes the split's Undo fail; a later
- * change of the old series keeps its own Undo.
+ * new series of a split, or of the task a detach made, counts as one of the
+ * old series too while the split or the detach is the old series' latest
+ * write, as it makes that write's Undo fail (`noteSplit`); a later change of
+ * the old series keeps its own Undo.
  */
 function startSeriesWrite(qc: QueryClient, id: string): number {
   const split = splitsOf(qc).get(id)
@@ -1155,19 +1163,15 @@ function todoScope(id: string | undefined) {
 }
 
 /**
- * The color of a task's calendar for its toast (FR-17), the solid one
- * `useCalendarColors` gives, read from the calendars as the cache holds them
- * when the toast shows: a task is written from a view that loaded them. It
- * observes nothing, so the many task rows that hold a task hook don't each
- * observe, or load, the calendars.
+ * The color of the calendar `calendarId` for a task's toast (FR-17), the
+ * solid one `useCalendarColors` gives, read as the toast shows: from the
+ * calendars as the cache holds them, as a task is written from a view that
+ * loaded them, in the theme shown then. A task hook observes neither, so the
+ * many task rows that hold task hooks don't each observe, or load, them.
  */
-function useTodoColor(): (calendarId: string) => string {
-  const qc = useQueryClient()
-  const dark = useIsDark()
-  return (calendarId) => {
-    const color = qc.getQueryData<Calendar[]>(queryKeys.calendars)?.find((c) => c.id === calendarId)?.color
-    return eventColors(color ?? FALLBACK_COLOR, dark).solid
-  }
+function todoColor(qc: QueryClient, calendarId: string): string {
+  const color = qc.getQueryData<Calendar[]>(queryKeys.calendars)?.find((c) => c.id === calendarId)?.color
+  return eventColors(color ?? FALLBACK_COLOR, isDarkNow()).solid
 }
 
 /** A day a task toast names; `now` only decides whether it needs its year. */
@@ -1238,14 +1242,35 @@ function seriesMessage(
 }
 
 /**
- * What an undo says when the server kept the task the change had created, as
- * another app changed it while the undo ran (FR-17): the task a detach made
- * of the current repeat, the new series of a split, or a completed copy.
+ * A task a change of a series created, which its undo takes back (FR-17), and
+ * what it is: the `completed` copy of a repeat, a task `detached` from the
+ * series, made of a repeat by a detach or by a split that removed the rule,
+ * or the new `series` of a split.
  */
-function copyKeptMessage(t: TFn, copy: Todo | null | undefined): string {
-  if (copy?.detachedFrom) return t('tasks.undoneDetachedKept')
-  if (copy && !isDone(copy)) return t('scope.undoneSeriesKept')
-  return t('tasks.undoneCopyKept')
+interface CreatedTodo {
+  todo: Todo
+  kind: 'completed' | 'detached' | 'series'
+}
+
+/** `todo` as what a change created, `kind`, or null where it created none. */
+function created(todo: Todo | null | undefined, kind: CreatedTodo['kind']): CreatedTodo | null {
+  return todo ? { todo, kind } : null
+}
+
+/**
+ * What an undo says when the server kept the task the change had created
+ * (FR-17), as another app changed it while the undo ran.
+ */
+function copyKeptMessage(t: TFn, kind: CreatedTodo['kind'] | undefined): string {
+  switch (kind) {
+    case 'detached':
+      return t('tasks.undoneDetachedKept')
+    case 'series':
+      return t('scope.undoneSeriesKept')
+    case 'completed':
+    case undefined:
+      return t('tasks.undoneCopyKept')
+  }
 }
 
 /**
@@ -1255,7 +1280,7 @@ function copyKeptMessage(t: TFn, copy: Todo | null | undefined): string {
  * `UPDATE_TODO_KEY` and the series' scope, so `usePendingSeries` marks the
  * series busy, and the undo waits for the writes ahead of it and holds back
  * the ones after it (NFR-26). `after` is the change's answer: the series' ETag
- * it gave, the token, and the task the change created, which the undo takes
+ * it gave, the token, and the task the change `created`, which the undo takes
  * back too: the completed copy, the task a detach made, or the new series of
  * a split, whose undo goes to the old series. The restore's own ETag is noted
  * within the mutation, so the write queued behind it already uses it. What the
@@ -1265,7 +1290,7 @@ async function undoTodoChange(
   qc: QueryClient,
   t: TFn,
   series: Todo,
-  after: { etag: string; undoToken: string; copy?: Todo | null },
+  after: { etag: string; undoToken: string; created?: CreatedTodo | null },
 ): Promise<void> {
   const key = queryKeys.todos(series.calendarId)
   const observer = new MutationObserver<RestoredTodo, unknown, { todo: Todo }>(qc, {
@@ -1281,9 +1306,9 @@ async function undoTodoChange(
     const { copyKept, ...restored } = await observer.mutate({ todo: series })
     putTodo(qc, series.calendarId, restored)
     if (copyKept) {
-      toast.warning(copyKeptMessage(t, after.copy))
+      toast.warning(copyKeptMessage(t, after.created?.kind))
     } else {
-      if (after.copy) removeTodo(qc, after.copy)
+      if (after.created) removeTodo(qc, after.created.todo)
       toast.success(t('scope.undone'))
     }
   } catch (err) {
@@ -1304,7 +1329,7 @@ async function undoTodoChange(
  * for events, with an Undo while the answer carries a token (FR-17). `after`
  * is this change's answer: the series' ETag it gave, its undo token, the
  * `generation` of the write (`startSeriesWrite`), and the task the change
- * created, which the Undo takes back (`undoTodoChange`). The token is dropped
+ * `created`, which the Undo takes back (`undoTodoChange`). The token is dropped
  * by `latestUndoToken` once a later write started. The ID is the series', so a
  * later change replaces this toast and its Undo. Its icon shows the repeats
  * the change reached, `look.slots` (`taskGlyphSlots` of the option chosen), in
@@ -1316,10 +1341,10 @@ function todoToast(
   t: TFn,
   series: Todo,
   message: string,
-  after: { etag: string; undoToken?: string | null; generation: number; copy?: Todo | null },
+  after: { etag: string; undoToken?: string | null; generation: number; created?: CreatedTodo | null },
   look?: { slots: GlyphSlot[]; color: string; tone?: 'default' | 'destructive' },
 ): void {
-  const { etag, generation, copy } = after
+  const { etag, generation } = after
   const undoToken = latestUndoToken(qc, series.id, generation, after.undoToken)
   toast.success(message, {
     id: seriesToastId(series.id),
@@ -1332,7 +1357,7 @@ function todoToast(
       ? {
           label: t('common.undo'),
           onClick: () => {
-            void undoTodoChange(qc, t, series, { etag, undoToken, copy })
+            void undoTodoChange(qc, t, series, { etag, undoToken, created: after.created })
           },
         }
       : undefined,
@@ -1353,7 +1378,6 @@ function todoToast(
 export function useUpdateTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: UPDATE_TODO_KEY,
@@ -1385,8 +1409,13 @@ export function useUpdateTodo(id?: string) {
         t,
         todo,
         message,
-        { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation, copy: updated.completedCopy },
-        look && { slots: look.slots, color: colorOf(todo.calendarId) },
+        {
+          etag: updated.etag,
+          undoToken: updated.undoToken,
+          generation: ctx.generation,
+          created: created(updated.completedCopy, 'completed'),
+        },
+        look && { slots: look.slots, color: todoColor(qc, todo.calendarId) },
       )
     },
     onError: (err, { todo }, ctx) => {
@@ -1436,12 +1465,13 @@ export const END_TODO_KEY = [...UPDATE_TODO_KEY, 'end'] as const
  * at once; its new ETag is noted within the mutation, so a write queued
  * behind it in the series' scope already uses it (NFR-26). The toast says
  * where the series goes on, its current repeat now, and its Undo takes the
- * detached task back. With the `id` of the series, after its other writes.
+ * detached task back, until a write of that task, which makes the server
+ * refuse the Undo, takes it away (`noteSplit`). With the `id` of the series,
+ * after its other writes.
  */
 export function useDetachTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: DETACH_TODO_KEY,
@@ -1456,11 +1486,13 @@ export function useDetachTodo(id?: string) {
     onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
     onSuccess: (answer, { todo, repeat, input, moved }, ctx) => {
       putTodo(qc, todo.calendarId, answer)
+      // The server refuses the Undo once the detached task changed, as the series restored would show the repeat twice.
+      if (answer.detachedCopy) noteSplit(qc, todo.id, answer.detachedCopy.id, ctx.generation)
       const after = {
         etag: answer.etag,
         undoToken: answer.undoToken,
         generation: ctx.generation,
-        copy: answer.detachedCopy,
+        created: created(answer.detachedCopy, 'detached'),
       }
       if (!answer.detachedCopy) {
         // The series had no next repeat by now, so the server changed its last one as a single task, which asks
@@ -1477,7 +1509,7 @@ export function useDetachTodo(id?: string) {
           ? t('scope.toast.detachedMoved', { date: toastDay(anchorOf(input), prefs), next })
           : t('scope.toast.detachedChanged', { next }),
         after,
-        { slots: taskGlyphSlots('this', repeat.at), color: colorOf(todo.calendarId) },
+        { slots: taskGlyphSlots('this', repeat.at), color: todoColor(qc, todo.calendarId) },
       )
     },
     onError: (err, { todo }) => {
@@ -1497,7 +1529,6 @@ export function useDetachTodo(id?: string) {
 export function useSkipTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: SKIP_TODO_KEY,
@@ -1517,7 +1548,7 @@ export function useSkipTodo(id?: string) {
         todo,
         t('scope.toast.skipped', { next: toastDay(anchorOf(answer), prefs) }),
         { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
-        { slots: taskGlyphSlots('this', repeat.at), color: colorOf(todo.calendarId), tone: 'destructive' },
+        { slots: taskGlyphSlots('this', repeat.at), color: todoColor(qc, todo.calendarId), tone: 'destructive' },
       )
     },
     onError: (err, { todo }) => {
@@ -1544,7 +1575,6 @@ export function useSkipTodo(id?: string) {
 export function useTodoFollowing(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: TODO_FOLLOWING_KEY,
@@ -1558,7 +1588,7 @@ export function useTodoFollowing(id?: string) {
     onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
     onSuccess: (answer, { todo, repeat, input, moved }, ctx) => {
       noteSplit(qc, todo.id, answer.todo.id, ctx.generation)
-      const color = colorOf(todo.calendarId)
+      const color = todoColor(qc, todo.calendarId)
       const after = { etag: answer.series.etag, undoToken: answer.undoToken, generation: ctx.generation }
       if (answer.todo.id === todo.id) {
         const message = moved
@@ -1576,7 +1606,8 @@ export function useTodoFollowing(id?: string) {
         removed
           ? t('scope.toast.ended', { date })
           : t(moved ? 'scope.toast.followingMoved' : 'scope.toast.followingChanged', { date }),
-        { ...after, copy: answer.todo },
+        // With the rule removed, the new series is the repeat alone, a task of its own.
+        { ...after, created: created(answer.todo, removed ? 'detached' : 'series') },
         { slots: taskGlyphSlots('following', repeat.at), color, tone: removed ? 'destructive' : 'default' },
       )
     },
@@ -1599,7 +1630,6 @@ export function useTodoFollowing(id?: string) {
 export function useEndTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
-  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: END_TODO_KEY,
@@ -1612,7 +1642,7 @@ export function useEndTodo(id?: string) {
     },
     onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
     onSuccess: (res, { todo, repeat }, ctx) => {
-      const color = colorOf(todo.calendarId)
+      const color = todoColor(qc, todo.calendarId)
       if (!res) {
         removeTodo(qc, todo)
         todoToast(
