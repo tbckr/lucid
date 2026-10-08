@@ -264,7 +264,7 @@ describe('dropResult and withDrop for an upcoming occurrence (FR-17)', () => {
     const moved = withDrop(drag, dropResult(drag, { type: 'day', day: day(29) }, 0)!).event
     expect(moved.startsAt).toEqual(day(29))
     expect(moved.endsAt).toEqual(day(30))
-    expect(moved.kind === 'task' && moved.occurrence).toEqual({ state: 'upcoming', recurrenceId: '2026-09-27T00:00:00Z' })
+    expect(moved.kind === 'task' && moved.occurrence).toMatchObject({ state: 'upcoming', recurrenceId: '2026-09-27T00:00:00Z' })
     expect(moved.key).toBe('t1@27')
   })
 

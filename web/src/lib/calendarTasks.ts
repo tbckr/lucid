@@ -24,8 +24,13 @@ export interface CalTask {
   /** Exclusive end (all-day: local midnight after the last day). */
   endsAt: Date
   todo: Todo
-  /** Set when this entry is one occurrence of a recurring series (FR-17), not the series itself. */
-  occurrence?: { state: OccurrenceState; recurrenceId: string }
+  /**
+   * Set when this entry is one occurrence of a recurring series (FR-17), not the series itself. Besides its state, it
+   * keeps the occurrence's wire dates, which a write to it starts from: `startsAt` and `endsAt` are local `Date`s,
+   * with the value type and the zone of the wire gone. `offRule` marks a repeat that lies on none of the rule's
+   * instances.
+   */
+  occurrence?: TaskDates & { state: OccurrenceState; recurrenceId: string; offRule: boolean }
 }
 
 /** The dates of a todo, an occurrence, or a `TodoInput` about to be saved (FR-17). */
@@ -121,7 +126,15 @@ export function occurrenceTask(occ: TodoOccurrence, todo: Todo): CalTask | null 
     calendarId: occ.calendarId,
     title: occ.title,
     todo,
-    occurrence: { state: occ.state, recurrenceId: occ.recurrenceId },
+    occurrence: {
+      state: occ.state,
+      recurrenceId: occ.recurrenceId,
+      offRule: occ.offRule,
+      start: occ.start,
+      startAllDay: occ.startAllDay,
+      due: occ.due,
+      dueAllDay: occ.dueAllDay,
+    },
     ...p,
   }
 }

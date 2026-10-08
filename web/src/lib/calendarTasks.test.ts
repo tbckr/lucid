@@ -235,6 +235,52 @@ describe('occurrenceTask', () => {
     expect(task?.todo.id).toBe('t1')
   })
 
+  it('keeps the wire dates of an all-day occurrence, which place it only as local dates', () => {
+    const occ = occurrence({
+      start: allDay('2026-09-24'),
+      startAllDay: true,
+      due: allDay('2026-09-25'),
+      dueAllDay: true,
+      state: 'upcoming',
+    })
+    expect(occurrenceTask(occ, todo())?.occurrence).toEqual({
+      state: 'upcoming',
+      recurrenceId: occ.recurrenceId,
+      offRule: false,
+      start: allDay('2026-09-24'),
+      startAllDay: true,
+      due: allDay('2026-09-25'),
+      dueAllDay: true,
+    })
+  })
+
+  it('keeps the wire dates of a timed occurrence and each date\'s own value type', () => {
+    const occ = occurrence({
+      start: '2026-09-25T08:00:00Z',
+      startAllDay: false,
+      due: allDay('2026-09-26'),
+      dueAllDay: true,
+    })
+    expect(occurrenceTask(occ, todo())?.occurrence).toMatchObject({
+      start: '2026-09-25T08:00:00Z',
+      startAllDay: false,
+      due: allDay('2026-09-26'),
+      dueAllDay: true,
+    })
+  })
+
+  it('keeps a missing start or due as the wire has it', () => {
+    const occ = occurrence({ start: null, due: '2026-09-25T08:00:00Z', dueAllDay: false })
+    const kept = occurrenceTask(occ, todo())?.occurrence
+    expect(kept?.start).toBeNull()
+    expect(kept?.due).toBe('2026-09-25T08:00:00Z')
+  })
+
+  it('keeps whether the repeat is off the rule', () => {
+    expect(occurrenceTask(occurrence({ offRule: true }), todo())?.occurrence?.offRule).toBe(true)
+    expect(occurrenceTask(occurrence({ offRule: false }), todo())?.occurrence?.offRule).toBe(false)
+  })
+
   it('places a timed point occurrence as a 30-minute point', () => {
     const occ = occurrence({ due: '2026-09-25T08:00:00Z', dueAllDay: false })
     const task = occurrenceTask(occ, todo())

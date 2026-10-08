@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { apiEvent, bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import i18n from '@/i18n'
 import { apiErrorMessage } from '../errors'
-import { ApiClient, isApiError } from './client'
-import { createEndpoints } from './endpoints'
+import { ApiClient, isApiError, type ApiErrorCode } from './client'
+import { createEndpoints, type Endpoints } from './endpoints'
 
 function setup(...responses: Response[]) {
   const calls: { url: string; init: RequestInit }[] = []
@@ -162,7 +162,7 @@ describe('endpoints', () => {
       const err: unknown = await call.catch((e: unknown) => e)
       expect(isApiError(err, 'series_split_unsupported')).toBe(true)
       expect(apiErrorMessage(i18n.getFixedT('en'), err)).toBe(
-        "This series can't be split. Change only this event or all events instead.",
+        "This series can't be split. Change only this one or all instead.",
       )
     }
   })
@@ -208,6 +208,112 @@ describe('endpoints', () => {
     expect(bodyOf(calls[0]?.init)).toEqual({ token: 'tok' })
     expect((calls[0]?.init.headers as Record<string, string>)['If-Match']).toBeUndefined()
     expect(restored.copyKept).toBe(true)
+  })
+
+  describe('the scope routes of a recurring task', () => {
+    const input = {
+      title: 'x',
+      description: '',
+      checklist: [],
+      start: null,
+      startAllDay: false,
+      due: '2026-09-28T00:00:00Z',
+      dueAllDay: true,
+      priority: 0,
+      status: 'NEEDS-ACTION' as const,
+    }
+    const rid = '2026-09-25T00:00:00Z'
+    const encodedRid = '2026-09-25T00%3A00%3A00Z'
+    const ifMatch = (init?: RequestInit) => (init?.headers as Record<string, string>)['If-Match']
+
+    it('detaches a repeat with the series\' ETag and reads the rolled series, the detached copy and the undo token', async () => {
+      const copy = todo({ id: 't2', uid: 'u2', detachedFrom: 'u1' })
+      const rolled = { ...todo({ id: 't1', etag: '"2"', recurring: true }), detachedCopy: copy, undoToken: 'tok' }
+      const { api, calls } = setup(jsonResponse(200, rolled))
+      const res = await api.detachTodo('t1', '"1"', rid, input)
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([['PUT', `/api/v1/todos/t1/occurrences/${encodedRid}`]])
+      expect(ifMatch(calls[0]?.init)).toBe('"1"')
+      expect(bodyOf(calls[0]?.init)).toEqual(input)
+      expect([res.id, res.etag, res.undoToken]).toEqual(['t1', '"2"', 'tok'])
+      expect([res.detachedCopy?.id, res.detachedCopy?.detachedFrom]).toEqual(['t2', 'u1'])
+    })
+
+    it('reads a detach at the last repeat, which answers as a plain change', async () => {
+      const { api } = setup(jsonResponse(200, todo({ etag: '"2"' })))
+      const res = await api.detachTodo('t1', '"1"', rid, input)
+      expect(res.detachedCopy).toBeUndefined()
+      expect(res.undoToken).toBeUndefined()
+    })
+
+    it('skips a repeat with the series\' ETag and reads the rolled series and the undo token', async () => {
+      const { api, calls } = setup(jsonResponse(200, { ...todo({ etag: '"2"', recurring: true }), undoToken: 'tok' }))
+      const res = await api.skipTodo('t1', '"1"', rid)
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([['DELETE', `/api/v1/todos/t1/occurrences/${encodedRid}`]])
+      expect(ifMatch(calls[0]?.init)).toBe('"1"')
+      expect(calls[0]?.init.body).toBeUndefined()
+      expect([res.etag, res.undoToken]).toEqual(['"2"', 'tok'])
+    })
+
+    it('splits a series at a repeat and reads the new series, the old one and the undo token', async () => {
+      const split = {
+        todo: todo({ id: 't2', uid: 'u2', etag: '"n1"', recurring: true, recurrenceId: '2026-09-28T00:00:00Z' }),
+        series: todo({ id: 't1', etag: '"s2"', recurring: true }),
+        undoToken: 'tok',
+      }
+      const { api, calls } = setup(jsonResponse(200, split))
+      const res = await api.updateTodoFollowing('t1', '"s1"', '2026-09-28T00:00:00Z', input)
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+        ['PUT', '/api/v1/todos/t1/following/2026-09-28T00%3A00%3A00Z'],
+      ])
+      expect(ifMatch(calls[0]?.init)).toBe('"s1"')
+      expect(bodyOf(calls[0]?.init)).toEqual(input)
+      expect([res.todo.id, res.todo.etag, res.series.id, res.series.etag, res.undoToken]).toEqual([
+        't2',
+        '"n1"',
+        't1',
+        '"s2"',
+        'tok',
+      ])
+    })
+
+    it('reads a split without an undo token', async () => {
+      const { api } = setup(jsonResponse(200, { todo: todo({ id: 't2' }), series: todo({ etag: '' }) }))
+      const res = await api.updateTodoFollowing('t1', '"s1"', rid, input)
+      expect(res.undoToken).toBeUndefined()
+      expect(res.series.etag).toBe('')
+    })
+
+    it('ends a series before a repeat and reads the series as written and the undo token', async () => {
+      const { api, calls } = setup(jsonResponse(200, { ...todo({ etag: '"2"', recurring: true }), undoToken: 'tok' }))
+      const res = await api.endTodo('t1', '"1"', rid)
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([['DELETE', `/api/v1/todos/t1/following/${encodedRid}`]])
+      expect(ifMatch(calls[0]?.init)).toBe('"1"')
+      expect([res?.etag, res?.undoToken]).toEqual(['"2"', 'tok'])
+    })
+
+    it('resolves with nothing once ending the series deleted its resource', async () => {
+      const { api } = setup(new Response(null, { status: 204 }))
+      expect(await api.endTodo('t1', '"1"', rid)).toBeUndefined()
+    })
+
+    const split = "This series can't be split. Change only this one or all instead."
+    it.each<[string, ApiErrorCode, string, (a: Endpoints) => Promise<unknown>]>([
+      ['detaching', 'series_split_unsupported', split, (a: Endpoints) => a.detachTodo('t1', '"1"', rid, input)],
+      ['skipping', 'series_split_unsupported', split, (a: Endpoints) => a.skipTodo('t1', '"1"', rid)],
+      ['ending', 'series_split_unsupported', split, (a: Endpoints) => a.endTodo('t1', '"1"', rid)],
+      ['splitting', 'series_split_unsupported', split, (a: Endpoints) => a.updateTodoFollowing('t1', '"1"', rid, input)],
+      [
+        'splitting and moving',
+        'series_move_unsupported',
+        "This series can't move like this. Move only this one instead.",
+        (a: Endpoints) => a.updateTodoFollowing('t1', '"1"', rid, input),
+      ],
+    ])('names a series that cannot be split or moved when %s', async (_what, code, text, call) => {
+      const { api } = setup(jsonResponse(400, { error: { code, message: 'the series has attendees' } }))
+      const err: unknown = await call(api).catch((e: unknown) => e)
+      expect(isApiError(err, code)).toBe(true)
+      expect(apiErrorMessage(i18n.getFixedT('en'), err)).toBe(text)
+    })
   })
 
   it('lists todo occurrences with an encoded range and isolates corrupted items', async () => {

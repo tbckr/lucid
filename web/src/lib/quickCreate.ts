@@ -236,6 +236,7 @@ export function previewOf(
     recurring: false,
     fixedDays: false,
     ruleUnsupported: false,
+    hasAttendees: false,
   })
 }
 

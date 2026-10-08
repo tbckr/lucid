@@ -9,6 +9,7 @@ import {
   parseList,
   restoredTodoSchema,
   sessionSchema,
+  todoFollowingSchema,
   todoOccurrenceSchema,
   todoSchema,
   toCorrupted,
@@ -107,6 +108,74 @@ describe('schemas', () => {
     expect(t.next).toBeUndefined()
   })
 
+  it('parses what a task of the scope question carries, and leaves it out when the server does', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    const left = todoSchema.parse(base)
+    expect(left.hasAttendees).toBe(false)
+    expect([left.detachedFrom, left.recurrenceId, left.timezone]).toEqual([undefined, undefined, undefined])
+    const carried = todoSchema.parse({
+      ...base,
+      hasAttendees: true,
+      detachedFrom: 'series-uid',
+      recurrenceId: '2026-09-25T00:00:00Z',
+      timezone: 'Europe/Berlin',
+    })
+    expect(carried.hasAttendees).toBe(true)
+    expect([carried.detachedFrom, carried.recurrenceId, carried.timezone]).toEqual([
+      'series-uid',
+      '2026-09-25T00:00:00Z',
+      'Europe/Berlin',
+    ])
+    expect(todoSchema.safeParse({ ...base, recurrenceId: 'tomorrow' }).success).toBe(false)
+  })
+
+  it('updatedTodoSchema keeps the detached copy of a detach, todoSchema strips it', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: 'e',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    expect(updatedTodoSchema.parse(base).detachedCopy).toBeUndefined()
+    const withCopy = { ...base, detachedCopy: { ...base, id: 't-copy', detachedFrom: 'u' } }
+    const updated = updatedTodoSchema.parse(withCopy)
+    expect(updated.detachedCopy?.id).toBe('t-copy')
+    expect(updated.detachedCopy?.detachedFrom).toBe('u')
+    expect(todoSchema.parse(withCopy)).not.toHaveProperty('detachedCopy')
+  })
+
+  it('parses the answer of a split of a task: the new series, the old one and an undo token, which is optional', () => {
+    const base = {
+      id: 't',
+      calendarId: 'c',
+      uid: 'u',
+      etag: '"1"',
+      title: 'x',
+      priority: 0,
+      status: 'NEEDS-ACTION',
+    }
+    const answer = { todo: { ...base, id: 't2', uid: 'u2', recurrenceId: '2026-09-28T00:00:00Z' }, series: base }
+    const bare = todoFollowingSchema.parse(answer)
+    expect([bare.todo.id, bare.series.id, bare.undoToken]).toEqual(['t2', 't', undefined])
+    expect(bare.todo.recurrenceId).toBe('2026-09-28T00:00:00Z')
+    expect(todoFollowingSchema.parse({ ...answer, undoToken: 'tok' }).undoToken).toBe('tok')
+    // The server tells no ETag of the old series that way, which is no reason to refuse the answer.
+    expect(todoFollowingSchema.parse({ ...answer, series: { ...base, etag: '' } }).series.etag).toBe('')
+    expect(todoFollowingSchema.safeParse({ series: base }).success).toBe(false)
+    expect(todoFollowingSchema.safeParse({ todo: answer.todo }).success).toBe(false)
+  })
+
   it('updatedTodoSchema keeps completedCopy, todoSchema strips it', () => {
     const base = {
       id: 't',
@@ -177,6 +246,12 @@ describe('schemas', () => {
 describe('todoOccurrenceSchema', () => {
   it('accepts a documented occurrence', () => {
     expect(todoOccurrenceSchema.safeParse(occurrence()).success).toBe(true)
+  })
+
+  it('flags a repeat off its rule, false when the server leaves it out', () => {
+    const { offRule: _o, ...plain } = occurrence()
+    expect(todoOccurrenceSchema.parse(plain).offRule).toBe(false)
+    expect(todoOccurrenceSchema.parse({ ...plain, offRule: true }).offRule).toBe(true)
   })
 
   it('rejects an occurrence with an unknown state', () => {

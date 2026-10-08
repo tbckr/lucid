@@ -44,6 +44,7 @@ export function todo(p: Partial<Todo> = {}): Todo {
     fixedDays: false,
     ruleUnsupported: false,
     next: null,
+    hasAttendees: false,
     ...p,
   }
 }
@@ -60,6 +61,7 @@ export function occurrence(p: Partial<TodoOccurrence> = {}): TodoOccurrence {
     due: '2026-09-25T00:00:00Z',
     dueAllDay: true,
     state: 'current',
+    offRule: false,
     ...p,
   }
 }

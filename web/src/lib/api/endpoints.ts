@@ -9,6 +9,7 @@ import {
   parseList,
   restoredTodoSchema,
   sessionSchema,
+  todoFollowingSchema,
   todoOccurrenceSchema,
   todoSchema,
   updatedTodoSchema,
@@ -23,6 +24,7 @@ import {
   type RestoredTodo,
   type Session,
   type Todo,
+  type TodoFollowing,
   type TodoInput,
   type TodoOccurrence,
   type UpdatedTodo,
@@ -161,6 +163,51 @@ export function createEndpoints(client: ApiClient) {
 
     deleteTodo: (todoId: string, etag: string): Promise<undefined> =>
       client.request(`/todos/${enc(todoId)}`, { method: 'DELETE', etag }),
+
+    /**
+     * FR-17: "Only this repeat" of a recurring task. The current repeat becomes a task of its own, changed by `input`
+     * (its `rrule` is ignored), and the series rolls on to its next repeat. Resolves with the rolled series, whose
+     * `detachedCopy` is the new task; at the series' last repeat, with the changed task alone.
+     */
+    detachTodo: (todoId: string, etag: string, recurrenceId: string, input: TodoInput): Promise<UpdatedTodo> =>
+      client.request(`/todos/${enc(todoId)}/occurrences/${enc(recurrenceId)}`, {
+        method: 'PUT',
+        body: input,
+        etag,
+        schema: updatedTodoSchema,
+      }),
+
+    /** FR-17: skips the current repeat of a recurring task, so the series rolls on to its next. Resolves with the rolled series. */
+    skipTodo: (todoId: string, etag: string, recurrenceId: string): Promise<UpdatedTodo> =>
+      client.request(`/todos/${enc(todoId)}/occurrences/${enc(recurrenceId)}`, {
+        method: 'DELETE',
+        etag,
+        schema: updatedTodoSchema,
+      }),
+
+    /**
+     * FR-17: "This and following repeats". The series ends before `recurrenceId` and a new series of its own goes on
+     * from it, changed by `input`. Resolves with the new series, the old one as written (its ETag is empty when the
+     * server told none) and the undo token, which undoes the split at the old series' `id`.
+     */
+    updateTodoFollowing: (todoId: string, etag: string, recurrenceId: string, input: TodoInput): Promise<TodoFollowing> =>
+      client.request(`/todos/${enc(todoId)}/following/${enc(recurrenceId)}`, {
+        method: 'PUT',
+        body: input,
+        etag,
+        schema: todoFollowingSchema,
+      }),
+
+    /**
+     * FR-17: ends the series before `recurrenceId`. Resolves with the series as written and the undo token, or with
+     * nothing once its resource is deleted, at what is its current repeat.
+     */
+    endTodo: (todoId: string, etag: string, recurrenceId: string): Promise<UpdatedTodo | undefined> =>
+      client.request(`/todos/${enc(todoId)}/following/${enc(recurrenceId)}`, {
+        method: 'DELETE',
+        etag,
+        schema: updatedTodoSchema.optional(),
+      }),
 
     /** Undoes the change that returned `token` as `undoToken` (FR-17); no `If-Match`, the token is the concurrency control. */
     undoTodo: (todoId: string, token: string): Promise<RestoredTodo> =>

@@ -143,22 +143,48 @@ export const todoSchema = z.object({
       dueAllDay: z.boolean().optional(),
     })
     .nullish(),
+  // FR-17: the RECURRENCE-ID of the current occurrence of an open series, by which the writes to one repeat name it.
+  recurrenceId: isoDateTime.nullish(),
+  // FR-17: the IANA zone of the todo's anchor, which a series recurs in; left out for a date, UTC or floating time.
+  timezone: z.string().nullish(),
+  // FR-17: true if the series or any override has an ORGANIZER or ATTENDEE, which the server refuses to split or
+  // detach from.
+  hasAttendees: z.boolean().optional().default(false),
+  // FR-17: the UID of the series a todo was detached from ("only this repeat"); left out for any other todo.
+  detachedFrom: z.string().nullish(),
   // FR-17: where a move of the current occurrence must keep its anchor, [from, until), by the rule's days in the
   // series' zone; from null for a repeat off the rule, until null for the last repeat. Null where a move is free.
+  // The server no longer sends it, so it parses as absent; it stays until the window code that reads it goes.
   moveWindow: z.object({ from: isoDateTime.nullable(), until: isoDateTime.nullable() }).nullish(),
 })
 export type Todo = z.infer<typeof todoSchema>
 
 /**
- * PUT /api/v1/todos/{todoId} response: a completed occurrence's copy, when
- * the master rolled to its next one (FR-17), and an undo token when the
- * change can be undone (recurring todos only).
+ * Response of a write to a todo: PUT /api/v1/todos/{todoId}, PUT and DELETE
+ * .../occurrences/{recurrenceId}, DELETE .../following/{recurrenceId}. A
+ * completed occurrence's copy, when the master rolled to its next one, the
+ * todo a detach made of the current repeat (FR-17), and an undo token when
+ * the change can be undone (recurring todos only).
  */
 export const updatedTodoSchema = todoSchema.extend({
   completedCopy: todoSchema.nullish(),
+  detachedCopy: todoSchema.nullish(),
   undoToken: z.string().nullish(),
 })
 export type UpdatedTodo = z.infer<typeof updatedTodoSchema>
+
+/**
+ * PUT /api/v1/todos/{todoId}/following/{recurrenceId} response: the new
+ * series from the repeat on, the old series as written, whose ETag is empty
+ * when the server told none, and an undo token when the split can be undone
+ * (FR-17, NFR-26).
+ */
+export const todoFollowingSchema = z.object({
+  todo: todoSchema,
+  series: todoSchema,
+  undoToken: z.string().nullish(),
+})
+export type TodoFollowing = z.infer<typeof todoFollowingSchema>
 
 /** POST /api/v1/todos/{todoId}/undo response: the restored series (FR-17). */
 export const restoredTodoSchema = todoSchema.extend({ copyKept: z.boolean().optional().default(false) })
@@ -179,6 +205,8 @@ export const todoOccurrenceSchema = z.object({
   due: isoDateTime.nullish(),
   dueAllDay: z.boolean().optional().default(false),
   state: occurrenceStateSchema,
+  // FR-17: true for a repeat that lies on none of the rule's instances, from which no series can go on.
+  offRule: z.boolean().optional().default(false),
 })
 export type TodoOccurrence = z.infer<typeof todoOccurrenceSchema>
 

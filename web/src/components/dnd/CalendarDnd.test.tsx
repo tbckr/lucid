@@ -520,7 +520,7 @@ describe('CalendarDnd', () => {
       await moveRight(chipIn(25, standupAt10))
       await user.click(await screen.findByRole('button', { name: 'All events' }))
       await waitFor(() => {
-        expect(error).toHaveBeenCalledWith("This series can't move like this. Move only this event instead.")
+        expect(error).toHaveBeenCalledWith("This series can't move like this. Move only this one instead.")
       })
       await waitFor(() => {
         expect(queryClient.isMutating()).toBe(0)

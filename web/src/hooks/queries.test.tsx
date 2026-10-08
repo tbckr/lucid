@@ -1926,7 +1926,7 @@ describe('this and following events', () => {
       result.current.mutate({ event: toCalEvent(late), ...to })
     })
     await waitFor(() => {
-      expect(error).toHaveBeenCalledWith("This series can't be split. Change only this event or all events instead.")
+      expect(error).toHaveBeenCalledWith("This series can't be split. Change only this one or all instead.")
     })
     await waitFor(() => {
       expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true)
