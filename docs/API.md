@@ -779,10 +779,17 @@ repeat open (`NEEDS-ACTION`, `IN-PROCESS`, or absent): `COMPLETED` or
 `CANCELLED` is `400 invalid_input`, before anything is read. The body changes
 the new series as `PUT /todos/{todoId}` changes a series from its current
 repeat, which the repeat is in the new series: new dates move it, the rule
-following as far as it can (see "Moving the series" there), and the fields
-replace its own. Its status and its checklist's state are those of a series
-that rolls on, though: `NEEDS-ACTION`, every item unchecked, whatever the body
-says. `start` is handled as there: a body without it, or without any date,
+following as far as it can (see "Moving the series" there). The body carries
+the repeat's fields as shown, an override's own where it has them (`title`
+as `GET .../todos/occurrences` lists it), and only the changed ones apply:
+title, notes, checklist (by the text of its items) and priority that differ
+from the repeat as shown go into the new series and into the repeat's
+override, if it has one; the others stay as the new series inherited them.
+So a title another client gave the repeat alone does not become the title of
+every repeat. With `rrule: ""`, the new series is the repeat alone and takes
+the body's fields as they are. Its status and its checklist's state are
+those of a series that rolls on, though: `NEEDS-ACTION`, every item
+unchecked, whatever the body says. `start` is handled as there: a body without it, or without any date,
 takes the repeat's `start`. `rrule` is the new series' rule: absent, or sent
 as the series has it (`rrule` of the todo, compared case-insensitively), the
 new series keeps the rule it inherits, with its lowered `COUNT`, so a move

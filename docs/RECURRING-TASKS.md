@@ -1013,14 +1013,19 @@ Lucid splits the series at R, by `RECURRENCE-ID`, and writes no
 3. The change applies to the new series as a change of the series applies
    from its current occurrence, which R is there: new dates move it as
    under Moving below, as far as its rule can follow, and a move it can't
-   follow is refused before anything is written; the fields replace its
-   own, but its status and its checklist's state are those of a series that
-   rolls on: open, every item unchecked. A request without a rule, or with
+   follow is refused before anything is written. The request carries R's
+   fields as R shows them, an override's own where it has them, and only
+   those that differ apply: they go into the new series and into R's
+   override, the others stay as the new series inherited them, so that a
+   title another app gave R alone does not become the title of every
+   occurrence. The checklist counts by the text of its items. Its status
+   and its checklist's state are those of a series that rolls on, though:
+   open, every item unchecked. A request without a rule, or with
    the rule the series has, compared case-insensitively, keeps the rule the
    new series inherited, with its lowered `COUNT`, so that a move doesn't
    count as a new rule; any other rule is the new series' own from R on,
    which drops the overrides it took along; an empty rule makes it a single
-   task at the dates entered.
+   task at the dates and with the fields entered.
 
 At the current occurrence, the last one too, nothing comes before it: "this
 and following" is all of them, the change of the series itself. R must be an

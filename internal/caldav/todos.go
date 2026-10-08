@@ -76,11 +76,7 @@ func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.To
 			t.Due, t.DueAllDay = &due, start.allDay
 		}
 	}
-	if p := c.Props.Get(ical.PropPriority); p != nil {
-		if n, err := strconv.Atoi(strings.TrimSpace(p.Value)); err == nil && n >= 0 && n <= 9 {
-			t.Priority = n
-		}
-	}
+	t.Priority = todoPriority(c.Props)
 	if d, err := parseDateProp(c.Props.Get(ical.PropCompleted)); err == nil {
 		completed := d.t.UTC()
 		t.Completed = &completed
@@ -436,6 +432,12 @@ type todoEdit struct {
 	// The completions other apps recorded in them become entries of their
 	// own before, see convertDoneOverrides.
 	drop func(rid dateValue) bool
+	// asShown says that in carries the fields of the current occurrence as
+	// shown, its override's own where it has them, as the body of a write to
+	// a later repeat R does for N, whose current occurrence R is (see
+	// UpdateTodoFollowing): only the fields that differ apply, see
+	// applyShownFields, while the series recurs.
+	asShown bool
 }
 
 // newTodoEdit decides the update in of the todo c in cal, read as cur
@@ -471,11 +473,13 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 
 // applyTodoEdit applies the update e to the todo c in cal, in memory, as
 // UpdateTodo writes it (FR-17): the rule edit, then the dates, then the
-// fields, see applyTodoFields. It does no I/O: before it, the caller turns
-// the completions other apps recorded in the overrides e.drop reports into
-// entries of their own, see convertDoneOverrides, cloned from e.series as
-// read; after it, the caller bumps the change properties and writes. It
-// returns the todo's series as edited, nil once it does not recur.
+// fields, see applyTodoFields, or, for e.asShown while c recurs, those that
+// differ from the occurrence as shown, see applyShownFields. It does no
+// I/O: before it, the caller turns the completions other apps recorded in
+// the overrides e.drop reports into entries of their own, see
+// convertDoneOverrides, cloned from e.series as read; after it, the caller
+// bumps the change properties and writes. It returns the todo's series as
+// edited, nil once it does not recur.
 //
 // An update that completes the current occurrence of an open series with a
 // next one stops after the rule edit, and reports complete: the caller
@@ -489,6 +493,13 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 // applied in cal then, which the caller does not write.
 func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.Time) (series *todoSeries, complete bool, err error) {
 	series = e.series
+	// The override of the occurrence in shows, as read: the rule edit and
+	// the move may drop it.
+	var shown *ical.Component
+	if e.asShown && series != nil {
+		occ, _ := series.reported(e.cur.Status)
+		shown = occ.override
+	}
 	switch e.rule {
 	case ruleRemove:
 		// The task stays at the current occurrence, whose dates in carries
@@ -535,7 +546,11 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		// would restart there and lose its overrides. A new rule wrote them
 		// already (FR-17).
 	}
-	applyTodoFields(c, e.in, now)
+	if e.asShown && series != nil {
+		applyShownFields(cal, c, shown, e.in, now)
+	} else {
+		applyTodoFields(c, e.in, now)
+	}
 	return series, false, nil
 }
 
@@ -1075,7 +1090,84 @@ func applyTodoFields(c *ical.Component, in domain.TodoInput, now time.Time) {
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, joinChecklist(in.Description, in.Checklist))
 	setPriority(c.Props, in.Priority)
+	applyTodoStatus(c, in, now)
+}
 
+// applyShownFields writes the title, notes, checklist and priority of in
+// into the master c of a series in cal, each only where it differs from the
+// current occurrence as shown: the override ov's own value where it has
+// one, else c's, as read, and then in's status (FR-17). It is the edit of
+// the new series N of a split, whose body carries the fields of its first
+// repeat R as shown, as applyChangedEventFields writes an event's: R's own
+// title does not become every repeat's, and a field the client changed
+// goes into R's override ov too, unless the edit dropped ov from cal. The
+// notes and the checklist, which share DESCRIPTION, count on their own,
+// the checklist by the text of its items: N's are unchecked anyway (see
+// rolledInput). ov is nil where R has no override.
+func applyShownFields(cal *ical.Calendar, c, ov *ical.Component, in domain.TodoInput, now time.Time) {
+	shownText := func(name string) string {
+		v := text(c.Props, name)
+		if ov != nil {
+			v = textOr(ov.Props, name, v)
+		}
+		return v
+	}
+	shownPriority := todoPriority(c.Props)
+	if ov != nil && ov.Props.Get(ical.PropPriority) != nil {
+		shownPriority = todoPriority(ov.Props)
+	}
+	desc := shownText(ical.PropDescription)
+	notes, list := splitChecklist(desc)
+	notesChanged := in.Description != notes
+	listChanged := !slices.EqualFunc(in.Checklist, list, func(a, b domain.ChecklistItem) bool { return a.Text == b.Text })
+	inOv := ov != nil && slices.Contains(cal.Children, ov)
+
+	if title := in.Title; title != shownText(ical.PropSummary) {
+		setText(c.Props, ical.PropSummary, title)
+		if inOv {
+			setTextKept(ov.Props, ical.PropSummary, title)
+		}
+	}
+	if notesChanged || listChanged {
+		changed := func(desc string) string {
+			notes, list := splitChecklist(desc)
+			if notesChanged {
+				notes = in.Description
+			}
+			if listChanged {
+				list = in.Checklist
+			}
+			return joinChecklist(notes, list)
+		}
+		if inOv {
+			setTextKept(ov.Props, ical.PropDescription, changed(desc))
+		}
+		setText(c.Props, ical.PropDescription, changed(text(c.Props, ical.PropDescription)))
+	}
+	if in.Priority != shownPriority {
+		setPriority(c.Props, in.Priority)
+		if inOv {
+			setPriority(ov.Props, in.Priority)
+		}
+	}
+	applyTodoStatus(c, in, now)
+}
+
+// todoPriority returns the PRIORITY of props, 0 (undefined) where it has
+// none or one out of range (FR-16).
+func todoPriority(props ical.Props) int {
+	if p := props.Get(ical.PropPriority); p != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(p.Value)); err == nil && n >= 0 && n <= 9 {
+			return n
+		}
+	}
+	return 0
+}
+
+// applyTodoStatus writes the status of in into c, COMPLETED with its time
+// and a PERCENT-COMPLETE of 100 for a completion, else without COMPLETED
+// and without a PERCENT-COMPLETE of 100 (FR-15).
+func applyTodoStatus(c *ical.Component, in domain.TodoInput, now time.Time) {
 	status := cmp.Or(in.Status, domain.TodoNeedsAction)
 	if status == domain.TodoCompleted {
 		markCompleted(c, now)

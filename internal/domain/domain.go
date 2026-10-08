@@ -589,30 +589,32 @@ type CalendarService interface {
 	// deleted instead), and the rest is refused as by DetachTodoOccurrence,
 	// except that an ORGANIZER or an ATTENDEE is none (FR-17).
 	SkipTodoOccurrence(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
-	// UpdateTodoFollowing changes the repeat at recurrenceID of the recurring
-	// todo todoID and the following ones ("this and following") as a series
-	// of their own: the series ends before the repeat, as by
+	// UpdateTodoFollowing changes the repeat at recurrenceID of the
+	// recurring todo todoID and the following ones ("this and following") as
+	// a series of their own: the series ends before the repeat, as by
 	// DeleteTodoFollowing, and a new series, a resource with a UID of its
 	// own, goes on from it, changed by in as UpdateTodo changes a series
-	// from its current repeat, open, its checklist unchecked. in.RRule is
-	// the new series' rule, except that the series' own rule, sent as
-	// stored or left out, keeps the rule the new series inherits, with its
-	// COUNT lowered by the repeats before it; "" makes the new series a
-	// single todo. Completions other apps recorded from the repeat on become
-	// todos of their own first, and leave both series. It returns the new
-	// series as Todo and the old one as Series, and the snapshot RestoreTodo
-	// undoes the change with, which also deletes the new series (nil when
-	// either new ETag is unknown, when completions became todos, or when
-	// the resource has an ORGANIZER or an ATTENDEE, which a later repeat
-	// refuses anyway). At the series' current repeat, the last one too, it
-	// is UpdateTodo with in, both Todo and Series the series as written.
-	// A status of in that completes or cancels the repeat is
-	// ErrInvalidInput; a series it cannot split, see DeleteTodoFollowing, is
-	// ErrSeriesSplitUnsupported; a move the new series cannot follow is
-	// ErrSeriesMoveUnsupported; a recurrenceID that is no open repeat of the
-	// series any more, as in a view not reloaded since, is ErrConflict.
-	// Nothing is written then. etag must match (If-Match), otherwise
-	// ErrConflict (FR-17).
+	// from its current repeat, open, its checklist unchecked, but for the
+	// fields: in carries the repeat's as shown, and only those that differ
+	// go into the new series and the repeat's override, all of them where in
+	// removes the rule. in.RRule is the new series' rule, except that the
+	// series' own rule, sent as stored or left out, keeps the rule the new
+	// series inherits, with its COUNT lowered by the repeats before it; ""
+	// makes the new series a single todo. Completions other apps recorded
+	// from the repeat on become todos of their own first, and leave both
+	// series. It returns the new series as Todo and the old one as Series,
+	// and the snapshot RestoreTodo undoes the change with, which also
+	// deletes the new series (nil when either new ETag is unknown, when
+	// completions became todos, or when the resource has an ORGANIZER or an
+	// ATTENDEE, which a later repeat refuses anyway). At the series' current
+	// repeat, the last one too, it is UpdateTodo with in, both Todo and
+	// Series the series as written. A status of in that completes or cancels
+	// the repeat is ErrInvalidInput; a series it cannot split, see
+	// DeleteTodoFollowing, is ErrSeriesSplitUnsupported; a move the new
+	// series cannot follow is ErrSeriesMoveUnsupported; a recurrenceID that
+	// is no open repeat of the series any more, as in a view not reloaded
+	// since, is ErrConflict. Nothing is written then. etag must match
+	// (If-Match), otherwise ErrConflict (FR-17).
 	UpdateTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time, in TodoInput) (TodoFollowing, *Snapshot, error)
 	// DeleteTodoFollowing ends the recurring todo todoID before its repeat at
 	// recurrenceID ("this and following"): its rule ends just before the

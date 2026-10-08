@@ -630,6 +630,112 @@ func TestUpdateTodoFollowing(t *testing.T) {
 			[]string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250324T085959Z\r\n"}, []string{"RECURRENCE-ID"})
 	})
 
+	// The body carries R's fields as shown, its override's own where it has
+	// them: only those that differ go into N, into its master and into R's
+	// override, so that R's own title does not become the title of every
+	// repeat of N; the others stay as N inherited them. The checklist counts
+	// by its items' text, as N's are unchecked anyway. Without a rule, N is
+	// R alone, and takes the body as it is (FR-17).
+	type fields struct{ title, notes, priority string }
+	for _, tc := range []struct {
+		name             string
+		by               time.Duration
+		rule             *string
+		edit             func(in *domain.TodoInput)
+		master, override fields
+		rid              time.Time // of R's override in N, zero for none
+	}{
+		{
+			name:     "R's own fields stay R's",
+			by:       24 * time.Hour,
+			master:   fields{"Series", "Series notes\n\n- [ ] s", "5"},
+			override: fields{"Own", "Own notes\n\n- [x] o", "1"},
+			rid:      date(2025, 3, 25, 9, 0),
+		},
+		{
+			name:     "a changed title goes into N and R",
+			by:       24 * time.Hour,
+			edit:     func(in *domain.TodoInput) { in.Title = "Renamed" },
+			master:   fields{"Renamed", "Series notes\n\n- [ ] s", "5"},
+			override: fields{"Renamed", "Own notes\n\n- [x] o", "1"},
+			rid:      date(2025, 3, 25, 9, 0),
+		},
+		{
+			name: "changed notes, checklist and priority go into N and R",
+			edit: func(in *domain.TodoInput) {
+				in.Description, in.Priority = "New notes", 2
+				in.Checklist = []domain.ChecklistItem{{Text: "o", Done: true}, {Text: "p"}}
+			},
+			master:   fields{"Series", "New notes\n\n- [ ] o\n- [ ] p", "2"},
+			override: fields{"Own", "New notes\n\n- [ ] o\n- [ ] p", "2"},
+			rid:      fourthRepeat,
+		},
+		{
+			name:     "a checklist item's state alone is no change",
+			edit:     func(in *domain.TodoInput) { in.Checklist = []domain.ChecklistItem{{Text: "o"}} },
+			master:   fields{"Series", "Series notes\n\n- [ ] s", "5"},
+			override: fields{"Own", "Own notes\n\n- [x] o", "1"},
+			rid:      fourthRepeat,
+		},
+		{
+			name:   "without a rule, N is R as sent",
+			rule:   ptr(""),
+			master: fields{"Own", "Own notes\n\n- [ ] o", "1"},
+		},
+	} {
+		t.Run("fields: "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, append([]string{`DESCRIPTION:Series notes\n\n- [ ] s`, "PRIORITY:5"}, weeklyFromMarch3...),
+				[]string{
+					"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250324T150000Z", "SUMMARY:Own",
+					`DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1",
+				})
+			if r := listedRepeat(t, e, id, fourthRepeat); r.Title != "Own" {
+				t.Fatalf("R = %+v; want it listed with its own title", r)
+			}
+			res, _ := updateTodoFollowing(t, e, id, fourthRepeat, func(in *domain.TodoInput) {
+				// R as shown: the client sends what it shows of R.
+				in.Title, in.Description, in.Priority = "Own", "Own notes", 1
+				in.Checklist = []domain.ChecklistItem{{Text: "o", Done: true}}
+				shiftedBy(tc.by)(in)
+				if tc.edit != nil {
+					tc.edit(in)
+				}
+				if tc.rule != nil {
+					*in = withRule(*in, *tc.rule)
+				}
+			})
+			n := mustParse(t, storedObject(t, e, res.Todo.ID))
+			master := mainComponent(n, ical.CompToDo)
+			of := func(c *ical.Component) fields {
+				return fields{text(c.Props, ical.PropSummary), text(c.Props, ical.PropDescription), text(c.Props, ical.PropPriority)}
+			}
+			if got := of(master); got != tc.master {
+				t.Errorf("N's master = %+v; want %+v", got, tc.master)
+			}
+			var overrides []*ical.Component
+			for _, c := range n.Children {
+				if c.Name == ical.CompToDo && c != master {
+					overrides = append(overrides, c)
+				}
+			}
+			switch {
+			case tc.rid.IsZero() && len(overrides) != 0:
+				t.Errorf("N has %d overrides; want none", len(overrides))
+			case tc.rid.IsZero():
+			case len(overrides) != 1:
+				t.Errorf("N has %d overrides; want R's", len(overrides))
+			default:
+				rid, err := parseDateProp(overrides[0].Props.Get(ical.PropRecurrenceID))
+				mustNoErr(t, err)
+				if got := of(overrides[0]); got != tc.override || !rid.t.Equal(tc.rid) {
+					t.Errorf("R's override at %v = %+v; want %+v at %v", rid.t, got, tc.override, tc.rid)
+				}
+			}
+		})
+	}
+
 	// The rule of the body is N's: S's own, in any case, keeps the rule N
 	// inherits, with its lowered COUNT; any other is N's new rule, from R
 	// on, and "" makes N the single task at R (FR-17).
