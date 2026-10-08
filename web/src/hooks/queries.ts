@@ -1204,8 +1204,9 @@ interface UpdateTodoVars {
   byUpcoming?: boolean
   /**
    * The repeats "all repeats" reaches from the repeat it was chosen at
-   * (`taskGlyphSlots`), drawn in the toast; left out for a task that asks
-   * nothing, a single one or the last repeat, whose toast has no icon.
+   * (`taskGlyphSlots`), drawn in the toast, in red where the change removes
+   * the rule; left out for a task that asks nothing, a single one or the
+   * last repeat, whose toast has no icon.
    */
   look?: { slots: GlyphSlot[] }
 }
@@ -1224,8 +1225,9 @@ function asksScope(todo: Todo): boolean {
  * says nothing (FR-17): the day the series goes on with after a completion,
  * and after a move also the one after it. A move by an upcoming occurrence
  * says that the series moved, since the day it goes on with isn't the one
- * dragged. A change of other fields alone says that it reached all repeats,
- * where the user chose them; a task that asked nothing says nothing.
+ * dragged. A new or removed rule, and a change of other fields alone, say
+ * that it reached all repeats, where the user chose them or the hint said so
+ * (spec §1, rule 1); a task that asked nothing says nothing.
  */
 function seriesMessage(
   { todo, input, byUpcoming }: UpdateTodoVars,
@@ -1238,9 +1240,11 @@ function seriesMessage(
     const next = updated.completedCopy ? anchorOf(updated) : null
     return next ? t('tasks.nextUp', { date: day(next) }) : t('tasks.lastRepeat')
   }
-  // A new or removed rule starts the series over from its dates: undo could not bring the old rule back.
-  if (!todo.recurring || ruleChanged(todo, input)) return null
-  if (!datesChanged(todo, input)) return asksScope(todo) ? t('scope.toast.allRepeatsChanged') : null
+  if (!todo.recurring) return null
+  // A rule reaches every repeat, whatever the dates do; the undo restores the old one from the server's snapshot.
+  if (ruleChanged(todo, input) || !datesChanged(todo, input)) {
+    return asksScope(todo) ? t('scope.toast.allRepeatsChanged') : null
+  }
   const moved = anchorOf(input)
   if (!moved) return null
   if (byUpcoming) return t('tasks.seriesMoved', { date: day(moved) })
@@ -1349,8 +1353,9 @@ async function undoTodoChange(
  * by `latestUndoToken` once a later write started. The ID is the series', so a
  * later change replaces this toast and its Undo. Its icon shows the repeats
  * the change reached, `look.slots` (`taskGlyphSlots` of the option chosen), in
- * the series' calendar color, or in red (`look.tone`) for repeats deleted; a
- * task that asked nothing gets no `look` and no icon.
+ * the series' calendar color, or in red (`look.tone`) for repeats deleted,
+ * also by a removed rule; a task that asked nothing gets no `look` and no
+ * icon.
  */
 function todoToast(
   qc: QueryClient,
@@ -1416,7 +1421,7 @@ export function useUpdateTodo(id?: string) {
       return { generation, snapshot }
     },
     onSuccess: (updated, vars, ctx) => {
-      const { todo, look } = vars
+      const { todo, input, look } = vars
       putTodo(qc, todo.calendarId, updated)
       const message = seriesMessage(vars, updated, t, prefs)
       if (!message) return
@@ -1431,7 +1436,12 @@ export function useUpdateTodo(id?: string) {
           generation: ctx.generation,
           created: created(updated.completedCopy, 'completed'),
         },
-        look && { slots: look.slots, color: todoColor(qc, todo.calendarId) },
+        look && {
+          slots: look.slots,
+          color: todoColor(qc, todo.calendarId),
+          // Red where the series became this one task, removing the upcoming repeats, as the hint was.
+          tone: input.rrule?.trim() === '' ? 'destructive' : 'default',
+        },
       )
     },
     onError: (err, { todo }, ctx) => {

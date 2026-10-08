@@ -1,5 +1,6 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
@@ -662,6 +663,7 @@ describe('TaskEditor', () => {
 
       it('warns in red, without asking, that removing the rule at the current repeat removes later ones', async () => {
         const user = userEvent.setup()
+        const success = vi.spyOn(toast, 'success')
         const { fetch, dialog } = await openTask(series)
         expect(within(dialog).queryByText(/^The task stops repeating/)).toBeNull()
 
@@ -682,6 +684,16 @@ describe('TaskEditor', () => {
         const { path, body } = await wrote(fetch, 'PUT')
         expect(path).toBe('/api/v1/todos/t1')
         expect(body).toMatchObject({ rrule: '' })
+        // Spec §1, rule 1: the one option is said after it is saved too, in red as before.
+        await waitFor(() => {
+          expect(success).toHaveBeenCalledWith('All repeats changed.', expect.objectContaining({ id: 'series:t1' }))
+        })
+        // The last: a toast of an earlier write still shown is merged into first (`startSeriesWrite`).
+        const [, options] = success.mock.calls.filter(([m]) => m === 'All repeats changed.').at(-1)!
+        const { container } = render(<>{options?.icon}</>)
+        expect(Array.from(container.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toEqual(
+          Array(3).fill('var(--destructive)'),
+        )
       })
 
       it('says in the footer that with attendees a change reaches all repeats, and saves them', async () => {

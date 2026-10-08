@@ -2381,25 +2381,70 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(toastOf(success.mock.calls, 'Moved to Wed, Oct 7.')).toMatchObject({ duration: 8000, action: 'Undo' })
   })
 
-  it('offers no undo for a move that changes the rule, which undo could not restore', async () => {
+  // FR-17, spec §1 rule 1: a new rule reaches all repeats, which the hint said before; the toast
+  // says so after, with an undo that restores the old rule from the server's snapshot.
+  it('says all repeats changed after a new rule, with an undo', async () => {
     const success = vi.spyOn(toast, 'success')
-    const { result } = setup([
-      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', rrule: 'FREQ=DAILY', fixedDays: false },
-      { ...series, etag: '"3"', due: '2026-10-07T00:00:00Z', rrule: '', recurring: false, next: null },
+    const { result, writes } = setup([
+      { ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', rrule: 'FREQ=DAILY', fixedDays: false, undoToken: 'tok' },
+      { ...series, etag: '"3"' },
     ])
 
     act(() => {
-      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: 'FREQ=DAILY' }) })
+      result.current.mutate({
+        todo: series,
+        input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: 'FREQ=DAILY' }),
+        look: { slots: taskGlyphSlots('all', 'current') },
+      })
     })
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
+    const shown = toastOf(success.mock.calls, 'All repeats changed.')
+    expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+    expect(marksOf(shown.icon)).toEqual(['✓', '✓', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+
+    act(shown.click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+  })
+
+  // The series becomes this one task, removing the upcoming repeats: red, as the hint was.
+  it('draws a removed rule in red, with an undo', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([
+      { ...series, etag: '"2"', rrule: '', recurring: false, fixedDays: false, next: null, undoToken: 'tok' },
+    ])
+
     act(() => {
-      result.current.mutate({ todo: series, input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z', rrule: '' }) })
+      result.current.mutate({
+        todo: series,
+        input: todoToInput(series, { rrule: '' }),
+        look: { slots: taskGlyphSlots('all', 'upcoming') },
+      })
     })
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
-      expect(result.current.variables?.input.rrule).toBe('')
+    })
+    const shown = toastOf(success.mock.calls, 'All repeats changed.')
+    expect(shown).toMatchObject({ id: 'series:t2', action: 'Undo' })
+    const red = 'var(--destructive)'
+    expect(marksOf(shown.icon)).toEqual(['✓', red, red, red, red])
+  })
+
+  // A task that did not repeat asked nothing: its new rule says nothing, as before.
+  it('says nothing about a rule given to a task that did not repeat', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const single = { ...series, rrule: '', recurring: false, fixedDays: false, next: null }
+    const { result } = setup([{ ...series, etag: '"2"', rrule: 'FREQ=DAILY', undoToken: 'tok' }], { from: single })
+
+    act(() => {
+      result.current.mutate({ todo: single, input: todoToInput(single, { rrule: 'FREQ=DAILY' }) })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
     })
     expect(success).not.toHaveBeenCalled()
   })
