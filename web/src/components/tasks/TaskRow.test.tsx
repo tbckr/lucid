@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys, useCachedTodo } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Todo } from '@/lib/api/schemas'
@@ -270,6 +270,166 @@ describe('TaskRow', () => {
         />,
       )
       expect(screen.getByRole('img', { name: 'Every week on Monday and Thursday' })).toBeInTheDocument()
+    })
+
+    it('marks a task detached from its series', () => {
+      renderWithProviders(<TaskRow todo={todo({ title: 'Water the roses', detachedFrom: 'u-series' })} calendar={calendar()} />)
+      const mark = screen.getByRole('img', { name: 'Detached from its series' })
+      // The repeat glyph with the dot of an occurrence changed on its own.
+      expect(mark).toHaveClass('lucide-repeat-changed')
+    })
+
+    describe('a change of its current repeat', () => {
+      // Due Monday, Oct 5, on Mondays and Thursdays; Monday's is the current repeat.
+      const series = todo({
+        title: 'Water the flowers',
+        etag: '"5"',
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+        rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+        recurring: true,
+        fixedDays: true,
+        recurrenceId: '2026-10-05T00:00:00Z',
+        next: { start: null, due: '2026-10-08T00:00:00Z' },
+      })
+      const question = 'This task repeats. Which repeats should change?'
+      const occurrencePath = `/api/v1/todos/t1/occurrences/${encodeURIComponent('2026-10-05T00:00:00Z')}`
+      /** The row of `t`, with the calendars loaded, as they are by the time the list shows a task. */
+      const row = (t: Todo) =>
+        renderWithProviders(<TaskRow todo={t} calendar={calendar()} />, (qc) => {
+          qc.setQueryData(queryKeys.calendars, [calendar()])
+        })
+      /** The buttons of `ask`, each by its text: an option's label, then its note. */
+      const buttons = (ask: HTMLElement) => within(ask).getAllByRole('button').map((b) => b.textContent)
+
+      /** Answers a detach with the series rolled on to Thursday and the detached task as sent; returns the fetch spy. */
+      function serveDetach() {
+        api.setCsrfToken('tok')
+        return vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+          Promise.resolve(
+            jsonResponse(200, {
+              ...series,
+              due: '2026-10-08T00:00:00Z',
+              recurrenceId: '2026-10-08T00:00:00Z',
+              next: { start: null, due: '2026-10-12T00:00:00Z' },
+              etag: '"6"',
+              detachedCopy: { ...series, ...bodyOf(init), id: 't9', uid: 'u9', rrule: '', recurring: false, detachedFrom: 'u1' },
+            }),
+          ),
+        )
+      }
+
+      beforeEach(() => {
+        // Only the date: fake timers would stall the requests.
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(new Date(2026, 9, 5, 12))
+      })
+
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+
+      it('asks which repeats a new title reaches, and gives it only to this repeat, as a task of its own', async () => {
+        const fetch = serveDetach()
+        const user = userEvent.setup()
+        row(series)
+        const field = screen.getByRole('textbox', { name: 'Title' })
+        await user.clear(field)
+        await user.type(field, 'Water the roses{Enter}')
+
+        const ask = screen.getByRole('alertdialog', { name: question })
+        expect(buttons(ask)).toEqual([
+          'Only this repeatBecomes a task of its own. The series goes on Thu, Oct 8.',
+          'All repeatsDone ones stay.',
+          'Cancel',
+        ])
+        expect(within(ask).getByRole('button', { name: 'Only this repeat' })).toHaveFocus()
+        expect(fetch).not.toHaveBeenCalled()
+
+        await user.click(within(ask).getByRole('button', { name: 'Only this repeat' }))
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(1)
+        })
+        const [url, init] = fetch.mock.calls[0]!
+        expect(urlOf(url)).toBe(occurrencePath)
+        expect(init?.method).toBe('PUT')
+        expect((init?.headers as Record<string, string>)['If-Match']).toBe('"5"')
+        expect(bodyOf(init)).toMatchObject({ title: 'Water the roses', due: '2026-10-05T00:00:00Z', dueAllDay: true })
+        expect(bodyOf(init)).not.toHaveProperty('rrule')
+        expect(screen.queryByRole('alertdialog')).toBeNull()
+        // The series keeps its own title; the new one is the detached task's, in a row of its own.
+        expect(field).toHaveValue('Water the flowers')
+        await waitFor(() => {
+          expect(field).toHaveFocus()
+        })
+      })
+
+      it('renames all repeats', async () => {
+        const fetch = serve(series)
+        const user = userEvent.setup()
+        row(series)
+        const field = screen.getByRole('textbox', { name: 'Title' })
+        await user.type(field, ' daily')
+        await user.tab()
+
+        await user.click(within(screen.getByRole('alertdialog', { name: question })).getByRole('button', { name: 'All repeats' }))
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(1)
+        })
+        const [url, init] = fetch.mock.calls[0]!
+        expect(urlOf(url)).toBe('/api/v1/todos/t1')
+        expect(bodyOf(init)).toMatchObject({ title: 'Water the flowers daily', due: '2026-10-05T00:00:00Z' })
+        expect(field).toHaveValue('Water the flowers daily')
+      })
+
+      it('restores the title on Escape, saves nothing and keeps the focus in the field', async () => {
+        const fetch = serve(series)
+        const user = userEvent.setup()
+        row(series)
+        const field = screen.getByRole('textbox', { name: 'Title' })
+        await user.type(field, ' daily{Enter}')
+        expect(screen.getByRole('alertdialog', { name: question })).toBeInTheDocument()
+
+        await user.keyboard('{Escape}')
+        expect(screen.queryByRole('alertdialog')).toBeNull()
+        expect(field).toHaveValue('Water the flowers')
+        expect(screen.getByTestId('task-row')).toBeInTheDocument()
+        await waitFor(() => {
+          expect(field).toHaveFocus()
+        })
+        await user.tab()
+        expect(fetch).not.toHaveBeenCalled()
+      })
+
+      it('renames the last repeat without asking, as a single task', async () => {
+        const last = { ...series, next: null }
+        const fetch = serve(last)
+        const user = userEvent.setup()
+        row(last)
+        await user.type(screen.getByRole('textbox', { name: 'Title' }), ' daily{Enter}')
+        expect(screen.queryByRole('alertdialog')).toBeNull()
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(1)
+        })
+        expect(urlOf(fetch.mock.calls[0]![0])).toBe('/api/v1/todos/t1')
+      })
+
+      it('moves only the current repeat from its picker', async () => {
+        const fetch = serveDetach()
+        const user = userEvent.setup()
+        row(series)
+        await user.click(screen.getByRole('button', { name: 'Change due date: Water the flowers' }))
+        await user.click(screen.getByRole('button', { name: /^Tomorrow / }))
+        const ask = screen.getByRole('alertdialog', { name: 'This task repeats. Which repeats should move?' })
+        await user.click(within(ask).getByRole('button', { name: 'Only this repeat' }))
+
+        await waitFor(() => {
+          expect(fetch).toHaveBeenCalledTimes(1)
+        })
+        const [url, init] = fetch.mock.calls[0]!
+        expect(urlOf(url)).toBe(occurrencePath)
+        expect(bodyOf(init)).toMatchObject({ title: 'Water the flowers', due: '2026-10-06T00:00:00.000Z', dueAllDay: true })
+      })
     })
 
     it('disables the checkbox for a rule Lucid cannot read', () => {

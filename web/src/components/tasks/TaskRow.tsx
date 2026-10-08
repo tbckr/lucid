@@ -2,13 +2,23 @@ import { CheckIcon, FlagIcon, ListChecksIcon, PencilIcon, Trash2Icon } from 'luc
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RecurringMark } from '@/components/events/EventItems'
+import { ScopePopover } from '@/components/scope/ScopePopover'
 import { Button } from '@/components/ui/button'
-import { useDeleteTodo, useUpdateTodo } from '@/hooks/queries'
+import { useDeleteTodo, useDetachTodo, useUpdateTodo } from '@/hooks/queries'
+import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { type Calendar, type Todo } from '@/lib/api/schemas'
-import { recurringLabel } from '@/lib/calendarTasks'
+import { type Calendar, type Todo, type TodoInput } from '@/lib/api/schemas'
+import { currentRepeat, recurringLabel, type TaskRepeat } from '@/lib/calendarTasks'
+import {
+  scopeOptions,
+  taskGlyphSlots,
+  taskScopeItems,
+  taskScopeMissing,
+  type Scope,
+  type ScopeResult,
+} from '@/lib/scope'
 import { checklistProgress, formatDue, priorityLevel, todoToInput } from '@/lib/tasks'
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
@@ -45,6 +55,10 @@ const ACTION =
  * day (FR-14). A click on the title edits it in place, the actions beside it
  * change the due date or open the editor; a done task has a trash in place of
  * the due date (FR-15). A read-only task opens the editor.
+ *
+ * A series shows as its current repeat, which a new title or due date
+ * changes: where there is a choice, after asking which repeats it reaches
+ * (FR-17). A task detached from its series is marked as such.
  */
 export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; calendar: Calendar; timeOnly?: boolean }) {
   const { t } = useTranslation()
@@ -52,22 +66,47 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const now = useNow()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const { done, toggle } = useToggleTodo(todo)
+  // The writes of a series wait for its other writes (FR-17, NFR-26).
   const update = useUpdateTodo(todo.id)
+  const detach = useDetachTodo(todo.id)
   const del = useDeleteTodo(todo.id)
+  const [row, setRow] = useState<HTMLDivElement | null>(null)
   const title = todo.title || t('event.untitled')
   const labels = { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') }
   const due = formatDue(todo, now, prefs, labels, { timeOnly })
   const progress = checklistProgress(todo.checklist)
-  const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0) || todo.recurring
+  const detached = !!todo.detachedFrom
+  const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0) || todo.recurring || detached
   const edit = () => {
     openTaskEditor({ mode: 'edit', todo })
+  }
+  const save = (input: TodoInput) => {
+    update.mutate({ todo, input })
+  }
+  // A change of the series' current repeat, for the repeats `scope` reaches (FR-17): "only this
+  // repeat" makes it a task of its own with the change, and the series goes on; "all repeats"
+  // changes the series, its reach drawn in the toast.
+  const saveScope = (scope: Scope, input: TodoInput, moved: boolean) => {
+    const repeat = currentRepeat(todo)
+    if (!repeat) return
+    switch (scope) {
+      case 'this':
+        detach.mutate({ todo, repeat, input, moved })
+        break
+      case 'all':
+        update.mutate({ todo, input, look: { slots: taskGlyphSlots('all', repeat.at) } })
+        break
+      case 'following':
+        // Offered only at a later repeat, and the list shows the current one.
+        break
+    }
   }
 
   const meta = hasMeta && (
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
       {due && <span className="tabular">{due}</span>}
-      {/* FR-17: names the series' rule, e.g. "Every week on Monday and Thursday". */}
-      <RecurringMark recurring={todo.recurring} label={recurringLabel(t, todo, null, prefs, now)} />
+      {/* FR-17: names the series' rule, e.g. "Every week on Monday and Thursday", or that the task was detached from one. */}
+      <RecurringMark recurring={todo.recurring} detached={detached} label={recurringLabel(t, todo, null, prefs, now)} />
       {!done && <PriorityChip priority={todo.priority} />}
       {progress.total > 0 && (
         <span className="tabular inline-flex items-center gap-1" aria-label={t('tasks.progress', progress)}>
@@ -80,6 +119,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
 
   return (
     <div
+      ref={setRow}
       className="group grid grid-cols-[1.125rem_minmax(0,1fr)_auto] items-start gap-x-3 px-4 py-1"
       data-testid="task-row"
       data-task-id={todo.id}
@@ -112,8 +152,10 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
           <TitleField
             todo={todo}
             done={done}
-            onSave={(text) => {
-              update.mutate({ todo, input: todoToInput(todo, { title: text }) })
+            row={row}
+            onChange={save}
+            onScope={(scope, input) => {
+              saveScope(scope, input, false)
             }}
           />
           <div className="flex">
@@ -137,8 +179,9 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
             ) : (
               <DuePicker
                 todo={todo}
-                onChange={(input) => {
-                  update.mutate({ todo, input })
+                onChange={save}
+                onScope={(scope, input) => {
+                  saveScope(scope, input, true)
                 }}
                 className={ACTION}
               />
@@ -164,16 +207,44 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
 const TITLE_BOX =
   'col-start-1 row-start-1 rounded-md border px-[5px] py-[3px] text-sm whitespace-pre-wrap [overflow-wrap:anywhere]'
 
+/** A new title waiting for the answer which repeats of the series it reaches (FR-17). */
+interface Asking {
+  input: TodoInput
+  repeat: TaskRepeat
+  result: ScopeResult
+}
+
 /**
  * The title as a field that reads as text until hovered or focused, like the
  * row that adds a task (FR-12). Enter or leaving it saves; Escape and an empty
  * title bring back the saved one. Line breaks become spaces.
+ *
+ * A new title of a series' current repeat asks below its `row` which repeats
+ * it reaches where there is a choice, and `onScope` reports the answer; with
+ * one option, `onScope` reports that one at once (FR-17). Cancelling the
+ * question brings back the saved title. A task that does not repeat, and the
+ * last repeat, are saved through `onChange`.
  */
-function TitleField({ todo, done, onSave }: { todo: Todo; done: boolean; onSave: (title: string) => void }) {
+function TitleField({
+  todo,
+  done,
+  row,
+  onChange,
+  onScope,
+}: {
+  todo: Todo
+  done: boolean
+  /** The task's row, which the question points at: below it, the question leaves the row's meta line in view. */
+  row: HTMLElement | null
+  onChange: (input: TodoInput) => void
+  onScope: (scope: Scope, input: TodoInput) => void
+}) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState(todo.title)
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(todo.title)
+  const [asking, setAsking] = useState<Asking | null>(null)
+  const [field, setField] = useState<HTMLTextAreaElement | null>(null)
   // Follow the task while nothing is typed: a reload or the editor may have renamed it.
   if (todo.title !== saved) {
     setSaved(todo.title)
@@ -185,14 +256,41 @@ function TitleField({ todo, done, onSave }: { todo: Todo; done: boolean; onSave:
     setDirty(false)
   }
   const commit = () => {
+    // The question takes the focus from the field: that saves nothing until it is answered.
+    if (asking) return
     const text = draft.trim()
     if (!text) {
       revert()
       return
     }
     setDraft(text)
+    if (text === todo.title) {
+      setDirty(false)
+      return
+    }
+    const input = todoToInput(todo, { title: text })
+    const repeat = currentRepeat(todo)
+    const result: ScopeResult = repeat ? scopeOptions({ kind: 'task', action: 'change', item: repeat }) : { options: [] }
+    const [only] = result.options
+    if (repeat && result.options.length > 1) {
+      setAsking({ input, repeat, result })
+      return
+    }
     setDirty(false)
-    if (text !== todo.title) onSave(text)
+    if (only) onScope(only, input)
+    else onChange(input)
+  }
+  const choose = (scope: Scope) => {
+    if (!asking) return
+    onScope(scope, asking.input)
+    // A repeat made a task of its own takes the new title along; the series keeps its own.
+    if (scope === 'this') setDraft(todo.title)
+    setDirty(false)
+    setAsking(null)
+  }
+  const cancel = () => {
+    revert()
+    setAsking(null)
   }
 
   return (
@@ -201,6 +299,7 @@ function TitleField({ todo, done, onSave }: { todo: Todo; done: boolean; onSave:
         {draft}{' '}
       </span>
       <textarea
+        ref={setField}
         rows={1}
         value={draft}
         maxLength={1024}
@@ -224,6 +323,45 @@ function TitleField({ todo, done, onSave }: { todo: Todo; done: boolean; onSave:
           done && 'text-muted-foreground line-through focus:text-foreground focus:no-underline',
         )}
       />
+      {asking && <RenameQuestion anchor={row ?? field} field={field} asking={asking} onChoose={choose} onCancel={cancel} />}
     </div>
+  )
+}
+
+/**
+ * The question which repeats a new title reaches, in a popover at `anchor`
+ * (FR-17). Escape, Cancel and a press beside it cancel it; the focus then
+ * goes back to the title `field`, as after an answer (NFR-27).
+ */
+function RenameQuestion({
+  anchor,
+  field,
+  asking,
+  onChoose,
+  onCancel,
+}: {
+  anchor: HTMLElement | null
+  field: HTMLTextAreaElement | null
+  asking: Asking
+  onChoose: (scope: Scope) => void
+  onCancel: () => void
+}) {
+  const { t } = useTranslation()
+  const prefs = usePrefs()
+  const now = useNow()
+  const { repeat, result } = asking
+  // Looked up only while it asks, so the many rows of the list look up no calendar colors.
+  const color = useCalendarColors()(repeat.todo.calendarId).solid
+  return (
+    <ScopePopover
+      anchor={anchor}
+      returnFocus={() => field}
+      question={t('scope.task.change')}
+      items={taskScopeItems(t, repeat, result.options, prefs, now, 'change')}
+      color={color}
+      missing={taskScopeMissing(t, result)}
+      onChoose={onChoose}
+      onCancel={onCancel}
+    />
   )
 }
