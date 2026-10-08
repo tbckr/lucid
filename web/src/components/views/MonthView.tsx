@@ -9,7 +9,7 @@ import { EventBar, EventChip } from '@/components/events/EventItems'
 import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
-import { canDrag, outsideWindow, type CalTask } from '@/lib/calendarTasks'
+import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { dayKey, monthGrid } from '@/lib/dates'
 import { type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -279,16 +279,13 @@ function DayCell({
   label: string
 }) {
   const { t } = useTranslation()
-  const { pendingTodos, moveWindow } = useDndState()
+  const { pendingTodos } = useDndState()
   const key = dayKey(day)
   const { setNodeRef, isOver } = useDroppable({ id: `day:${key}`, data: { type: 'day', day } satisfies DropData })
   const first = day.getDate() === 1
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
   // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
   const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
-  // Past the move window of a bounded series being dragged (FR-17): block it to show it's out of reach,
-  // and take no drop highlight, as a drop there changes nothing.
-  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
 
   return (
     <div
@@ -310,10 +307,8 @@ function DayCell({
       }}
       className={cn(
         'relative min-w-0 cursor-default border-r border-grid outline-none last:border-r-0 focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-        // Blocked wins over outside the month: both set the background.
-        !inMonth && !blocked && 'bg-outside',
-        ((isOver && !blocked) || draft) && 'bg-primary/8',
-        blocked && 'blocked',
+        !inMonth && 'bg-outside',
+        (isOver || draft) && 'bg-primary/8',
       )}
     >
       <div className="flex h-[30px] items-center justify-between px-1.5 pt-1">

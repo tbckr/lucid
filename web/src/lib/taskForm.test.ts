@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { todo } from '@/test/fixtures'
-import { buildTaskFormSchema, dayAllowed, formToTodoInput, formWithDate, taskFormSchema, taskToForm, withDue } from './taskForm'
+import { buildTaskFormSchema, formToTodoInput, formWithDate, taskFormSchema, taskToForm, withDue } from './taskForm'
 
 const TZ = 'Europe/Berlin'
 
@@ -167,7 +167,6 @@ describe('taskForm', () => {
       recurring: true,
       fixedDays: true,
       next: { start: null, due: allDay('2026-10-08') },
-      moveWindow: { from: allDay('2026-10-05'), until: allDay('2026-10-08') },
     })
 
     it('round-trips a rule the presets cannot express as custom', () => {
@@ -194,7 +193,7 @@ describe('taskForm', () => {
 
     it('keeps the stored rule while the repeat is untouched', () => {
       // The preset would write FREQ=WEEKLY: another rule to the server, which re-anchors the series.
-      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false, moveWindow: null }
+      const t = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
       const v = taskToForm(t, TZ)
       expect(v.recurrence).toBe('weekly')
       expect(formToTodoInput({ ...v, title: 'Other' }, TZ, t)).not.toHaveProperty('rrule')
@@ -211,9 +210,9 @@ describe('taskForm', () => {
     })
 
     it('shows a rule Lucid cannot read, or a series without a rule, as custom', () => {
-      const unreadable = todo({ ...series, rrule: 'FREQ=WEEKLY', ruleUnsupported: true, next: null, moveWindow: null })
+      const unreadable = todo({ ...series, rrule: 'FREQ=WEEKLY', ruleUnsupported: true, next: null })
       expect(taskToForm(unreadable, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=WEEKLY' })
-      const dates = todo({ ...series, rrule: '', ruleUnsupported: true, next: null, moveWindow: null })
+      const dates = todo({ ...series, rrule: '', ruleUnsupported: true, next: null })
       expect(taskToForm(dates, TZ)).toMatchObject({ recurrence: 'custom', customRule: '' })
       expect(formToTodoInput(taskToForm(dates, TZ), TZ, dates)).not.toHaveProperty('rrule')
       expect(formToTodoInput({ ...taskToForm(dates, TZ), recurrence: 'none' }, TZ, dates).rrule).toBe('')
@@ -278,60 +277,6 @@ describe('taskForm', () => {
       expect(formWithDate(v, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '09:00' })
       const noTime = { ...v, dueTime: '', startDate: '2026-10-01', startTime: '' }
       expect(formWithDate(noTime, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '' })
-    })
-  })
-
-  describe('dayAllowed', () => {
-    // The window of a fixed-day series due Mon, Oct 5 whose next repeat is due Thu, Oct 8.
-    const series = todo({
-      due: '2026-10-05T00:00:00Z',
-      dueAllDay: true,
-      rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
-      recurring: true,
-      fixedDays: true,
-      next: { start: null, due: '2026-10-08T00:00:00Z' },
-      moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
-    })
-    const v = taskToForm(series, TZ)
-
-    it('allows the days before the next repeat', () => {
-      expect(dayAllowed(series, v, 'due', '2026-10-05', TZ)).toBe(true)
-      expect(dayAllowed(series, v, 'due', '2026-10-07', TZ)).toBe(true)
-    })
-
-    it('blocks the day of the next repeat, the days after it and those before the current one', () => {
-      expect(dayAllowed(series, v, 'due', '2026-10-08', TZ)).toBe(false)
-      expect(dayAllowed(series, v, 'due', '2026-10-09', TZ)).toBe(false)
-      expect(dayAllowed(series, v, 'due', '2026-10-04', TZ)).toBe(false)
-    })
-
-    it('judges a timed series by the day, whatever time the date gets', () => {
-      // Mon 09:00 local, next Thu 09:00 local: the window runs from Monday's midnight to Thursday's.
-      const timed = todo({
-        ...series,
-        due: '2026-10-05T07:00:00Z',
-        dueAllDay: false,
-        next: { due: '2026-10-08T07:00:00Z' },
-        moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
-      })
-      const tv = taskToForm(timed, TZ)
-      // A start takes the due date's time, 09:00, and places the task from then on.
-      expect(dayAllowed(timed, tv, 'start', '2026-10-07', TZ)).toBe(true)
-      expect(dayAllowed(timed, tv, 'start', '2026-10-08', TZ)).toBe(false)
-      // The next repeat's day is out even before its 09:00; the day before is in until midnight.
-      expect(dayAllowed(timed, { ...tv, dueTime: '08:00' }, 'due', '2026-10-08', TZ)).toBe(false)
-      expect(dayAllowed(timed, { ...tv, dueTime: '23:30' }, 'due', '2026-10-07', TZ)).toBe(true)
-    })
-
-    it('allows any day without a window', () => {
-      expect(dayAllowed(undefined, v, 'due', '2026-10-20', TZ)).toBe(true)
-      const single = todo({ due: '2026-10-05T00:00:00Z', dueAllDay: true })
-      expect(dayAllowed(single, taskToForm(single, TZ), 'due', '2026-10-20', TZ)).toBe(true)
-    })
-
-    it('allows any day once the rule changes, which starts it over from there', () => {
-      expect(dayAllowed(series, { ...v, recurrence: 'none' }, 'due', '2026-10-09', TZ)).toBe(true)
-      expect(dayAllowed(series, { ...v, recurrence: 'daily' }, 'due', '2026-10-09', TZ)).toBe(true)
     })
   })
 })

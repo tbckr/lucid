@@ -1,14 +1,11 @@
 import { DndContext, type DragStartEvent } from '@dnd-kit/core'
-import { QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { api } from '@/lib/api/client'
-import { occurrenceTask, toCalTask, type MoveWindow } from '@/lib/calendarTasks'
+import { occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
@@ -194,9 +191,24 @@ describe('MonthView', () => {
       })
     })
 
-    it('keeps an upcoming repeat of a series on fixed days in place', () => {
+    it('picks up an upcoming repeat of a series on fixed days from its own day, too', () => {
+      const t = upcoming({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH,FR,SU', fixedDays: true })
       const onDragStart = vi.fn<(e: DragStartEvent) => void>()
-      renderMonth([upcoming({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH,FR,SU', fixedDays: true })], { onDragStart })
+      renderMonth([t], { onDragStart })
+      const title = screen.getByRole('button', { name })
+      expect(title).toHaveAttribute('aria-roledescription', 'draggable')
+      fireEvent.keyDown(title, { code: 'Space', key: ' ' })
+      expect(onDragStart).toHaveBeenCalledTimes(1)
+      expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+        type: 'event',
+        event: t,
+        originDay: new Date(2026, 8, 27),
+      })
+    })
+
+    it('keeps an upcoming repeat of a series whose rule is unsupported in place', () => {
+      const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+      renderMonth([upcoming({ rrule: 'FREQ=SOMETIMES', ruleUnsupported: true })], { onDragStart })
       const title = screen.getByRole('button', { name })
       expect(title).not.toHaveAttribute('aria-roledescription')
       fireEvent.keyDown(title, { code: 'Space', key: ' ' })
@@ -231,153 +243,18 @@ describe('MonthView', () => {
     useUi.getState().openDetail(null)
   })
 
-  it('highlights the day under a drag, but not one outside the window of a dragged repeat (FR-17)', async () => {
+  it('highlights the day under a drag', async () => {
     const call = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
     // jsdom lays nothing out: only Friday's cell and the task in it share a box, so the task is over Friday.
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       return this.dataset.day === '2026-09-25' || this.dataset.taskKey ? rect(0, 0, 100, 100) : rect(1000, 1000, 10, 10)
     })
-    const view = (moveWindow: MoveWindow | null) => (
-      <DndContext>
-        <DndStateContext
-          value={{
-            pendingKeys: new Set(),
-            pendingSeries: new Set(),
-            pendingTodos: new Set(),
-            resize: null,
-            moveWindow,
-            activeId: null,
-            scope: null,
-            held: null,
-            scopeAnchor: () => undefined,
-            draggedTodo: null,
-          }}
-        >
-          <MonthView
-            date={new Date(2026, 8, 25)}
-            now={new Date(2026, 8, 25, 12)}
-            events={[call]}
-            corrupted={[]}
-            prefs={prefs}
-            colorsOf={() => colors}
-            calendarOf={() => cal}
-          />
-        </DndStateContext>
-      </DndContext>
-    )
-    const { rerender, queryClient } = renderWithProviders(view(null))
+    renderMonth([call])
     const friday = screen.getByRole('gridcell', { name: /September 25th/ })
     fireEvent.keyDown(screen.getByRole('button', { name: 'Call, 10 AM' }), { code: 'Space', key: ' ' })
     await waitFor(() => {
       expect(friday).toHaveClass('bg-primary/8')
     })
-
-    // The same drag, with Friday past the window: blocked, and no promise of a drop.
-    rerender(
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
-      </QueryClientProvider>,
-    )
-    expect(friday).toHaveClass('blocked')
-    expect(friday).not.toHaveClass('bg-primary/8')
-  })
-
-  it('blocks only the days before the last repeat of a fixed-day series (FR-17)', () => {
-    const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
-    renderWithProviders(
-      <DndContext>
-        <DndStateContext
-          value={{
-            pendingKeys: new Set(),
-            pendingSeries: new Set(),
-            pendingTodos: new Set(),
-            resize: null,
-            moveWindow: w,
-            activeId: null,
-            scope: null,
-            held: null,
-            scopeAnchor: () => undefined,
-            draggedTodo: null,
-          }}
-        >
-          <MonthView
-            date={new Date(2026, 8, 25)}
-            now={new Date(2026, 8, 25, 12)}
-            events={[]}
-            corrupted={[]}
-            prefs={prefs}
-            colorsOf={() => colors}
-            calendarOf={() => cal}
-          />
-        </DndStateContext>
-      </DndContext>,
-    )
-    expect(screen.getByRole('gridcell', { name: /September 24th/ })).toHaveClass('blocked')
-    expect(screen.getByRole('gridcell', { name: /September 25th/ })).not.toHaveClass('blocked')
-    expect(screen.getByRole('gridcell', { name: /September 26th/ })).not.toHaveClass('blocked')
-  })
-
-  /** The month of 2026-09-25 while a bounded series is dragged: `moveWindow` and `draggedTodo` as `CalendarDnd` gives them. */
-  function renderDragging(events: CalItem[], moveWindow: MoveWindow, draggedTodo: string | null) {
-    renderWithProviders(
-      <DndContext>
-        <DndStateContext
-          value={{
-            pendingKeys: new Set(),
-            pendingSeries: new Set(),
-            pendingTodos: new Set(),
-            resize: null,
-            moveWindow,
-            activeId: null,
-            scope: null,
-            held: null,
-            scopeAnchor: () => undefined,
-            draggedTodo,
-          }}
-        >
-          <MonthView
-            date={new Date(2026, 8, 25)}
-            now={new Date(2026, 8, 25, 12)}
-            events={events}
-            corrupted={[]}
-            prefs={prefs}
-            colorsOf={() => colors}
-            calendarOf={() => cal}
-          />
-        </DndStateContext>
-      </DndContext>,
-    )
-  }
-
-  it("dims what a blocked day shows but the dragged series' repeats (FR-17)", () => {
-    const repeat = occurrenceTask(
-      occurrence({
-        todoId: 't1',
-        title: 'Water the flowers',
-        state: 'upcoming',
-        due: '2026-09-28T00:00:00Z',
-        key: 't1@2026-09-28T00:00:00Z',
-        recurrenceId: '2026-09-28T00:00:00Z',
-      }),
-      todo({ id: 't1', title: 'Water the flowers', recurring: true, fixedDays: true, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH' }),
-    )!
-    const other = toCalTask(todo({ id: 't2', title: 'Call', due: '2026-09-28T08:00:00Z' }))!
-    renderDragging([repeat, other], { from: new Date(2026, 8, 24), until: new Date(2026, 8, 26) }, 't1')
-
-    expect(screen.getByRole('gridcell', { name: /September 28th/ })).toHaveClass('blocked')
-    expect(document.querySelector('[data-task-key="t1@2026-09-28T00:00:00Z"]')).toHaveAttribute('data-dragged-series')
-    expect(document.querySelector('[data-task-key="task:t2"]')).not.toHaveAttribute('data-dragged-series')
-  })
-
-  it('washes a blocked day outside the month instead of greying it as outside', () => {
-    renderDragging([], { from: new Date(2026, 8, 25), until: null }, null)
-
-    const before = screen.getByRole('gridcell', { name: /August 30th/ })
-    expect(before).toHaveClass('blocked')
-    expect(before).not.toHaveClass('bg-outside')
-    const after = screen.getByRole('gridcell', { name: /October 1st/ })
-    expect(after).toHaveClass('bg-outside')
-    expect(after).not.toHaveClass('blocked')
   })
 
   it('counts tasks apart from events in the cell label', () => {

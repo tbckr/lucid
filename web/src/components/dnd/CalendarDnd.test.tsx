@@ -13,7 +13,7 @@ import { queryKeys, UNDO_EVENT_KEY } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { endpoints } from '@/lib/api/endpoints'
 import { type ApiEvent, type EventRestore } from '@/lib/api/schemas'
-import { outsideWindow, toCalTask } from '@/lib/calendarTasks'
+import { occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type DragData, type DropData } from '@/lib/dnd'
 import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
@@ -21,10 +21,10 @@ import { type FormatPrefs } from '@/lib/format'
 import { previewOf } from '@/lib/quickCreate'
 import { type ScopeHint } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
-import { apiEvent, bodyOf, calendar, jsonResponse, todo, urlOf } from '@/test/fixtures'
+import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { CalendarDnd } from './CalendarDnd'
-import { useDndState, useScopePreview } from './dndState'
+import { useScopePreview } from './dndState'
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const colors = eventColors('#3b82f6', false)
@@ -34,16 +34,11 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) }
 }
 
-/**
- * A 100 px day cell at `left`; jsdom lays nothing out, so the cells report their rects
- * themselves. Blocks like the real views' day cells while a bounded series is dragged (FR-17).
- */
+/** A 100 px day cell at `left`; jsdom lays nothing out, so the cells report their rects themselves. */
 function Day({ day, left, children }: { day: Date; left: number; children?: ReactNode }) {
-  const { moveWindow } = useDndState()
   const { setNodeRef } = useDroppable({ id: `day:${day.getDate()}`, data: { type: 'day', day } satisfies DropData })
-  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
   return (
-    <div ref={setNodeRef} data-left={left} data-testid={`day:${day.getDate()}`} className={blocked ? 'blocked' : undefined}>
+    <div ref={setNodeRef} data-left={left} data-testid={`day:${day.getDate()}`}>
       {children}
     </div>
   )
@@ -990,134 +985,116 @@ describe('CalendarDnd', () => {
     })
   })
 
-  describe('the move window of a bounded series (FR-17)', () => {
+  describe('a series on fixed days (FR-17)', () => {
     afterEach(() => {
       vi.useRealTimers()
     })
 
-    /**
-     * Renders a fixed-day series due 10-05 (next occurrence due 10-08, so its window is
-     * [10-05, 10-08)) draggable across day cells 10-05..10-09, and picks it up with the
-     * keyboard. Callers move it and finish the drag themselves.
-     */
-    async function pickUpBounded(renderOverlay: Overlay = () => null) {
+    // Due Mon 10-05, next repeat due Thu 10-08.
+    const series = todo({
+      id: 't2',
+      title: 'Water the flowers',
+      rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+      due: '2026-10-05T00:00:00Z',
+      dueAllDay: true,
+      recurring: true,
+      fixedDays: true,
+      next: { due: '2026-10-08T00:00:00Z' },
+    })
+    const planned = occurrenceTask(
+      occurrence({
+        key: 't2@2026-10-08T00:00:00Z',
+        todoId: 't2',
+        title: 'Water the flowers',
+        recurrenceId: '2026-10-08T00:00:00Z',
+        due: '2026-10-08T00:00:00Z',
+        dueAllDay: true,
+        state: 'upcoming',
+      }),
+      series,
+    )!
+    const current = occurrenceTask(
+      occurrence({
+        key: 't2@2026-10-05T00:00:00Z',
+        todoId: 't2',
+        title: 'Water the flowers',
+        recurrenceId: '2026-10-05T00:00:00Z',
+        due: '2026-10-05T00:00:00Z',
+        dueAllDay: true,
+      }),
+      series,
+    )!
+
+    /** Renders `task` on its day among the day cells 10-04..10-10, and picks it up with the keyboard. */
+    async function pickUp(task: CalTask, name: RegExp) {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))
+      // The chip, and the overlay dnd-kit wraps around it, sit in the cell of the day it is shown on.
+      const onCell = (task.startsAt.getDate() - 5) * 100
       vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(10, 40, 80, 20)
+        return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 100) : rect(onCell + 10, 40, 80, 20)
       })
-      const bounded = toCalTask(
-        todo({
-          id: 't2',
-          title: 'Water the flowers',
-          due: '2026-10-05T00:00:00Z',
-          dueAllDay: true,
-          recurring: true,
-          fixedDays: true,
-          next: { due: '2026-10-08T00:00:00Z' },
-          moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
-        }),
-      )!
+      api.setCsrfToken('tok')
+      const days = [4, 5, 6, 7, 8, 9, 10].map((d) => new Date(2026, 9, d))
       renderWithProviders(
-        <CalendarDnd renderOverlay={renderOverlay}>
-          <Day day={new Date(2026, 9, 4)} left={-100} />
-          <Day day={new Date(2026, 9, 5)} left={0}>
-            <TaskChip
-              task={bounded}
-              colors={colors}
-              prefs={prefs}
-              readOnly={false}
-              drag={{ id: 'chip', data: { type: 'event', event: bounded, originDay: new Date(2026, 9, 5) }, disabled: false }}
-            />
-          </Day>
-          <Day day={new Date(2026, 9, 6)} left={100} />
-          <Day day={new Date(2026, 9, 7)} left={200} />
-          <Day day={new Date(2026, 9, 8)} left={300} />
-          <Day day={new Date(2026, 9, 9)} left={400} />
+        <CalendarDnd renderOverlay={() => null}>
+          {days.map((day, i) => (
+            <Day key={day.getDate()} day={day} left={(i - 1) * 100}>
+              {isSameDay(task.startsAt, day) && (
+                <TaskChip
+                  task={task}
+                  colors={colors}
+                  prefs={prefs}
+                  readOnly={false}
+                  drag={{ id: 'chip', data: { type: 'event', event: task, originDay: day }, disabled: false }}
+                />
+              )}
+            </Day>
+          ))}
         </CalendarDnd>,
         loadCalendars,
       )
-
-      const chip = screen.getByRole('button', { name: 'Water the flowers, all day' })
+      const chip = screen.getByRole('button', { name })
       chip.focus()
       fireEvent.keyDown(chip, { code: 'Space', key: ' ' })
       await act(() => new Promise((resolve) => setTimeout(resolve)))
-      return chip
     }
 
-    it('blocks the days past the next occurrence and announces the limit while over one', async () => {
-      await pickUpBounded()
+    const right = (times: number) => {
+      for (let i = 0; i < times; i++) fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+    }
 
-      expect(screen.getByTestId('day:9').className).toContain('blocked')
-      expect(screen.getByTestId('day:6').className).not.toContain('blocked')
-
-      for (let i = 0; i < 4; i++) {
-        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
-      }
-      expect(screen.getByRole('status')).toHaveTextContent('Only possible until Wed, Oct 7.')
-
-      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
-    })
-
-    it('hands the overlay the limit while over a blocked day, and none back inside', async () => {
-      const overlay = vi.fn<Overlay>(() => null)
-      await pickUpBounded(overlay)
-      for (let i = 0; i < 4; i++) {
-        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
-      }
-      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), 'Only possible until Wed, Oct 7.', null)
-
-      for (let i = 0; i < 3; i++) {
-        fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
-      }
-      expect(overlay).toHaveBeenLastCalledWith(expect.anything(), null, null)
-
-      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
-    })
-
-    it('saves nothing and toasts why when a keyboard drop completes on a blocked day', async () => {
-      const fetch = vi.spyOn(globalThis, 'fetch')
-      const message = vi.spyOn(toast, 'message')
-      await pickUpBounded()
-      for (let i = 0; i < 4; i++) {
-        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
-      }
-      // End, not cancel: completes the drop instead of abandoning it.
+    it('moves the series by the distance a later repeat was dragged', async () => {
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(() => Promise.resolve(jsonResponse(200, { ...series, due: '2026-10-06T00:00:00Z', etag: '"2"' })))
+      await pickUp(planned, /Water the flowers, planned repeat/)
+      right(1)
       fireEvent.keyDown(document, { code: 'Space', key: ' ' })
 
-      expect(message).toHaveBeenCalledWith('Not moved', { description: 'Until Wed, Oct 7, then the next repeat is due.' })
-      expect(fetch).not.toHaveBeenCalled()
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe('/api/v1/todos/t2')
+      expect(init?.method).toBe('PUT')
+      expect(bodyOf(init)).toMatchObject({ due: '2026-10-06T00:00:00.000Z', dueAllDay: true })
     })
 
-    it("toasts the lower limit for a drop before the series' day", async () => {
+    it('saves the current repeat dropped past the next one, which no day is out of reach for', async () => {
+      const fetch = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(() => Promise.resolve(jsonResponse(200, { ...series, due: '2026-10-09T00:00:00Z', etag: '"2"' })))
       const message = vi.spyOn(toast, 'message')
-      await pickUpBounded()
-      fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
+      await pickUp(current, /Water the flowers, all day/)
+      right(4)
       fireEvent.keyDown(document, { code: 'Space', key: ' ' })
 
-      expect(message).toHaveBeenCalledWith('Not moved', { description: 'Only possible from Mon, Oct 5 on.' })
-    })
-
-    it('toasts nothing when the drag is cancelled over a blocked day', async () => {
-      const message = vi.spyOn(toast, 'message')
-      await pickUpBounded()
-      for (let i = 0; i < 4; i++) {
-        fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
-      }
-      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
-
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      expect(bodyOf(fetch.mock.calls[0]![1])).toMatchObject({ due: '2026-10-09T00:00:00.000Z' })
       expect(message).not.toHaveBeenCalled()
-    })
-
-    it('blocks the day before the series and announces the lower limit while over it', async () => {
-      await pickUpBounded()
-
-      expect(screen.getByTestId('day:4').className).toContain('blocked')
-
-      fireEvent.keyDown(document, { code: 'ArrowLeft', key: 'ArrowLeft' })
-      expect(screen.getByRole('status')).toHaveTextContent('Only possible from Mon, Oct 5 on.')
-
-      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })
   })
 })

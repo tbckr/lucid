@@ -245,7 +245,7 @@ export function CalendarPage() {
               const colors = colorsOf(e.calendarId)
               const bar = e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= 86_400_000
               if (e.kind === 'task') {
-                // Over a day it can't reach (FR-17): pencilled in on paper, with the limit beneath.
+                // Held back (FR-17): pencilled in on paper, with the reason beneath.
                 const blocked = limit !== null
                 const item = { task: e, colors, prefs, readOnly: false, blocked }
                 const pill = limit && <LimitPill className="absolute top-full left-0 mt-1">{limit}</LimitPill>

@@ -11,7 +11,7 @@ import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventIte
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
-import { canDrag, outsideWindow, type CalTask } from '@/lib/calendarTasks'
+import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
@@ -188,7 +188,6 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
             {hidden > 0 && (
               <button
                 type="button"
-                data-more=""
                 onClick={() => {
                   setExpanded(true)
                 }}
@@ -251,19 +250,15 @@ function AllDayCell({
   onCreate: (day: Date, target: HTMLElement) => void
   children: React.ReactNode
 }) {
-  const { moveWindow } = useDndState()
   const { setNodeRef, isOver } = useDroppable({
     id: `alldaycell:${dayKey(day)}`,
     data: { type: 'day', day } satisfies DropData,
   })
-  // Past the move window of a bounded series being dragged (FR-17): block it to show it's out of reach,
-  // and take no drop highlight, as a drop there changes nothing.
-  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
   return (
     <div
       ref={setNodeRef}
       data-draft={draft ? '' : undefined}
-      className={cn('relative border-l border-grid', ((isOver && !blocked) || draft) && 'bg-primary/8', blocked && 'blocked')}
+      className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8')}
       style={{ height }}
     >
       <button
@@ -300,15 +295,12 @@ function DayColumn({
   onCreate: (state: CreateState) => void
 }) {
   const { t } = useTranslation()
-  const { resize, pendingTodos, moveWindow } = useDndState()
+  const { resize, pendingTodos } = useDndState()
   const column = useRef<HTMLDivElement>(null)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${dayKey(day)}`,
     data: { type: 'column', day, ref: column } satisfies DropData,
   })
-  // Past the move window of a bounded series being dragged (FR-17): block it to show it's out of reach,
-  // and take no drop highlight, as a drop there changes nothing.
-  const blocked = moveWindow != null && outsideWindow(moveWindow, day)
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
       column.current = el
@@ -329,7 +321,7 @@ function DayColumn({
   })
 
   return (
-    <div ref={ref} className={cn('relative border-l border-grid', isOver && !blocked && 'bg-primary/5', blocked && 'blocked')}>
+    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
       {HOURS.map((h) => (
         <button
           key={h}

@@ -1,12 +1,10 @@
 import { DndContext, type DragStartEvent } from '@dnd-kit/core'
-import { QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
-import { TooltipProvider } from '@/components/ui/tooltip'
-import { toCalTask, type MoveWindow } from '@/lib/calendarTasks'
+import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
@@ -187,98 +185,30 @@ describe('TimeGridView', () => {
       () => screen.getByRole('button', { name: /9:00 AM$/ }).parentElement!,
       'bg-primary/5',
     ],
-  ])('highlights %s under a drag, but not outside the window of a dragged repeat (FR-17)', async (_, task, name, target, tint) => {
+  ])('highlights %s under a drag', async (_, task, name, target, tint) => {
     // jsdom lays nothing out: only the target and the task in it share a box, so the task is over the target.
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       return 'box' in this.dataset || this.dataset.taskKey ? rect(0, 0, 100, 100) : rect(1000, 1000, 10, 10)
     })
-    const view = (moveWindow: MoveWindow | null) => (
+    renderWithProviders(
       <DndContext>
-        <DndStateContext
-          value={{
-            pendingKeys: new Set(),
-            pendingSeries: new Set(),
-            pendingTodos: new Set(),
-            resize: null,
-            moveWindow,
-            activeId: null,
-            scope: null,
-            held: null,
-            scopeAnchor: () => undefined,
-            draggedTodo: null,
-          }}
-        >
-          <TimeGridView
-            days={[new Date(2026, 8, 25)]}
-            now={new Date(2026, 8, 25, 12)}
-            events={[task]}
-            corrupted={[]}
-            prefs={prefs}
-            colorsOf={() => colors}
-            calendarOf={() => cal}
-          />
-        </DndStateContext>
-      </DndContext>
+        <TimeGridView
+          days={[new Date(2026, 8, 25)]}
+          now={new Date(2026, 8, 25, 12)}
+          events={[task]}
+          corrupted={[]}
+          prefs={prefs}
+          colorsOf={() => colors}
+          calendarOf={() => cal}
+        />
+      </DndContext>,
     )
-    const { rerender, queryClient } = renderWithProviders(view(null))
     const day = target()
     day.dataset.box = ''
     fireEvent.keyDown(screen.getByRole('button', { name }), { code: 'Space', key: ' ' })
     await waitFor(() => {
       expect(day).toHaveClass(tint)
     })
-
-    // The same drag, with the day past the window: blocked, and no promise of a drop.
-    rerender(
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>{view({ from: new Date(2026, 8, 28), until: new Date(2026, 9, 1) })}</TooltipProvider>
-      </QueryClientProvider>,
-    )
-    expect(day).toHaveClass('blocked')
-    expect(day).not.toHaveClass(tint)
-  })
-
-  it('marks the all-day "more" button, so a blocked day dims it with the rest (FR-17)', () => {
-    const allDay = (n: number) =>
-      toCalEvent(apiEvent({ id: `e${n}`, key: `e${n}`, title: `All day ${n}`, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z', allDay: true }))
-    renderDay([1, 2, 3, 4, 5].map(allDay))
-    expect(screen.getByRole('button', { name: '3 more' })).toHaveAttribute('data-more')
-  })
-
-  it('blocks only the days before the last repeat of a fixed-day series (FR-17)', () => {
-    const w: MoveWindow = { from: new Date(2026, 8, 25), until: null }
-    renderWithProviders(
-      <DndContext>
-        <DndStateContext
-          value={{
-            pendingKeys: new Set(),
-            pendingSeries: new Set(),
-            pendingTodos: new Set(),
-            resize: null,
-            moveWindow: w,
-            activeId: null,
-            scope: null,
-            held: null,
-            scopeAnchor: () => undefined,
-            draggedTodo: null,
-          }}
-        >
-          <TimeGridView
-            days={[new Date(2026, 8, 24), new Date(2026, 8, 25), new Date(2026, 8, 26)]}
-            now={new Date(2026, 8, 25, 12)}
-            events={[]}
-            corrupted={[]}
-            prefs={prefs}
-            colorsOf={() => colors}
-            calendarOf={() => cal}
-          />
-        </DndStateContext>
-      </DndContext>,
-    )
-    const cellOf = (date: string) => screen.getByRole('button', { name: `New all-day event on ${date}` }).parentElement!
-    expect(cellOf('Thursday, September 24th, 2026')).toHaveClass('blocked')
-    expect(cellOf('Friday, September 25th, 2026')).not.toHaveClass('blocked')
-    expect(cellOf('Saturday, September 26th, 2026')).not.toHaveClass('blocked')
   })
 
   it('opens the popover for an all-day event from the all-day row', () => {
@@ -390,12 +320,10 @@ describe('TimeGridView', () => {
             pendingSeries: new Set(),
             pendingTodos: new Set(),
             resize: { ...draft, endsAt: new Date(2026, 8, 25, 12) } as CalEvent,
-            moveWindow: null,
             activeId: null,
             scope: null,
             held: null,
             scopeAnchor: () => undefined,
-            draggedTodo: null,
           }}
         >
           <TimeGridView

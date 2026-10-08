@@ -1,10 +1,9 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DndStateContext, type DndState } from '@/components/dnd/dndState'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
-import { canDrag, occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { canDrag, occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { useUi } from '@/stores/ui'
@@ -128,7 +127,7 @@ describe('task items', () => {
       vi.useRealTimers()
     })
 
-    it('pencils in an upcoming occurrence: no checkbox, a planned-repeat name, on fixed days not draggable', () => {
+    it('pencils in an upcoming occurrence: no checkbox, a planned-repeat name, and draggable, on fixed days too', () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 8, 25, 12))
       const t = occurrenceTask(
@@ -154,7 +153,7 @@ describe('task items', () => {
       )
       expect(screen.queryByRole('checkbox')).toBeNull()
       const button = screen.getByRole('button', { name: 'Water the flowers, planned repeat on Thu, Oct 8' })
-      expect(button).not.toHaveAttribute('aria-roledescription')
+      expect(button).toHaveAttribute('aria-roledescription', 'draggable')
     })
 
     it('opens the details from the pencil mark of an upcoming occurrence, not the cell underneath', async () => {
@@ -295,140 +294,6 @@ describe('task items', () => {
       const { container } = renderWithProviders(<TaskBar task={current()} colors={colors} prefs={prefs} readOnly={false} />)
       expect(screen.getByRole('checkbox')).toBeInTheDocument()
       expect(container.querySelector('.lucide-ban')).toBeNull()
-    })
-  })
-
-  describe('a drag attempt on an upcoming repeat that stays put (FR-17)', () => {
-    beforeEach(() => {
-      // Only the hint's own delay: Radix and floating-ui keep real promises and frames.
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    })
-    afterEach(() => {
-      vi.useRealTimers()
-      useUi.getState().openDetail(null)
-    })
-
-    // The repeat on Thu, Oct 8 of a Monday/Thursday series whose current one is Mon, Oct 5.
-    const planned = (p: Parameters<typeof todo>[0] = {}) =>
-      occurrenceTask(
-        occurrence({
-          todoId: 't1',
-          title: 'Water the flowers',
-          due: '2026-10-08T00:00:00Z',
-          dueAllDay: true,
-          state: 'upcoming',
-          recurrenceId: '2026-10-08T00:00:00Z',
-          key: 't1@2026-10-08T00:00:00Z',
-        }),
-        series({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true, due: '2026-10-05T00:00:00Z', dueAllDay: true, ...p }),
-      )!
-    const bar = (t: CalTask, readOnly = false) => (
-      <TaskBar
-        task={t}
-        colors={colors}
-        prefs={prefs}
-        readOnly={readOnly}
-        drag={{ id: 'x', data: { type: 'event', event: t, originDay: t.startsAt }, disabled: !canDrag(t) }}
-      />
-    )
-    const button = () => screen.getByRole('button', { name: /Water the flowers/ })
-    const pointer = { pointerId: 1, pointerType: 'mouse' }
-    function attempt(dx: number) {
-      fireEvent.pointerDown(button(), { ...pointer, button: 0, clientX: 0, clientY: 0 })
-      fireEvent.pointerMove(button(), { ...pointer, clientX: dx, clientY: 0 })
-    }
-
-    it('says why once the press has moved 6 px, not before', () => {
-      renderWithProviders(bar(planned()))
-      attempt(5)
-      expect(screen.queryByRole('status')).toBeNull()
-
-      fireEvent.pointerMove(button(), { ...pointer, clientX: 6, clientY: 0 })
-      expect(screen.getByRole('status')).toHaveTextContent('Can be completed and moved once Mon, Oct 5 is done.')
-      expect(button()).toHaveClass('cursor-not-allowed')
-    })
-
-    it('keeps the hint 2 s after the release, then hides it', () => {
-      renderWithProviders(bar(planned()))
-      attempt(10)
-      fireEvent.pointerUp(button(), pointer)
-      expect(screen.getByRole('status')).toBeInTheDocument()
-      expect(button()).not.toHaveClass('cursor-not-allowed')
-
-      act(() => {
-        vi.advanceTimersByTime(2000)
-      })
-      expect(screen.queryByRole('status')).toBeNull()
-    })
-
-    it('swallows the click that ends the attempt, so neither details nor a new entry open', () => {
-      const t = planned()
-      renderWithProviders(bar(t))
-      attempt(10)
-      fireEvent.pointerUp(button(), pointer)
-      fireEvent.click(button())
-      expect(useUi.getState().detail).toBeNull()
-      expect(useUi.getState().create).toBeNull()
-
-      fireEvent.click(button())
-      expect(useUi.getState().detail?.item).toBe(t)
-    })
-
-    it('keeps a click on the hint from reaching the cell, and hides it', () => {
-      // The month cell creates an entry on a click; the pill sits in a portal, but React bubbles through it.
-      const cell = vi.fn()
-      renderWithProviders(
-        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- stands in for the month cell's click handler.
-        <div onClick={cell}>{bar(planned())}</div>,
-      )
-      attempt(10)
-      fireEvent.pointerUp(button(), pointer)
-      fireEvent.click(button())
-      fireEvent.click(screen.getByRole('status'))
-
-      expect(cell).not.toHaveBeenCalled()
-      expect(useUi.getState().create).toBeNull()
-      expect(screen.queryByRole('status')).toBeNull()
-    })
-
-    it('opens the details on a click without a move', () => {
-      const t = planned()
-      renderWithProviders(bar(t))
-      fireEvent.pointerDown(button(), { ...pointer, button: 0, clientX: 0, clientY: 0 })
-      fireEvent.pointerUp(button(), pointer)
-      fireEvent.click(button())
-      expect(useUi.getState().detail?.item).toBe(t)
-      expect(screen.queryByRole('status')).toBeNull()
-    })
-
-    it("shows no hint where the repeat can't move for another reason", () => {
-      const pending: DndState = {
-        pendingKeys: new Set(),
-        pendingSeries: new Set(),
-        pendingTodos: new Set(['t1']),
-        resize: null,
-        moveWindow: null,
-        activeId: null,
-        scope: null,
-        held: null,
-        scopeAnchor: () => undefined,
-        draggedTodo: null,
-      }
-      const cases = [
-        bar(planned(), true),
-        <DndStateContext key="pending" value={pending}>
-          {bar(planned())}
-        </DndStateContext>,
-        // An interval series moves from any repeat: dnd-kit's drag, not the hint.
-        bar(planned({ rrule: 'FREQ=DAILY', fixedDays: false })),
-      ]
-      for (const ui of cases) {
-        const { unmount } = renderWithProviders(ui)
-        attempt(10)
-        expect(screen.queryByRole('status')).toBeNull()
-        fireEvent.pointerUp(button(), pointer)
-        unmount()
-      }
     })
   })
 })

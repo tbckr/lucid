@@ -85,14 +85,13 @@ describe('DuePicker', () => {
     expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
   })
 
-  describe('a fixed-day series', () => {
+  describe('a series on fixed days', () => {
     const fixedDayTodo = todo({
       due: '2026-10-05T00:00:00.000Z',
       dueAllDay: true,
       recurring: true,
       fixedDays: true,
       next: { start: null, due: '2026-10-08T00:00:00.000Z' },
-      moveWindow: { from: '2026-10-05T00:00:00.000Z', until: '2026-10-08T00:00:00.000Z' },
     })
 
     beforeEach(() => {
@@ -104,81 +103,22 @@ describe('DuePicker', () => {
       vi.useRealTimers()
     })
 
-    it('limits the shortcuts and the month to the window, and shows the limit', async () => {
+    it('offers every shortcut and day, whether it falls before the next repeat or not', async () => {
       const { user, onChange, dialog } = await open(fixedDayTodo)
 
-      expect(within(dialog).getByRole('button', { name: /^Next week / })).toBeDisabled()
-      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).toHaveAttribute(
-        'aria-disabled',
-        'true',
-      )
-      expect(within(dialog).getByText('Until Wed, Oct 7, then the next repeat is due.')).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: /^Next week / })).not.toBeDisabled()
+      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
+      expect(within(dialog).queryByText(/^Until /)).toBeNull()
 
       await user.click(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' }))
-      expect(onChange).not.toHaveBeenCalled()
-
-      await user.click(within(dialog).getByRole('button', { name: 'Wednesday, October 7th, 2026' }))
-      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-07T00:00:00.000Z', dueAllDay: true }))
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-09T00:00:00.000Z', dueAllDay: true }))
     })
 
-    it('names the last due day of a series anchored on its start, which moves along', async () => {
-      // Starts Monday, due Wednesday; the next repeat starts Thursday.
-      const { dialog } = await open({
-        ...fixedDayTodo,
-        start: '2026-10-05T00:00:00.000Z',
-        startAllDay: true,
-        due: '2026-10-07T00:00:00.000Z',
-        next: { start: '2026-10-08T00:00:00.000Z', due: '2026-10-10T00:00:00.000Z' },
-      })
+    it('offers an earlier day than the current repeat, too', async () => {
+      const { user, onChange, dialog } = await open(fixedDayTodo)
 
-      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
-      expect(within(dialog).getByRole('button', { name: 'Saturday, October 10th, 2026' })).toHaveAttribute(
-        'aria-disabled',
-        'true',
-      )
-      expect(within(dialog).getByText('Until Fri, Oct 9, then the next repeat is due.')).toBeInTheDocument()
-    })
-
-    it('shows no limit for a due date added next to a start that stays put', async () => {
-      const { dialog } = await open({
-        ...fixedDayTodo,
-        start: '2026-10-05T00:00:00.000Z',
-        startAllDay: true,
-        due: null,
-        next: { start: '2026-10-08T00:00:00.000Z', due: null },
-      })
-
-      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
-      expect(within(dialog).queryByText(/^Until /)).toBeNull()
-    })
-  })
-
-  describe('the last repeat of a fixed-day series', () => {
-    const lastTodo = todo({
-      due: '2026-10-05T00:00:00.000Z',
-      dueAllDay: true,
-      recurring: true,
-      fixedDays: true,
-      next: null,
-      moveWindow: { from: '2026-10-05T00:00:00.000Z', until: null },
-    })
-
-    beforeEach(() => {
-      vi.useFakeTimers({ toFake: ['Date'] })
-      vi.setSystemTime(new Date(2026, 9, 5, 12))
-    })
-
-    afterEach(() => {
-      vi.useRealTimers()
-    })
-
-    it('disables only earlier days and shows no limit', async () => {
-      const { dialog } = await open(lastTodo)
-
-      expect(within(dialog).getByRole('button', { name: /^Next week / })).not.toBeDisabled()
-      expect(within(dialog).getByRole('button', { name: 'Sunday, October 4th, 2026' })).toHaveAttribute('aria-disabled', 'true')
-      expect(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })).not.toHaveAttribute('aria-disabled')
-      expect(within(dialog).queryByText(/^Until /)).toBeNull()
+      await user.click(within(dialog).getByRole('button', { name: 'Sunday, October 4th, 2026' }))
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: '2026-10-04T00:00:00.000Z', dueAllDay: true }))
     })
   })
 })

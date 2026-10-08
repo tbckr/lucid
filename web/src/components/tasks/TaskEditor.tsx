@@ -33,22 +33,18 @@ import { useCreateTodo, useDeleteTodo, useUpdateTodo, useVisibleCalendars } from
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
-import { anchorOf, lastAllowedDay, moveWindow, windowEdge } from '@/lib/calendarTasks'
-import { dayKey, parseDayKey } from '@/lib/dates'
-import { formatPickerDate } from '@/lib/format'
+import { parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
 import {
   buildTaskFormSchema,
-  dayAllowed,
   formToTodoInput,
   formWithDate,
-  repeatChanged,
   taskToForm,
   type TaskFormValues,
 } from '@/lib/taskForm'
-import { datesChanged, isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
+import { isOverdue, priorityLevel, priorityValue, type PriorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
@@ -118,7 +114,7 @@ export function TaskEditor({
         ? taskToForm(state.todo, tz)
         : { ...taskForm(state.draft.title, state.draft.task), description: state.draft.description },
   })
-  const { register, control, handleSubmit, formState, setValue, getValues, setFocus, setError } = form
+  const { register, control, handleSubmit, formState, setValue, getValues, setFocus } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
   const [completed, startDate, startTime, dueDate, dueTime, items, recurrence] = useWatch({
     control,
@@ -132,17 +128,6 @@ export function TaskEditor({
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
   const ruleUnsupported = todo?.ruleUnsupported ?? false
   const customRule = recurrence === 'custom' ? getValues('customRule') : ''
-  // A fixed-day series stays before its next repeat while it keeps its rule; a new one starts over (FR-17).
-  const w = todo ? moveWindow(todo) : null
-  const bounded = w && !repeatChanged({ recurrence, customRule }, todo) ? w : null
-  // The window binds the series' anchor, its start or else its due date; the other date moves freely.
-  const anchor: Which = startDate ? 'start' : 'due'
-  // The last repeat's window has no last day to name (FR-17): it only blocks earlier days, silently.
-  const last = w ? lastAllowedDay(w) : null
-  const limit = last ? t('tasks.moveLimit', { date: formatPickerDate(last, prefs, now) }) : ''
-  // Named for the submit guard below, which can hit either edge (FR-17): an added start date, for
-  // instance, isn't blocked by the picker while the due date is still the window's anchor.
-  const fromLimit = w?.from ? t('tasks.moveFrom', { date: formatPickerDate(w.from, prefs, now) }) : ''
   // The presets repeat on the weekday or date of the start, else of the due date; say which.
   const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
   const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
@@ -178,22 +163,7 @@ export function TaskEditor({
 
   const onSubmit = handleSubmit((v) => {
     if (todo) {
-      const input = formToTodoInput(v, tz, todo)
-      // The pickers block the days past the window, but an added start date can still take the task there (FR-17).
-      // Only a moved date needs the check: a notes-only save of an occurrence another
-      // app already moved past `next` must still go through.
-      if (datesChanged(todo, input)) {
-        const which: Which = v.startDate ? 'start' : 'due'
-        const field = DATES[which].date
-        if (!dayAllowed(todo, v, which, v[field], tz)) {
-          // Names the edge the save would cross (FR-17), the way a blocked drag does.
-          const anchor = anchorOf(input)
-          const edge = w && anchor ? windowEdge(w, anchor) : null
-          setError(field, { message: edge?.edge === 'from' ? 'tasks.moveFrom' : 'tasks.moveLimit' })
-          return
-        }
-      }
-      update.mutate({ todo, input }, { onSuccess: onDone })
+      update.mutate({ todo, input: formToTodoInput(v, tz, todo) }, { onSuccess: onDone })
       return
     }
     create.mutate(
@@ -220,11 +190,7 @@ export function TaskEditor({
     setValue(DATES[which].time, '', setOpts)
   }
 
-  const msg = (m: string | undefined) => {
-    if (m === 'tasks.moveLimit') return limit
-    if (m === 'tasks.moveFrom') return fromLimit
-    return m ? t(m as 'validation.date') : undefined
-  }
+  const msg = (m: string | undefined) => (m ? t(m as 'validation.date') : undefined)
   const titleError = msg(formState.errors.title?.message)
   const repeatError = msg(formState.errors.recurrence?.message)
   const itemError = msg(formState.errors.checklist?.message ?? formState.errors.checklist?.find?.((e) => e?.text)?.text?.message)
@@ -260,8 +226,6 @@ export function TaskEditor({
             now={now}
             invalid={!!error}
             describedBy={error ? `${id}-${which}-error` : undefined}
-            isDisabled={bounded && which === anchor ? (d) => !dayAllowed(todo, getValues(), which, dayKey(d), tz) : undefined}
-            footer={bounded && which === anchor && last && <p className="px-2 pt-2 text-xs text-muted-foreground">{limit}</p>}
           />
           {date && (
             <TimeSelect

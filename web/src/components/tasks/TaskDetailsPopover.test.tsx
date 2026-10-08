@@ -195,7 +195,7 @@ describe('TaskDetailsPopover', () => {
       expect(within(dialog).getByText('Can be completed once Mon, Oct 5 is done.')).toBeInTheDocument()
     })
 
-    it('says an upcoming occurrence on fixed days can also only be moved once the current one is done', async () => {
+    it('says an upcoming occurrence on fixed days can be completed once the current one is done, like any other', async () => {
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(2026, 9, 5, 12))
       const t = occurrenceTask(
@@ -212,7 +212,7 @@ describe('TaskDetailsPopover', () => {
         series({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true }),
       )!
       const { dialog } = await open(t, 'Water the flowers')
-      expect(within(dialog).getByText('Can be completed and moved once Mon, Oct 5 is done.')).toBeInTheDocument()
+      expect(within(dialog).getByText('Can be completed once Mon, Oct 5 is done.')).toBeInTheDocument()
     })
 
     it('marks the current occurrence of an overdue series overdue', async () => {

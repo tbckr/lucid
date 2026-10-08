@@ -57,9 +57,9 @@ export function DateField({
   onClear?: { label: string; clear: () => void } | undefined
   /** On a calendar's tint: reads as text until hovered or focused. */
   tone?: 'tint'
-  /** A day a bounded series (FR-17) may not move to; passed through to `MiniMonth`. */
+  /** A day that can't be picked; passed through to `MiniMonth`. */
   isDisabled?: (day: Date) => boolean
-  /** Extra content below the month, e.g. the window's last day; passed through to `MiniMonth`. */
+  /** Extra content below the month, e.g. a note on what picking a day does; passed through to `MiniMonth`. */
   footer?: ReactNode
 }) {
   const [open, setOpen] = useState(false)

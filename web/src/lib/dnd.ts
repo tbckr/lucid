@@ -1,22 +1,13 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import {
-  anchorOf,
-  movedTodo,
-  moveWindow,
-  shiftedTask,
-  toCalTask,
-  windowEdge,
-  withinWindow,
-  type CalTask,
-} from './calendarTasks'
+import { movedTodo, shiftedTask, toCalTask, type CalTask } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 import { type Scope } from './scope'
 
 /** Pixel height of one hour in the time grid. */
-/** Pointer travel before a press becomes a drag (FR-10): for moving entries, drawing new ones, and an attempt on one that can't move (FR-17). */
+/** Pointer travel before a press becomes a drag (FR-10): for moving entries and drawing new ones. */
 export const DRAG_DISTANCE = 6
 
 export const HOUR_HEIGHT = 48
@@ -85,11 +76,7 @@ function movedDelta(drag: MoveDrag, drop: DropData | null, deltaY: number): { da
   return { days, minutes }
 }
 
-/**
- * What a finished drag saves. Returns null when nothing changes, the drop
- * target is incompatible, or a bounded series (FR-17) would move onto or past
- * its next occurrence.
- */
+/** What a finished drag saves. Returns null when nothing changes or the drop target is incompatible. */
 export function dropResult(drag: DragData, drop: DropData | null, deltaY: number): DropResult | null {
   if (drag.type === 'resize') {
     const minutes = snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES)
@@ -104,35 +91,9 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
   if (!delta) return null
   const e = drag.event
   if (e.kind === 'task') {
-    const input = movedTodo(e.todo, delta.days, delta.minutes)
-    if (!withinWindow(e.todo, input)) return null
-    return { kind: 'task', task: e, input, delta }
+    return { kind: 'task', task: e, input: movedTodo(e.todo, delta.days, delta.minutes), delta }
   }
   return { kind: 'event', event: e, times: movedTimes(e, delta.days, delta.minutes) }
-}
-
-/** Which edge of a bounded series' move window (FR-17) a blocked drop hit, and the day it names. */
-export interface DropBlocked {
-  edge: 'from' | 'until'
-  date: Date
-}
-
-/**
- * Which edge of the move window a drop of a bounded series (FR-17) would
- * cross, so the UI can explain why nothing was saved: `from` when the drop
- * lands before the series' own day, `until` when it reaches or passes the
- * next occurrence. Null when the drag isn't a bounded task, or the drop is
- * within reach.
- */
-export function dropBlocked(drag: DragData, drop: DropData | null, deltaY: number): DropBlocked | null {
-  if (drag.type === 'resize' || drag.event.kind !== 'task') return null
-  const w = moveWindow(drag.event.todo)
-  if (!w) return null
-  const delta = movedDelta(drag, drop, deltaY)
-  if (!delta) return null
-  const input = movedTodo(drag.event.todo, delta.days, delta.minutes)
-  const anchor = anchorOf(input)
-  return anchor ? windowEdge(w, anchor) : null
 }
 
 /** `drag` with its item where `result` puts it, to preview a drop before it is saved. */

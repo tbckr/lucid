@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
-import { anchorOf, withinWindow } from './calendarTasks'
+import { anchorOf } from './calendarTasks'
 import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
 import { todoToInput } from './tasks'
@@ -155,24 +155,6 @@ const DATE_FIELDS = {
 export function formWithDate(v: TaskFormValues, which: 'start' | 'due', day: string): TaskFormValues {
   const f = DATE_FIELDS[which]
   return { ...v, [f.date]: day, [f.time]: v[f.date] ? v[f.time] : v[f.other] }
-}
-
-/**
- * Whether the editor may give `todo` the start or due date `day` (FR-17):
- * the task it would save stays inside the move window of a fixed-day series.
- * A new or removed rule starts the series over from the dates it gets, so
- * only a kept rule binds them; without a window, any day will do.
- */
-export function dayAllowed(
-  todo: Todo | undefined,
-  v: TaskFormValues,
-  which: 'start' | 'due',
-  day: string,
-  timeZone: string,
-): boolean {
-  if (!todo) return true
-  const input = formToTodoInput(formWithDate(v, which, day), timeZone, todo)
-  return input.rrule !== undefined || withinWindow(todo, input)
 }
 
 interface Fields {

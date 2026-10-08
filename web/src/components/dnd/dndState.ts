@@ -1,5 +1,4 @@
 import { createContext, use, useMemo } from 'react'
-import { type MoveWindow } from '@/lib/calendarTasks'
 import { withScopePreview, type ScopePreview } from '@/lib/dnd'
 import { type CalEvent, type CalItem } from '@/lib/events'
 
@@ -15,8 +14,6 @@ export interface DndState {
   pendingTodos: ReadonlySet<string>
   /** Live resize preview: the event being resized, with the end a drop would save. */
   resize: CalEvent | null
-  /** Move window of the active drag's task, when it is a bounded series (FR-17): the views block days outside it. */
-  moveWindow: MoveWindow | null
   activeId: string | null
   /**
    * A dropped event of a series while the question which events move is open
@@ -32,11 +29,6 @@ export interface DndState {
   held: ScopePreview | null
   /** Extra ref for the tile of `scope.key`, which the question points at. */
   scopeAnchor: (el: HTMLElement | null) => void
-  /**
-   * The todo of the task being dragged (FR-17): in days outside its move window, its own entries
-   * stay lit while the rest dims, so the next repeat shows where the window ends.
-   */
-  draggedTodo: string | null
 }
 
 export const DndStateContext = createContext<DndState>({
@@ -44,12 +36,10 @@ export const DndStateContext = createContext<DndState>({
   pendingSeries: new Set(),
   pendingTodos: new Set(),
   resize: null,
-  moveWindow: null,
   activeId: null,
   scope: null,
   held: null,
   scopeAnchor: () => undefined,
-  draggedTodo: null,
 })
 
 export function useDndState(): DndState {

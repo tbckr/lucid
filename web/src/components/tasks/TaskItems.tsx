@@ -4,11 +4,9 @@ import { useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDndState } from '@/components/dnd/dndState'
 import { RecurringMark } from '@/components/events/EventItems'
-import { RepeatDragHintPopover } from '@/components/tasks/RepeatDragHint'
-import { useRepeatDragHint } from '@/components/tasks/useRepeatDragHint'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { anchorOf, canComplete, canDrag, recurringLabel, type CalTask } from '@/lib/calendarTasks'
+import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
 import { type DragBinding } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
@@ -47,8 +45,8 @@ interface TaskItemProps {
 }
 
 /**
- * The stand-in for the checkbox on the drag overlay over a day outside the move window (FR-17): the task can't
- * land there. Decorative, as the limit is announced and shown beneath the overlay.
+ * The stand-in for the checkbox on the drag overlay of a task that can't land where it is (FR-17). Decorative, as the
+ * reason is announced and shown beneath the overlay.
  */
 export function StopMark({ className }: { className?: string }) {
   return <BanIcon aria-hidden className={cn('size-3.5 shrink-0 text-muted-foreground', className)} />
@@ -71,7 +69,7 @@ export function PencilMark({ color, className }: { color: string; className?: st
 function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
   const { t } = useTranslation()
   const openDetail = useUi((s) => s.openDetail)
-  const { pendingTodos, draggedTodo } = useDndState()
+  const { pendingTodos } = useDndState()
   const { done: toggledDone, toggle } = useToggleTodo(task.todo)
   // Fixed per render, so a re-render mid-day never flips a year suffix under the pointer.
   const now = useMemo(() => new Date(), [])
@@ -84,9 +82,7 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
     if (onOpen) onOpen(task)
     else openDetail({ item: task, anchor: e.currentTarget })
   }
-  // An entry of the series being dragged (FR-17) stays lit in the days it can't reach.
-  const inDrag = task.todo.id === draggedTodo
-  return { t, title, done, toggle, open, pending, now, inDrag }
+  return { t, title, done, toggle, open, pending, now }
 }
 
 /**
@@ -105,23 +101,6 @@ function useTaskDrag(task: CalTask, drag: DragBinding | undefined) {
   // dnd-kit sets role="button"; the title is a real one.
   const handle = { ref: setActivatorNodeRef, ...(draggable ? { ...attributes, ...listeners, role: undefined } : {}) }
   return { ref: setNodeRef, handle, isDragging }
-}
-
-/**
- * Says why an upcoming repeat can't be dragged once someone tries (FR-17): on
- * the items the calendar views let drag, where only its rule keeps it in place,
- * not a read-only calendar or an update on its way. The date is the current
- * repeat's, as in the details.
- */
-function useRepeatHint(task: CalTask, drag: DragBinding | undefined, readOnly: boolean, pending: boolean, prefs: FormatPrefs, now: Date) {
-  const { t } = useTranslation()
-  const hint = useRepeatDragHint(
-    drag !== undefined && task.occurrence?.state === 'upcoming' && !canDrag(task) && !readOnly && !pending,
-  )
-  const text = hint.at
-    ? t('tasks.upcomingFixedHint', { date: formatPickerDate(anchorOf(task.todo) ?? task.startsAt, prefs, now) })
-    : ''
-  return { hint, hintPopover: <RepeatDragHintPopover hint={hint} text={text} /> }
 }
 
 /** A point shows its time; a span shows start – end unless `compact`. */
@@ -209,24 +188,22 @@ export function TaskChip({
   onOpen,
 }: TaskItemProps & {
   drag?: DragBinding
-  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  /** As the drag overlay shows a task that can't land where it is (FR-17): pencilled in, with `StopMark` for the checkbox. */
   blocked?: boolean
   className?: string
   /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
   onOpen?: (task: CalTask) => void
 }) {
-  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task, onOpen)
+  const { t, title, done, toggle, open, pending, now } = useTaskItem(task, onOpen)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
-  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
-  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
   return (
     <div
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
-      data-dragged-series={inDrag ? '' : undefined}
       className={cn(
         'flex h-5 w-full min-w-0 items-stretch rounded-sm text-xs leading-none @container hover:bg-muted',
         INK_IN,
@@ -252,14 +229,12 @@ export function TaskChip({
       <button
         type="button"
         {...handle}
-        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring',
           pencil && 'pl-1.5',
-          hint.attempting && 'cursor-not-allowed',
         )}
       >
         {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
@@ -273,7 +248,6 @@ export function TaskChip({
           className={CHIP_MARK_IF_ROOM}
         />
       </button>
-      {hintPopover}
     </div>
   )
 }
@@ -292,25 +266,23 @@ export function TaskBar({
   style,
 }: TaskItemProps & {
   drag?: DragBinding
-  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  /** As the drag overlay shows a task that can't land where it is (FR-17): pencilled in, with `StopMark` for the checkbox. */
   blocked?: boolean
   continuesBefore?: boolean
   continuesAfter?: boolean
   className?: string
   style?: CSSProperties
 }) {
-  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
-  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
-  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
   return (
     <div
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
-      data-dragged-series={inDrag ? '' : undefined}
       className={cn(
         'flex h-5 min-w-0 items-stretch text-xs leading-none font-medium',
         INK_IN,
@@ -337,14 +309,12 @@ export function TaskBar({
       <button
         type="button"
         {...handle}
-        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
         className={cn(
           'flex min-w-0 flex-1 items-center gap-1 rounded-sm pr-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
           pencil && 'pl-1.5',
-          hint.attempting && 'cursor-not-allowed',
         )}
       >
         {blocked ? <StopMark /> : upcoming && <PencilMark color={colors.solid} />}
@@ -354,7 +324,6 @@ export function TaskBar({
         <span className={cn('truncate', done && 'line-through')}>{title}</span>
         <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
       </button>
-      {hintPopover}
     </div>
   )
 }
@@ -371,18 +340,17 @@ export function TaskBlock({
   style,
 }: TaskItemProps & {
   drag?: DragBinding
-  /** As the drag overlay shows it over a day outside its move window (FR-17): pencilled in, with `StopMark` for the checkbox. */
+  /** As the drag overlay shows a task that can't land where it is (FR-17): pencilled in, with `StopMark` for the checkbox. */
   blocked?: boolean
   /** Available height decides how much text fits. */
   size: 'xs' | 'sm' | 'md'
   style?: CSSProperties
 }) {
   const compact = size === 'xs'
-  const { t, title, done, toggle, open, pending, now, inDrag } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
   const { ref, handle, isDragging } = useTaskDrag(task, drag)
-  const { hint, hintPopover } = useRepeatHint(task, drag, readOnly, pending, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
-  // Pencilled in: a planned repeat, or the drag overlay over a day it can't reach (FR-17).
+  // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
   const markClassName = cn('absolute left-2.5 z-10', compact ? 'top-1/2 -translate-y-1/2' : 'top-[5px]')
   return (
@@ -390,7 +358,6 @@ export function TaskBlock({
       ref={ref}
       data-task-key={task.key}
       data-calendar-id={task.calendarId}
-      data-dragged-series={inDrag ? '' : undefined}
       className={cn('absolute px-px', done && 'opacity-60', isDragging && 'opacity-40')}
       style={{ ...style, color: pencil ? undefined : colors.onTint }}
     >
@@ -409,7 +376,6 @@ export function TaskBlock({
       <button
         type="button"
         {...handle}
-        {...hint.props}
         onClick={open}
         aria-busy={pending || undefined}
         aria-label={titleLabel(t, task, title, timeText(task, prefs), prefs, now)}
@@ -418,7 +384,6 @@ export function TaskBlock({
           INK_IN,
           pencil ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
           compact ? 'flex-row items-center gap-1 py-0 @container' : 'flex-col py-1',
-          hint.attempting && 'cursor-not-allowed',
         )}
         style={pencil ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
       >
@@ -433,7 +398,6 @@ export function TaskBlock({
         </span>
         <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
       </button>
-      {hintPopover}
     </div>
   )
 }

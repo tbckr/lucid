@@ -152,10 +152,6 @@ export const todoSchema = z.object({
   hasAttendees: z.boolean().optional().default(false),
   // FR-17: the UID of the series a todo was detached from ("only this repeat"); left out for any other todo.
   detachedFrom: z.string().nullish(),
-  // FR-17: where a move of the current occurrence must keep its anchor, [from, until), by the rule's days in the
-  // series' zone; from null for a repeat off the rule, until null for the last repeat. Null where a move is free.
-  // The server no longer sends it, so it parses as absent; it stays until the window code that reads it goes.
-  moveWindow: z.object({ from: isoDateTime.nullable(), until: isoDateTime.nullable() }).nullish(),
 })
 export type Todo = z.infer<typeof todoSchema>
 

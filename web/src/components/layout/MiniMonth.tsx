@@ -48,9 +48,9 @@ export function MiniMonth({
   /** Which day gets the solid mark: today (navigation) or the chosen day (picker). */
   emphasis?: 'today' | 'selected'
   onSelect: (day: Date) => void
-  /** A day a bounded series (FR-17) may not move to: a real disabled button, kept in the arrow-key traversal. */
+  /** A day that can't be picked: a real disabled button, kept in the arrow-key traversal. */
   isDisabled?: (day: Date) => boolean
-  /** Extra content below the month grid, e.g. the window's last day. */
+  /** Extra content below the month grid, e.g. a note on what picking a day does. */
   footer?: ReactNode
 }) {
   const { t } = useTranslation()
@@ -138,9 +138,9 @@ export function MiniMonth({
                         onKeyDown={onKeyDown}
                         onClick={() => {
                           setActive(d)
-                          // A day outside a bounded series' window (FR-17) stays focusable and
-                          // reachable by arrow keys (NFR-27) so the roving tab stop is never
-                          // trapped; it just can't be picked (aria-disabled, not `disabled`).
+                          // A day that can't be picked stays focusable and reachable by arrow keys
+                          // (NFR-27) so the roving tab stop is never trapped; it just can't be
+                          // picked (aria-disabled, not `disabled`).
                           if (blocked) return
                           onSelect(d)
                         }}

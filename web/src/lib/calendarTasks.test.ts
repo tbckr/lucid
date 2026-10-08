@@ -6,16 +6,11 @@ import {
   anchorOf,
   canComplete,
   canDrag,
-  lastAllowedDay,
-  moveWindow,
   movedTodo,
   occurrenceTask,
-  outsideWindow,
   recurringLabel,
   shiftedTask,
   toCalTask,
-  windowEdge,
-  withinWindow,
 } from './calendarTasks'
 import { isSpanning } from './events'
 import { type FormatPrefs } from './format'
@@ -328,16 +323,18 @@ describe('canDrag', () => {
     expect(canDrag(occurrenceTask(occurrence({ state }), interval)!)).toBe(expected)
   })
 
-  it('keeps the upcoming occurrences of a series on fixed days in place', () => {
+  it.each([
+    ['current', true],
+    ['upcoming', true],
+    ['done', false],
+  ] as const)('an occurrence of a series on fixed days in state %s -> %s', (state, expected) => {
     const fixed = { ...interval, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', fixedDays: true }
-    expect(canDrag(occurrenceTask(occurrence({ state: 'upcoming' }), fixed)!)).toBe(false)
-    expect(canDrag(occurrenceTask(occurrence({ state: 'current' }), fixed)!)).toBe(true)
+    expect(canDrag(occurrenceTask(occurrence({ state }), fixed)!)).toBe(expected)
   })
 
-  it('keeps the upcoming occurrences in place while the current one is off the rule and moves alone', () => {
-    const offRule = { ...interval, moveWindow: { from: null, until: allDay('2026-09-27') } }
-    expect(canDrag(occurrenceTask(occurrence({ state: 'upcoming' }), offRule)!)).toBe(false)
-    expect(canDrag(occurrenceTask(occurrence({ state: 'current' }), offRule)!)).toBe(true)
+  it('is false for an upcoming occurrence of a series whose rule is unsupported', () => {
+    const unsupported = { ...interval, ruleUnsupported: true }
+    expect(canDrag(occurrenceTask(occurrence({ state: 'upcoming' }), unsupported)!)).toBe(false)
   })
 
   it('stays true for a plain, done task (unlike an occurrence)', () => {
@@ -375,319 +372,5 @@ describe('shiftedTask', () => {
       startsAt: new Date(2026, 8, 26, 23, 45),
       endsAt: new Date(2026, 8, 27),
     })
-  })
-})
-
-describe('moveWindow', () => {
-  it("returns the server's instants for a timed series", () => {
-    // A series in UTC−5: its days start at 05:00 UTC, 07:00 in Berlin (CEST).
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: '2026-10-05T13:00:00Z',
-      moveWindow: { from: '2026-10-05T05:00:00Z', until: '2026-10-08T05:00:00Z' },
-    })
-    expect(moveWindow(t)).toEqual({ from: new Date('2026-10-05T05:00:00Z'), until: new Date('2026-10-08T05:00:00Z') })
-  })
-
-  it('reads the dates of an all-day window as local days, like the dates themselves', () => {
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      moveWindow: { from: allDay('2026-10-05'), until: allDay('2026-10-08') },
-    })
-    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) })
-  })
-
-  it('keeps an all-day window on local midnights across the DST change', () => {
-    // Sat 24 Oct, next Tue 27 Oct; the clocks go back on the 25th.
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      start: allDay('2026-10-24'),
-      startAllDay: true,
-      moveWindow: { from: allDay('2026-10-24'), until: allDay('2026-10-27') },
-    })
-    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 24), until: new Date(2026, 9, 27) })
-    expect(lastAllowedDay(moveWindow(t)!)).toEqual(new Date(2026, 9, 26))
-  })
-
-  it('has a lower bound only for the last repeat', () => {
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      moveWindow: { from: allDay('2026-10-05'), until: null },
-    })
-    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: null })
-  })
-
-  it('is null without a window from the server, whatever the series', () => {
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      next: { start: null, due: allDay('2026-10-08') },
-    })
-    expect(moveWindow(t)).toBeNull()
-    expect(moveWindow({ ...t, moveWindow: null })).toBeNull()
-  })
-
-  it("follows the server's rule days, not the date another client moved the occurrence to", () => {
-    // Another client moved Monday's repeat to Tuesday: the window still starts on the rule's Monday, before the
-    // task's own start. The series is in UTC, so its days start at 01:00 in Berlin (CET in March).
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      start: '2025-03-11T09:00:00Z',
-      next: { start: '2025-03-13T09:00:00Z', startAllDay: false, due: null, dueAllDay: false },
-      moveWindow: { from: '2025-03-10T00:00:00Z', until: '2025-03-13T00:00:00Z' },
-    })
-    const w = moveWindow(t)!
-    expect(w).toEqual({ from: new Date('2025-03-10T00:00:00Z'), until: new Date('2025-03-13T00:00:00Z') })
-    expect(outsideWindow(w, new Date(2025, 2, 9))).toBe(true)
-    expect(outsideWindow(w, new Date(2025, 2, 10))).toBe(false)
-    const startAt = (iso: string) => ({ start: iso, startAllDay: false, due: null, dueAllDay: false })
-    expect(withinWindow(t, startAt('2025-03-10T09:00:00Z'))).toBe(true) // back onto its own Monday
-    expect(withinWindow(t, startAt('2025-03-09T23:30:00Z'))).toBe(false) // Monday 00:30 in Berlin, before the series' day
-    expect(windowEdge(w, new Date('2025-03-09T23:30:00Z'))).toEqual({ edge: 'from', date: w.from })
-  })
-
-  it('has no lower bound for a repeat off the rule', () => {
-    // Shown on 10 March, before the weekly rule's next instance on Sunday the 16th: it may move earlier at will.
-    const t = todo({
-      recurring: true,
-      start: '2025-03-10T15:00:00Z',
-      next: { start: '2025-03-16T09:00:00Z', startAllDay: false, due: null, dueAllDay: false },
-      moveWindow: { from: null, until: '2025-03-16T00:00:00Z' },
-    })
-    const w = moveWindow(t)!
-    expect(w).toEqual({ from: null, until: new Date('2025-03-16T00:00:00Z') })
-    expect(outsideWindow(w, new Date(2025, 2, 1))).toBe(false)
-    expect(outsideWindow(w, new Date(2025, 2, 16))).toBe(false) // covered until 01:00 local
-    expect(outsideWindow(w, new Date(2025, 2, 17))).toBe(true)
-    const startAt = (iso: string) => ({ start: iso, startAllDay: false, due: null, dueAllDay: false })
-    expect(withinWindow(t, startAt('2025-03-01T15:00:00Z'))).toBe(true)
-    expect(withinWindow(t, startAt('2025-03-16T08:00:00Z'))).toBe(false)
-    expect(windowEdge(w, new Date('2025-03-01T15:00:00Z'))).toBeNull()
-    expect(windowEdge(w, new Date('2025-03-16T08:00:00Z'))).toEqual({ edge: 'until', date: new Date(2025, 2, 16) })
-  })
-
-  it('ends where the server says, not at the day of the next occurrence (A-15)', () => {
-    // Twice a day, 09:00 and 17:00 local: the window ends at the next one, on the same day.
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: '2026-10-05T07:00:00Z',
-      next: { start: null, due: '2026-10-05T15:00:00Z' },
-      moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-05T15:00:00Z' },
-    })
-    expect(moveWindow(t)).toEqual({ from: new Date(2026, 9, 5), until: new Date(2026, 9, 5, 17) })
-    expect(withinWindow(t, { start: null, startAllDay: false, due: '2026-10-05T12:00:00Z', dueAllDay: false })).toBe(true)
-    expect(withinWindow(t, { start: null, startAllDay: false, due: '2026-10-05T15:00:00Z', dueAllDay: false })).toBe(false)
-  })
-})
-
-describe('a window in another zone than the browser (A-14)', () => {
-  // A series in UTC−5: its days start at 05:00 UTC, 06:00 in Berlin (CET in March).
-  const t = todo({
-    recurring: true,
-    fixedDays: true,
-    due: '2025-03-10T14:00:00Z',
-    moveWindow: { from: '2025-03-10T05:00:00Z', until: '2025-03-13T05:00:00Z' },
-  })
-  const w = moveWindow(t)!
-  const dueAt = (iso: string) => ({ start: null, startAllDay: false, due: iso, dueAllDay: false })
-
-  it('a partly covered local day stays selectable', () => {
-    expect(outsideWindow(w, new Date(2025, 2, 9))).toBe(true)
-    expect(outsideWindow(w, new Date(2025, 2, 10))).toBe(false)
-    expect(outsideWindow(w, new Date(2025, 2, 13))).toBe(false)
-    expect(outsideWindow(w, new Date(2025, 2, 14))).toBe(true)
-    expect(lastAllowedDay(w)).toEqual(new Date(2025, 2, 13))
-  })
-
-  it('checks a time on such a day exactly', () => {
-    expect(withinWindow(t, dueAt('2025-03-10T04:00:00Z'))).toBe(false) // 05:00 local
-    expect(withinWindow(t, dueAt('2025-03-10T06:00:00Z'))).toBe(true) // 07:00 local
-    expect(withinWindow(t, dueAt('2025-03-13T04:30:00Z'))).toBe(true) // 05:30 local
-    expect(withinWindow(t, dueAt('2025-03-13T05:00:00Z'))).toBe(false) // 06:00 local
-  })
-})
-
-describe('withinWindow', () => {
-  const t = todo({
-    recurring: true,
-    fixedDays: true,
-    due: allDay('2026-10-05'),
-    dueAllDay: true,
-    moveWindow: { from: allDay('2026-10-05'), until: allDay('2026-10-08') },
-  })
-
-  it('accepts a due date inside the window', () => {
-    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-07'), dueAllDay: true })).toBe(
-      true,
-    )
-  })
-
-  it('rejects the day the next occurrence is due', () => {
-    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-08'), dueAllDay: true })).toBe(
-      false,
-    )
-  })
-
-  it('rejects a day before the current occurrence', () => {
-    expect(withinWindow(t, { start: null, startAllDay: false, due: allDay('2026-10-04'), dueAllDay: true })).toBe(
-      false,
-    )
-  })
-
-  it('is judged by its start when both start and due are given', () => {
-    expect(
-      withinWindow(t, { start: allDay('2026-10-04'), startAllDay: true, due: allDay('2026-10-07'), dueAllDay: true }),
-    ).toBe(false)
-  })
-
-  it('is true without a window', () => {
-    expect(
-      withinWindow(todo(), { start: null, startAllDay: false, due: allDay('2026-10-20'), dueAllDay: true }),
-    ).toBe(true)
-  })
-
-  it('rejects an input without dates when a window exists', () => {
-    expect(withinWindow(t, { start: null, startAllDay: false, due: null, dueAllDay: false })).toBe(false)
-  })
-
-  describe('for a timed series', () => {
-    // Mon 09:00 local, next Thu 09:00 local, in the browser's zone.
-    const timed = todo({
-      recurring: true,
-      fixedDays: true,
-      due: '2026-10-05T07:00:00Z',
-      moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
-    })
-    const dueAt = (iso: string) => ({ start: null, startAllDay: false, due: iso, dueAllDay: false })
-
-    it('rejects an earlier time on the day the next occurrence is due', () => {
-      expect(withinWindow(timed, dueAt('2026-10-08T05:00:00Z'))).toBe(false)
-    })
-
-    it('accepts any time on the last allowed day', () => {
-      expect(withinWindow(timed, dueAt('2026-10-07T21:30:00Z'))).toBe(true)
-    })
-
-    it('accepts an earlier time on the day of the current occurrence', () => {
-      expect(withinWindow(timed, dueAt('2026-10-05T04:00:00Z'))).toBe(true)
-    })
-
-    it('ends at local midnight across the DST change', () => {
-      // Sat 24 Oct 09:00 CEST, next Tue 27 Oct 09:00 CET; the clocks go back on the 25th.
-      const dst = todo({
-        recurring: true,
-        fixedDays: true,
-        due: '2026-10-24T07:00:00Z',
-        moveWindow: { from: '2026-10-23T22:00:00Z', until: '2026-10-26T23:00:00Z' },
-      })
-      expect(withinWindow(dst, dueAt('2026-10-26T22:30:00Z'))).toBe(true) // Mon 23:30 CET
-      expect(withinWindow(dst, dueAt('2026-10-26T23:00:00Z'))).toBe(false) // Tue 00:00 CET
-    })
-  })
-
-  describe('for the last repeat of a fixed-day series', () => {
-    const last = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      moveWindow: { from: allDay('2026-10-05'), until: null },
-    })
-    const dueOn = (day: string) => ({ start: null, startAllDay: false, due: allDay(day), dueAllDay: true })
-
-    it('accepts a later day', () => {
-      expect(withinWindow(last, dueOn('2026-12-25'))).toBe(true)
-    })
-
-    it('accepts its own day', () => {
-      expect(withinWindow(last, dueOn('2026-10-05'))).toBe(true)
-    })
-
-    it('refuses an earlier day', () => {
-      expect(withinWindow(last, dueOn('2026-10-04'))).toBe(false)
-    })
-  })
-})
-
-describe('lastAllowedDay', () => {
-  it('is the day before the window ends', () => {
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      moveWindow: { from: allDay('2026-10-05'), until: allDay('2026-10-08') },
-    })
-    expect(lastAllowedDay(moveWindow(t)!)).toEqual(new Date(2026, 9, 7))
-  })
-
-  it('is null without an upper bound', () => {
-    const t = todo({
-      recurring: true,
-      fixedDays: true,
-      due: allDay('2026-10-05'),
-      dueAllDay: true,
-      moveWindow: { from: allDay('2026-10-05'), until: null },
-    })
-    expect(lastAllowedDay(moveWindow(t)!)).toBeNull()
-  })
-})
-
-describe('outsideWindow', () => {
-  it('is true only before from, when the window has no upper bound', () => {
-    const w = { from: new Date(2026, 9, 5), until: null }
-    expect(outsideWindow(w, new Date(2026, 9, 4))).toBe(true)
-    expect(outsideWindow(w, new Date(2026, 9, 5))).toBe(false)
-    expect(outsideWindow(w, new Date(2026, 9, 25))).toBe(false)
-  })
-
-  it('is true before from, or from until on, for a bounded window', () => {
-    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
-    expect(outsideWindow(w, new Date(2026, 9, 4))).toBe(true)
-    expect(outsideWindow(w, new Date(2026, 9, 5))).toBe(false)
-    expect(outsideWindow(w, new Date(2026, 9, 7))).toBe(false)
-    expect(outsideWindow(w, new Date(2026, 9, 8))).toBe(true)
-  })
-})
-
-describe('windowEdge', () => {
-  it('names from for an anchor before the window, for a bounded window', () => {
-    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
-    expect(windowEdge(w, new Date(2026, 9, 4))).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
-  })
-
-  it('names until for an anchor at or past the end, for a bounded window', () => {
-    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
-    expect(windowEdge(w, new Date(2026, 9, 8))).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
-    expect(windowEdge(w, new Date(2026, 9, 7, 23, 59))).toBeNull()
-  })
-
-  it('is null for an anchor inside a bounded window', () => {
-    const w = { from: new Date(2026, 9, 5), until: new Date(2026, 9, 8) }
-    expect(windowEdge(w, new Date(2026, 9, 5))).toBeNull()
-    expect(windowEdge(w, new Date(2026, 9, 6))).toBeNull()
-  })
-
-  it('names from for an anchor before the window, without an upper bound', () => {
-    const w = { from: new Date(2026, 9, 5), until: null }
-    expect(windowEdge(w, new Date(2026, 9, 4))).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
-  })
-
-  it('is null for any anchor on or after from, without an upper bound', () => {
-    const w = { from: new Date(2026, 9, 5), until: null }
-    expect(windowEdge(w, new Date(2026, 9, 5))).toBeNull()
-    expect(windowEdge(w, new Date(2026, 11, 25))).toBeNull()
   })
 })

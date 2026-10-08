@@ -1,4 +1,3 @@
-import { addDays, differenceInCalendarDays } from 'date-fns'
 import { CalendarIcon, ClockIcon, XIcon } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -9,7 +8,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
-import { lastAllowedDay, moveWindow, withinWindow } from '@/lib/calendarTasks'
 import { dayKey, parseDayKey } from '@/lib/dates'
 import { formatPickerDate } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
@@ -37,24 +35,13 @@ export function DuePicker({
   const tz = useMemo(() => browserTimeZone(), [])
   const timeId = useId()
   const [open, setOpen] = useState(false)
-  const { startDate, dueDate, dueTime } = taskToForm(todo, tz)
+  const { dueDate, dueTime } = taskToForm(todo, tz)
   const shortcuts = dueShortcuts(now)
   const picks = [
     { label: t('tasks.today'), day: shortcuts.today },
     { label: t('tasks.tomorrow'), day: shortcuts.tomorrow },
     { label: t('tasks.nextWeek'), day: shortcuts.nextWeek },
   ]
-  // A fixed-day series (FR-17) can't move past its next occurrence: block the days and
-  // shortcuts past the window, and say so below the month.
-  const w = moveWindow(todo)
-  const dayDisabled = (day: Date) => !withinWindow(todo, withDue(todo, { date: dayKey(day), time: dueTime }, tz))
-  // The window bounds the anchor: the due date itself, or a start that moves along with it, so the
-  // last due day lies as far past the window's last day as the due date lies past the start. A start
-  // that stays put, next to a due date still to be added, leaves every day open. The last repeat has
-  // no last day to show (FR-17): its window only blocks earlier days, silently.
-  const last = w ? lastAllowedDay(w) : null
-  const shift = !startDate ? 0 : dueDate ? differenceInCalendarDays(parseDayKey(dueDate), parseDayKey(startDate)) : null
-  const lastDue = last && shift !== null ? addDays(last, shift) : null
 
   const pickDay = (day: Date) => {
     const input = withDue(todo, { date: dayKey(day), time: dueTime }, tz)
@@ -85,7 +72,6 @@ export function DuePicker({
               variant="ghost"
               size="sm"
               className="justify-between font-normal"
-              disabled={dayDisabled(p.day)}
               onClick={() => {
                 pickDay(p.day)
               }}
@@ -103,14 +89,6 @@ export function DuePicker({
             prefs={prefs}
             emphasis="selected"
             onSelect={pickDay}
-            isDisabled={dayDisabled}
-            footer={
-              lastDue && (
-                <p className="px-2 pt-2 text-xs text-muted-foreground">
-                  {t('tasks.moveLimit', { date: formatPickerDate(lastDue, prefs, now) })}
-                </p>
-              )
-            }
           />
         </div>
         {dueDate && (

@@ -4,7 +4,6 @@ import { occurrenceTask, toCalTask } from './calendarTasks'
 import {
   acceptsDrop,
   createRange,
-  dropBlocked,
   dropResult,
   PX_PER_MINUTE,
   withDrop,
@@ -99,8 +98,8 @@ describe('dropResult', () => {
   })
 })
 
-describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
-  // Fixed-day series due 10-05, next occurrence due 10-08: window [10-05, 10-08).
+describe('dropResult for a series on fixed days (FR-17)', () => {
+  // Due 10-05, next occurrence due 10-08: no day is out of reach, because a move shifts the whole series.
   const fixedTask = toCalTask(
     todo({
       id: 't2',
@@ -109,117 +108,25 @@ describe('dropResult and dropBlocked for a bounded series (FR-17)', () => {
       recurring: true,
       fixedDays: true,
       next: { due: '2026-10-08T00:00:00Z' },
-      moveWindow: { from: '2026-10-05T00:00:00Z', until: '2026-10-08T00:00:00Z' },
     }),
   )!
   const drag = { type: 'event' as const, event: fixedTask, originDay: new Date(2026, 9, 5) }
   const drop = (d: number) => ({ type: 'day' as const, day: new Date(2026, 9, d) })
 
-  it('allows a move that still lands before the next occurrence', () => {
-    expect(dropResult(drag, drop(7), 0)).not.toBeNull()
+  it.each([
+    [4, '2026-10-04T00:00:00.000Z'],
+    [7, '2026-10-07T00:00:00.000Z'],
+    [8, '2026-10-08T00:00:00.000Z'],
+    [25, '2026-10-25T00:00:00.000Z'],
+  ])('moves it to day %i, before or past its next occurrence', (d, due) => {
+    expect(dropResult(drag, drop(d), 0)).toMatchObject({ kind: 'task', input: { due } })
   })
 
-  it('blocks a move that reaches the next occurrence, naming the last allowed day', () => {
-    expect(dropResult(drag, drop(8), 0)).toBeNull()
-    expect(dropBlocked(drag, drop(8), 0)).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
-  })
-
-  it('blocks a move before the window, naming the first allowed day', () => {
-    expect(dropResult(drag, drop(4), 0)).toBeNull()
-    expect(dropBlocked(drag, drop(4), 0)).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
-  })
-
-  // The same shape with a time: Mon 09:00 local, next Thu 09:00 local.
-  const fixedTimed = toCalTask(
-    todo({
-      id: 't4',
-      due: '2026-10-05T07:00:00Z',
-      recurring: true,
-      fixedDays: true,
-      next: { due: '2026-10-08T07:00:00Z' },
-      moveWindow: { from: '2026-10-04T22:00:00Z', until: '2026-10-07T22:00:00Z' },
-    }),
-  )!
-  const timedDrag = { type: 'timed' as const, event: fixedTimed, originDay: new Date(2026, 9, 5) }
-  const column = (d: number) => ({ type: 'column' as const, day: new Date(2026, 9, d) })
-
-  it('blocks a week-view drop at an earlier time on the day the next occurrence is due', () => {
-    expect(dropResult(timedDrag, column(8), -60 * PX_PER_MINUTE)).toBeNull()
-    expect(dropBlocked(timedDrag, column(8), -60 * PX_PER_MINUTE)).toEqual({ edge: 'until', date: new Date(2026, 9, 7) })
-  })
-
-  it('allows a week-view drop at any time on the last allowed day', () => {
-    expect(dropResult(timedDrag, column(7), 13 * 60 * PX_PER_MINUTE)).toMatchObject({
-      kind: 'task',
-      input: { due: '2026-10-07T20:00:00.000Z' },
-    })
-  })
-
-  it('refuses a drop the server would refuse, for a series in another zone (A-14)', () => {
-    // A series in UTC−5, due at 15:00 in Berlin: its days start at 07:00 in Berlin.
-    const zoned = toCalTask(
-      todo({
-        id: 't6',
-        due: '2026-10-05T13:00:00Z',
-        recurring: true,
-        fixedDays: true,
-        next: { due: '2026-10-08T13:00:00Z' },
-        moveWindow: { from: '2026-10-05T05:00:00Z', until: '2026-10-08T05:00:00Z' },
-      }),
-    )!
-    const zonedDrag = { type: 'timed' as const, event: zoned, originDay: new Date(2026, 9, 5) }
-    // 06:00 local on its own day lies before the series' day begins; 07:00 is where it begins.
-    expect(dropResult(zonedDrag, column(5), -9 * 60 * PX_PER_MINUTE)).toBeNull()
-    expect(dropBlocked(zonedDrag, column(5), -9 * 60 * PX_PER_MINUTE)).toEqual({
-      edge: 'from',
-      date: new Date('2026-10-05T05:00:00Z'),
-    })
-    expect(dropResult(zonedDrag, column(5), -8 * 60 * PX_PER_MINUTE)).not.toBeNull()
-    // On the next repeat's local day, the series' day only begins at 07:00.
-    expect(dropResult(zonedDrag, column(8), -8.5 * 60 * PX_PER_MINUTE)).not.toBeNull()
-    expect(dropResult(zonedDrag, column(8), -8 * 60 * PX_PER_MINUTE)).toBeNull()
-    expect(dropBlocked(zonedDrag, column(8), -8 * 60 * PX_PER_MINUTE)).toEqual({ edge: 'until', date: new Date(2026, 9, 8) })
-  })
-
-  it('lets a non-fixed-day series move past where a fixed one would be blocked', () => {
-    const intervalTask = toCalTask(
-      todo({
-        id: 't3',
-        due: '2026-10-05T00:00:00Z',
-        dueAllDay: true,
-        recurring: true,
-        fixedDays: false,
-        next: { due: '2026-10-08T00:00:00Z' },
-        moveWindow: null,
-      }),
-    )!
-    const free = { type: 'event' as const, event: intervalTask, originDay: new Date(2026, 9, 5) }
-    expect(dropResult(free, drop(15), 0)).not.toBeNull()
-  })
-
-  describe('the last repeat of a fixed-day series', () => {
-    const lastTask = toCalTask(
-      todo({
-        id: 't5',
-        due: '2026-10-05T00:00:00Z',
-        dueAllDay: true,
-        recurring: true,
-        fixedDays: true,
-        next: null,
-        moveWindow: { from: '2026-10-05T00:00:00Z', until: null },
-      }),
-    )!
-    const lastDrag = { type: 'event' as const, event: lastTask, originDay: new Date(2026, 9, 5) }
-
-    it('blocks a move to an earlier day, naming the first allowed day', () => {
-      expect(dropResult(lastDrag, drop(4), 0)).toBeNull()
-      expect(dropBlocked(lastDrag, drop(4), 0)).toEqual({ edge: 'from', date: new Date(2026, 9, 5) })
-    })
-
-    it('allows a move to a later day, with nothing blocked', () => {
-      expect(dropResult(lastDrag, drop(25), 0)).not.toBeNull()
-      expect(dropBlocked(lastDrag, drop(25), 0)).toBeNull()
-    })
+  it('moves the last repeat, which has no next occurrence, to any day', () => {
+    const last = toCalTask({ ...fixedTask.todo, next: null })!
+    const lastDrag = { type: 'event' as const, event: last, originDay: new Date(2026, 9, 5) }
+    expect(dropResult(lastDrag, drop(4), 0)).not.toBeNull()
+    expect(dropResult(lastDrag, drop(25), 0)).not.toBeNull()
   })
 })
 

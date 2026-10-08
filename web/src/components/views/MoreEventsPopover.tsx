@@ -142,7 +142,6 @@ export function MoreEventsPopover({
         <button
           ref={triggerRef}
           type="button"
-          data-more=""
           onClick={(e) => {
             e.stopPropagation()
           }}
