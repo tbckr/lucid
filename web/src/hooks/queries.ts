@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
+import { useIsDark } from '@/hooks/useTheme'
 import { isApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList, type TodoOccurrenceList } from '@/lib/api/endpoints'
 import {
@@ -30,12 +31,20 @@ import {
   type TodoOccurrence,
   type UpdatedTodo,
 } from '@/lib/api/schemas'
-import { anchorOf, occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { anchorOf, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
+import { eventColors, FALLBACK_COLOR } from '@/lib/color'
 import { apiErrorMessage } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
-import { followingStart, glyphSlots, type GlyphSlot, type Scope } from '@/lib/scope'
+import {
+  followingStart,
+  glyphSlots,
+  taskFollowingStart,
+  taskGlyphSlots,
+  type GlyphSlot,
+  type Scope,
+} from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
 
@@ -382,12 +391,14 @@ function splitsOf(qc: QueryClient): Map<string, SplitOf> {
 }
 
 /**
- * Notes that the write `generation` of the series of `event` split it, as the
- * answer's event is in a new series (FR-17), so a write of the new series
- * takes the split's Undo away (`startSeriesWrite`).
+ * Notes that the write `generation` of the series `seriesId`, an event's or a
+ * task's, split it, as its answer is of the new series `newId` (FR-17), so a
+ * write of the new series takes the split's Undo away (`startSeriesWrite`).
+ * An answer of the same series is no split: the server changed the whole
+ * series, at what is its first event or current repeat by now.
  */
-function noteSplit(qc: QueryClient, event: CalEvent, answer: Following, generation: number): void {
-  if (answer.event.id !== event.id) splitsOf(qc).set(answer.event.id, { series: event.id, generation })
+function noteSplit(qc: QueryClient, seriesId: string, newId: string, generation: number): void {
+  if (newId !== seriesId) splitsOf(qc).set(newId, { series: seriesId, generation })
 }
 
 /**
@@ -987,7 +998,7 @@ export function useMoveFollowing(series?: string) {
     mutationFn: ({ event, start, end }: MoveVars) => writeFollowing(qc, event, moveInput(event, start, end)),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (answer, { event, change }, ctx) => {
-      noteSplit(qc, event, answer, ctx.generation)
+      noteSplit(qc, event.id, answer.event.id, ctx.generation)
       const reach = splitReach(event, answer)
       const date = followingDay(event, prefs)
       eventToast(
@@ -1025,7 +1036,7 @@ export function useUpdateFollowing(series?: string) {
     mutationFn: ({ event, input }: { event: CalEvent; input: EventInput }) => writeFollowing(qc, event, input),
     onMutate: ({ event }) => ({ generation: startSeriesWrite(qc, event.id) }),
     onSuccess: (answer, { event, input }, ctx) => {
-      noteSplit(qc, event, answer, ctx.generation)
+      noteSplit(qc, event.id, answer.event.id, ctx.generation)
       const reach = splitReach(event, answer)
       const removed = removesRule(event, input)
       const date = followingDay(event, prefs)
@@ -1110,14 +1121,18 @@ export function useCreateTodo() {
 }
 
 /**
- * Puts a task as the API answered an update into its list in the cache. A
- * completed series brings the copy of the occurrence it completed (FR-17).
+ * Puts a task as the API answered a write into its list in the cache. A
+ * completed series brings the copy of the occurrence it completed, a detach
+ * the task it made of the current repeat (FR-17).
  */
-function putTodo(qc: QueryClient, calendarId: string, { completedCopy, ...todo }: UpdatedTodo): void {
+function putTodo(qc: QueryClient, calendarId: string, { completedCopy, detachedCopy, ...todo }: UpdatedTodo): void {
+  const copies = [completedCopy, detachedCopy].filter((c) => c != null)
   qc.setQueryData<TodoList>(queryKeys.todos(calendarId), (old) => {
     if (!old) return old
-    const todos = old.todos.filter((x) => x.id !== completedCopy?.id).map((x) => (x.id === todo.id ? todo : x))
-    return { ...old, todos: completedCopy ? [...todos, completedCopy] : todos }
+    const todos = old.todos
+      .filter((x) => !copies.some((c) => c.id === x.id))
+      .map((x) => (x.id === todo.id ? todo : x))
+    return { ...old, todos: [...todos, ...copies] }
   })
 }
 
@@ -1128,6 +1143,38 @@ function removeTodo(qc: QueryClient, todo: Todo): void {
   )
 }
 
+/**
+ * The mutation scope of the task `id` (FR-17, NFR-26): the repeats of a
+ * series share one resource and so one ETag, so its writes run one after
+ * another, each with the ETag the one before got (`currentEtag`), and so do
+ * the title field, the check and the due date of one task in the list.
+ * Without an `id`, a write runs at once.
+ */
+function todoScope(id: string | undefined) {
+  return id ? { scope: { id: `todo:${id}` } } : {}
+}
+
+/**
+ * The color of a task's calendar for its toast (FR-17), the solid one
+ * `useCalendarColors` gives, read from the calendars as the cache holds them
+ * when the toast shows: a task is written from a view that loaded them. It
+ * observes nothing, so the many task rows that hold a task hook don't each
+ * observe, or load, the calendars.
+ */
+function useTodoColor(): (calendarId: string) => string {
+  const qc = useQueryClient()
+  const dark = useIsDark()
+  return (calendarId) => {
+    const color = qc.getQueryData<Calendar[]>(queryKeys.calendars)?.find((c) => c.id === calendarId)?.color
+    return eventColors(color ?? FALLBACK_COLOR, dark).solid
+  }
+}
+
+/** A day a task toast names; `now` only decides whether it needs its year. */
+function toastDay(at: Date | null, prefs: FormatPrefs): string {
+  return at ? formatPickerDate(at, prefs, new Date()) : ''
+}
+
 export const UPDATE_TODO_KEY = ['updateTodo'] as const
 
 interface UpdateTodoVars {
@@ -1135,29 +1182,45 @@ interface UpdateTodoVars {
   input: TodoInput
   /** Set by a drag of an upcoming occurrence, which moves the series as a whole (FR-17). */
   byUpcoming?: boolean
+  /**
+   * The repeats "all repeats" reaches from the repeat it was chosen at
+   * (`taskGlyphSlots`), drawn in the toast; left out for a task that asks
+   * nothing, a single one or the last repeat, whose toast has no icon.
+   */
+  look?: { slots: GlyphSlot[] }
+}
+
+/**
+ * Whether a change of the series `todo` asks which repeats it reaches (FR-17):
+ * an open series Lucid can read, before its last repeat. Any other task acts
+ * as a single one (`scopeOptions`).
+ */
+function asksScope(todo: Todo): boolean {
+  return placedByOccurrences(todo) && todo.next != null
 }
 
 /**
  * What the toast after an update of a series says, or null for an update that
- * neither completes nor moves one (FR-17): the day the series goes on with,
+ * says nothing (FR-17): the day the series goes on with after a completion,
  * and after a move also the one after it. A move by an upcoming occurrence
  * says that the series moved, since the day it goes on with isn't the one
- * dragged.
+ * dragged. A change of other fields alone says that it reached all repeats,
+ * where the user chose them; a task that asked nothing says nothing.
  */
 function seriesMessage(
   { todo, input, byUpcoming }: UpdateTodoVars,
   updated: UpdatedTodo,
   t: TFn,
   prefs: FormatPrefs,
-  now: Date,
 ): string | null {
-  const day = (d: Date) => formatPickerDate(d, prefs, now)
+  const day = (d: Date | null) => toastDay(d, prefs)
   if (isSeriesCompletion(todo, input)) {
     const next = updated.completedCopy ? anchorOf(updated) : null
     return next ? t('tasks.nextUp', { date: day(next) }) : t('tasks.lastRepeat')
   }
   // A new or removed rule starts the series over from its dates: undo could not bring the old rule back.
-  if (!todo.recurring || !datesChanged(todo, input) || ruleChanged(todo, input)) return null
+  if (!todo.recurring || ruleChanged(todo, input)) return null
+  if (!datesChanged(todo, input)) return asksScope(todo) ? t('scope.toast.allRepeatsChanged') : null
   const moved = anchorOf(input)
   if (!moved) return null
   if (byUpcoming) return t('tasks.seriesMoved', { date: day(moved) })
@@ -1175,32 +1238,52 @@ function seriesMessage(
 }
 
 /**
- * Takes back a series change using the server's undo token (FR-17): an exact
- * restore of the snapshot the change had read, rather than a reconstruction.
- * Run through a `MutationObserver` sharing `UPDATE_TODO_KEY` and the task's
- * scope, so `usePendingSeries` marks the series busy and a later drag waits,
- * just like the change it undoes. `after` is the update's answer that
- * carried the token; its copy, if any, leaves the cache unless the server
- * kept it (`copyKept`, changed by another app in the meantime).
+ * What an undo says when the server kept the task the change had created, as
+ * another app changed it while the undo ran (FR-17): the task a detach made
+ * of the current repeat, the new series of a split, or a completed copy.
  */
-async function undoSeriesChange(qc: QueryClient, t: TFn, after: UpdatedTodo): Promise<void> {
-  const token = after.undoToken
-  if (!token) return
-  const key = queryKeys.todos(after.calendarId)
+function copyKeptMessage(t: TFn, copy: Todo | null | undefined): string {
+  if (copy?.detachedFrom) return t('tasks.undoneDetachedKept')
+  if (copy && !isDone(copy)) return t('scope.undoneSeriesKept')
+  return t('tasks.undoneCopyKept')
+}
+
+/**
+ * Takes back a change of the task series `series` using the server's undo
+ * token (FR-17): an exact restore of the snapshot the change had read, rather
+ * than a reconstruction. Run through a `MutationObserver` sharing
+ * `UPDATE_TODO_KEY` and the series' scope, so `usePendingSeries` marks the
+ * series busy, and the undo waits for the writes ahead of it and holds back
+ * the ones after it (NFR-26). `after` is the change's answer: the series' ETag
+ * it gave, the token, and the task the change created, which the undo takes
+ * back too: the completed copy, the task a detach made, or the new series of
+ * a split, whose undo goes to the old series. The restore's own ETag is noted
+ * within the mutation, so the write queued behind it already uses it. What the
+ * change created leaves the cache, unless the server kept it (`copyKept`).
+ */
+async function undoTodoChange(
+  qc: QueryClient,
+  t: TFn,
+  series: Todo,
+  after: { etag: string; undoToken: string; copy?: Todo | null },
+): Promise<void> {
+  const key = queryKeys.todos(series.calendarId)
   const observer = new MutationObserver<RestoredTodo, unknown, { todo: Todo }>(qc, {
     mutationKey: UPDATE_TODO_KEY,
-    scope: { id: `todo:${after.id}` },
-    mutationFn: ({ todo }) => endpoints.undoTodo(todo.id, token),
+    ...todoScope(series.id),
+    mutationFn: async ({ todo }) => {
+      const restored = await endpoints.undoTodo(todo.id, after.undoToken)
+      if (restored.etag) replaceEtag(qc, todo.id, currentEtag(qc, { id: todo.id, etag: after.etag }), restored.etag)
+      return restored
+    },
   })
   try {
-    const restored = await observer.mutate({ todo: after })
-    const etag = currentEtag(qc, after)
-    replaceEtag(qc, after.id, etag, restored.etag)
-    putTodo(qc, after.calendarId, restored)
-    if (restored.copyKept) {
-      toast.warning(t('tasks.undoneCopyKept'))
+    const { copyKept, ...restored } = await observer.mutate({ todo: series })
+    putTodo(qc, series.calendarId, restored)
+    if (copyKept) {
+      toast.warning(copyKeptMessage(t, after.copy))
     } else {
-      if (after.completedCopy) removeTodo(qc, after.completedCopy)
+      if (after.copy) removeTodo(qc, after.copy)
       toast.success(t('scope.undone'))
     }
   } catch (err) {
@@ -1217,22 +1300,64 @@ async function undoSeriesChange(qc: QueryClient, t: TFn, after: UpdatedTodo): Pr
 }
 
 /**
+ * Says what a change of the task series `series` did, as `eventToast` says it
+ * for events, with an Undo while the answer carries a token (FR-17). `after`
+ * is this change's answer: the series' ETag it gave, its undo token, the
+ * `generation` of the write (`startSeriesWrite`), and the task the change
+ * created, which the Undo takes back (`undoTodoChange`). The token is dropped
+ * by `latestUndoToken` once a later write started. The ID is the series', so a
+ * later change replaces this toast and its Undo. Its icon shows the repeats
+ * the change reached, `look.slots` (`taskGlyphSlots` of the option chosen), in
+ * the series' calendar color, or in red (`look.tone`) for repeats deleted; a
+ * task that asked nothing gets no `look` and no icon.
+ */
+function todoToast(
+  qc: QueryClient,
+  t: TFn,
+  series: Todo,
+  message: string,
+  after: { etag: string; undoToken?: string | null; generation: number; copy?: Todo | null },
+  look?: { slots: GlyphSlot[]; color: string; tone?: 'default' | 'destructive' },
+): void {
+  const { etag, generation, copy } = after
+  const undoToken = latestUndoToken(qc, series.id, generation, after.undoToken)
+  toast.success(message, {
+    id: seriesToastId(series.id),
+    duration: ACTION_TOAST_MS,
+    // Always given, like the action: sonner merges a toast into the one of its ID, which would keep an earlier icon.
+    icon: look ? createElement(ScopeGlyph, { slots: look.slots, color: look.color, tone: look.tone }) : undefined,
+    // Sonner's icon box is 16px wide; the glyph is 44px.
+    classNames: look ? { icon: 'w-auto!' } : undefined,
+    action: undoToken
+      ? {
+          label: t('common.undo'),
+          onClick: () => {
+            void undoTodoChange(qc, t, series, { etag, undoToken, copy })
+          },
+        }
+      : undefined,
+  })
+}
+
+/**
  * Updates a task and shows the change at once (NFR-26). With the task's `id`,
- * its updates run one after another, so the title field, the check and the
- * due date of one row never conflict with each other.
+ * its updates run one after another (`todoScope`), so the title field, the
+ * check and the due date of one row never conflict with each other.
  *
  * Completing a series moves it on to its next occurrence instead (FR-17):
  * the list keeps it until the server answers with the moved series and the
- * completed copy. Completing or moving a series says where it goes on, with
- * an Undo, for every caller alike.
+ * completed copy. Completing, moving or otherwise changing a series that asks
+ * which repeats a change reaches says what happened, with an Undo, for every
+ * caller alike; "all repeats" chosen at a repeat draws its reach (`look`).
  */
 export function useUpdateTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
+  const colorOf = useTodoColor()
   const prefs = usePrefs()
   return useMutation({
     mutationKey: UPDATE_TODO_KEY,
-    ...(id ? { scope: { id: `todo:${id}` } } : {}),
+    ...todoScope(id),
     mutationFn: async ({ todo, input }: UpdateTodoVars) => {
       const etag = currentEtag(qc, todo)
       const updated = await endpoints.updateTodo(todo.id, etag, input)
@@ -1251,24 +1376,18 @@ export function useUpdateTodo(id?: string) {
       return { generation, snapshot }
     },
     onSuccess: (updated, vars, ctx) => {
-      const { todo } = vars
+      const { todo, look } = vars
       putTodo(qc, todo.calendarId, updated)
-      // `now` only decides whether the date needs its year.
-      const message = seriesMessage(vars, updated, t, prefs, new Date())
+      const message = seriesMessage(vars, updated, t, prefs)
       if (!message) return
-      toast.success(message, {
-        id: seriesToastId(todo.id),
-        duration: ACTION_TOAST_MS,
-        // Always given: sonner merges a toast into the one of its ID, which would keep the earlier Undo.
-        action: latestUndoToken(qc, todo.id, ctx.generation, updated.undoToken)
-          ? {
-              label: t('common.undo'),
-              onClick: () => {
-                void undoSeriesChange(qc, t, updated)
-              },
-            }
-          : undefined,
-      })
+      todoToast(
+        qc,
+        t,
+        todo,
+        message,
+        { etag: updated.etag, undoToken: updated.undoToken, generation: ctx.generation, copy: updated.completedCopy },
+        look && { slots: look.slots, color: colorOf(todo.calendarId) },
+      )
     },
     onError: (err, { todo }, ctx) => {
       if (ctx?.snapshot) qc.setQueryData(queryKeys.todos(todo.calendarId), ctx.snapshot)
@@ -1279,14 +1398,260 @@ export function useUpdateTodo(id?: string) {
 }
 
 /**
- * IDs of the recurring tasks with an update on its way (FR-17): their
- * occurrences only move once the server has answered and they are reloaded.
+ * A write to the open repeat `repeat` of the task series `todo` (FR-17),
+ * which names it by its RECURRENCE-ID: skipping it, or ending the series
+ * before it.
+ */
+export interface RepeatVars {
+  todo: Todo
+  repeat: TaskRepeat
+}
+
+/**
+ * A change of a repeat (FR-17): detaching it, or splitting the series at it,
+ * with `input`, the series' values with the user's edits and the repeat's new
+ * dates. `moved` says that the dates changed, which the toast tells.
+ */
+export interface RepeatChangeVars extends RepeatVars {
+  input: TodoInput
+  moved: boolean
+}
+
+/*
+ * The writes to a repeat, each under `UPDATE_TODO_KEY` with the series as
+ * `todo`, so `usePendingSeries` marks the series busy while one is on its way
+ * (FR-17, NFR-26). None is optimistic: the list shows the stored state, from
+ * the answer or the reload after it.
+ */
+export const DETACH_TODO_KEY = [...UPDATE_TODO_KEY, 'detach'] as const
+export const SKIP_TODO_KEY = [...UPDATE_TODO_KEY, 'skip'] as const
+export const TODO_FOLLOWING_KEY = [...UPDATE_TODO_KEY, 'following'] as const
+export const END_TODO_KEY = [...UPDATE_TODO_KEY, 'end'] as const
+
+/**
+ * Makes the current repeat of a task series a task of its own, changed by
+ * `input` ("Only this repeat", FR-17); the series goes on at its next repeat.
+ * The rule belongs to the series, so `rrule` stays out of the body. The
+ * answer is the rolled series with the detached task, both put into the list
+ * at once; its new ETag is noted within the mutation, so a write queued
+ * behind it in the series' scope already uses it (NFR-26). The toast says
+ * where the series goes on, its current repeat now, and its Undo takes the
+ * detached task back. With the `id` of the series, after its other writes.
+ */
+export function useDetachTodo(id?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorOf = useTodoColor()
+  const prefs = usePrefs()
+  return useMutation({
+    mutationKey: DETACH_TODO_KEY,
+    ...todoScope(id),
+    mutationFn: async ({ todo, repeat, input }: RepeatChangeVars) => {
+      const { rrule: _rrule, ...body } = input
+      const etag = currentEtag(qc, todo)
+      const answer = await endpoints.detachTodo(todo.id, etag, repeat.recurrenceId, body)
+      if (answer.etag) replaceEtag(qc, todo.id, etag, answer.etag)
+      return answer
+    },
+    onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
+    onSuccess: (answer, { todo, repeat, input, moved }, ctx) => {
+      putTodo(qc, todo.calendarId, answer)
+      const after = {
+        etag: answer.etag,
+        undoToken: answer.undoToken,
+        generation: ctx.generation,
+        copy: answer.detachedCopy,
+      }
+      if (!answer.detachedCopy) {
+        // The series had no next repeat by now, so the server changed its last one as a single task, which asks
+        // nothing: said like such a change, and only where it moved.
+        if (moved) todoToast(qc, t, todo, t('tasks.movedToLast', { date: toastDay(anchorOf(input), prefs) }), after)
+        return
+      }
+      const next = toastDay(anchorOf(answer), prefs)
+      todoToast(
+        qc,
+        t,
+        todo,
+        moved
+          ? t('scope.toast.detachedMoved', { date: toastDay(anchorOf(input), prefs), next })
+          : t('scope.toast.detachedChanged', { next }),
+        after,
+        { slots: taskGlyphSlots('this', repeat.at), color: colorOf(todo.calendarId) },
+      )
+    },
+    onError: (err, { todo }) => {
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+    },
+    onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+  })
+}
+
+/**
+ * Skips the current repeat of a task series ("Only this repeat" of a delete,
+ * FR-17): the series goes on at its next repeat. The answer is the rolled
+ * series, put into the list at once, with its ETag noted like a detach's
+ * (NFR-26). The toast says, in red, what is next up, with an Undo. With the
+ * `id` of the series, after its other writes.
+ */
+export function useSkipTodo(id?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorOf = useTodoColor()
+  const prefs = usePrefs()
+  return useMutation({
+    mutationKey: SKIP_TODO_KEY,
+    ...todoScope(id),
+    mutationFn: async ({ todo, repeat }: RepeatVars) => {
+      const etag = currentEtag(qc, todo)
+      const answer = await endpoints.skipTodo(todo.id, etag, repeat.recurrenceId)
+      if (answer.etag) replaceEtag(qc, todo.id, etag, answer.etag)
+      return answer
+    },
+    onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
+    onSuccess: (answer, { todo, repeat }, ctx) => {
+      putTodo(qc, todo.calendarId, answer)
+      todoToast(
+        qc,
+        t,
+        todo,
+        t('scope.toast.skipped', { next: toastDay(anchorOf(answer), prefs) }),
+        { etag: answer.etag, undoToken: answer.undoToken, generation: ctx.generation },
+        { slots: taskGlyphSlots('this', repeat.at), color: colorOf(todo.calendarId), tone: 'destructive' },
+      )
+    },
+    onError: (err, { todo }) => {
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+    },
+    onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+  })
+}
+
+/**
+ * Splits a task series at a later repeat ("This and following repeats",
+ * FR-17): the series ends before it, and one of its own goes on from it,
+ * changed by `input` with the repeat's new dates. Not optimistic: both series
+ * come with the reload. The old series' new ETag, when the server told one,
+ * is noted within the mutation (NFR-26), and the split is noted for the new
+ * series (`noteSplit`), whose first write takes the split's Undo away. The
+ * toast names the day the split starts from, as the question did, and its
+ * Undo goes to the old series and takes the new one back too. With the rule
+ * removed, the new series is the repeat alone, and the toast says, in red,
+ * that the series ends. Where the server found the repeat current, as in a
+ * view not reloaded since, it changed the whole series instead, which the
+ * toast says. With the `id` of the series, after its other writes.
+ */
+export function useTodoFollowing(id?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorOf = useTodoColor()
+  const prefs = usePrefs()
+  return useMutation({
+    mutationKey: TODO_FOLLOWING_KEY,
+    ...todoScope(id),
+    mutationFn: async ({ todo, repeat, input }: RepeatChangeVars) => {
+      const etag = currentEtag(qc, todo)
+      const answer = await endpoints.updateTodoFollowing(todo.id, etag, repeat.recurrenceId, input)
+      if (answer.series.etag) replaceEtag(qc, todo.id, etag, answer.series.etag)
+      return answer
+    },
+    onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
+    onSuccess: (answer, { todo, repeat, input, moved }, ctx) => {
+      noteSplit(qc, todo.id, answer.todo.id, ctx.generation)
+      const color = colorOf(todo.calendarId)
+      const after = { etag: answer.series.etag, undoToken: answer.undoToken, generation: ctx.generation }
+      if (answer.todo.id === todo.id) {
+        const message = moved
+          ? t('tasks.seriesMoved', { date: toastDay(anchorOf(answer.series), prefs) })
+          : t('scope.toast.allRepeatsChanged')
+        todoToast(qc, t, todo, message, after, { slots: taskGlyphSlots('all', 'current'), color })
+        return
+      }
+      const date = toastDay(taskFollowingStart(repeat), prefs)
+      const removed = input.rrule?.trim() === ''
+      todoToast(
+        qc,
+        t,
+        todo,
+        removed
+          ? t('scope.toast.ended', { date })
+          : t(moved ? 'scope.toast.followingMoved' : 'scope.toast.followingChanged', { date }),
+        { ...after, copy: answer.todo },
+        { slots: taskGlyphSlots('following', repeat.at), color, tone: removed ? 'destructive' : 'default' },
+      )
+    },
+    onError: (err, { todo }) => {
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+    },
+    onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+  })
+}
+
+/**
+ * Ends a task series before a later repeat ("This and following repeats" of a
+ * delete, FR-17), not optimistic, like a split. While the series is kept, the
+ * answer carries its new ETag, noted within the mutation (NFR-26), and the
+ * undo token; the toast says, in red, before which day the series ends. A
+ * `204` means the server found the repeat current, as in a view not reloaded
+ * since, and deleted the task: it leaves the list, and the toast says so,
+ * without Undo. With the `id` of the series, after its other writes.
+ */
+export function useEndTodo(id?: string) {
+  const qc = useQueryClient()
+  const { t } = useTranslation()
+  const colorOf = useTodoColor()
+  const prefs = usePrefs()
+  return useMutation({
+    mutationKey: END_TODO_KEY,
+    ...todoScope(id),
+    mutationFn: async ({ todo, repeat }: RepeatVars) => {
+      const etag = currentEtag(qc, todo)
+      const res = await endpoints.endTodo(todo.id, etag, repeat.recurrenceId)
+      if (res?.etag) replaceEtag(qc, todo.id, etag, res.etag)
+      return res
+    },
+    onMutate: ({ todo }) => ({ generation: startSeriesWrite(qc, todo.id) }),
+    onSuccess: (res, { todo, repeat }, ctx) => {
+      const color = colorOf(todo.calendarId)
+      if (!res) {
+        removeTodo(qc, todo)
+        todoToast(
+          qc,
+          t,
+          todo,
+          t('tasks.deleted'),
+          { etag: '', generation: ctx.generation },
+          { slots: taskGlyphSlots('all', 'current'), color, tone: 'destructive' },
+        )
+        return
+      }
+      todoToast(
+        qc,
+        t,
+        todo,
+        t('scope.toast.ended', { date: toastDay(taskFollowingStart(repeat), prefs) }),
+        { etag: res.etag, undoToken: res.undoToken, generation: ctx.generation },
+        { slots: taskGlyphSlots('following', repeat.at), color, tone: 'destructive' },
+      )
+    },
+    onError: (err, { todo }) => {
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+    },
+    onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
+  })
+}
+
+/**
+ * IDs of the recurring tasks with a write on its way (FR-17): an update, a
+ * detach, skip, split or end of a repeat, whose keys start with
+ * `UPDATE_TODO_KEY`, or an undo. Their occurrences only move once the server
+ * has answered and they are reloaded.
  */
 export function usePendingSeries(): ReadonlySet<string> {
   const ids = useMutationState({
     filters: { mutationKey: UPDATE_TODO_KEY, status: 'pending' },
     select: (m) => {
-      const todo = (m.state.variables as UpdateTodoVars | undefined)?.todo
+      const todo = (m.state.variables as { todo?: Todo } | undefined)?.todo
       return todo?.recurring ? todo.id : null
     },
   })
@@ -1295,14 +1660,14 @@ export function usePendingSeries(): ReadonlySet<string> {
 
 /**
  * Deletes a task. With the task's `id`, it waits for the updates of that task
- * still on their way, so a task checked and deleted at once does not conflict
- * with its own check.
+ * still on their way (`todoScope`), so a task checked and deleted at once does
+ * not conflict with its own check.
  */
 export function useDeleteTodo(id?: string) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   return useMutation({
-    ...(id ? { scope: { id: `todo:${id}` } } : {}),
+    ...todoScope(id),
     mutationFn: (todo: Todo) => endpoints.deleteTodo(todo.id, currentEtag(qc, todo)),
     onMutate: (todo) => {
       startSeriesWrite(qc, todo.id)

@@ -249,7 +249,11 @@
       "allChanged": "All events changed.",
       "followingMoved": "Moved from {{date}} on, as a series of its own.",
       "followingChanged": "Changed from {{date}} on, as a series of its own.",
-      "ended": "The series now ends before {{date}}."
+      "ended": "The series now ends before {{date}}.",
+      "allRepeatsChanged": "All repeats changed.",
+      "detachedMoved": "Moved to {{date}} as a task of its own. The series goes on {{next}}.",
+      "detachedChanged": "Changed as a task of its own. The series goes on {{next}}.",
+      "skipped": "Skipped. Next up: {{next}}"
     },
     "undone": "Undone.",
     "undoneSeriesKept": "Undone. The new series was changed in another app and stays.",
@@ -341,6 +345,7 @@
     "seriesMoved": "Series moved. Next up: {{date}}",
     "undoConflict": "Couldn't undo: the task was changed elsewhere in the meantime.",
     "undoneCopyKept": "Undone. The completed entry was changed in another app and stays.",
+    "undoneDetachedKept": "Undone. The detached task was changed in another app and stays.",
     "plannedRepeat": "{{title}}, planned repeat on {{date}}",
     "repeat": "Repeat",
     "repeatInfo": "How repeating tasks work",

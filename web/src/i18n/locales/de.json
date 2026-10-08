@@ -249,7 +249,11 @@
       "allChanged": "Alle Termine geändert.",
       "followingMoved": "Ab {{date}} verschoben, als eigene Serie.",
       "followingChanged": "Ab {{date}} geändert, als eigene Serie.",
-      "ended": "Die Serie endet jetzt vor dem {{date}}."
+      "ended": "Die Serie endet jetzt vor dem {{date}}.",
+      "allRepeatsChanged": "Alle Wiederholungen geändert.",
+      "detachedMoved": "Als eigene Aufgabe auf {{date}} verschoben. Die Serie geht am {{next}} weiter.",
+      "detachedChanged": "Als eigene Aufgabe geändert. Die Serie geht am {{next}} weiter.",
+      "skipped": "Übersprungen. Als Nächstes: {{next}}"
     },
     "undone": "Rückgängig gemacht.",
     "undoneSeriesKept": "Rückgängig gemacht. Die neue Serie wurde in einer anderen App geändert und bleibt.",
@@ -341,6 +345,7 @@
     "seriesMoved": "Serie verschoben. Als Nächstes: {{date}}",
     "undoConflict": "Nicht rückgängig gemacht: Die Aufgabe wurde inzwischen anderswo geändert.",
     "undoneCopyKept": "Rückgängig gemacht. Der erledigte Eintrag wurde in einer anderen App geändert und bleibt.",
+    "undoneDetachedKept": "Rückgängig gemacht. Die aus der Serie gelöste Aufgabe wurde in einer anderen App geändert und bleibt.",
     "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}",
     "repeat": "Wiederholung",
     "repeatInfo": "So funktionieren wiederkehrende Aufgaben",

@@ -272,8 +272,9 @@ function followingNote(t: TFunction, notes: ScopeNotes, date: string): string {
  * earlier of its recurrence date and the date it is shown on, as for an event
  * (`followingStart`), since the server splits a task series by recurrence ID
  * too. A recurrence date is read as a date where the repeat is shown on one.
+ * The toast after the split or the end names the same day.
  */
-function taskFollowingStart(repeat: TaskRepeat): Date | null {
+export function taskFollowingStart(repeat: TaskRepeat): Date | null {
   const shown = anchorOf(repeat.shown)
   if (!shown) return null
   const allDay = repeat.shown.start ? repeat.shown.startAllDay : repeat.shown.dueAllDay

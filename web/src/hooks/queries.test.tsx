@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
 import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
+import { currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
 import { toCalEvent, type CalEvent } from '@/lib/events'
+import { taskGlyphSlots } from '@/lib/scope'
 import { todoToInput } from '@/lib/tasks'
 import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -19,10 +21,14 @@ import {
   useDeleteOccurrence,
   useDeleteTodo,
   useDeleteTodos,
+  useDetachTodo,
+  useEndTodo,
   useMoveEvent,
   useMoveFollowing,
   useMoveOccurrence,
   usePendingSeries,
+  useSkipTodo,
+  useTodoFollowing,
   useTodos,
   useUpdateEvent,
   useUpdateFollowing,
@@ -64,6 +70,12 @@ function seriesToastAction(id: string): Action | undefined {
 function dotsOf(icon: ReactNode): (string | null)[] {
   const { container } = render(<>{icon}</>)
   return [...container.querySelectorAll('svg circle')].map((c) => c.getAttribute('fill'))
+}
+
+/** Each place of a toast's reach icon from left to right: '✓' for a done repeat, else the dot's fill ('none' for a ring). */
+function marksOf(icon: ReactNode): (string | null)[] {
+  const { container } = render(<>{icon}</>)
+  return [...container.querySelectorAll('svg > *')].map((m) => (m.tagName === 'path' ? '✓' : m.getAttribute('fill')))
 }
 
 /** The toast `toast.success` showed with `message`: its ID, how long it stays, and its action. */
@@ -2096,7 +2108,7 @@ describe('useUpdateTodo with a recurring task', () => {
    */
   function setup(answers: (Answer | Promise<Answer>)[], { from = series }: SetupOptions = {}) {
     api.setCsrfToken('tok')
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const queryClient = eventClient()
     queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [from], corrupted: [] })
     let stored: Todo[] = [from]
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -2281,10 +2293,10 @@ describe('useUpdateTodo with a recurring task', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
-    expect(toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8')).toMatchObject({
-      duration: 8000,
-      action: 'Undo',
-    })
+    const shown = toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8')
+    expect(shown).toMatchObject({ duration: 8000, action: 'Undo' })
+    // No reach given, as for a task that asks nothing.
+    expect(shown.icon).toBeUndefined()
   })
 
   it('tells the next repeat on its own day, not the moved occurrence value type (A-04)', async () => {
@@ -2419,16 +2431,63 @@ describe('useUpdateTodo with a recurring task', () => {
     expect(toastOf(success.mock.calls, 'Done. Next up: Thu, Oct 8')).toMatchObject({ duration: 8000, action: 'Undo' })
   })
 
-  it('says nothing about other edits of a series', async () => {
+  // FR-17: "all repeats" changes the other fields of every open repeat too, which the toast says,
+  // with the reach the question or the hint showed before.
+  it('says all repeats changed after an edit of other fields, with an undo', async () => {
     const success = vi.spyOn(toast, 'success')
-    const { result } = setup([{ ...series, etag: '"2"', title: 'Water the garden' }])
+    const { result, writes } = setup([
+      { ...series, etag: '"2"', title: 'Water the garden', undoToken: 'tok' },
+      { ...series, etag: '"3"' },
+    ])
 
     act(() => {
       // The editor writes the same dates in its own way.
       result.current.mutate({
         todo: series,
         input: todoToInput(series, { title: 'Water the garden', due: '2026-10-05T00:00:00.000Z' }),
+        look: { slots: taskGlyphSlots('all', 'upcoming') },
       })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'All repeats changed.')
+    expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+    expect(marksOf(shown.icon)).toEqual(['✓', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+
+    act(shown.click)
+    await waitFor(() => {
+      expect(success).toHaveBeenCalledWith('Undone.')
+    })
+    expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+  })
+
+  it('draws the reach of a move it is given', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { result } = setup([{ ...series, etag: '"2"', due: '2026-10-07T00:00:00Z', undoToken: 'tok' }])
+
+    act(() => {
+      result.current.mutate({
+        todo: series,
+        input: todoToInput(series, { due: '2026-10-07T00:00:00.000Z' }),
+        look: { slots: taskGlyphSlots('all', 'current') },
+      })
+    })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    const shown = toastOf(success.mock.calls, 'Moved to Wed, Oct 7. Then: Thu, Oct 8')
+    expect(marksOf(shown.icon)).toEqual(['✓', '✓', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+  })
+
+  // The last repeat acts as a single task, which asks nothing and says nothing about an edit.
+  it('says nothing about other edits of the last repeat', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const last = { ...series, next: null }
+    const { result } = setup([{ ...last, etag: '"2"', title: 'Water the garden', undoToken: 'tok' }], { from: last })
+
+    act(() => {
+      result.current.mutate({ todo: last, input: todoToInput(last, { title: 'Water the garden' }) })
     })
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
@@ -2824,6 +2883,665 @@ describe('useDeleteTodo', () => {
     expect(urlOf(url)).toBe('/api/v1/todos/x')
     expect(init?.method).toBe('DELETE')
     expect((init?.headers as Record<string, string>)['If-Match']).toBe('"2"')
+  })
+})
+
+// FR-17, NFR-26: the writes of a task series' repeat besides "all": detach and skip at the
+// current repeat, split and end at a later one. None is optimistic; each says what it reached,
+// with the reach glyph of its choice and an Undo that goes to the old series.
+describe('task scope writes', () => {
+  // Mondays and Thursdays, all-day: the current repeat is Mon, Oct 5, the next Thu, Oct 8.
+  const series = todo({
+    id: 't2',
+    calendarId: 'c1',
+    uid: 'u2',
+    etag: '"1"',
+    title: 'Water the flowers',
+    due: '2026-10-05T00:00:00Z',
+    dueAllDay: true,
+    rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+    recurring: true,
+    fixedDays: true,
+    recurrenceId: '2026-10-05T00:00:00Z',
+    next: { due: '2026-10-08T00:00:00Z' },
+  })
+  const current = currentRepeat(series)!
+  // Mon, Oct 12: a later repeat, from which "this and following" splits the series.
+  const later: TaskRepeat = {
+    todo: series,
+    recurrenceId: '2026-10-12T00:00:00Z',
+    at: 'upcoming',
+    last: false,
+    offRule: false,
+    shown: { start: null, startAllDay: false, due: '2026-10-12T00:00:00Z', dueAllDay: true },
+  }
+  /** The series rolled on to Thu, Oct 8, as a detach or a skip of Mon, Oct 5 answers. */
+  const rolled = {
+    ...series,
+    etag: '"2"',
+    due: '2026-10-08T00:00:00Z',
+    recurrenceId: '2026-10-08T00:00:00Z',
+    next: { due: '2026-10-12T00:00:00Z' },
+  }
+  /** The task a detach made of Mon, Oct 5, moved to Tue, Oct 6. */
+  const detached = todo({
+    id: 'd1',
+    calendarId: 'c1',
+    uid: 'u-d1',
+    etag: '"d"',
+    title: 'Water the flowers',
+    due: '2026-10-06T00:00:00Z',
+    dueAllDay: true,
+    detachedFrom: 'u2',
+  })
+  /** The new series a split makes from Mon, Oct 12, moved to Tue, Oct 13. */
+  const split = todo({
+    ...series,
+    id: 't9',
+    uid: 'u9',
+    etag: '"n1"',
+    due: '2026-10-13T00:00:00Z',
+    rrule: 'FREQ=WEEKLY;BYDAY=TU,FR',
+    recurrenceId: '2026-10-13T00:00:00Z',
+    next: { due: '2026-10-16T00:00:00Z' },
+  })
+  /** The old series as a split or an end wrote it, ending before Mon, Oct 12. */
+  const ended = { ...series, etag: '"5"', rrule: 'FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20261011' }
+  /** Mon, Oct 5 moved to Tue, Oct 6. */
+  const toTuesday = todoToInput(series, { due: '2026-10-06T00:00:00.000Z' })
+  /** R, Mon, Oct 12, moved to Tue, Oct 13. */
+  const toLaterTuesday = todoToInput(series, { due: '2026-10-13T00:00:00.000Z' })
+  const red = 'var(--destructive)'
+
+  beforeEach(() => {
+    // Only the date, so the toast leaves the year out: fake timers would stall the requests.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 5, 12))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A client holding the series, and a server answering each request with the next of `answers`. */
+  function setup(...answers: (Response | Promise<Response>)[]) {
+    api.setCsrfToken('tok')
+    const queryClient = eventClient()
+    queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [series], corrupted: [] })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      const next = answers.shift()
+      return next ? Promise.resolve(next) : Promise.reject(new Error('unexpected request'))
+    })
+    const wrap = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const writes = () =>
+      fetch.mock.calls.map(([url, init]) => ({
+        request: `${init?.method} ${urlOf(url)}`,
+        etag: (init?.headers as Record<string, string>)['If-Match'],
+        body: bodyOf(init),
+      }))
+    const cached = () => queryClient.getQueryData<TodoList>(queryKeys.todos('c1'))?.todos
+    return { queryClient, wrap, writes, cached }
+  }
+
+  function useScopeWrites() {
+    return {
+      detach: useDetachTodo('t2'),
+      skip: useSkipTodo('t2'),
+      following: useTodoFollowing('t2'),
+      end: useEndTodo('t2'),
+      update: useUpdateTodo('t2'),
+    }
+  }
+  type ScopeWrites = ReturnType<typeof useScopeWrites>
+
+  describe('only this repeat', () => {
+    it('detaches the current repeat, and its undo takes the detached task back', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap, writes, cached } = setup(
+        jsonResponse(200, { ...rolled, undoToken: 'tok', detachedCopy: detached }),
+        jsonResponse(200, { ...series, etag: '"3"' }),
+      )
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+      // The editor's input carries the rule; the repeat it detaches has none of its own.
+      const input = { ...toTuesday, rrule: series.rrule }
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current, input, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(writes()).toEqual([
+        { request: 'PUT /api/v1/todos/t2/occurrences/2026-10-05T00%3A00%3A00Z', etag: '"1"', body: toTuesday },
+      ])
+      // The series goes on at its next repeat, next to the task of its own.
+      expect(cached()?.map((x) => [x.id, x.due])).toEqual([
+        ['t2', '2026-10-08T00:00:00Z'],
+        ['d1', '2026-10-06T00:00:00Z'],
+      ])
+      expect(cached()?.[0]).not.toHaveProperty('detachedCopy')
+      const shown = toastOf(
+        success.mock.calls,
+        'Moved to Tue, Oct 6 as a task of its own. The series goes on Thu, Oct 8.',
+      )
+      expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+      expect(marksOf(shown.icon)).toEqual(['✓', '✓', CALENDAR_COLOR, 'none', 'none'])
+
+      act(shown.click)
+      await waitFor(() => {
+        expect(success).toHaveBeenCalledWith('Undone.')
+      })
+      expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+      expect(cached()?.map((x) => [x.id, x.etag, x.due])).toEqual([['t2', '"3"', '2026-10-05T00:00:00Z']])
+    })
+
+    it('says a repeat changed on its own, and where the series goes on', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const renamed = { ...detached, due: series.due, title: 'Water the roses' }
+      const { wrap } = setup(jsonResponse(200, { ...rolled, undoToken: 'tok', detachedCopy: renamed }))
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({
+          todo: series,
+          repeat: current,
+          input: todoToInput(series, { title: 'Water the roses' }),
+          moved: false,
+        })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(
+        toastOf(success.mock.calls, 'Changed as a task of its own. The series goes on Thu, Oct 8.'),
+      ).toMatchObject({ id: 'series:t2', action: 'Undo' })
+      expect(success).toHaveBeenCalledTimes(1)
+    })
+
+    // The server hands out no token where it can't tell the detached task's ETag, or with attendees.
+    it('offers no undo without a token', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap } = setup(jsonResponse(200, { ...rolled, detachedCopy: detached }))
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current, input: toTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      const shown = toastOf(
+        success.mock.calls,
+        'Moved to Tue, Oct 6 as a task of its own. The series goes on Thu, Oct 8.',
+      )
+      expect(shown).toMatchObject({ id: 'series:t2', duration: 8000 })
+      expect(shown.action).toBeUndefined()
+    })
+
+    // A write of the series queued ahead of it ended the series after its current repeat: the server
+    // changes that last repeat as a single task, which asks nothing.
+    it('tells where the last repeat moved when the server detached nothing', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const moved = { ...series, etag: '"2"', due: '2026-10-06T00:00:00Z', next: null, undoToken: 'tok' }
+      const { wrap, cached } = setup(jsonResponse(200, moved))
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current, input: toTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(cached()?.map((x) => [x.id, x.due])).toEqual([['t2', '2026-10-06T00:00:00Z']])
+      const shown = toastOf(success.mock.calls, 'Moved to Tue, Oct 6.')
+      expect(shown).toMatchObject({ id: 'series:t2', action: 'Undo' })
+      expect(shown.icon).toBeUndefined()
+      expect(success).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps a detached task another app changed while the undo ran', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const warning = vi.spyOn(toast, 'warning')
+      const { wrap, cached } = setup(
+        jsonResponse(200, { ...rolled, undoToken: 'tok', detachedCopy: detached }),
+        jsonResponse(200, { ...series, etag: '"3"', copyKept: true }),
+      )
+      const { result } = renderHook(() => useDetachTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current, input: toTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      act(
+        toastOf(success.mock.calls, 'Moved to Tue, Oct 6 as a task of its own. The series goes on Thu, Oct 8.')
+          .click,
+      )
+
+      await waitFor(() => {
+        expect(warning).toHaveBeenCalledWith('Undone. The detached task was changed in another app and stays.')
+      })
+      expect(success).not.toHaveBeenCalledWith('Undone.')
+      expect(cached()?.map((x) => x.id)).toEqual(['t2', 'd1'])
+      expect(cached()?.[0]).not.toHaveProperty('copyKept')
+    })
+
+    it('skips the current repeat, and says what is next up', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap, writes, cached } = setup(
+        jsonResponse(200, { ...rolled, undoToken: 'tok' }),
+        jsonResponse(200, { ...series, etag: '"3"' }),
+      )
+      const { result } = renderHook(() => useSkipTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(writes()).toEqual([
+        { request: 'DELETE /api/v1/todos/t2/occurrences/2026-10-05T00%3A00%3A00Z', etag: '"1"', body: {} },
+      ])
+      expect(cached()?.map((x) => [x.id, x.due])).toEqual([['t2', '2026-10-08T00:00:00Z']])
+      const shown = toastOf(success.mock.calls, 'Skipped. Next up: Thu, Oct 8')
+      expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+      // Red, as the repeat is gone; the done ones are never red.
+      expect(marksOf(shown.icon)).toEqual(['✓', '✓', red, 'none', 'none'])
+
+      act(shown.click)
+      await waitFor(() => {
+        expect(success).toHaveBeenCalledWith('Undone.')
+      })
+      expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+    })
+
+    it('queues a write behind a pending undo with the ETag the undo answered with', async () => {
+      const success = vi.spyOn(toast, 'success')
+      let answerUndo: (r: Response) => void = () => undefined
+      const { queryClient, wrap, writes } = setup(
+        jsonResponse(200, { ...rolled, undoToken: 'tok' }),
+        new Promise<Response>((resolve) => (answerUndo = resolve)),
+        jsonResponse(200, { ...rolled, etag: '"4"' }),
+      )
+      const { result } = renderHook(() => useSkipTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      act(toastOf(success.mock.calls, 'Skipped. Next up: Thu, Oct 8').click)
+      await waitFor(() => {
+        expect(writes()).toHaveLength(2)
+      })
+
+      // A skip of the repeat as it was loaded, while the undo is on its way: it waits for the undo.
+      act(() => {
+        result.current.mutate({ todo: series, repeat: current })
+      })
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+      expect(writes()).toHaveLength(2)
+
+      answerUndo(jsonResponse(200, { ...series, etag: '"3"' }))
+      await waitFor(() => {
+        expect(writes()).toHaveLength(3)
+      })
+      expect(writes()[2]).toMatchObject({
+        request: 'DELETE /api/v1/todos/t2/occurrences/2026-10-05T00%3A00%3A00Z',
+        etag: '"3"',
+      })
+      await waitFor(() => {
+        expect(queryClient.isMutating()).toBe(0)
+      })
+    })
+  })
+
+  describe('this and following repeats', () => {
+    const answer = (undoToken?: string) =>
+      jsonResponse(200, { todo: split, series: ended, ...(undoToken ? { undoToken } : {}) })
+
+    it('splits the series at a later repeat, and its undo goes to the old series', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { queryClient, wrap, writes, cached } = setup(answer('tok'), jsonResponse(200, { ...series, etag: '"6"' }))
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(writes()).toEqual([
+        { request: 'PUT /api/v1/todos/t2/following/2026-10-12T00%3A00%3A00Z', etag: '"1"', body: toLaterTuesday },
+      ])
+      // Not optimistic: both series come with the reload.
+      expect(cached()).toEqual([series])
+      // Named by the day the split starts from, as the question named it.
+      const shown = toastOf(success.mock.calls, 'Moved from Mon, Oct 12 on, as a series of its own.')
+      expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+      expect(marksOf(shown.icon)).toEqual(['✓', 'none', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+
+      // As the reload after the split shows them.
+      queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [ended, split], corrupted: [] })
+      act(shown.click)
+      await waitFor(() => {
+        expect(success).toHaveBeenCalledWith('Undone.')
+      })
+      expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+      // The undo took the new series back.
+      expect(cached()?.map((x) => [x.id, x.etag])).toEqual([['t2', '"6"']])
+    })
+
+    it('says the series changed from when after an edit', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap } = setup(answer('tok'))
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({
+          todo: series,
+          repeat: later,
+          input: todoToInput(series, { title: 'Water the roses', due: later.shown.due ?? null }),
+          moved: false,
+        })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(toastOf(success.mock.calls, 'Changed from Mon, Oct 12 on, as a series of its own.')).toMatchObject({
+        id: 'series:t2',
+        action: 'Undo',
+      })
+      expect(success).toHaveBeenCalledTimes(1)
+    })
+
+    it('says the series ends, in red, when the rule is removed from a later repeat on', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap } = setup(
+        jsonResponse(200, { todo: { ...split, rrule: '', recurring: false, next: null }, series: ended, undoToken: 'tok' }),
+      )
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later, input: { ...toLaterTuesday, rrule: '' }, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      const shown = toastOf(success.mock.calls, 'The series now ends before Mon, Oct 12.')
+      expect(shown).toMatchObject({ id: 'series:t2', action: 'Undo' })
+      expect(marksOf(shown.icon)).toEqual(['✓', 'none', red, red, red])
+    })
+
+    // The server changes the series from its current repeat when the repeat has become it, as in
+    // a view not reloaded since: no new series, so all its repeats changed.
+    it('says the whole series changed when the server found the repeat current', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const moved = { ...series, etag: '"2"', due: '2026-10-13T00:00:00Z' }
+      const { wrap, writes, cached } = setup(
+        jsonResponse(200, { todo: moved, series: moved, undoToken: 'tok' }),
+        jsonResponse(200, { ...series, etag: '"3"' }),
+      )
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      const shown = toastOf(success.mock.calls, 'Series moved. Next up: Tue, Oct 13')
+      expect(shown).toMatchObject({ id: 'series:t2', action: 'Undo' })
+      expect(marksOf(shown.icon)).toEqual(['✓', '✓', CALENDAR_COLOR, CALENDAR_COLOR, CALENDAR_COLOR])
+
+      act(shown.click)
+      await waitFor(() => {
+        expect(success).toHaveBeenCalledWith('Undone.')
+      })
+      expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo' })
+      // The series is no copy of itself: it stays.
+      expect(cached()?.map((x) => [x.id, x.etag])).toEqual([['t2', '"3"']])
+    })
+
+    it('tells that the new series stays after an undo', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const warning = vi.spyOn(toast, 'warning')
+      const { queryClient, wrap, cached } = setup(answer('tok'), jsonResponse(200, { ...series, etag: '"6"', copyKept: true }))
+      const { result } = renderHook(() => useTodoFollowing('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), { todos: [ended, split], corrupted: [] })
+      act(toastOf(success.mock.calls, 'Moved from Mon, Oct 12 on, as a series of its own.').click)
+
+      await waitFor(() => {
+        expect(warning).toHaveBeenCalledWith('Undone. The new series was changed in another app and stays.')
+      })
+      expect(cached()?.map((x) => x.id)).toEqual(['t2', 't9'])
+    })
+
+    // FR-17: the server refuses the undo of a split once the new series changed.
+    it("takes the split's undo away once the new series changes", async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { queryClient, wrap, writes } = setup(answer('tok'), new Promise<Response>(() => undefined))
+      const { result } = renderHook(() => ({ split: useTodoFollowing('t2'), ofNew: useUpdateTodo('t9') }), {
+        wrapper: wrap,
+      })
+
+      act(() => {
+        result.current.split.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true })
+      })
+      await waitFor(() => {
+        expect(seriesToastAction('t2')?.label).toBe('Undo')
+      })
+      const message = 'Moved from Mon, Oct 12 on, as a series of its own.'
+      expect(toastOf(success.mock.calls, message).action).toBe('Undo')
+
+      act(() => {
+        result.current.ofNew.mutate({ todo: split, input: todoToInput(split, { title: 'Water the roses' }) })
+      })
+      await waitFor(() => {
+        expect(writes()).toHaveLength(2)
+      })
+      // The split's toast stays, without Undo.
+      const shown = toast.getToasts().find((x) => x.id === 'series:t2')
+      expect(shown && 'title' in shown ? shown.title : undefined).toBe(message)
+      expect(seriesToastAction('t2')).toBeUndefined()
+      expect(queryClient.isMutating()).toBe(1)
+    })
+
+    it('ends the series before a later repeat, with an undo', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap, writes } = setup(
+        jsonResponse(200, { ...ended, undoToken: 'tok' }),
+        jsonResponse(200, { ...series, etag: '"6"' }),
+      )
+      const { result } = renderHook(() => useEndTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(writes()).toEqual([
+        { request: 'DELETE /api/v1/todos/t2/following/2026-10-12T00%3A00%3A00Z', etag: '"1"', body: {} },
+      ])
+      const shown = toastOf(success.mock.calls, 'The series now ends before Mon, Oct 12.')
+      expect(shown).toMatchObject({ id: 'series:t2', duration: 8000, action: 'Undo' })
+      expect(marksOf(shown.icon)).toEqual(['✓', 'none', red, red, red])
+
+      act(shown.click)
+      await waitFor(() => {
+        expect(success).toHaveBeenCalledWith('Undone.')
+      })
+      expect(writes()[1]).toMatchObject({ request: 'POST /api/v1/todos/t2/undo', body: { token: 'tok' } })
+    })
+
+    // At what the server found the current repeat, ending the series before it deletes it.
+    it('says the task was deleted, without undo, when the end deleted it', async () => {
+      const success = vi.spyOn(toast, 'success')
+      const { wrap, cached } = setup(new Response(null, { status: 204 }))
+      const { result } = renderHook(() => useEndTodo('t2'), { wrapper: wrap })
+
+      act(() => {
+        result.current.mutate({ todo: series, repeat: later })
+      })
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+      expect(cached()).toEqual([])
+      const shown = toastOf(success.mock.calls, 'Task deleted')
+      expect(shown).toMatchObject({ id: 'series:t2' })
+      expect(shown.action).toBeUndefined()
+      // From the current repeat on, all of them.
+      expect(marksOf(shown.icon)).toEqual(['✓', '✓', red, red, red])
+      expect(success).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  const firsts: [string, (h: ScopeWrites) => void, () => Response, string][] = [
+    [
+      'detaching',
+      (h) => h.detach.mutate({ todo: series, repeat: current, input: toTuesday, moved: true }),
+      () => jsonResponse(200, { ...rolled, detachedCopy: detached }),
+      '"2"',
+    ],
+    ['skipping', (h) => h.skip.mutate({ todo: series, repeat: current }), () => jsonResponse(200, rolled), '"2"'],
+    [
+      'splitting',
+      (h) => h.following.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true }),
+      () => jsonResponse(200, { todo: split, series: ended }),
+      '"5"',
+    ],
+    ['ending', (h) => h.end.mutate({ todo: series, repeat: later }), () => jsonResponse(200, ended), '"5"'],
+  ]
+
+  // NFR-26: both from the series as shown, with the ETag it was loaded with.
+  it.each(firsts)('runs a write queued behind %s with the ETag its answer gave the series', async (_, first, reply, etag) => {
+    let answerFirst: (r: Response) => void = () => undefined
+    const { queryClient, wrap, writes } = setup(
+      new Promise<Response>((resolve) => (answerFirst = resolve)),
+      jsonResponse(200, { ...series, etag: '"9"', title: 'Water the roses' }),
+    )
+    const { result } = renderHook(useScopeWrites, { wrapper: wrap })
+
+    act(() => {
+      first(result.current)
+      result.current.update.mutate({ todo: series, input: todoToInput(series, { title: 'Water the roses' }) })
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(writes()).toHaveLength(1)
+
+    answerFirst(reply())
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect(writes()[1]).toMatchObject({ request: 'PUT /api/v1/todos/t2', etag })
+    await waitFor(() => {
+      expect(queryClient.isMutating()).toBe(0)
+    })
+  })
+
+  const seconds: [string, (h: ScopeWrites) => void, string][] = [
+    [
+      'detaching',
+      (h) => h.detach.mutate({ todo: series, repeat: current, input: toTuesday, moved: true }),
+      'PUT /api/v1/todos/t2/occurrences/2026-10-05T00%3A00%3A00Z',
+    ],
+    ['skipping', (h) => h.skip.mutate({ todo: series, repeat: current }), 'DELETE /api/v1/todos/t2/occurrences/2026-10-05T00%3A00%3A00Z'],
+    [
+      'splitting',
+      (h) => h.following.mutate({ todo: series, repeat: later, input: toLaterTuesday, moved: true }),
+      'PUT /api/v1/todos/t2/following/2026-10-12T00%3A00%3A00Z',
+    ],
+    ['ending', (h) => h.end.mutate({ todo: series, repeat: later }), 'DELETE /api/v1/todos/t2/following/2026-10-12T00%3A00%3A00Z'],
+  ]
+
+  it.each(seconds)('runs %s queued behind a write of the series with the ETag that write got', async (_, second, request) => {
+    let answerFirst: (r: Response) => void = () => undefined
+    const { wrap, writes } = setup(
+      new Promise<Response>((resolve) => (answerFirst = resolve)),
+      new Promise<Response>(() => undefined),
+    )
+    const { result } = renderHook(useScopeWrites, { wrapper: wrap })
+
+    act(() => {
+      result.current.update.mutate({ todo: series, input: todoToInput(series, { title: 'Water the roses' }) })
+      second(result.current)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(writes()).toHaveLength(1)
+
+    answerFirst(jsonResponse(200, { ...series, etag: '"7"', title: 'Water the roses' }))
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect(writes()[1]).toMatchObject({ request, etag: '"7"' })
+  })
+
+  // FR-17: the server refuses the Undo of a change once a later write changed the series.
+  it.each(seconds)('takes the undo of an earlier change away as soon as %s starts', async (_, start) => {
+    // The second write's answer never comes: the Undo is gone before it.
+    const { wrap, writes } = setup(
+      jsonResponse(200, { ...series, etag: '"2"', title: 'Water the roses', undoToken: 'tok' }),
+      new Promise<Response>(() => undefined),
+    )
+    const { result } = renderHook(useScopeWrites, { wrapper: wrap })
+
+    act(() => {
+      result.current.update.mutate({
+        todo: series,
+        input: todoToInput(series, { title: 'Water the roses' }),
+        look: { slots: taskGlyphSlots('all', 'current') },
+      })
+    })
+    await waitFor(() => {
+      expect(seriesToastAction('t2')?.label).toBe('Undo')
+    })
+
+    act(() => {
+      start(result.current)
+    })
+    await waitFor(() => {
+      expect(writes()).toHaveLength(2)
+    })
+    expect(toast.getToasts().some((x) => x.id === 'series:t2')).toBe(true)
+    expect(seriesToastAction('t2')).toBeUndefined()
+  })
+
+  it.each(firsts)('marks the series busy while %s', async (_, write, reply) => {
+    let answer: (r: Response) => void = () => undefined
+    const { wrap } = setup(new Promise<Response>((resolve) => (answer = resolve)))
+    const { result } = renderHook(() => ({ writes: useScopeWrites(), pending: usePendingSeries() }), { wrapper: wrap })
+    expect(result.current.pending.size).toBe(0)
+
+    act(() => {
+      write(result.current.writes)
+    })
+    await waitFor(() => {
+      expect([...result.current.pending]).toEqual(['t2'])
+    })
+
+    answer(reply())
+    await waitFor(() => {
+      expect(result.current.pending.size).toBe(0)
+    })
   })
 })
 
