@@ -871,7 +871,7 @@ event, and the refusal comes as a toast.
   series (see below). The frontend can't foresee these refusals, so it
   asks as for any other move, with "All events" and, at a later event,
   "This and following events" among the options, and shows the refusal as
-  a toast: "This series can't move like this. Move only this event
+  a toast: "This series can't move like this. Move only this one
   instead."
   - From an event on another day of the month than `DTSTART`'s (an
     `RDATE`, or an exception left on another day), a change of date is

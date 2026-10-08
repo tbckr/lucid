@@ -87,7 +87,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **FR-13:** Checklist support.
 * **FR-14:** Due Date & Priority.
 * **FR-15:** Status Update (COMPLETED).
-* **FR-16:** Tasks with a date are shown in the calendar views, can be completed there and created from a click in them. Recurring tasks show every repeat; the current one can be completed and moved.
+* **FR-16:** Tasks with a date are shown in the calendar views, can be completed there and created from a click in them. Recurring tasks show every repeat. Repeats are completed in order; the current one can be changed or deleted on its own, which detaches it as a task of its own or skips it, and any repeat can be changed together with the series (FR-17).
 
 ### **4.5 Extended iCal Features**
 
@@ -96,9 +96,10 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
   * **Only this event:** a single occurrence can be changed or deleted independently of the series, via an RFC 5545 override (an EXDATE on delete).
   * **All events:** a change to the series shifts by the distance from the edited occurrence's shown start and carries along only the fields that changed.
   * **This and following events:** a change, move or delete can reach an occurrence and the later ones: the series ends before it, and a change goes on from it as a series of its own, with a new UID (a split, never `RANGE=THISANDFUTURE`). Not offered at the series' first event, where it would be all events, nor for a series with attendees.
-  * **Ask only with a choice:** a change with one possible scope is not asked about; the dragged event or the editor says beforehand which events it reaches.
-  * Events changed individually by an override are marked (`modified`).
-  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change, unless the series has attendees. Undoing a split also removes the new series; if the new series changed since, the undo is refused and nothing is written.
+  * **Recurring tasks** behave the same, with the same question, worded for repeats: "Only this repeat", "This and following repeats", "All repeats". Under the rolling model (see [docs/RECURRING-TASKS.md](RECURRING-TASKS.md)) only the current repeat can be changed on its own: it becomes a task of its own, detached from the series, or, deleted, is skipped, and the series goes on at its next repeat. From a later repeat on, a change, move or delete splits or ends the series as for events. A series on fixed days, of events or tasks, moves only as far as its rule can follow; the last repeat of a task moves to any day.
+  * **Ask only with a choice:** a change with one possible scope is not asked about; the dragged event or task, the editor or the task list's date picker says beforehand which events or repeats it reaches.
+  * Events changed individually by an override, and tasks detached from their series, are marked.
+  * **Undo:** for 8 seconds after a change to a series that keeps it, the series can be restored exactly as it was read before the change, unless the series has attendees. Undoing a split also removes the new series, and undoing a detach the detached task; if that changed since, the undo is refused and nothing is written.
 * **FR-18:** Timezone Support (UTC Storage, Local Display).
 
 ### **4.6 Frontend Resilience, UX & i18n**

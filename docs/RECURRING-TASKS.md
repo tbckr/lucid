@@ -776,10 +776,13 @@ problem: the dates move, but `BYDAY`/`BYMONTHDAY` do not.
 
 ## Lucid's behavior
 
-Lucid shows every occurrence of a recurring task in the calendar views and
-lets the user complete and move the current one, and move a series with an
-interval rule by any later one too (FR-16, FR-17). The API is described in
-[API.md](API.md#todos).
+Lucid shows every occurrence of a recurring task in the calendar views
+(FR-16, FR-17). The occurrences are completed in order, and the current one
+can be changed, moved or deleted on its own: it is detached as a task of its
+own, or skipped, and the series goes on. From a later occurrence on, the
+series can be changed, moved or ended as a series of its own ("this and
+following"), and from any occurrence the whole series can be changed, as for
+an event series. The API is described in [API.md](API.md#todos).
 
 **Decision (2026-09-29): write by rolling, read tolerantly.**
 
@@ -1267,18 +1270,17 @@ keeps the properties and components Lucid does not know.
   them on, the series can only be changed or ended ("this and following").
 - No occurrence moves on its own within the series: moving the current one,
   one off the rule too, moves the series from it on, and only detaching it
-  moves it alone, as a task of its own. With an interval rule the later
-  occurrences move along, so in the calendar any of them can be dragged as
-  well, like an occurrence of a recurring event: the series moves by the
-  distance it was dragged, from the current occurrence on. On fixed days the
-  series moves only as far as its rule can follow (see Writing): a weekly
-  rule rotates its days, but a monthly rule on the 15th, for example, can't
-  move to the 16th, and a rule with `BYHOUR` can't change its time; the
-  server refuses such a move. Only the last repeat moves to any day. The
-  days count from the current occurrence's `RECURRENCE-ID` in the series'
-  zone: one another client moved moves the series by the distance it moves
-  from where it is shown, so a change of its time alone keeps the rule's
-  days.
+  moves it alone, as a task of its own. A later occurrence moves with the
+  ones after it, as a series of their own ("this and following"), or with
+  the whole series, which moves by the same distance from the current
+  occurrence on. On fixed days a series moves only as far as its rule can
+  follow (see Writing): a weekly rule rotates its days, but a monthly rule
+  on the 15th, for example, can't move to the 16th, and a rule with
+  `BYHOUR` can't change its time; the server refuses such a move. Only the
+  last repeat moves to any day. The days count from the `RECURRENCE-ID` of
+  the occurrence the series moves from, in the series' zone: one another
+  client moved moves the series by the distance it moves from where it is
+  shown, so a change of its time alone keeps the rule's days.
 - Moving a series never puts one of its repeats onto a repeat another app
   already marked done or changed: the server refuses such a move, for
   example the current repeat dragged back onto a repeat another app
@@ -1288,6 +1290,10 @@ keeps the properties and components Lucid does not know.
   not show.
 - A completed copy is not linked to its series: later edits of the series
   don't change it, and deleting the series keeps it.
+- Neither is a detached task: it is a task of its own, which a rename, a
+  move or the deletion of its series leaves as it is.
+  `X-LUCID-DETACHED-FROM` only records where it came from, for the UI to
+  say.
 - A series in a `TZID` Lucid cannot resolve is read at its wall clock as
   UTC, so its `COUNT` stays a `COUNT`: an `UNTIL` computed from that wall
   clock would end the series one occurrence early in a reader that knows a
@@ -1355,59 +1361,124 @@ keeps the properties and components Lucid does not know.
 
 ### Where the UI shows it
 
-The UI speaks of *repeats*, never of copies or overrides. For those who want
-to know more, an ⓘ next to the repeat in the editor explains that a completed
-repeat stays as its own entry while the task moves on to the next one, and
-that repeats are completed in order.
+The UI speaks of *repeats*, never of copies, overrides or splits. For those
+who want to know more, an ⓘ next to the repeat in the editor explains that a
+completed repeat stays as its own entry while the task moves on to the next
+one, that repeats are completed in order, and that changing only one repeat
+makes it a task of its own while the series goes on.
 
-The move window the date pickers and dragging keep to below is no longer
-reported by the backend, which moves a series as far as its rule can follow
-(see Writing); the UI part follows.
+- **Calendar views**: the current repeat looks like any task, with a
+  checkbox and ⟳. Upcoming ones are pencilled in: a dashed outline in the
+  calendar's color, no checkbox; a click opens their details. Both can be
+  dragged, unless Lucid can't read the rule. Done ones look like completed
+  tasks, and "Hide in calendar" hides them too; one completed by another
+  app cannot be reopened. A series with a change on its way is busy, and
+  can't be dragged, until it is reloaded.
+- **Task list**: one row per series, due at its current repeat, with ⟳ and
+  the rule as screen reader text. Completed copies are completed tasks.
+- **Detached tasks**: a repeat changed on its own shows ⟳ with a dot, like
+  an event changed on its own, named "Detached from its series" for screen
+  readers, in the calendar, the list and the details. It no longer repeats;
+  its details say "Detached from its series. The series goes on *date*.",
+  with the series' current repeat, or only the first sentence once the
+  series is gone, done or no longer repeats, or isn't loaded.
+- **The question**: a change of a series asks which repeats it reaches, in
+  the same form as for events (see
+  [RECURRING-EVENTS.md](RECURRING-EVENTS.md#lucids-behavior)): "This task
+  repeats. Which repeats should move?", "… should change?" or "… should be
+  deleted?". Its options, from the smallest reach to the largest, each say
+  what they do:
+  - "Only this repeat", at the current repeat: "Becomes a task of its own.
+    The series goes on *date*.", or, when deleting, "Skipped. The series
+    goes on *date*.";
+  - "This and following repeats", at a later repeat: "From *date* on, as a
+    series of its own. Earlier ones stay as they are.", "The series ends
+    before *date*." when deleting, and "From *date* on, only this repeat
+    stays. Earlier ones stay as they are." when the rule is removed;
+  - "All repeats": "Done ones stay.", "Done and detached ones stay." when
+    deleting, and, in red, "The task stops repeating. Upcoming repeats are
+    removed." when the rule is removed.
 
-- **Calendar views**: the current occurrence looks like any task, with a
-  checkbox and ⟳, and can be dragged. Upcoming ones are pencilled in: a dashed
-  outline in the calendar's color, no checkbox, not draggable; a click opens
-  their details. Done ones look like completed tasks, and "Hide in calendar"
-  hides them too; one completed by another app cannot be reopened.
-- **Task list**: one row per series, due at its current occurrence, with ⟳
-  and the rule as screen reader text. Completed copies are completed tasks.
-- **Details**: the rule in words; for an upcoming occurrence "Can be completed
-  once *date* is done.", or "Can be completed and moved once *date* is done."
-  where it can't be dragged; for one completed by another app "Completed in
+  Five dots before each option show its reach: the middle one is the repeat
+  acted on, filled ones are reached, rings stay as they are, and checks are
+  done repeats, which stay. Below the options, a line says why one the user
+  might expect is missing: "Only the current repeat can be changed on its
+  own." at a later repeat, "With attendees, a repeat can't become a task of
+  its own." or "With attendees, the series can't be split." The focus
+  starts on the smallest change, or on Cancel when the change deletes
+  repeats, whose dots are then red. Escape cancels the question only, not
+  the editor, details or picker around it.
+- **No question without a choice**: a change with one possible option
+  makes it right away, and says beforehand what it reaches, with the same
+  dots: beneath a dragged repeat, in the editor's footer, and below the
+  month of the list's date picker where the day doesn't decide it. It says
+  "Only this repeat. It becomes a task of its own.", "This and following
+  repeats, as a series of their own.", "Moves all repeats." or "Applies
+  from this repeat on. Done ones stay.", and, in red, "The task stops
+  repeating. Upcoming repeats are removed."; where attendees took the
+  other option away, a second sentence says so. A delete that can only
+  reach all repeats asks "This task repeats. Delete all repeats? Completed
+  ones stay." A task that doesn't repeat, a done repeat, a series Lucid
+  can't read, and the last repeat get no question and no hint: the last
+  repeat is a task like any other, moves to any day, and asks "Delete this
+  task?".
+- **Moves the series can't follow**: on fixed days a series moves only as
+  far as its rule can follow (see Writing). Where no option is left,
+  nothing is written, and the UI says "Can't move. The series stays on its
+  days." or "… keeps its times.": a dragged repeat is pencilled in with a
+  stop mark and says it beneath itself, which screen readers hear too, and
+  a drop there changes nothing, with a toast "Not moved" and the reason;
+  the editor says it under the date and keeps Save disabled until the date
+  changes; the list's date picker says it below the month and leaves the
+  day unpicked. A move only the server can refuse shows "This series can't
+  move like this. Move only this one instead."
+- **Dragging**: a dropped repeat with a choice waits at its new place for
+  the question, which opens beside it; an option with the pointer or the
+  focus rings the repeats in view it reaches. "Only this repeat" keeps the
+  repeat where it was dropped until the detached task is in; the other
+  options show the series as the server saved it once it is reloaded.
+- **Editor**: opens at the repeat that was clicked, with its dates, and
+  saves a change of the series by the question in its footer, in place of
+  Cancel and Save, or, with one option, says beforehand what Save reaches.
+  Completing the current repeat there asks nothing, and a save that changes
+  nothing writes nothing. Deleting asks as the details do. The repeat field
+  has "Does not repeat" and every day, week, month or year on the day of
+  the task's start, else its due date. A rule from another app stays as
+  "Custom rule" until another is chosen, and a rule without a date is
+  refused with "A repeating task needs a date."
+- **Details**: the rule in words; for an upcoming repeat "Can be completed
+  once *date* is done."; for one completed by another app "Completed in
   another app."; for a rule Lucid cannot evaluate "Lucid can't read this
-  repeat. Complete and move it in the app that created it."
-- **Editor**: a repeat field with "Does not repeat" and every day, week,
-  month or year on the day of the task's start, else its due date. A rule
-  from another app stays as "Custom rule" until another is chosen. A series
-  shows "This task repeats. Changes apply to all upcoming repeats.", and a
-  rule without a date is refused with "A repeating task needs a date."
-- **Date pickers**: days outside the move window are blocked but stay
-  reachable by keyboard, with "Until *date*, then the next repeat is due."
-  For the last repeat, only the days before it are blocked, and the picker
-  shows no limit.
-- **Dragging**: the current occurrence, and with an interval rule any
-  upcoming one, which moves the series by the distance it was dragged and
-  shows where it lands itself. Days outside the move window are greyed out
-  and hatched, and what they show is dimmed, except the series' own repeats:
-  the next one is where the window ends. A day of the browser's that the
-  window covers only in part, for a series in another zone, is not; a drop
-  there is checked at its time. Over a day it can't reach, the dragged task
-  is pencilled in with a stop mark and says "Only possible until *date*.",
-  which screen readers hear too; for the last repeat, before its day, "Only
-  possible from *date* on." A drop there changes nothing, and a toast says
-  "Not moved" with "Until *date*, then the next repeat is due." or "Only
-  possible from *date* on."
-- **Upcoming repeats on fixed days** can't be dragged: pressing one and
-  moving the pointer shows "Can be completed and moved once *date* is done."
-  next to it while it is held and for two seconds after, and the release
-  opens nothing.
-- **Toasts**: "Done. Next up: *date*", "Done. That was the last repeat.",
-  "Moved to *date*. Then: *date*" and, for the last repeat, "Moved to
-  *date*.", or after dragging an upcoming occurrence "Series moved. Next up:
-  *date*", each with Undo for 8 seconds, then "Undone." A completion saved
-  together with a rule change gets the same toast and Undo, which restores
-  the series exactly as it was, rule and all. A change that turned other
-  apps' completions into tasks of their own (see Writing), or whose new
-  ETag the server did not tell, gets its toast without Undo.
-- **Deleting** asks "This task repeats. Delete all repeats? Completed ones
-  stay."
+  repeat. Complete and move it in the app that created it." Delete asks the
+  question in place.
+- **Task list changes**: the date picker moves the series at its current
+  repeat, the one the row shows, and asks in place of the month where
+  there is a choice. A new title for a series asks in a popover below the
+  row; cancelling it brings the saved title back.
+- **Toasts**: every change of a series says what it did, with Undo for 8
+  seconds, then "Undone.", and, where the user chose which repeats it
+  reaches, the dots of that option as its icon:
+  - completing: "Done. Next up: *date*" or "Done. That was the last
+    repeat.";
+  - "Only this repeat": "Moved to *date* as a task of its own. The series
+    goes on *date*." or "Changed as a task of its own. The series goes on
+    *date*.", and, when deleting, "Skipped. Next up: *date*";
+  - "This and following repeats": "Moved from *date* on, as a series of its
+    own." or "Changed from *date* on, as a series of its own.", and, when
+    deleting or removing the rule, "The series now ends before *date*.";
+  - "All repeats": "Moved to *date*. Then: *date*", "Series moved. Next
+    up: *date*" from a later repeat, and "All repeats changed." when no
+    date changed;
+  - the last repeat, which asks nothing: "Moved to *date*."
+
+  Deleting a whole task says "Task deleted", without Undo. Only the latest
+  change of a series keeps its Undo, and a detach's or a split's goes as
+  soon as the detached task or the new series is changed in Lucid. An Undo
+  the server can't do anymore says "Nothing to undo anymore." or "Couldn't
+  undo: the task was changed elsewhere in the meantime."; one whose
+  detached task, new series or completed copy another app changed while it
+  ran keeps that and says so. A completion saved together with a rule
+  change gets the same toast and Undo, which restores the series exactly
+  as it was, rule and all. A change that turned other apps' completions
+  into tasks of their own (see Writing), or whose new ETag the server did
+  not tell, gets its toast without Undo.
