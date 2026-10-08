@@ -467,6 +467,18 @@ describe('allRepeatsDates', () => {
     })
   })
 
+  // A later repeat another app gave a time in an all-day series, or a date in a timed one: its new time is the
+  // user's, on the series' day, not shifted by the hours between the two shapes.
+  it('gives the series the time a later repeat of another shape gets, on its own day', () => {
+    const days = todo({ ...series, due: allDay('2026-10-05'), dueAllDay: true, recurrenceId: allDay('2026-10-05') })
+    // Thursday at 9:00, moved to 10:00: Monday at 10:00.
+    const atNine = thursday(days, timed('2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(atNine, timed('2026-10-08T08:00:00Z'))).toEqual(timed('2026-10-05T08:00:00.000Z'))
+    // Thursday all-day in a series at 9:00, given 10:00: Monday at 10:00.
+    const dated = thursday(series, { start: null, startAllDay: false, due: allDay('2026-10-08'), dueAllDay: true })
+    expect(allRepeatsDates(dated, timed('2026-10-08T08:00:00Z'))).toEqual(timed('2026-10-05T08:00:00.000Z'))
+  })
+
   it('removes a date the repeat loses', () => {
     const span = todo({ ...series, start: '2026-10-05T06:00:00Z' })
     const repeat = thursday(span, timed('2026-10-08T07:00:00Z', '2026-10-08T06:00:00Z'))

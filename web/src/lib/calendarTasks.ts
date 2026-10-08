@@ -60,7 +60,12 @@ function taskDate(iso: string | null | undefined, allDay: boolean): TaskDate | n
 
 /** The instant that places a task, occurrence, or planned move (FR-16, FR-17): start, else due. */
 export function anchorOf(d: TaskDates): Date | null {
-  return taskDate(d.start, d.startAllDay)?.at ?? taskDate(d.due, d.dueAllDay)?.at ?? null
+  return anchorDate(d)?.at ?? null
+}
+
+/** The date that places a task, occurrence, or planned move (start, else due), with its value type. */
+function anchorDate(d: TaskDates): TaskDate | null {
+  return taskDate(d.start, d.startAllDay) ?? taskDate(d.due, d.dueAllDay)
 }
 
 /**
@@ -281,14 +286,23 @@ function sameDate(
  * moves the series' own by as much, on the wall clock, as a drag moves them
  * (`movedDates`), so the series moves by the user's change rather than to
  * the repeat's day. A date the repeat gains, or turns between a date and a
- * time, is the repeat's new one, moved back by the distance from the repeat
- * to the current one; one it loses goes.
+ * time, or one of a value type the series' own does not have, is the
+ * repeat's new one, moved back by the distance from the repeat to the
+ * current one: in whole days where one of them is shown on a date and the
+ * other at a time, so a time it gets is the user's, on the series' day. One
+ * it loses goes.
  */
 export function allRepeatsDates(repeat: TaskRepeat, to: TaskDates): Required<TaskDates> {
   const series = repeat.todo
-  const shown = anchorOf(repeat.shown)
-  const own = anchorOf(series)
-  const back = shown && own ? wallDistance(shown, own) : { days: 0, minutes: 0 }
+  const shown = anchorDate(repeat.shown)
+  const own = anchorDate(series)
+  // Between a date and a time by whole days: the time of day is the repeat's, not part of the distance.
+  const back =
+    shown && own
+      ? shown.allDay === own.allDay
+        ? wallDistance(shown.at, own.at)
+        : { days: differenceInCalendarDays(own.at, shown.at), minutes: 0 }
+      : { days: 0, minutes: 0 }
   const field = (which: 'start' | 'due'): [string | null, boolean] => {
     const flag = which === 'start' ? 'startAllDay' : 'dueAllDay'
     const next = to[which]
