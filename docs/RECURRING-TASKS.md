@@ -1146,8 +1146,11 @@ value type, earlier ones too: RFC 5545 requires `UNTIL` and `RECURRENCE-ID`
 in `DTSTART`'s value type, and a done override or an `EXDATE` in the old one
 would match no occurrence in readers that follow it. A date gets the new
 time of day in the series' zone (an `UNTIL` in UTC), and a date-time becomes
-its date in the series' zone. The later ones first move by the change in
-date.
+its date in the series' zone. In an all-day series, an `EXDATE` or a
+`RECURRENCE-ID` another app wrote with a time stands for the occurrence on
+its date (see Reading), so it takes the new time of day on that date too,
+and keeps excluding or changing that occurrence. The later ones first move
+by the change in date.
 
 `DTSTART` stays on the rule, so a `COUNT` stays a `COUNT`, without the
 occurrences before the moved one, which the new `DTSTART` leaves behind. An
@@ -1185,7 +1188,8 @@ moves along, or a new one excludes it there, and an override that completed
 it stays where it is. Saved between all-day and timed, an occurrence shown
 in the series' own value type changes the series' value type, as any move
 does: the series takes the dates saved, on the date its rule moves to, and
-every reference converts as above, earlier ones too. One another app
+every reference converts as above, earlier ones too. A time saved counts on
+its date in the zone the series takes, the browser's. One another app
 already shows in the other value type keeps the series' type: only that
 occurrence was of it. A change of the due alone changes only the occurrence
 another app moved. The last repeat moves to any date, as above, wherever it
@@ -1234,7 +1238,11 @@ writes a stored rule in its own words, which would count as a new rule and
 start the series over.
 
 **Removing the rule** leaves a single task at the current occurrence's dates,
-without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events.
+without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events: the current
+occurrence alone, as shown. Its override, if it has one, is laid over the
+master first, its own title, notes, priority and alarms included, and the
+fields the request changes from the series go over those (see Changing the
+fields).
 
 Neither loses a completion. Every override with `STATUS:COMPLETED` that
 goes, an occurrence another app completed, first becomes a completed task of

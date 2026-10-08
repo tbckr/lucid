@@ -564,10 +564,11 @@ type CalendarService interface {
 	CreateTodo(ctx context.Context, calendarID string, in TodoInput) (Todo, error)
 	// UpdateTodo replaces the todo. The fields of in that differ from a
 	// series' go into the override of its current repeat too, where another
-	// app gave it one that the change keeps. etag must match (If-Match),
-	// otherwise ErrConflict. A move of a series that its rule cannot follow,
-	// or that puts a repeat on one another app already changed, is
-	// ErrSeriesMoveUnsupported, and nothing is written. The change of a
+	// app gave it one that the change keeps; where in removes the rule, the
+	// todo is that repeat alone, as shown, with those fields. etag must
+	// match (If-Match), otherwise ErrConflict. A move of a series that its
+	// rule cannot follow, or that puts a repeat on one another app already
+	// changed, is ErrSeriesMoveUnsupported, and nothing is written. The change of a
 	// recurring todo returns the snapshot that RestoreTodo undoes it with, or
 	// nil when it cannot be undone (FR-17).
 	UpdateTodo(ctx context.Context, todoID, etag string, in TodoInput) (Todo, *Snapshot, error)
@@ -607,16 +608,17 @@ type CalendarService interface {
 	// and a new series, a resource with a UID of its own, goes on from it,
 	// changed by in as UpdateTodo changes a series from its current repeat,
 	// open, its checklist unchecked, but for the fields: in carries the series'
-	// with the user's edits, and only those that differ from the series' go into
-	// the new series and the repeat's override; where in removes the rule, the
-	// new series is the repeat alone, as shown, with those fields. in.RRule is
-	// the new series' rule, except that the series' own rule, sent as stored
+	// with the user's edits, and only those that differ from the series' go
+	// into the new series and the repeat's override; where in removes the rule,
+	// the new series is the repeat alone, as shown, with those fields. in.RRule
+	// is the new series' rule, except that the series' own rule, sent as stored
 	// or left out, keeps the rule the new series inherits, with its COUNT
-	// lowered by the repeats before it; "" makes the new series a single todo. Completions other apps recorded from the repeat on become
-	// todos of their own first, and leave both series. It returns the new series
-	// as Todo and the old one as Series, and the snapshot RestoreTodo undoes the
-	// change with, which also deletes the new series (nil when either new ETag
-	// is unknown, when completions became todos, or when the resource has an
+	// lowered by the repeats before it; "" makes the new series a single todo.
+	// Completions other apps recorded from the repeat on become todos of their
+	// own first, and leave both series. It returns the new series as Todo and
+	// the old one as Series, and the snapshot RestoreTodo undoes the change
+	// with, which also deletes the new series (nil when either new ETag is
+	// unknown, when completions became todos, or when the resource has an
 	// ORGANIZER or an ATTENDEE, which a later repeat refuses anyway). At the
 	// series' current repeat, the last one too, it is UpdateTodo with in, both
 	// Todo and Series the series as written. A status of in that completes or

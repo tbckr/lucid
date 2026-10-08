@@ -145,18 +145,21 @@ func splitTodoOff(cal *ical.Calendar, series *todoSeries, rid time.Time, uid str
 	return n, nil
 }
 
-// aloneAsShown makes c, the master of the new series N of a split whose
-// rule the edit removes, its first repeat R alone, as shown, as splitOff
-// makes a single event of the event shown (FR-17): R's override ov laid
-// over c (see layOver), whose properties and alarms replace c's, but for
-// its UID, RECURRENCE-ID and change properties. As N, it is open, its
-// checklist unchecked, without the links to the series' subtasks (see
-// splitTodoOff); its dates are the edit's. The fields the edit changes from
-// the series then go over R's (see applyEditedFields).
-func aloneAsShown(c, ov *ical.Component) {
+// aloneAsShown makes c, the master of a series whose rule an edit removes,
+// its current occurrence alone, as shown, as splitOff makes a single event
+// of the event shown (FR-17): the occurrence's override ov laid over c (see
+// layOver), whose properties and alarms replace c's, but for its UID,
+// RECURRENCE-ID and change properties; its dates are the edit's. The new
+// series N of a split, for asN, is open, its checklist unchecked, without
+// the links to the series' subtasks, as N always is (see splitTodoOff). The
+// fields the edit changes from the series then go over the occurrence's
+// (see applyEditedFields).
+func aloneAsShown(c, ov *ical.Component, asN bool) {
 	layOver(c, ov)
-	reopen(c)
-	dropChildLinks(c)
+	if asN {
+		reopen(c)
+		dropChildLinks(c)
+	}
 }
 
 // errSplitRuleUnsupported refuses to split a task series whose rule Lucid

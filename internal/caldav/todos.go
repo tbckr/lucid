@@ -229,6 +229,8 @@ func seriesOccurrences(s *todoSeries, todoID, calendarID, title string, start, e
 			continue
 		}
 		if occ, ok := s.overrideOcc(o); ok && occOverlaps(occ, start, end) {
+			// One the rule cannot be walked to counts as off it: no series
+			// can go on from it either (see splitPlace).
 			on, _ := s.onInstance(s.ridOf(o))
 			occ.offGrid = !on
 			add(occ, stateOf(occ))
@@ -446,9 +448,9 @@ type todoEdit struct {
 	// onlyEdited says that only the fields of in that differ from the master
 	// as read, cur's, apply to it, see applyEditedFields, as for the new
 	// series N of a split, which keeps the fields it inherited where in
-	// leaves them as they are, and whose master, where in removes the rule,
-	// is its first repeat R alone, as shown (see aloneAsShown and
-	// UpdateTodoFollowing); else in's fields replace the master's.
+	// leaves them as they are (see UpdateTodoFollowing); else in's fields
+	// replace the master's, but where in removes the rule, which leaves the
+	// current occurrence alone, as shown (see aloneAsShown).
 	onlyEdited bool
 }
 
@@ -485,10 +487,10 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 
 // applyTodoEdit applies the update e to the todo c in cal, in memory, as
 // UpdateTodo writes it (FR-17): the rule edit, then the dates, then the
-// fields, see applyTodoFields, or, for e.onlyEdited, those that differ from
-// the master as read, over the current occurrence as shown where the edit
-// removes the rule (see aloneAsShown); those go into the override of the
-// current occurrence as read too, while the edit keeps it, see
+// fields, see applyTodoFields, or, for e.onlyEdited and over the current
+// occurrence as shown where the edit removes the rule (see aloneAsShown),
+// those that differ from the master as read; those go into the override of
+// the current occurrence as read too, while the edit keeps it, see
 // applyEditedFields. It does no I/O: before it, the caller turns the
 // completions other apps recorded in the overrides e.drop reports into
 // entries of their own, see convertDoneOverrides, cloned from e.series as
@@ -514,12 +516,16 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		occ, _ := series.reported(e.cur.Status)
 		ov = occ.override
 	}
+	// shownAlone reports that the rule edit left c the current occurrence
+	// alone, as shown, see aloneAsShown.
+	shownAlone := false
 	switch e.rule {
 	case ruleRemove:
-		// The task stays at the current occurrence, whose dates in carries
-		// (FR-17). N without a rule is its first repeat alone, as shown.
-		if e.onlyEdited && ov != nil {
-			aloneAsShown(c, ov)
+		// The task stays at the current occurrence, whose dates in carries,
+		// as shown (FR-17).
+		if ov != nil {
+			aloneAsShown(c, ov, e.onlyEdited)
+			shownAlone = true
 		}
 		removeRecurrence(cal, c)
 		c.Props.Del(propKDEPending)
@@ -563,7 +569,7 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		// would restart there and lose its overrides. A new rule wrote them
 		// already (FR-17).
 	}
-	if e.onlyEdited {
+	if e.onlyEdited || shownAlone {
 		applyEditedFields(c, ov, e.in, e.cur)
 		applyTodoStatus(c, e.in, now)
 	} else {

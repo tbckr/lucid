@@ -509,6 +509,8 @@ func TestMoveShownRetypes(t *testing.T) {
 		dates:      []time.Time{date(2025, 3, 3, 0, 0), date(2025, 3, 12, 0, 0), date(2025, 3, 24, 0, 0), date(2025, 3, 31, 0, 0)},
 		states:     []string{done, current, upcoming, upcoming},
 	}
+	// Monday the 10th, shown on Wednesday the 12th, of an all-day series.
+	dateShown := []string{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART;VALUE=DATE:20250312", "SUMMARY:Moved"}
 	// West of UTC, a date saved is the evening before in the zone saved
 	// from: it counts as written.
 	west := saved
@@ -559,6 +561,62 @@ func TestMoveShownRetypes(t *testing.T) {
 			next:   date(2025, 3, 24, 13, 0),
 			dates:  []time.Time{date(2025, 3, 3, 13, 0), date(2025, 3, 12, 13, 0), date(2025, 3, 24, 13, 0)},
 			states: []string{done, current, upcoming},
+		},
+		{
+			// Another app wrote the override with a DATE-TIME RECURRENCE-ID,
+			// for the repeat on its date (A-11): it takes the new time on
+			// that date, and stays the repeat's.
+			name:   "an all-day series saved timed, its repeat's RECURRENCE-ID a time",
+			master: []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART;VALUE=DATE:20250312", "SUMMARY:Moved"},
+			},
+			start: date(2025, 3, 12, 13, 0),
+			stored: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T140000", "RECURRENCE-ID;TZID=Europe/Berlin:20250310T140000",
+				"DTSTART;TZID=Europe/Berlin:20250312T140000", "SUMMARY:Moved",
+			},
+			lacks: []string{"VALUE=DATE", "T090000Z"},
+			next:  date(2025, 3, 17, 13, 0),
+			dates: []time.Time{
+				date(2025, 3, 12, 13, 0), date(2025, 3, 17, 13, 0), date(2025, 3, 24, 13, 0), date(2025, 3, 31, 12, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			// 08:00 on Wednesday in Tokyo is Tuesday in UTC: the series keeps
+			// its Mondays.
+			name:      "an all-day series saved timed far east of UTC",
+			master:    []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{dateShown},
+			start:     date(2025, 3, 11, 23, 0),
+			tz:        "Asia/Tokyo",
+			stored: []string{
+				"DTSTART;TZID=Asia/Tokyo:20250310T080000", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID;TZID=Asia/Tokyo:20250310T080000", "DTSTART;TZID=Asia/Tokyo:20250312T080000",
+			},
+			lacks: []string{"VALUE=DATE", "BYDAY=SU"},
+			next:  date(2025, 3, 16, 23, 0),
+			dates: []time.Time{
+				date(2025, 3, 11, 23, 0), date(2025, 3, 16, 23, 0), date(2025, 3, 23, 23, 0), date(2025, 3, 30, 23, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			// 20:00 on Wednesday in New York is Thursday in UTC.
+			name:      "an all-day series saved timed far west of UTC",
+			master:    []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{dateShown},
+			start:     date(2025, 3, 13, 0, 0),
+			tz:        "America/New_York",
+			stored: []string{
+				"DTSTART;TZID=America/New_York:20250310T200000", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID;TZID=America/New_York:20250310T200000", "DTSTART;TZID=America/New_York:20250312T200000",
+			},
+			lacks:  []string{"VALUE=DATE", "BYDAY=TU"},
+			next:   date(2025, 3, 18, 0, 0),
+			dates:  []time.Time{date(2025, 3, 13, 0, 0), date(2025, 3, 18, 0, 0), date(2025, 3, 25, 0, 0)},
+			states: []string{current, upcoming, upcoming},
 		},
 		{
 			// Monday the 24th, shown on Monday the 31st, after Berlin went
@@ -632,6 +690,53 @@ func TestMoveShownRetypes(t *testing.T) {
 			next:   date(2025, 3, 18, 9, 0),
 			dates:  []time.Time{date(2025, 3, 13, 0, 0), date(2025, 3, 18, 9, 0), date(2025, 3, 25, 9, 0)},
 			states: []string{current, upcoming, upcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkMoveShown(t, tc)
+		})
+	}
+}
+
+// The current repeat of an all-day series saved timed at its own date, as
+// move moves it, converts the references like a repeat shown elsewhere
+// does: an EXDATE and an override's RECURRENCE-ID another app wrote with a
+// time, for the repeat on their date (A-11), take the new time on that
+// date, and keep excluding and changing that repeat; and the series keeps
+// its days far from UTC, counted on the wall clock of the zone it takes
+// (FR-17).
+func TestMoveRetypesDatedRefs(t *testing.T) {
+	t.Parallel()
+	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent
+	for _, tc := range []moveShownCase{
+		{
+			name:      "references with a time keep their repeats",
+			master:    []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE:20250317T090000Z"},
+			overrides: [][]string{{"RECURRENCE-ID:20250324T090000Z", "SUMMARY:Later"}},
+			start:     date(2025, 3, 10, 13, 0),
+			stored: []string{
+				"DTSTART;TZID=Europe/Berlin:20250310T140000", "EXDATE;TZID=Europe/Berlin:20250317T140000",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20250324T140000", "SUMMARY:Later",
+			},
+			lacks:  []string{"VALUE=DATE", "T090000Z"},
+			next:   date(2025, 3, 24, 13, 0),
+			dates:  []time.Time{date(2025, 3, 10, 13, 0), date(2025, 3, 24, 13, 0), date(2025, 3, 31, 12, 0)},
+			states: []string{current, upcoming, upcoming},
+		},
+		{
+			// 08:00 on Monday in Tokyo is Sunday in UTC.
+			name:   "far east of UTC, the series keeps its days",
+			master: []string{"DTSTART;VALUE=DATE:20250310", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			start:  date(2025, 3, 9, 23, 0),
+			tz:     "Asia/Tokyo",
+			stored: []string{"DTSTART;TZID=Asia/Tokyo:20250310T080000", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n"},
+			lacks:  []string{"VALUE=DATE", "BYDAY=SU"},
+			next:   date(2025, 3, 16, 23, 0),
+			dates: []time.Time{
+				date(2025, 3, 9, 23, 0), date(2025, 3, 16, 23, 0), date(2025, 3, 23, 23, 0), date(2025, 3, 30, 23, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

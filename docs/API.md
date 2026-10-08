@@ -635,7 +635,10 @@ For a recurring todo, these edits are handled specially:
   (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
   value type: a date gets the new time of day in the series' zone (an `UNTIL`
   in UTC), a date-time becomes its date in the series' zone; the later ones
-  first move by the change in date. A `COUNT` no longer counts the rule's
+  first move by the change in date. In an all-day series, an `EXDATE` or a
+  `RECURRENCE-ID` another client wrote with a time stands for the occurrence
+  on its date, so with a time it takes the new time of day on that date
+  too. A `COUNT` no longer counts the rule's
   instances before the moved occurrence, and an `UNTIL` that would end before
   the new dates moves onto them.
   The **last repeat** (a current occurrence with `next: null`) moves to any
@@ -660,8 +663,9 @@ For a recurring todo, these edits are handled specially:
   Saved between all-day and timed, an occurrence shown in the series' own
   value type changes the series' type, as any move does: the series takes
   the saved dates on the date its rule moves to, and every override,
-  `EXDATE` and the `UNTIL` convert as above. One another client already
-  shows in the other value type keeps the series' type.
+  `EXDATE` and the `UNTIL` convert as above. A time saved counts on its date
+  in the body's `timezone`, the zone the series takes. One another client
+  already shows in the other value type keeps the series' type.
   A change of its `due` alone changes only the occurrence; the last repeat
   moves to any date as above, wherever it is shown. A move together with a
   new `rrule` starts the series over, and the undo below restores the
@@ -674,7 +678,10 @@ For a recurring todo, these edits are handled specially:
   `start` or `due` to recur from, otherwise `400 invalid_input`, message
   *"a repeating task needs a start or due date"*.
 - **Removing `rrule`** (`""`): the todo keeps the current occurrence's dates
-  and loses its overrides and `EXDATE`s.
+  and loses its overrides and `EXDATE`s. It is the current occurrence alone,
+  as shown: that occurrence's override, if it has one, is laid over the
+  series first, its own title, notes, priority and alarms included, and the
+  changed fields (see "Changing fields") go over those.
 - **Completions from other clients**: when changing or removing `rrule`
   drops an override with `STATUS:COMPLETED`, the backend first creates a
   completed todo of its own for it (`If-None-Match: *`), a clone of the

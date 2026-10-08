@@ -776,8 +776,16 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	}
 	loc := s.anchor.loc()
 	shown := dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)}
-	dest := dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)}
+	dest := dateValue{t: occAnchor(moved), allDay: occAnchorAllDay(moved)}
 	retype := shown.allDay == s.anchor.allDay && dest.allDay != s.anchor.allDay
+	// A time is read on the wall clock of the series' zone, or, where an
+	// all-day series takes it, of the zone it takes, as writeSeriesDates
+	// writes it (see seriesForm): the date the user saved there.
+	if retype && !dest.allDay {
+		dest.t = dest.t.In(zoneOf(in.Timezone))
+	} else {
+		dest.t = dest.t.In(loc)
+	}
 	shift := s.shiftBetween(shown, dest)
 	if shift == nil && !retype {
 		s.setEntryDates(occ.override, moved)
@@ -840,6 +848,16 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	return stayed, nil
 }
 
+// zoneOf returns the zone a series writes timed dates in for the zone tz of
+// a request, see seriesForm: tz's, UTC where it has none or Lucid cannot
+// resolve it (FR-17).
+func zoneOf(tz string) *time.Location {
+	if l := loadLocation(tz); l != nil {
+		return l
+	}
+	return time.UTC
+}
+
 // datesOn returns in with its dates moved onto day, a date, by whole days,
 // for a series retyped from an occurrence shown on another day (FR-17): its
 // start, else its due, falls on day at its own wall-clock time in the zone of
@@ -850,8 +868,8 @@ func datesOn(in domain.TodoInput, day time.Time) domain.TodoInput {
 		anchor, allDay = in.Due, in.DueAllDay
 	}
 	zone := time.UTC
-	if l := loadLocation(in.Timezone); l != nil && !allDay {
-		zone = l
+	if !allDay {
+		zone = zoneOf(in.Timezone)
 	}
 	days := int(day.Sub(civilDate(anchor.In(zone))) / (24 * time.Hour))
 	move := func(t *time.Time) *time.Time {
@@ -1297,9 +1315,22 @@ func (s *todoSeries) retypeRefs(cal *ical.Calendar, to dateValue) {
 // series was read in for DATE; f is the new anchor's form, and a floating
 // one gets a floating UNTIL, as RFC 5545 3.3.10 wants. A reference already
 // of the new value type stays as written, unless it shares an EXDATE with
-// one that is not (see retypeDateProp).
+// one that is not (see retypeDateProp), or it stood for a date: in an
+// all-day series, a DATE-TIME EXDATE and the RECURRENCE-ID of an override of
+// that value type stand for the repeat on their date as written (A-11), so
+// with a time they take the new anchor's time of day on that date, as the
+// repeat does. An override hidden behind one of the anchor's value type for
+// the same repeat (see newTodoSeries) keeps its RECURRENCE-ID: it would hold
+// that repeat too.
 func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay time.Duration, loc *time.Location, f dateForm) {
 	c := s.master
+	// The overrides that stand for the repeat on their date (A-11).
+	dated := map[*ical.Component]bool{}
+	for _, o := range s.overrides {
+		if !o.day.IsZero() {
+			dated[o.c] = true
+		}
+	}
 	conv := func(d dateValue) time.Time {
 		if toAllDay {
 			return civilDate(d.t.In(loc))
@@ -1326,35 +1357,37 @@ func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay ti
 	}
 	exdates := c.Props[ical.PropExceptionDates]
 	for i := range exdates {
-		retypeDateProp(cal, &exdates[i], toAllDay, f, conv)
+		retypeDateProp(cal, &exdates[i], toAllDay, !toAllDay, f, conv)
 	}
 	for _, o := range cal.Children {
 		if o == c || o.Name != c.Name {
 			continue
 		}
 		for _, name := range []string{ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDue} {
+			all := !toAllDay && name == ical.PropRecurrenceID && dated[o]
 			vals := o.Props[name]
 			for i := range vals {
-				retypeDateProp(cal, &vals[i], toAllDay, f, conv)
+				retypeDateProp(cal, &vals[i], toAllDay, all, f, conv)
 			}
 		}
 	}
 }
 
 // retypeDateProp rewrites the date property p in the form f when one of its
-// values is not of the value type toAllDay (FR-17): such values by conv, the
-// others at their own instant. Its parameters other than VALUE and TZID
-// stay; one that cannot be read stays as written.
-func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay bool, f dateForm, conv func(dateValue) time.Time) {
+// values is not of the value type toAllDay, or for all (FR-17): such values,
+// or all of them, by conv, the others at their own instant. Its parameters
+// other than VALUE and TZID stay; one that cannot be read stays as written.
+func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay, all bool, f dateForm, conv func(dateValue) time.Time) {
+	converts := func(d dateValue) bool { return all || d.allDay != toAllDay }
 	dvs, err := parseDateList(p)
-	if err != nil || !slices.ContainsFunc(dvs, func(d dateValue) bool { return d.allDay != toAllDay }) {
+	if err != nil || !slices.ContainsFunc(dvs, converts) {
 		return
 	}
 	var np *ical.Prop
 	vals := make([]string, len(dvs))
 	for i, d := range dvs {
 		t := d.t
-		if d.allDay != toAllDay {
+		if converts(d) {
 			t = conv(d)
 		}
 		np = seriesDateProp(cal, p.Name, t, f)

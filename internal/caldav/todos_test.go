@@ -4312,7 +4312,8 @@ func checkFields(t *testing.T, e *env, id string, master todoFields, overrides m
 // the series has it keeps R's own value, and an edited one shows at R as at
 // every other repeat. The checklist counts with the state of its items, the
 // progress of R. A move from R's rule date drops R's override; one from
-// where another app shows R moves it along (FR-17).
+// where another app shows R moves it along. Without a rule, the task is R
+// alone, as shown (FR-17).
 func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
 	t.Parallel()
 	series := todoFields{"Series", "Series notes\n\n- [ ] s", "5"}
@@ -4323,6 +4324,7 @@ func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
 		own       []string // R's own fields, the default where nil
 		shown     []string // R's own dates, where another app moved R
 		edit      func(in *domain.TodoInput)
+		rule      *string
 		master    todoFields
 		overrides map[string]todoFields
 	}{
@@ -4360,6 +4362,21 @@ func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
 			overrides: map[string]todoFields{rid: {"Own", "Series notes\n\n- [x] s", ""}},
 		},
 		{
+			// Without a rule, the task is R alone, as shown: R's override
+			// laid over the series, with the edited fields over R's.
+			name:      "removing the rule keeps R's own fields",
+			rule:      ptr(""),
+			master:    own,
+			overrides: map[string]todoFields{},
+		},
+		{
+			name:      "removing the rule, an edited title goes over R's",
+			edit:      func(in *domain.TodoInput) { in.Title = "New" },
+			rule:      ptr(""),
+			master:    todoFields{"New", own.notes, "1"},
+			overrides: map[string]todoFields{},
+		},
+		{
 			name: "a move from R's rule date drops R's override",
 			edit: func(in *domain.TodoInput) {
 				in.Title = "New"
@@ -4392,6 +4409,9 @@ func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
 			in := editInput(&f)
 			if tc.edit != nil {
 				tc.edit(&in)
+			}
+			if tc.rule != nil {
+				in = withRule(in, *tc.rule)
 			}
 			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 			mustNoErr(t, err)
