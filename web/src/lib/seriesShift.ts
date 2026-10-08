@@ -314,25 +314,23 @@ function addWallMinutes(s: string, minutes: number): string {
  * minutes on the wall clock. That is the distance of an override another app
  * moved too, as the server measures it.
  *
- * Wall clocks are read in the series' zone (`todo.timezone`), else in
- * `browserZone`; a date, all-day, by its UTC date. A RECURRENCE-ID is read in
- * the value type of the repeat it names, as shown. A move between a date and
- * a time moves by its change of date alone, as on the server. An off-rule
- * current repeat moves from its RECURRENCE-ID too, where the server takes the
- * rule's instance before it; where they disagree, the server refuses the
- * write. No dates to move to, or none shown, is no move here.
+ * Wall clocks are read in the series' zone (`todo.timezone`), else in UTC,
+ * as the server reads a time in UTC ("Z"), a floating one and one in a zone
+ * it cannot resolve, which it reports without `timezone`; unlike an event's
+ * (`moveAllRefusal`), never in the browser's zone. A date, all-day, is read
+ * by its UTC date. A RECURRENCE-ID is read in the value type of the repeat
+ * it names, as shown. A move between a date and a time moves by its change
+ * of date alone, as on the server. An off-rule current repeat moves from its
+ * RECURRENCE-ID too, where the server takes the rule's instance before it;
+ * where they disagree, the server refuses the write. No dates to move to, or
+ * none shown, is no move here.
  */
-export function taskMoveRefusal(
-  repeat: TaskRepeat,
-  to: TaskDates,
-  from: 'repeat' | 'current',
-  browserZone: string,
-): ShiftReason | null {
+export function taskMoveRefusal(repeat: TaskRepeat, to: TaskDates, from: 'repeat' | 'current'): ShiftReason | null {
   const shown = taskAnchor(repeat.shown)
   const moved = taskAnchor(to)
   if (!shown || !moved) return null
-  // Left out, or empty, for a date, a time in UTC or a floating one.
-  const zone = (repeat.todo.timezone ?? '') || browserZone
+  // Left out, or empty, for a date or a time the server reads in UTC.
+  const zone = (repeat.todo.timezone ?? '') || 'UTC'
   const before = wallMinutes(taskWallClock(shown.at, shown.allDay, zone))
   const after = wallMinutes(taskWallClock(moved.at, moved.allDay, zone))
   const distance =

@@ -424,19 +424,28 @@ describe('scopeOptions for tasks', () => {
     next: { due: '2026-04-15T07:00:00Z', dueAllDay: false },
   }
   const monthlyLater = (p: Partial<Todo> = {}) => later({ ...monthly, ...p }, { rid: '2026-04-15T07:00:00Z' })
-  // Daily in March and April, stored in UTC and read in Berlin: the current repeat at 23:30 on Saturday, 28 March,
-  // the next one at 00:30 on Monday, 30 March, as summer time began in between. The same move of the later repeat
-  // can cross midnight from one of them and not from the other.
+  // Daily at 02:30 in Berlin in March and April. On Sunday, 29 March, summer time begins and 02:30 does not exist,
+  // so the current repeat is at 03:30 (the server's RECURRENCE-ID 01:30Z); the next one is at 02:30 on Monday. The
+  // same move of the later repeat can cross midnight from one of them and not from the other.
   const daylight = later(
     {
       rrule: 'FREQ=DAILY;BYMONTH=3,4',
-      timezone: null,
-      due: '2026-03-28T22:30:00Z',
-      recurrenceId: '2026-03-28T22:30:00Z',
-      next: { due: '2026-03-29T22:30:00Z', dueAllDay: false },
+      due: '2026-03-29T01:30:00Z',
+      recurrenceId: '2026-03-29T01:30:00Z',
+      next: { due: '2026-03-30T00:30:00Z', dueAllDay: false },
     },
-    { rid: '2026-03-29T22:30:00Z' },
+    { rid: '2026-03-30T00:30:00Z' },
   )
+  // The current repeat on the 9th at `rid`, stored in UTC ("Z"): the server counts its days in UTC, and so does the
+  // browser, whatever its own zone (Berlin here).
+  const utcAt = (rid: string) =>
+    current({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
+      timezone: null,
+      due: rid,
+      recurrenceId: rid,
+      next: { due: '2026-04-09T22:30:00Z', dueAllDay: false },
+    })
 
   const tuesday = due('2026-03-10T08:00:00Z')
   const friday = due('2026-03-13T08:00:00Z')
@@ -553,7 +562,7 @@ describe('scopeOptions for tasks', () => {
       name: 'move a later repeat that only the series from it can follow',
       action: 'move',
       item: daylight,
-      to: due('2026-03-29T23:00:00Z'),
+      to: due('2026-03-30T21:30:00Z'),
       want: { options: ['following'], reason: 'fixedDays' },
     },
     {
@@ -562,6 +571,20 @@ describe('scopeOptions for tasks', () => {
       item: daylight,
       to: due('2026-03-29T21:30:00Z'),
       want: { options: ['all'], reason: 'fixedDays' },
+    },
+    {
+      name: 'move a series stored in UTC past midnight in UTC, though not in the browser\'s Berlin',
+      action: 'move',
+      item: utcAt('2026-03-09T23:30:00Z'),
+      to: due('2026-03-10T00:30:00Z'),
+      want: { options: ['this'], reason: 'fixedDays' },
+    },
+    {
+      name: 'move a series stored in UTC within its day in UTC, though past midnight in the browser\'s Berlin',
+      action: 'move',
+      item: utcAt('2026-03-09T22:30:00Z'),
+      to: due('2026-03-09T23:15:00Z'),
+      want: { options: ['this', 'all'] },
     },
     {
       name: 'change a later repeat',
@@ -653,7 +676,7 @@ describe('scopeOptions for tasks', () => {
   ]
 
   it.each(rows)('$name', ({ action, item, to, want }) => {
-    expect(scopeOptions({ kind: 'task', action, item, to, tz })).toStrictEqual(want)
+    expect(scopeOptions({ kind: 'task', action, item, to })).toStrictEqual(want)
   })
 })
 
@@ -877,6 +900,11 @@ describe('taskScopeHint', () => {
     expect(taskScopeHint(de, { options: ['following'] }, 'move', false, 'upcoming')?.text).toBe(
       'Diese und alle folgenden, als eigene Serie.',
     )
+  })
+
+  it('has nothing to say before a delete, which asks to confirm instead', () => {
+    expect(taskScopeHint(t, { options: ['all'] }, 'delete', false, 'current')).toBeNull()
+    expect(taskScopeHint(t, { options: ['all'], missing: 'attendees' }, 'delete', false, 'upcoming')).toBeNull()
   })
 
   it('has nothing to say with a choice, which the question asks, for a single task, or for a refused move', () => {

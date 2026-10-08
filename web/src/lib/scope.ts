@@ -68,14 +68,15 @@ export interface ScopeResult {
  * this event, the following ones or all.
  *
  * `kind: 'task'` asks the same of a task series' repeat, with its new dates
- * as `to` (`taskScopeOptions`).
+ * as `to` (`taskScopeOptions`). It needs no browser zone: a task series
+ * without a zone of its own is judged in UTC, as the server judges it.
  */
 export function scopeOptions(
   input:
     | { kind: 'event'; action: ScopeAction; item: CalEvent; to?: Date; tz: string }
-    | { kind: 'task'; action: ScopeAction; item: TaskRepeat; to?: TaskDates; tz: string },
+    | { kind: 'task'; action: ScopeAction; item: TaskRepeat; to?: TaskDates },
 ): ScopeResult {
-  if (input.kind === 'task') return taskScopeOptions(input.action, input.item, input.to, input.tz)
+  if (input.kind === 'task') return taskScopeOptions(input.action, input.item, input.to)
   const { action, item, to, tz } = input
   if (!item.recurring || !item.recurrenceId) return { options: [] }
 
@@ -123,12 +124,12 @@ function thisFollowingAll(item: CalEvent): ScopeResult {
  * "all repeats" from the current one. `reason` names a refusal that took
  * one of them away; with no option left, the move is refused.
  */
-function taskScopeOptions(action: ScopeAction, repeat: TaskRepeat, to: TaskDates | undefined, tz: string): ScopeResult {
+function taskScopeOptions(action: ScopeAction, repeat: TaskRepeat, to: TaskDates | undefined): ScopeResult {
   const { todo } = repeat
   if (!todo.recurring || todo.ruleUnsupported || isDone(todo) || repeat.last) return { options: [] }
 
   const moved = to ?? repeat.shown
-  const refusal = (from: 'repeat' | 'current') => (action === 'move' ? taskMoveRefusal(repeat, moved, from, tz) : null)
+  const refusal = (from: 'repeat' | 'current') => (action === 'move' ? taskMoveRefusal(repeat, moved, from) : null)
   const allRefused = refusal('current')
   const options: Scope[] = []
   let reason = allRefused
@@ -413,11 +414,12 @@ export function eventScopeHint(t: TFunction, result: ScopeResult, ruleRemoved: b
  * What a change of a task series' repeat `at` the current one or a later one
  * reaches when it has exactly one option (FR-17), said before it happens, as
  * `eventScopeHint` says it for events. `null` with a choice, which the
- * question asks, for a single task, and for a refused move, which says why
- * (`scope.hint.none`). "All repeats" says that a move moves them all, and
- * warns in red that a removed rule removes the upcoming ones. Where
- * attendees took the other option away, a second sentence says so;
- * "only this repeat", missing at every later repeat, is not worth one.
+ * question asks, for a single task, for a refused move, which says why
+ * (`scope.hint.none`), and for a delete, which asks to confirm instead
+ * (`tasks.confirmDeleteSeries`). "All repeats" says that a move moves them
+ * all, and warns in red that a removed rule removes the upcoming ones. Where
+ * attendees took the other option away, a second sentence says so; "only
+ * this repeat", missing at every later repeat, is not worth one.
  */
 export function taskScopeHint(
   t: TFunction,
@@ -427,7 +429,7 @@ export function taskScopeHint(
   at: TaskRepeat['at'],
 ): ScopeHint | null {
   const [only] = result.options
-  if (result.options.length !== 1 || !only) return null
+  if (result.options.length !== 1 || !only || action === 'delete') return null
   const missing = result.missing === 'taskThis' ? undefined : taskScopeMissing(t, result)
   const hint = (key: 'taskThis' | 'taskFollowing' | 'taskAll' | 'taskAllMove' | 'taskRuleRemoved'): string =>
     missing ? `${t(`scope.hint.${key}`)} ${missing}` : t(`scope.hint.${key}`)
