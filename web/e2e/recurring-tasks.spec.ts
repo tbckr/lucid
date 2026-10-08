@@ -3,11 +3,12 @@ import { createTestTask, deleteTestTasks, login, monthGrid } from './helpers'
 
 /*
  * Repeating tasks in the calendar views (FR-16, FR-17). The browser's clock
- * stands on the first Monday two months ahead, so every day a spec uses (up
- * to four days later) shares one week row whether weeks start on Sunday or
- * Monday, that row is one of the month grid's top ones, clear of the toasts
- * at the bottom, and the seeded one-off items, all within two weeks of the
- * real today, stay out of its cells.
+ * stands on the first Monday two months ahead, so every day a spec drags to
+ * or from (up to four days later) shares one week row whether weeks start on
+ * Sunday or Monday, that row is one of the month grid's top ones, clear of
+ * the toasts at the bottom, and the seeded one-off items, all within two
+ * weeks of the real today, stay out of its cells and the next row's, which
+ * a spec only looks at.
  */
 
 const DAY = 24 * 3600 * 1000
@@ -119,89 +120,229 @@ async function dragOver(page: Page, handle: Locator, target: Locator): Promise<v
   await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 })
 }
 
-test('dragging a repeat on fixed days stays before the next one', async ({ page }) => {
-  const title = 'E2E weekly'
-  const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
-  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
-  // Something else in a day the series can't reach, which dims while the series is dragged.
-  await createTestTask(page, { title: 'E2E other', due: day(4).toISOString(), dueAllDay: true })
+/** Drag `handle` onto `target` and drop it there. */
+async function drag(page: Page, handle: Locator, target: Locator): Promise<void> {
+  await dragOver(page, handle, target)
+  await page.mouse.up()
+}
+
+/** The month grid's cell of the day `n` days after today. */
+async function monthDays(page: Page): Promise<(n: number) => Locator> {
+  const cells = monthGrid(page).getByRole('gridcell')
+  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
+  return (n) => cells.nth(at + n)
+}
+
+/**
+ * The entries of `title` in the month grid's `cell` of day `n`, all of them or its current one, which alone has a
+ * checkbox, and its planned repeat there.
+ */
+function entriesOf(page: Page, cell: (n: number) => Locator, title: string) {
+  const entry = (n: number) => cell(n).locator('[data-task-key]', { hasText: title })
+  return {
+    entry,
+    current: (n: number) => entry(n).filter({ has: page.getByRole('checkbox') }),
+    planned: (n: number) => cell(n).getByRole('button', { name: `${title}, planned repeat on ${short(day(n))}` }),
+    /** The title of the current repeat on day `n`, which opens its details and drags it. */
+    handle: (n: number) =>
+      entry(n)
+        .filter({ has: page.getByRole('checkbox') })
+        .getByRole('button', { name: `${title}, all day` }),
+  }
+}
+
+/** The question which repeats of a series a drop moves (FR-17). */
+const moveQuestion = (page: Page) =>
+  page.getByRole('alertdialog', { name: 'This task repeats. Which repeats should move?' })
+
+/**
+ * The mark of a task detached from its series (FR-17). A chip too narrow for the mark hides it, so match the element
+ * rather than the visible role.
+ */
+const DETACHED_MARK = '[role="img"][aria-label="Detached from its series"]'
+
+/** The toast with `message`, after hovering it: that pauses sonner's 8 s timer, so a slow run keeps its Undo. */
+async function hoverToast(page: Page, message: string): Promise<Locator> {
+  const toast = page.locator('[data-sonner-toast]', { hasText: message })
+  await expect(toast).toBeVisible()
+  await toast.hover()
+  return toast
+}
+
+/** Reload, and wait for the calendar: the view stays the one shown. */
+async function reload(page: Page): Promise<void> {
   await page.reload()
   await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
-  await page.keyboard.press('m')
-  const cells = monthGrid(page).getByRole('gridcell')
-  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
-  // The current repeat on day `n`: the planned ones have no checkbox.
-  const current = (n: number) =>
-    cells.nth(at + n).locator('[data-task-key]', { hasText: title }).filter({ has: page.getByRole('checkbox') })
-  const handle = (n: number) => current(n).getByRole('button', { name: `${title}, all day` })
+}
 
-  // A day later is before the next repeat, on day 3.
-  await dragOver(page, handle(0), cells.nth(at + 1))
-  await page.mouse.up()
-  await expect(page.getByText(`Moved to ${short(day(1))}. Then: ${short(day(3))}`)).toBeVisible()
-  await expect(current(1)).toBeVisible()
-  await expect(current(0)).toHaveCount(0)
-
-  // Three more days would pass it: the drop keeps the task where it is, and says why.
-  await dragOver(page, handle(1), cells.nth(at + 4))
-  await expect(page.getByRole('status').filter({ hasText: `Only possible until ${short(day(2))}.` })).toHaveCount(1)
-  // Beneath the dragged task too, not only for screen readers.
-  await expect(page.locator('p[aria-hidden="true"]', { hasText: `Only possible until ${short(day(2))}.` })).toBeVisible()
-  // The days past the next repeat are blocked, and dim what they show but the series' repeats.
-  await expect(cells.nth(at + 4)).toHaveClass(/\bblocked\b/)
-  await expect(cells.nth(at + 4).locator('[data-task-key]', { hasText: 'E2E other' })).toHaveCSS('opacity', '0.5')
-  await expect(cells.nth(at + 3).locator('[data-task-key]', { hasText: title })).toHaveCSS('opacity', '1')
-  await page.mouse.up()
-  await expect(page.getByText('Not moved')).toBeVisible()
-  await expect(page.getByText(`Until ${short(day(2))}, then the next repeat is due.`)).toBeVisible()
-  await expect(current(1)).toBeVisible()
-  await expect(current(4)).toHaveCount(0)
-  await expect(page.getByText(`Moved to ${short(day(4))}`)).toHaveCount(0)
-
-  // Nothing saved.
-  await page.reload()
-  await expect(current(1)).toBeVisible()
-  await expect(current(4)).toHaveCount(0)
-})
-
-test('dragging a later repeat of an interval series moves the whole series', async ({ page }) => {
-  const title = 'E2E daily'
-  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule: 'FREQ=DAILY' }, 'm')
-  const cells = monthGrid(page).getByRole('gridcell')
-  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
-  const entry = (n: number) => cells.nth(at + n).locator('[data-task-key]', { hasText: title })
-  // The current repeat on day `n`: the planned ones have no checkbox.
-  const current = (n: number) => entry(n).filter({ has: page.getByRole('checkbox') })
-
-  // Tomorrow's planned repeat two days later: the series follows, from today's repeat on.
-  await dragOver(page, entry(1).getByRole('button', { name: `${title}, planned repeat on ${short(day(1))}` }), cells.nth(at + 3))
-  await page.mouse.up()
-  await expect(page.getByText(`Series moved. Next up: ${short(day(2))}`)).toBeVisible()
-  await expect(current(2)).toBeVisible()
-  await expect(entry(0)).toHaveCount(0)
-  await expect(entry(1)).toHaveCount(0)
-
-  await page.reload()
-  await expect(current(2)).toBeVisible()
-  await expect(entry(1)).toHaveCount(0)
-})
-
-test('a later repeat on fixed days stays in place', async ({ page }) => {
+test('dragging the current repeat of a fixed-day series asks, and Only this repeat detaches it', async ({ page }) => {
   const title = 'E2E weekly'
   const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
   await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
-  const cells = monthGrid(page).getByRole('gridcell')
-  const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
-  const planned = cells.nth(at + 3).getByRole('button', { name: `${title}, planned repeat on ${short(day(3))}` })
+  const cell = await monthDays(page)
+  const { entry, current, planned, handle } = entriesOf(page, cell, title)
 
-  await dragOver(page, planned, cells.nth(at + 1))
-  // Trying says why it stays, next to it.
-  await expect(page.getByRole('status').filter({ hasText: `Can be completed and moved once ${short(today)} is done.` })).toBeVisible()
+  // A day later: the repeat could go on its own, or the series along with it, on its days a day later each.
+  await drag(page, handle(0), cell(1))
+  const question = moveQuestion(page)
+  await expect(question.getByRole('button', { name: 'All repeats' })).toBeVisible()
+  await expect(question.getByRole('button', { name: 'This and following repeats' })).toHaveCount(0)
+
+  // The repeat stays where it was dropped while the server, held back here, detaches it.
+  const detach = /\/api\/v1\/todos\/[^/]+\/occurrences\//
+  let answer!: () => void
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve
+  })
+  await page.route(detach, async (route) => {
+    await answered
+    await route.continue()
+  })
+  const detaching = page.waitForRequest((r) => r.method() === 'PUT' && detach.test(r.url()))
+  await question.getByRole('button', { name: 'Only this repeat' }).click()
+  await detaching
+  await expect(question).toBeHidden()
+  await expect(entry(1)).toHaveCount(1)
+  await expect(entry(0)).toHaveCount(0)
+  answer()
+
+  const toast = await hoverToast(
+    page,
+    `Moved to ${short(day(1))} as a task of its own. The series goes on ${short(day(3))}.`,
+  )
+  // A task of its own now, marked as detached, and the series goes on with Thursday's repeat.
+  await expect(current(1).locator(DETACHED_MARK)).toHaveCount(1)
+  await expect(current(3)).toBeVisible()
+  await expect(entry(0)).toHaveCount(0)
+
+  // Undo takes the detached task back, and the series is at today's repeat again.
+  await toast.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.getByText('Undone.')).toBeVisible()
+  await expect(current(0)).toBeVisible()
+  await expect(entry(1)).toHaveCount(0)
+  await expect(planned(3)).toBeVisible()
+
+  await reload(page)
+  await expect(current(0)).toBeVisible()
+  await expect(current(0).locator(DETACHED_MARK)).toHaveCount(0)
+  await expect(entry(1)).toHaveCount(0)
+  await expect(planned(3)).toBeVisible()
+})
+
+test('dragging a later repeat of an interval series asks, and This and following splits it', async ({ page }) => {
+  const title = 'E2E daily'
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule: 'FREQ=DAILY' }, 'm')
+  const cell = await monthDays(page)
+  const { entry, current, planned } = entriesOf(page, cell, title)
+
+  // Tomorrow's planned repeat two days later: only the current repeat could go on its own.
+  await drag(page, planned(1), cell(3))
+  const question = moveQuestion(page)
+  await expect(question).toHaveAccessibleDescription('Only the current repeat can be changed on its own.')
+  await expect(question.getByRole('button', { name: 'Only this repeat' })).toHaveCount(0)
+  await expect(question.getByRole('button', { name: 'All repeats' })).toBeVisible()
+  await question.getByRole('button', { name: 'This and following repeats' }).click()
+  await expect(question).toBeHidden()
+  await expect(page.getByText(`Moved from ${short(day(1))} on, as a series of its own.`)).toBeVisible()
+
+  // Today's repeat stays as the last of the old series; the new one starts where the repeat was dropped.
+  const split = async () => {
+    await expect(current(0)).toBeVisible()
+    await expect(entry(1)).toHaveCount(0)
+    await expect(entry(2)).toHaveCount(0)
+    await expect(current(3)).toBeVisible()
+    await expect(planned(4)).toBeVisible()
+  }
+  await split()
+
+  await reload(page)
+  await split()
+  // Two series, each in the list with its current repeat.
+  await expect(taskList(page).getByRole('checkbox', { name: `Completed: ${title}` })).toHaveCount(2)
+})
+
+test('a later repeat on fixed days moves as This and following', async ({ page }) => {
+  const title = 'E2E weekly'
+  const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
+  const cell = await monthDays(page)
+  const { entry, current, planned } = entriesOf(page, cell, title)
+
+  // Thursday's repeat a day later.
+  await drag(page, planned(3), cell(4))
+  const question = moveQuestion(page)
+  await question.getByRole('button', { name: 'This and following repeats' }).click()
+  await expect(question).toBeHidden()
+  await expect(page.getByText(`Moved from ${short(day(3))} on, as a series of its own.`)).toBeVisible()
+
+  const split = async () => {
+    // The old series keeps its days and ends before Thursday: today's repeat is its last.
+    await expect(current(0)).toBeVisible()
+    await expect(entry(1)).toHaveCount(0)
+    await expect(entry(3)).toHaveCount(0)
+    await expect(entry(7)).toHaveCount(0)
+    // The new one goes on a day later each, on Fridays and Tuesdays.
+    await expect(current(4)).toBeVisible()
+    await expect(planned(8)).toBeVisible()
+    await expect(entry(10)).toHaveCount(0)
+    await expect(planned(11)).toBeVisible()
+  }
+  await split()
+
+  await reload(page)
+  await split()
+})
+
+test('deleting the current repeat in the details skips it', async ({ page }) => {
+  const title = 'E2E weekly'
+  const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))}`
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
+  const cell = await monthDays(page)
+  const { entry, current, handle } = entriesOf(page, cell, title)
+
+  await handle(0).click()
+  const details = page.getByRole('dialog', { name: title })
+  await details.getByRole('button', { name: 'Delete task' }).click()
+  await details
+    .getByRole('alertdialog', { name: 'This task repeats. Which repeats should be deleted?' })
+    .getByRole('button', { name: 'Only this repeat' })
+    .click()
+  await expect(details).toBeHidden()
+  // The toast comes with the server's answer: the series goes on with Thursday's repeat.
+  await expect(page.getByText(`Skipped. Next up: ${short(day(3))}`)).toBeVisible()
+  await expect(entry(0)).toHaveCount(0)
+  await expect(current(3)).toBeVisible()
+
+  await reload(page)
+  await expect(entry(0)).toHaveCount(0)
+  await expect(current(3)).toBeVisible()
+})
+
+test('the last repeat moves without a question', async ({ page }) => {
+  const title = 'E2E weekly'
+  // On fixed days, until the day after tomorrow: today's repeat is the last.
+  const until = day(2).toISOString().slice(0, 10).replaceAll('-', '')
+  const rrule = `FREQ=WEEKLY;BYDAY=${byDay(today)},${byDay(day(3))};UNTIL=${until}`
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true, rrule }, 'm')
+  const cell = await monthDays(page)
+  const { entry, current, handle } = entriesOf(page, cell, title)
+
+  // The day after tomorrow, not one of the series' days: the last repeat is a task like any other.
+  await dragOver(page, handle(0), cell(2))
+  const said = page.getByRole('status').filter({ hasText: 'New time:' })
+  await expect(said).toHaveCount(1)
+  // With nothing to choose, nothing is said about the series, to screen readers or beneath the task.
+  await expect(said).not.toContainText(/repeat|move/i)
+  await expect(page.locator('p[aria-hidden="true"]', { hasText: /repeat|move/i })).toHaveCount(0)
   await page.mouse.up()
-  await expect(planned).toBeVisible()
-  await expect(cells.nth(at + 1).locator('[data-task-key]', { hasText: title })).toHaveCount(0)
-  // The release opens nothing: no details, no new entry.
-  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByText(`Moved to ${short(day(2))}.`, { exact: true })).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(current(2)).toBeVisible()
+  await expect(entry(0)).toHaveCount(0)
+
+  await reload(page)
+  await expect(current(2)).toBeVisible()
+  await expect(entry(0)).toHaveCount(0)
 })
 
 test('set and remove the repeat of a task in the editor', async ({ page }) => {

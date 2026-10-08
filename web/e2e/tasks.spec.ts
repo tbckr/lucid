@@ -7,11 +7,15 @@ const taskList = (page: Page) => page.getByTestId('tasks-list')
 /**
  * The seeded tasks in the month grid that don't repeat, whichever fall into it: they are
  * dated relative to today. A repeating one, marked by its ⟳ image, moves on to its next
- * repeat when completed and keeps the completed one as a task of its own (FR-17). A chip
- * too narrow for the mark hides it, so match the element rather than the visible role.
+ * repeat when completed and keeps the completed one as a task of its own (FR-17). A task
+ * detached from a series carries the same image, named for that, but no longer repeats, so
+ * it counts as single. A chip too narrow for the mark hides it, so match the element rather
+ * than the visible role.
  */
 const singleTasks = (page: Page) =>
-  monthGrid(page).locator('[data-task-key]').filter({ hasNot: page.locator('[role="img"]') })
+  monthGrid(page)
+    .locator('[data-task-key]')
+    .filter({ hasNot: page.locator('[role="img"]:not([aria-label="Detached from its series"])') })
 
 // A failed test never reaches its own clean-up; remove the tasks the specs created.
 test.afterEach(async ({ page }) => {
@@ -113,9 +117,14 @@ test('complete a task in the month view', async ({ page }) => {
 
 test('a task in the month view opens its details, and the editor from there', async ({ page }) => {
   await login(page)
-  const inGrid = monthGrid(page).locator('[data-task-key]').first()
-  await expect(inGrid).toBeVisible()
-  const title = ((await inGrid.getByRole('checkbox').getAttribute('aria-label')) ?? '').replace(/^Completed: /, '')
+  const first = monthGrid(page).locator('[data-task-key]').first()
+  await expect(first).toBeVisible()
+  const title = ((await first.getByRole('checkbox').getAttribute('aria-label')) ?? '').replace(/^Completed: /, '')
+  // That task, by its title: the repeats of a series can come in after the other tasks, ahead of it.
+  const inGrid = monthGrid(page)
+    .locator('[data-task-key]')
+    .filter({ has: page.getByRole('checkbox', { name: `Completed: ${title}`, exact: true }) })
+    .first()
   await inGrid.getByRole('button').click()
 
   const details = page.getByRole('dialog', { name: title })
