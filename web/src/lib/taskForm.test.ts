@@ -153,6 +153,19 @@ describe('taskForm', () => {
       })
     })
 
+    // FR-17: a series given a time writes it in the zone of the write, so the date picker names it, as the editor does.
+    it.each([
+      ['a new time', { date: '2026-09-25', time: '09:00' }],
+      ['a new day', { date: '2026-09-26', time: '' }],
+      ['no due date', { date: '', time: '' }],
+    ])('names the zone its times are in, for %s', (_, due) => {
+      expect(withDue(todo({ due: '2026-09-25T00:00:00Z', dueAllDay: true }), due, 'Asia/Tokyo')).toMatchObject({
+        timezone: 'Asia/Tokyo',
+      })
+      const spanning = todo({ start: '2026-09-24T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true })
+      expect(withDue(spanning, due, 'Asia/Tokyo')).toMatchObject({ timezone: 'Asia/Tokyo' })
+    })
+
     it('moves a start after the new due date back to it', () => {
       const t = todo({ start: '2026-10-01T00:00:00Z', startAllDay: true })
       expect(withDue(t, { date: '2026-09-28', time: '' }, TZ)).toMatchObject({

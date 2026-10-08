@@ -1,5 +1,5 @@
 import { type TFunction } from 'i18next'
-import { anchorOf, type TaskDates, type TaskRepeat } from './calendarTasks'
+import { anchorOf, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
 import { utcDateToLocal } from './dates'
 import { type CalEvent } from './events'
 import { formatPickerDate, type FormatPrefs } from './format'
@@ -69,12 +69,14 @@ export interface ScopeResult {
  *
  * `kind: 'task'` asks the same of a task series' repeat, with its new dates
  * as `to` (`taskScopeOptions`). It needs no browser zone: a task series
- * without a zone of its own is judged in UTC, as the server judges it.
+ * without a zone of its own is judged in UTC, as the server judges it, but
+ * for a time given to an all-day series, judged in the zone the write names
+ * (`to.timezone`), where the server writes it.
  */
 export function scopeOptions(
   input:
     | { kind: 'event'; action: ScopeAction; item: CalEvent; to?: Date; tz: string }
-    | { kind: 'task'; action: ScopeAction; item: TaskRepeat; to?: TaskDates },
+    | { kind: 'task'; action: ScopeAction; item: TaskRepeat; to?: ZonedTaskDates },
 ): ScopeResult {
   if (input.kind === 'task') return taskScopeOptions(input.action, input.item, input.to)
   const { action, item, to, tz } = input
@@ -124,7 +126,7 @@ function thisFollowingAll(item: CalEvent): ScopeResult {
  * "all repeats" from the current one. `reason` names a refusal that took
  * one of them away; with no option left, the move is refused.
  */
-function taskScopeOptions(action: ScopeAction, repeat: TaskRepeat, to: TaskDates | undefined): ScopeResult {
+function taskScopeOptions(action: ScopeAction, repeat: TaskRepeat, to: ZonedTaskDates | undefined): ScopeResult {
   const { todo } = repeat
   if (!todo.recurring || todo.ruleUnsupported || isDone(todo) || repeat.last) return { options: [] }
 

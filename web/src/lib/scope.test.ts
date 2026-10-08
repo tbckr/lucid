@@ -3,7 +3,7 @@ import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
 import { type Todo } from './api/schemas'
-import { currentRepeat, type TaskDates, type TaskRepeat } from './calendarTasks'
+import { currentRepeat, type TaskDates, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
 import { toCalEvent, type CalEvent } from './events'
 import { type FormatPrefs } from './format'
 import {
@@ -453,7 +453,17 @@ describe('scopeOptions for tasks', () => {
   const tuesday = due('2026-03-10T08:00:00Z')
   const friday = due('2026-03-13T08:00:00Z')
 
-  const rows: { name: string; action: ScopeAction; item: TaskRepeat; to?: TaskDates; want: ScopeResult }[] = [
+  // The 5th of each month, all-day, without a zone: November's is the current repeat.
+  const fifth = current({
+    rrule: 'FREQ=MONTHLY;BYMONTHDAY=5',
+    timezone: null,
+    due: '2026-11-05T00:00:00Z',
+    dueAllDay: true,
+    recurrenceId: '2026-11-05T00:00:00Z',
+    next: { due: '2026-12-05T00:00:00Z', dueAllDay: true },
+  })
+
+  const rows: { name: string; action: ScopeAction; item: TaskRepeat; to?: ZonedTaskDates; want: ScopeResult }[] = [
     // at the current repeat
     { name: 'move the current repeat', action: 'move', item: current(), to: tuesday, want: { options: ['this', 'all'] } },
     {
@@ -588,6 +598,29 @@ describe('scopeOptions for tasks', () => {
       item: utcAt('2026-03-09T22:30:00Z'),
       to: due('2026-03-09T23:15:00Z'),
       want: { options: ['this', 'all'] },
+    },
+    {
+      // 08:00 on the 5th in Tokyo, 23:00 UTC on the 4th: the server writes the time in the zone of the write.
+      name: 'give an all-day series a time on its day east of UTC',
+      action: 'move',
+      item: fifth,
+      to: { ...due('2026-11-04T23:00:00Z'), timezone: 'Asia/Tokyo' },
+      want: { options: ['this', 'all'] },
+    },
+    {
+      // 20:00 on the 5th in New York, 01:00 UTC on the 6th.
+      name: 'give an all-day series a time on its day west of UTC',
+      action: 'move',
+      item: fifth,
+      to: { ...due('2026-11-06T01:00:00Z'), timezone: 'America/New_York' },
+      want: { options: ['this', 'all'] },
+    },
+    {
+      name: 'give an all-day series a time on the next day in the zone of the write',
+      action: 'move',
+      item: fifth,
+      to: { ...due('2026-11-05T23:00:00Z'), timezone: 'Asia/Tokyo' },
+      want: { options: ['this'], reason: 'fixedDays' },
     },
     {
       name: 'change a later repeat',

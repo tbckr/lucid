@@ -608,6 +608,37 @@ describe('TaskEditor', () => {
         expect(body).toMatchObject({ title: 'Water the roses', due: '2026-10-08T07:00:00.000Z' })
       })
 
+      // FR-17: the server writes a time given to an all-day series in the zone of the write, and reads the move there:
+      // 8:00 on the 15th in Tokyo stays on the 15th, though it is 23:00 on the 14th in UTC.
+      it('gives an all-day series on fixed days a time on its day east of UTC, with all repeats offered', async () => {
+        const originalTz = process.env.TZ
+        process.env.TZ = 'Asia/Tokyo'
+        try {
+          const user = userEvent.setup()
+          const monthly = {
+            ...series,
+            title: 'Pay rent',
+            due: '2026-10-15T00:00:00Z',
+            rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
+            recurrenceId: '2026-10-15T00:00:00Z',
+            next: { start: null, due: '2026-11-15T00:00:00Z' },
+          }
+          const { fetch, dialog } = await openTask(monthly)
+
+          await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+          await user.click(screen.getByRole('option', { name: '8:00 AM' }))
+          await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+          const question = within(dialog).getByRole('alertdialog', { name: moveQuestion })
+          await user.click(within(question).getByRole('button', { name: 'All repeats' }))
+
+          const { path, body } = await wrote(fetch, 'PUT')
+          expect(path).toBe('/api/v1/todos/t1')
+          expect(body).toMatchObject({ due: '2026-10-14T23:00:00.000Z', dueAllDay: false, timezone: 'Asia/Tokyo' })
+        } finally {
+          process.env.TZ = originalTz
+        }
+      })
+
       it('moves all repeats from a later one as far as it moved', async () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(timed, undefined, later(timed, '2026-10-08T07:00:00Z'))

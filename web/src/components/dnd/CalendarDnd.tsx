@@ -36,7 +36,7 @@ import {
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type TodoInput } from '@/lib/api/schemas'
-import { movedDates, repeatOf, type CalTask, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
+import { movedDates, repeatOf, type CalTask, type TaskRepeat, type ZonedTaskDates } from '@/lib/calendarTasks'
 import {
   acceptsDrop,
   DRAG_DISTANCE,
@@ -117,7 +117,7 @@ interface TaskMove {
   task: CalTask
   repeat: TaskRepeat
   input: TodoInput
-  to: TaskDates
+  to: ZonedTaskDates
 }
 
 /**
@@ -139,15 +139,18 @@ function dropScopes(d: DragData, result: Extract<DropResult, { kind: 'event' }>,
  * the dates the repeat lands on; null for a task that does not repeat. The drop moves the
  * series' own dates, which are its current repeat's, so those are the dates of a dropped
  * current repeat; a later one lands on its own dates moved as far. Never the dates of a drag
- * preview, which keeps the repeat's dates of the pick-up.
+ * preview, which keeps the repeat's dates of the pick-up. The dates name the zone the write
+ * names, none: a drag keeps each date a date or a time, so it never gives an all-day series a
+ * time, the one move that zone decides (`taskMoveRefusal`).
  */
 function taskDrop(result: Extract<DropResult, { kind: 'task' }>): (TaskMove & ScopeResult) | null {
   const repeat = repeatOf(result.task)
   if (!repeat) return null
   const { input, delta } = result
-  const to =
+  const { start, startAllDay, due, dueAllDay, timezone } = input
+  const to: ZonedTaskDates =
     repeat.at === 'current'
-      ? { start: input.start, startAllDay: input.startAllDay, due: input.due, dueAllDay: input.dueAllDay }
+      ? { start, startAllDay, due, dueAllDay, timezone }
       : movedDates(repeat.shown, delta.days, delta.minutes)
   return { task: result.task, repeat, input, to, ...scopeOptions({ kind: 'task', action: 'move', item: repeat, to }) }
 }

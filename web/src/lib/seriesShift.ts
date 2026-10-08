@@ -1,5 +1,5 @@
 import { formatInTimeZone } from 'date-fns-tz'
-import { type TaskDates, type TaskRepeat } from './calendarTasks'
+import { type TaskDates, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
 import { utcToZoned } from './dates'
 import { type CalEvent } from './events'
 
@@ -318,21 +318,26 @@ function addWallMinutes(s: string, minutes: number): string {
  * as the server reads a time in UTC ("Z"), a floating one and one in a zone
  * it cannot resolve, which it reports without `timezone`; unlike an event's
  * (`moveAllRefusal`), never in the browser's zone. A date, all-day, is read
- * by its UTC date. A RECURRENCE-ID is read in the value type of the repeat
- * it names, as shown. A move between a date and a time moves by its change
- * of date alone, as on the server. An off-rule current repeat moves from its
- * RECURRENCE-ID too, where the server takes the rule's instance before it;
- * where they disagree, the server refuses the write. No dates to move to, or
- * none shown, is no move here.
+ * by its UTC date. A time given to a repeat shown on a date of a series
+ * without a zone, an all-day series, is read in the zone the write names
+ * (`to.timezone`), else in UTC, where the server writes it and reads the
+ * move. A RECURRENCE-ID is read in the value type of the repeat it names, as
+ * shown. A move between a date and a time moves by its change of date alone,
+ * as on the server. An off-rule current repeat moves from its RECURRENCE-ID
+ * too, where the server takes the rule's instance before it; where they
+ * disagree, the server refuses the write. No dates to move to, or none
+ * shown, is no move here.
  */
-export function taskMoveRefusal(repeat: TaskRepeat, to: TaskDates, from: 'repeat' | 'current'): ShiftReason | null {
+export function taskMoveRefusal(repeat: TaskRepeat, to: ZonedTaskDates, from: 'repeat' | 'current'): ShiftReason | null {
   const shown = taskAnchor(repeat.shown)
   const moved = taskAnchor(to)
   if (!shown || !moved) return null
   // Left out, or empty, for a date or a time the server reads in UTC.
   const zone = (repeat.todo.timezone ?? '') || 'UTC'
+  // An all-day series takes a time in the write's zone (the server's seriesForm and moveShown).
+  const movedZone = shown.allDay && !moved.allDay && !repeat.todo.timezone ? (to.timezone ?? '') || 'UTC' : zone
   const before = wallMinutes(taskWallClock(shown.at, shown.allDay, zone))
-  const after = wallMinutes(taskWallClock(moved.at, moved.allDay, zone))
+  const after = wallMinutes(taskWallClock(moved.at, moved.allDay, movedZone))
   const distance =
     shown.allDay === moved.allDay ? after - before : (Math.floor(after / 1440) - Math.floor(before / 1440)) * 1440
 

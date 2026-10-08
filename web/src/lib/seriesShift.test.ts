@@ -268,6 +268,47 @@ describe('taskMoveRefusal', () => {
     },
   )
 
+  // FR-17: an all-day series given a time takes it on the wall clock of the zone the write names (its `timezone`),
+  // where the server writes it (seriesForm) and reads the move: not in UTC, where east or west of it the time can lie
+  // on another day. Run in the browser's zone too, which must not decide it either.
+  it.each([
+    // 08:00 on Thursday, 5 November in Tokyo is 23:00 UTC on the 4th.
+    { zone: 'Asia/Tokyo', on: '2026-11-04T23:00:00Z', dayLater: '2026-11-05T23:00:00Z' },
+    // 20:00 on the 5th in New York is 01:00 UTC on the 6th.
+    { zone: 'America/New_York', on: '2026-11-06T01:00:00Z', dayLater: '2026-11-07T01:00:00Z' },
+  ])('reads a time given to an all-day series in the zone of the write, in $zone', ({ zone, on, dayLater }) => {
+    const originalTz = process.env.TZ
+    process.env.TZ = zone
+    try {
+      const fifth = repeat({
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=5',
+        current: '2026-11-05T00:00:00Z',
+        rid: '2026-11-05T00:00:00Z',
+        shown: date('2026-11-05'),
+      })
+      expect(taskMoveRefusal(fifth, { ...timed(on), timezone: zone }, 'repeat')).toBeNull()
+      expect(taskMoveRefusal(fifth, { ...timed(on), timezone: zone }, 'current')).toBeNull()
+      expect(taskMoveRefusal(fifth, { ...timed(dayLater), timezone: zone }, 'repeat')).toBe('fixedDays')
+      // A write without a zone gets its time in UTC, as the server reads it then: another day.
+      expect(taskMoveRefusal(fifth, timed(on), 'repeat')).toBe('fixedDays')
+    } finally {
+      process.env.TZ = originalTz
+    }
+  })
+
+  it("reads a timed series without a zone in UTC, whatever zone the write names", () => {
+    // 23:30 UTC on Monday, 9 March, an hour later: 00:30 UTC is Tuesday, though 09:30 in Tokyo is still Tuesday's start.
+    const lateUtc = repeat({
+      rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
+      current: '2026-03-09T23:30:00Z',
+      rid: '2026-03-09T23:30:00Z',
+      shown: timed('2026-03-09T23:30:00Z'),
+    })
+    expect(taskMoveRefusal(lateUtc, { ...timed('2026-03-10T00:30:00Z'), timezone: 'America/New_York' }, 'repeat')).toBe(
+      'fixedDays',
+    )
+  })
+
   it('measures from the recurrence ID by the distance the shown dates move', () => {
     // A repeat at 23:30 on the 9th in Berlin, which another app shows at 10:00 instead: an hour later moves the rule
     // from 23:30 past midnight, off its day; a quarter of an hour later keeps it there.

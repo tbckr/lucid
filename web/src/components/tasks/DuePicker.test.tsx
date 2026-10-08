@@ -193,6 +193,36 @@ describe('DuePicker', () => {
       expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveFocus()
     })
 
+    // FR-17: an all-day series given a time writes it in the browser's zone, where the server then reads the move:
+    // 08:00 on the 15th in Tokyo is still the 15th there, though 23:00 on the 14th in UTC.
+    it('gives an all-day series a time on its day east of UTC, and names the zone', async () => {
+      const originalTz = process.env.TZ
+      process.env.TZ = 'Asia/Tokyo'
+      try {
+        useSettings.setState({ timeFormat: '24h' })
+        const { user, onChange, onScope, dialog } = await open(monthly)
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+        await user.click(screen.getByRole('option', { name: '08:00' }))
+
+        const ask = within(dialog).getByRole('alertdialog', { name: question })
+        await user.click(within(ask).getByRole('button', { name: 'All repeats' }))
+        expect(onScope).toHaveBeenCalledWith(
+          'all',
+          expect.objectContaining({ due: '2026-10-14T23:00:00.000Z', dueAllDay: false, timezone: 'Asia/Tokyo' }),
+        )
+        expect(onChange).not.toHaveBeenCalled()
+      } finally {
+        process.env.TZ = originalTz
+      }
+    })
+
+    it('names the zone of a new day too', async () => {
+      const { user, onScope, dialog } = await open(series)
+      await user.click(within(dialog).getByRole('button', { name: /^Tomorrow / }))
+      await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ timezone: TZ }))
+    })
+
     it('offers every shortcut and day, earlier ones too', async () => {
       const { dialog } = await open(series)
       expect(within(dialog).getByRole('button', { name: /^Next week / })).not.toBeDisabled()

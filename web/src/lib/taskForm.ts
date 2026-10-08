@@ -234,11 +234,13 @@ function shiftFields(f: Fields, days: number, minutes: number): Fields {
  * `todo` with its due date set to `due`, in fields of `timeZone`: without a
  * date it is removed, without a time it is all-day (FR-14). The start moves by
  * as much as the due date and takes its kind, so the two stay a valid pair
- * (FR-16); a start that would still come after the due date ends at it.
+ * (FR-16); a start that would still come after the due date ends at it. The
+ * write names `timeZone`, as the editor's does (`formToTodoInput`): a series
+ * given a time takes it there (FR-17).
  */
 export function withDue(todo: Todo, due: Fields, timeZone: string): TodoInput {
   const next = fromFields(due.date, due.time, timeZone)
-  const patch = { due: next.value, dueAllDay: next.allDay }
+  const patch = { due: next.value, dueAllDay: next.allDay, timezone: timeZone }
   if (!due.date || !todo.start) return todoToInput(todo, patch)
 
   const before = toFields(todo.due, todo.dueAllDay, timeZone)

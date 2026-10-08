@@ -41,6 +41,13 @@ export interface TaskDates {
   dueAllDay: boolean
 }
 
+/**
+ * Dates a repeat moves to (FR-17), with the zone the write that saves them names (`TodoInput.timezone`): where they
+ * give an all-day series a time, the server writes that time on the wall clock of this zone, UTC without one, and
+ * reads the move there.
+ */
+export type ZonedTaskDates = TaskDates & { timezone?: string }
+
 interface TaskDate {
   at: Date
   allDay: boolean
