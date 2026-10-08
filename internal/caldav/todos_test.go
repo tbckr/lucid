@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -3588,13 +3589,31 @@ func TestMoveRepeatShownElsewhereMovesSeries(t *testing.T) {
 			},
 			states: []string{current, upcoming, upcoming, upcoming},
 		},
+		{
+			// As Tasks.org writes it: the body has no start, and the series
+			// gets DTSTART = DUE, as on a roll.
+			name:      "a series anchored on its due",
+			master:    []string{"DUE:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{{"RECURRENCE-ID:20250310T090000Z", "DUE:20250312T090000Z"}},
+			shown:     date(2025, 3, 12, 9, 0),
+			by:        time.Hour,
+			stored: []string{
+				"DTSTART:20250310T100000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID:20250310T100000Z", "DUE:20250312T100000Z",
+			},
+			lacks:  []string{"BYDAY=WE", "RECURRENCE-ID:20250310T090000Z"},
+			start:  date(2025, 3, 12, 10, 0),
+			next:   date(2025, 3, 17, 10, 0),
+			dates:  []time.Time{date(2025, 3, 12, 10, 0), date(2025, 3, 17, 10, 0), date(2025, 3, 24, 10, 0), date(2025, 3, 31, 10, 0)},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			id := seedSeries(t, e, tc.master, tc.overrides...)
 			f := listedTodo(t, e, id)
-			if !sameTime(f.Start, &tc.shown) {
+			if shown := cmp.Or(f.Start, f.Due); !sameTime(shown, &tc.shown) {
 				t.Fatalf("listed series = %+v; want its current repeat shown at %v", f, tc.shown)
 			}
 			in := movedBy(&f, tc.by)
