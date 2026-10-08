@@ -820,8 +820,13 @@ describe('TaskEditor', () => {
 
         await user.click(within(dialog).getByRole('button', { name: 'Due Sun, Nov 15' }))
         await user.click(screen.getByRole('button', { name: 'Monday, November 16th, 2026' }))
-        expect(within(dialog).getByText(refused)).toBeInTheDocument()
-        expect(within(dialog).getByRole('button', { name: 'Due Mon, Nov 16' })).toHaveAccessibleDescription(refused)
+        // A limit is no error (spec §2): said in the muted foreground, the field not marked.
+        const said = within(dialog).getByText(refused)
+        expect(said).toHaveClass('text-muted-foreground')
+        expect(said).not.toHaveClass('text-destructive')
+        const field = within(dialog).getByRole('button', { name: 'Due Mon, Nov 16' })
+        expect(field).toHaveAccessibleDescription(refused)
+        expect(field).not.toHaveClass('border-destructive')
         expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
         await user.type(within(dialog).getByPlaceholderText('Add a title'), '{Enter}')
         expect(within(dialog).queryByRole('alertdialog')).toBeNull()

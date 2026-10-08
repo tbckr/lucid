@@ -426,9 +426,11 @@ export function TaskEditor({
   const dateRow = (which: Which) => {
     const { date, time } = values[which]
     const other = values[DATES[which].other].date
-    const error =
-      msg(formState.errors[DATES[which].date]?.message) ??
-      (refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined)
+    const error = msg(formState.errors[DATES[which].date]?.message)
+    // Why the series can't follow the dates: a limit, not an error, so said muted, with the field unmarked (FR-17).
+    const refusal =
+      !error && refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined
+    const note = error ?? refusal
     // The label keeps its own column, so on narrow screens the time wraps below the date.
     return (
       <div className="grid grid-cols-[3rem_1fr] items-start gap-x-2 gap-y-1">
@@ -455,7 +457,7 @@ export function TaskEditor({
             prefs={prefs}
             now={now}
             invalid={!!error}
-            describedBy={error ? `${id}-${which}-error` : undefined}
+            describedBy={note ? `${id}-${which}-error` : undefined}
           />
           {date && (
             <TimeSelect
@@ -472,9 +474,12 @@ export function TaskEditor({
           )}
           {which === 'due' && overdue && <span className="text-sm font-medium text-destructive">{t('tasks.overdue')}</span>}
         </div>
-        {error && (
-          <p id={`${id}-${which}-error`} className="col-start-2 text-sm text-destructive">
-            {error}
+        {note && (
+          <p
+            id={`${id}-${which}-error`}
+            className={cn('col-start-2 text-sm', error ? 'text-destructive' : 'text-muted-foreground')}
+          >
+            {note}
           </p>
         )}
       </div>
