@@ -1880,16 +1880,19 @@ func TestUpdateTodoSeries(t *testing.T) {
 	})
 
 	// The stored form stays, whatever the browser's zone; COUNT loses the
-	// occurrence before the moved one, so that as many remain (FR-17).
+	// occurrence before the moved one, so that as many remain (FR-17). The
+	// override shows the repeat at its RECURRENCE-ID, with a due of its own;
+	// one that shows it elsewhere moves along instead, see
+	// TestMoveRepeatShownElsewhereMovesSeries.
 	t.Run("move drops the current override and kde", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{
 			"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=DAILY;COUNT=5", "X-KDE-LIBKCAL-DTRECURRENCE:20250311T090000Z",
-		}, []string{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z", "DUE:20250311T160000Z"})
+		}, []string{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T090000Z", "DUE:20250311T160000Z"})
 		f := listedTodo(t, e, id)
-		if !sameTime(f.Start, ptr(date(2025, 3, 11, 15, 0))) {
-			t.Fatalf("current occurrence = %+v; want the moved 2025-03-11T15:00Z", f)
+		if !sameTime(f.Start, ptr(date(2025, 3, 11, 9, 0))) || !sameTime(f.Due, ptr(date(2025, 3, 11, 16, 0))) {
+			t.Fatalf("current occurrence = %+v; want 2025-03-11T09:00Z, due at 16:00Z", f)
 		}
 		in := editInput(&f)
 		in.Start, in.Due, in.Timezone = ptr(date(2025, 3, 11, 16, 0)), ptr(date(2025, 3, 11, 17, 0)), "Europe/Berlin"
@@ -2369,17 +2372,20 @@ func TestUpdateTodoSeries(t *testing.T) {
 
 	// The current repeat's override goes with a move also where its
 	// RECURRENCE-ID is a date in a timed series: else it would take over
-	// the repeat that the moved rule puts on its day (A-11, FR-17).
+	// the repeat that the moved rule puts on its day (A-11, FR-17). It shows
+	// the repeat at its RECURRENCE-ID, the day's instance; one that shows it
+	// elsewhere moves along instead, see
+	// TestMoveRepeatShownElsewhereMovesSeries.
 	t.Run("a move drops the current repeat's date override", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"},
-			[]string{"RECURRENCE-ID;VALUE=DATE:20250310", "DTSTART:20250310T150000Z", "SUMMARY:Moved"})
+			[]string{"RECURRENCE-ID;VALUE=DATE:20250310", "SUMMARY:Moved"})
 		got := moveListed(t, e, id, -24*time.Hour)
-		if !sameTime(got.Start, ptr(date(2025, 3, 9, 15, 0))) {
-			t.Errorf("moved series = %+v; want 2025-03-09T15:00Z", got)
+		if !sameTime(got.Start, ptr(date(2025, 3, 9, 9, 0))) {
+			t.Errorf("moved series = %+v; want 2025-03-09T09:00Z", got)
 		}
-		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250309T150000Z"}, []string{"RECURRENCE-ID", "Moved"})
+		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250309T090000Z"}, []string{"RECURRENCE-ID", "Moved"})
 	})
 
 	// An EXDATE with a date in a timed series lies on its date in the
@@ -3201,6 +3207,17 @@ func TestMoveLastRepeat(t *testing.T) {
 			dates:     []time.Time{date(2025, 3, 11, 15, 0)},
 		},
 		{
+			// Another app showed it on the 17th: it moves from there, as
+			// any last repeat, and its override goes.
+			name:      "a repeat another app moved, on fixed days",
+			master:    []string{"DTSTART:20250315T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15;COUNT=1"},
+			overrides: [][]string{{"RECURRENCE-ID:20250315T090000Z", "DTSTART:20250317T090000Z"}},
+			by:        2 * 24 * time.Hour,
+			want:      []string{"DTSTART:20250319T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15;UNTIL=20250319T090000Z\r\n"},
+			lacks:     []string{"RECURRENCE-ID", "COUNT"},
+			dates:     []time.Time{date(2025, 3, 19, 9, 0)},
+		},
+		{
 			// Lucid reads the wall clock as UTC.
 			name:   "unknown zone, a COUNT",
 			master: []string{"DTSTART;TZID=W. Europe Standard Time:20250315T090000", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3"},
@@ -3434,6 +3451,192 @@ func TestMoveOffRuleCurrentMovesSeries(t *testing.T) {
 		id := seedSeries(t, e, []string{"DTSTART:20250315T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15", "EXDATE:20250315T090000Z"},
 			[]string{"RECURRENCE-ID:20250320T090000Z", "DTSTART:20250322T090000Z"})
 		mustNotMove(t, e, id, 24*time.Hour)
+	})
+}
+
+// A current repeat of the rule that another app's override shows away from
+// its RECURRENCE-ID, as Thunderbird and OpenTasks move one repeat, moves the
+// series by the distance it moves from where it is shown, as an event series
+// moves from an exception (FR-17): the rule moves by that distance from the
+// repeat's RECURRENCE-ID, as seriesShift lets it, not from the date it is
+// shown on, so a change of its time alone keeps the rule's days. Its
+// override moves along with the later references and takes the new dates.
+func TestMoveRepeatShownElsewhereMovesSeries(t *testing.T) {
+	t.Parallel()
+	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent
+	for _, tc := range []struct {
+		name        string
+		master      []string
+		overrides   [][]string
+		shown       time.Time // where the override shows the current repeat
+		by          time.Duration
+		stored      []string
+		lacks       []string
+		start, next time.Time
+		dates       []time.Time // from 1 to 31 March
+		states      []string
+	}{
+		{
+			// Monday's repeat, shown on Wednesday, moved to 10:00 there.
+			name:   "a weekly rule keeps its day on a change of time",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "SUMMARY:Moved"},
+			},
+			shown: date(2025, 3, 12, 9, 0),
+			by:    time.Hour,
+			stored: []string{
+				"DTSTART:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n",
+				"RECURRENCE-ID:20250310T100000Z", "DTSTART:20250312T100000Z", "SUMMARY:Moved",
+			},
+			lacks:  []string{"BYDAY=WE", "RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z"},
+			start:  date(2025, 3, 12, 10, 0),
+			next:   date(2025, 3, 17, 10, 0),
+			dates:  []time.Time{date(2025, 3, 12, 10, 0), date(2025, 3, 17, 10, 0), date(2025, 3, 24, 10, 0), date(2025, 3, 31, 10, 0)},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+		{
+			// The 15th, shown on the 17th, an hour later: a move within the
+			// day of the rule's repeat, which the rule can follow.
+			name:   "a monthly rule on its day moves by an hour",
+			master: []string{"DTSTART:20250315T090000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250315T090000Z", "DTSTART:20250317T090000Z"},
+			},
+			shown: date(2025, 3, 17, 9, 0),
+			by:    time.Hour,
+			stored: []string{
+				"DTSTART:20250315T100000Z", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15\r\n",
+				"RECURRENCE-ID:20250315T100000Z", "DTSTART:20250317T100000Z",
+			},
+			lacks:  []string{"RECURRENCE-ID:20250315T090000Z"},
+			start:  date(2025, 3, 17, 10, 0),
+			next:   date(2025, 4, 15, 10, 0),
+			dates:  []time.Time{date(2025, 3, 17, 10, 0)},
+			states: []string{current},
+		},
+		{
+			// Monday's repeat, shown on Tuesday, a day later: the days
+			// rotate by that day, from Monday to Tuesday.
+			name:   "a weekly rule's days rotate by the distance moved",
+			master: []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO,TH"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250311T090000Z"},
+			},
+			shown: date(2025, 3, 11, 9, 0),
+			by:    24 * time.Hour,
+			stored: []string{
+				"DTSTART:20250311T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=TU,FR\r\n",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250312T090000Z",
+			},
+			lacks: []string{"BYDAY=WE", "RECURRENCE-ID:20250310"},
+			start: date(2025, 3, 12, 9, 0),
+			next:  date(2025, 3, 14, 9, 0),
+			dates: []time.Time{
+				date(2025, 3, 12, 9, 0), date(2025, 3, 14, 9, 0), date(2025, 3, 18, 9, 0), date(2025, 3, 21, 9, 0),
+				date(2025, 3, 25, 9, 0), date(2025, 3, 28, 9, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming, upcoming, upcoming},
+		},
+		{
+			// Monday's repeat, shown on Wednesday, a day later: the series
+			// recurs from Tuesday, its due an hour after its start as before.
+			// Another app's completion before it stays.
+			name:   "an interval rule moves by the distance moved",
+			master: []string{"DTSTART:20250303T090000Z", "DUE:20250303T100000Z", "RRULE:FREQ=WEEKLY"},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+				{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z"},
+			},
+			shown: date(2025, 3, 12, 9, 0),
+			by:    24 * time.Hour,
+			stored: []string{
+				"DTSTART:20250311T090000Z", "DUE:20250311T100000Z", "RRULE:FREQ=WEEKLY\r\n", "RECURRENCE-ID:20250303T090000Z",
+				"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250313T090000Z", "DUE:20250313T100000Z",
+			},
+			lacks: []string{"RECURRENCE-ID:20250310"},
+			start: date(2025, 3, 13, 9, 0),
+			next:  date(2025, 3, 18, 9, 0),
+			dates: []time.Time{
+				date(2025, 3, 3, 9, 0), date(2025, 3, 13, 9, 0), date(2025, 3, 18, 9, 0), date(2025, 3, 25, 9, 0),
+			},
+			states: []string{domain.OccurrenceDone, current, upcoming, upcoming},
+		},
+		{
+			// The KDE marker goes, and the COUNT loses the repeat before
+			// the moved one; the stored form stays, whatever the browser's
+			// zone.
+			name: "a COUNT and KDE's pending repeat",
+			master: []string{
+				"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=DAILY;COUNT=5",
+				"X-KDE-LIBKCAL-DTRECURRENCE:20250311T090000Z",
+			},
+			overrides: [][]string{
+				{"RECURRENCE-ID:20250311T090000Z", "DTSTART:20250311T150000Z", "DUE:20250311T160000Z"},
+			},
+			shown: date(2025, 3, 11, 15, 0),
+			by:    time.Hour,
+			stored: []string{
+				"DTSTART:20250311T100000Z", "DUE:20250311T110000Z", "RRULE:FREQ=DAILY;COUNT=4\r\n",
+				"RECURRENCE-ID:20250311T100000Z", "DTSTART:20250311T160000Z", "DUE:20250311T170000Z",
+			},
+			lacks: []string{"X-KDE-LIBKCAL-DTRECURRENCE", "TZID", "RECURRENCE-ID:20250311T090000Z"},
+			start: date(2025, 3, 11, 16, 0),
+			next:  date(2025, 3, 12, 10, 0),
+			dates: []time.Time{
+				date(2025, 3, 11, 16, 0), date(2025, 3, 12, 10, 0), date(2025, 3, 13, 10, 0), date(2025, 3, 14, 10, 0),
+			},
+			states: []string{current, upcoming, upcoming, upcoming},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			f := listedTodo(t, e, id)
+			if !sameTime(f.Start, &tc.shown) {
+				t.Fatalf("listed series = %+v; want its current repeat shown at %v", f, tc.shown)
+			}
+			in := movedBy(&f, tc.by)
+			in.Timezone = "Europe/Berlin"
+			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			if !sameTime(got.Start, &tc.start) || got.Next == nil || !sameTime(got.Next.Start, &tc.next) {
+				t.Errorf("moved series = %+v; want the repeat at %v, then %v", got, tc.start, tc.next)
+			}
+			checkStored(t, "series", storedObject(t, e, id), tc.stored, tc.lacks)
+			occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+			mustNoErr(t, err)
+			checkTodoOccurrences(t, occs, tc.dates, tc.states)
+		})
+	}
+
+	// A week earlier, the series' repeat would land on Monday the 3rd,
+	// another app's completion: it would read as done (see keepApart).
+	t.Run("a move onto a repeat another app completed is refused", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			[]string{"RECURRENCE-ID:20250303T090000Z", "STATUS:COMPLETED"},
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z"})
+		mustNotMove(t, e, id, -7*24*time.Hour)
+	})
+
+	// Its due alone changed, the repeat has not moved, and neither does the
+	// series.
+	t.Run("a change of its due alone changes only the repeat", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		master := []string{"DTSTART:20250310T090000Z", "DUE:20250310T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"}
+		id := seedSeries(t, e, master,
+			[]string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T100000Z"})
+		f := listedTodo(t, e, id)
+		in := editInput(&f)
+		in.Due = ptr(date(2025, 3, 12, 11, 0))
+		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+		mustNoErr(t, err)
+		checkStored(t, "series", storedObject(t, e, id),
+			slices.Concat(master, []string{"RECURRENCE-ID:20250310T090000Z", "DTSTART:20250312T090000Z", "DUE:20250312T110000Z"}), nil)
 	})
 }
 

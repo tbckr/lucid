@@ -586,7 +586,8 @@ For a recurring todo, these edits are handled specially:
 - **Moving the series** (`start`/`due` different from the stored ones): the
   master's `DTSTART`/`DUE` become the new dates, keeping their written form
   (a series without `start` recurs on `due`), and the override of the
-  current occurrence goes. The rule follows as far as it can, counted from
+  current occurrence goes (but see one another client moved, below). The
+  rule follows as far as it can, counted from
   the current occurrence's `RECURRENCE-ID` to the new start in the series'
   zone: an interval rule stays as it is; a weekly rule whose only other part
   is `BYDAY` with plain weekdays rotates its days by the move (`BYDAY=MO,TH`
@@ -619,13 +620,19 @@ For a recurring todo, these edits are handled specially:
   start on goes, and an override another client left there refuses the move
   as above. Completing the last repeat with new dates moves it the same way;
   an earlier one leaves them on its completed copy, which is no move. A
-  current occurrence **off the rule** moves the series by the distance it
-  moves from where it is shown, as an event series moves from an exception:
-  the rule moves by that distance from its last instance before the
-  occurrence, as above. That instance, done or excluded as the occurrence is
+  current occurrence **another client moved**, whose override shows it at
+  another start (else due) than its `RECURRENCE-ID`, or which lies **off the
+  rule**, moves the series by the distance it moves from where it is shown,
+  as an event series moves from an exception. The rule moves by that
+  distance from the occurrence's `RECURRENCE-ID`, as above, so a change of
+  its time alone keeps the rule's days (`BYDAY=MO` with Monday's repeat
+  shown on Wednesday, moved from 09:00 to 10:00 there, recurs on Mondays at
+  10:00). From an occurrence off the rule it moves from the rule's last
+  instance before it; that instance, done or excluded as the occurrence is
   current, stays out at its new place by its `EXDATE`, which moves along, or
-  a new one; the occurrence's override moves along and takes the new dates.
-  A change of its `due` alone changes only the occurrence. A move together
+  a new one. The occurrence's override moves along and takes the new dates.
+  A change of its `due` alone changes only the occurrence; the last repeat
+  moves to any date as above, wherever it is shown. A move together
   with a new `rrule` starts the series over, and the undo below restores the
   resource: neither is such a move.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;

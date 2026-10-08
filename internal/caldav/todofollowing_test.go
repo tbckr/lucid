@@ -609,6 +609,27 @@ func TestUpdateTodoFollowing(t *testing.T) {
 		})
 	}
 
+	// R, Monday the 24th, shown on Wednesday by another app's override,
+	// moved to 10:00 there: N moves by that hour from R's RECURRENCE-ID, as
+	// a series moves from its current repeat shown elsewhere, and keeps its
+	// day; R's override moves along and takes the new dates (FR-17).
+	t.Run("N moves by the distance R moved from where it is shown", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			[]string{"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250326T090000Z"})
+		res, _ := updateTodoFollowing(t, e, id, fourthRepeat, shiftedBy(time.Hour))
+		if n := res.Todo; n.RRule != "FREQ=WEEKLY;BYDAY=MO" || !sameTime(n.Start, ptr(date(2025, 3, 26, 10, 0))) ||
+			n.Next == nil || !sameTime(n.Next.Start, ptr(date(2025, 3, 31, 10, 0))) {
+			t.Errorf("new series = %+v; want R on Wednesday at 10:00, then Mondays at 10:00", n)
+		}
+		checkStored(t, "N", storedObject(t, e, res.Todo.ID), []string{
+			"DTSTART:20250324T100000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO\r\n", "RECURRENCE-ID:20250324T100000Z", "DTSTART:20250326T100000Z",
+		}, []string{"BYDAY=WE", "RECURRENCE-ID:20250324T090000Z"})
+		checkStored(t, "S", storedObject(t, e, id),
+			[]string{"DTSTART:20250303T090000Z", "RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20250324T085959Z\r\n"}, []string{"RECURRENCE-ID"})
+	})
+
 	// The rule of the body is N's: S's own, in any case, keeps the rule N
 	// inherits, with its lowered COUNT; any other is N's new rule, from R
 	// on, and "" makes N the single task at R (FR-17).

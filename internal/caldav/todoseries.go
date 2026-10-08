@@ -638,10 +638,12 @@ func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
 // too: seriesShift does not decide, and the rule ends there, see endAt, so
 // that it stays the only one. Its references stay where they are, but an
 // EXDATE from the new DTSTART on goes, as it could only exclude the moved
-// occurrence. A current occurrence off the rule (see todoOcc.offGrid) moves
-// the series as moveOffRule says. A rule Lucid cannot evaluate (of a
-// completed series) only gets its dates moved, and its references
-// converted.
+// occurrence. A current occurrence another app moved, off the rule (see
+// todoOcc.offGrid) or shown away from its RECURRENCE-ID by its override (see
+// shownElsewhere), moves the series by the distance it moves from where it
+// is shown instead, as moveShown says; its override moves along. A rule
+// Lucid cannot evaluate (of a completed series) only gets its dates moved,
+// and its references converted.
 //
 // It fails, leaving cal as it was, when in has no date, the rule cannot
 // follow the move, the rule cannot be walked up to the moved occurrence, or
@@ -675,8 +677,8 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 	evaluable := p != nil && s.err == nil && s.rrule != ""
 	occ, last := s.reported(status)
 	last = last && evaluable
-	if occ.offGrid && evaluable && !last {
-		return s.moveOffRule(cal, occ, in)
+	if evaluable && !last && (occ.offGrid || shownElsewhere(occ)) {
+		return s.moveShown(cal, occ, in)
 	}
 	rid := occ.rid
 	to, _ := parseDateProp(seriesDateProp(nil, ical.PropDateTimeStart, *start, form)) // as writeSeriesDates writes it
@@ -710,7 +712,7 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 	dropOccurrence(cal, c, occ)
 	c.Props.Del(propKDEPending)
 	if shift != nil {
-		s.shiftLaterRefs(cal, rid, shift)
+		s.shiftRefs(cal, func(d dateValue) bool { return s.placeRef(d, rid) > 0 }, shift)
 	}
 	s.retypeRefs(cal, to)
 	// The last occurrence ends the rule; else UNTIL never ends before the
@@ -725,23 +727,30 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 	return stayed, nil
 }
 
-// moveOffRule moves the series s, whose current occurrence occ lies off the
-// rule (see todoOcc.offGrid), by the distance occ moves from where it is
-// shown (its start, else its due) to the dates of in, as an event series
-// moves from an exception (FR-17). occ is none of the rule's instances, so
-// the rule cannot be anchored on it, or a rule on fixed days would start
-// off its days and an interval rule would recur from another day. It moves
-// from its last instance before occ, prev, instead, as move moves it from
-// an occurrence: its days as seriesShift says, its COUNT and UNTIL, and the
-// later references by the whole distance, occ's override among them, which
-// then takes the dates of in. prev is done, excluded or cancelled, as occ is
+// moveShown moves the series s, whose current occurrence occ another app
+// moved, by the distance occ moves from where it is shown (its start, else
+// its due) to the dates of in, as an event series moves from an exception
+// (FR-17): occ lies off the rule (see todoOcc.offGrid), or its override
+// shows it away from its RECURRENCE-ID (see shownElsewhere). The rule moves
+// by that distance from its instance prev, as move moves it from an
+// occurrence: its days as seriesShift says, from prev to prev moved, both on
+// the wall clock of the series' zone, its COUNT and UNTIL, and the later
+// references by the whole distance, occ's override among them, which then
+// takes the dates of in.
+//
+// For an instance of the rule, prev is occ's RECURRENCE-ID, so that a change
+// of its time alone keeps the rule's days, and occ's override moves from
+// there. An occurrence off the rule is none of the rule's instances, so the
+// rule cannot be anchored on it, or a rule on fixed days would start off its
+// days and an interval rule would recur from another day; prev is its last
+// instance before occ instead, done, excluded or cancelled, as occ is
 // current: its EXDATE moves along to the new anchor, or an EXDATE there
-// keeps it out, and an override of it stays where it is, as do the
-// references before it, but for an EXDATE from the new anchor on, as in
-// move. A move that keeps occ's start (else due), such as a change of its
-// due alone, changes occ's dates only. It returns the overrides it left in
-// place, for keepApart, and fails, without changing anything, as move does.
-func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) ([]*ical.Component, error) {
+// keeps it out, and an override of it stays where it is. The references
+// before prev stay, but for an EXDATE from the new anchor on, as in move. A
+// move that keeps occ's start (else due), such as a change of its due alone,
+// changes occ's dates only. It returns the overrides it left in place, for
+// keepApart, and fails, without changing anything, as move does.
+func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) ([]*ical.Component, error) {
 	// Without a start, DTSTART = DUE, as for the series.
 	moved := todoOcc{start: in.Start, startAllDay: in.StartAllDay, due: in.Due, dueAllDay: in.DueAllDay}
 	if moved.start == nil {
@@ -751,33 +760,66 @@ func (s *todoSeries) moveOffRule(cal *ical.Calendar, occ todoOcc, in domain.Todo
 	shift := s.shiftBetween(
 		dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)},
 		dateValue{t: occAnchor(moved).In(loc), allDay: occAnchorAllDay(moved)})
-	var stayed []*ical.Component
-	if shift != nil {
-		// occ lies after the anchor, an instance of the rule: prev exists.
-		prev, n, err := s.lastBefore(occ.rid)
-		if err != nil || n == 0 {
-			return nil, errRuleUnsupported
-		}
-		to := shift(dateValue{t: prev.In(loc), allDay: s.anchor.allDay})
-		rule, ok := seriesShift(s.rrule, prev.In(loc), to.In(loc))
-		if !ok {
-			return nil, errMoveFixedDays
-		}
-		c := s.master
-		stays := func(d dateValue) bool { return s.placeRef(d, prev) <= 0 }
-		stayed = s.overridesWhere(cal, stays)
-		anchor := dateValue{t: to, allDay: s.anchor.allDay}
-		dropExdates(c, func(d dateValue) bool {
-			return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, anchor))
-		})
-		s.anchorAt(cal, to)
-		c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, n-1, prev, shift) // n-1 before prev
-		c.Props.Del(propKDEPending)
-		s.shiftLaterRefs(cal, prev, shift)
+	if shift == nil {
+		s.setEntryDates(occ.override, moved)
+		return nil, nil
+	}
+	prev, before, err := s.movedFrom(occ)
+	if err != nil {
+		return nil, errRuleUnsupported
+	}
+	to := shift(dateValue{t: prev.In(loc), allDay: s.anchor.allDay})
+	rule, ok := seriesShift(s.rrule, prev.In(loc), to.In(loc))
+	if !ok {
+		return nil, errMoveFixedDays
+	}
+	c := s.master
+	// What moves: the references after prev, and those of occ itself where
+	// prev is its RECURRENCE-ID.
+	moves := func(d dateValue) bool {
+		at := s.placeRef(d, prev)
+		return at > 0 || at == 0 && !occ.offGrid
+	}
+	stays := func(d dateValue) bool { return !moves(d) }
+	stayed := s.overridesWhere(cal, stays)
+	anchor := dateValue{t: to, allDay: s.anchor.allDay}
+	dropExdates(c, func(d dateValue) bool {
+		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, anchor))
+	})
+	s.anchorAt(cal, to)
+	c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, before, prev, shift)
+	c.Props.Del(propKDEPending)
+	s.shiftRefs(cal, moves, shift)
+	if occ.offGrid {
 		c.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, to, s.startForm))
 	}
 	s.setEntryDates(occ.override, moved)
 	return stayed, nil
+}
+
+// movedFrom returns the instance of the rule of s that moveShown moves the
+// series from for its current occurrence occ, and the number of the rule's
+// occurrences before it, counted as instancesBefore counts them (FR-17):
+// occ's RECURRENCE-ID for an instance of the rule; for an occurrence off
+// the rule, which lies after the anchor, an instance, the rule's last
+// instance before it. It fails when the rule cannot be walked that far.
+func (s *todoSeries) movedFrom(occ todoOcc) (prev time.Time, before int, err error) {
+	if !occ.offGrid {
+		before, err = s.instancesBefore(occ.rid)
+		return occ.rid, before, err
+	}
+	prev, n, err := s.lastBefore(occ.rid)
+	if err == nil && n == 0 {
+		err = errRuleUnsupported // the anchor, an instance, comes before occ
+	}
+	return prev, n - 1, err
+}
+
+// shownElsewhere reports whether the override of the occurrence occ shows
+// it away from its RECURRENCE-ID, at another start (else due), as another
+// app moves one repeat (FR-17).
+func shownElsewhere(occ todoOcc) bool {
+	return occ.override != nil && !occAnchor(occ).Equal(occ.rid)
 }
 
 // keepApart refuses with errMoveOntoRepeat a move of the series s, as
@@ -1132,27 +1174,16 @@ func mapRulePart(rrule, key string, f func(string) string) string {
 	return strings.Join(parts, ";")
 }
 
-// after returns shift for references of s after the instance rid (see
-// placeRef); it keeps the others.
-func (s *todoSeries) after(rid time.Time, shift func(dateValue) time.Time) func(dateValue) time.Time {
-	return func(d dateValue) time.Time {
-		if s.placeRef(d, rid) <= 0 {
-			return d.t
-		}
-		return shift(d)
-	}
-}
-
-// shiftLaterRefs moves the references of the master of s in cal to
-// occurrences after the instance rid, placed by placeRef, by shift (FR-17):
-// the RECURRENCE-ID, DTSTART and DUE of their overrides, and EXDATE values.
-func (s *todoSeries) shiftLaterRefs(cal *ical.Calendar, rid time.Time, shift func(dateValue) time.Time) {
+// shiftRefs moves the references of the master of s in cal that moves
+// reports, placed by placeRef, by shift (FR-17): the RECURRENCE-ID, DTSTART
+// and DUE of their overrides, by their RECURRENCE-ID, and EXDATE values.
+func (s *todoSeries) shiftRefs(cal *ical.Calendar, moves func(dateValue) bool, shift func(dateValue) time.Time) {
 	master := s.master
 	for _, o := range cal.Children {
 		if o == master || o.Name != master.Name {
 			continue
 		}
-		if r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err != nil || s.placeRef(r, rid) <= 0 {
+		if r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID)); err != nil || !moves(r) {
 			continue
 		}
 		for _, name := range []string{ical.PropRecurrenceID, ical.PropDateTimeStart, ical.PropDue} {
@@ -1164,7 +1195,12 @@ func (s *todoSeries) shiftLaterRefs(cal *ical.Calendar, rid time.Time, shift fun
 	}
 	vals := master.Props[ical.PropExceptionDates]
 	for i := range vals {
-		shiftDatePropBy(&vals[i], s.after(rid, shift))
+		shiftDatePropBy(&vals[i], func(d dateValue) time.Time {
+			if !moves(d) {
+				return d.t
+			}
+			return shift(d)
+		})
 	}
 }
 

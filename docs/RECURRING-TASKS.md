@@ -1068,7 +1068,8 @@ clients don't read it.
 **Moving** the current occurrence writes the new dates to the master's
 `DTSTART` and `DUE`, in the form they are written in (a series anchored on
 `DUE` gets a `DTSTART` here too), and drops that occurrence's override and
-KDE's pending occurrence. The rule follows the move as far as it can,
+KDE's pending occurrence; one that another app moved moves the series as
+below. The rule follows the move as far as it can,
 decided as for an event series' "all events" (see
 [RECURRING-EVENTS.md](RECURRING-EVENTS.md)), from the current occurrence's
 `RECURRENCE-ID` to the new `DTSTART`, both on the wall clock of the series'
@@ -1131,16 +1132,25 @@ The references stay where they are, but an `EXDATE` from the new `DTSTART`
 on goes, as it could only exclude the moved occurrence; an override of
 another app there refuses the move, as above.
 
-A current occurrence **off the rule** moves the series by the distance it
-moves from where it is shown, as an event series moves from an exception.
-The rule cannot take its place, since it is none of the rule's occurrences:
-it moves by that distance from its last occurrence before it, as from a
-current occurrence (rule, `COUNT`, `UNTIL`, later references), with the
-moved occurrence's override among the later references, which then takes
-the new dates. That rule occurrence, done or excluded since the one off the
-rule is current, stays out at its new place: its `EXDATE` moves along, or a
-new one excludes it there, and an override that completed it stays where
-it is. A change of the due alone changes only the occurrence off the rule.
+A current occurrence **another app moved** moves the series by the
+distance it moves from where it is shown, as an event series moves from an
+exception: one whose override shows it at another start (else due) than its
+`RECURRENCE-ID`, as Thunderbird and OpenTasks move a single occurrence, and
+one **off the rule**. The rule moves by that distance from the occurrence's
+`RECURRENCE-ID`, as from any current occurrence (rule, `COUNT`, `UNTIL`,
+later references), not from the date it is shown on: `BYDAY=MO` with
+Monday's occurrence shown on Wednesday, moved from 09:00 to 10:00 there,
+recurs on Mondays at 10:00, and a monthly rule on the 15th, its occurrence
+shown on the 17th, moves by the hour within its day. The occurrence's
+override moves along with the later references and then takes the new
+dates. An occurrence off the rule is none of the rule's occurrences, so the
+rule cannot take its place: it moves by that distance from its last
+occurrence before it instead. That rule occurrence, done or excluded since
+the one off the rule is current, stays out at its new place: its `EXDATE`
+moves along, or a new one excludes it there, and an override that completed
+it stays where it is. A change of the due alone changes only the occurrence
+another app moved. The last repeat moves to any date, as above, wherever it
+is shown.
 
 **Undo** restores the todo's resource exactly as it was read before the
 write that returned `undoToken` (a snapshot, kept server-side under the
@@ -1219,7 +1229,9 @@ keeps the properties and components Lucid does not know.
   move to the 16th, and a rule with `BYHOUR` can't change its time; the
   server refuses such a move. Only the last repeat moves to any day. The
   days count from the current occurrence's `RECURRENCE-ID` in the series'
-  zone, not from the date another client moved it to.
+  zone: one another client moved moves the series by the distance it moves
+  from where it is shown, so a change of its time alone keeps the rule's
+  days.
 - Moving a series never puts one of its repeats onto a repeat another app
   already marked done or changed: the server refuses such a move, for
   example the current repeat dragged back onto a repeat another app
