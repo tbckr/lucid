@@ -1,10 +1,10 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Todo, type TodoOccurrence } from '@/lib/api/schemas'
-import { occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { occurrenceTask, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { useUi } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -18,7 +18,11 @@ const allDay = (iso: string) => `${iso}T00:00:00Z`
 /** Open the details of `task` as a click on it in the calendar does: the calendars are loaded by then. */
 async function open(task: CalTask, name: string) {
   api.setCsrfToken('tok')
-  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(jsonResponse(204)))
+  // A skip answers with the rolled series, an end with the series as written; every other write with nothing.
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const written = init?.method === 'DELETE' && /\/(occurrences|following)\//.test(urlOf(input))
+    return Promise.resolve(written ? jsonResponse(200, { ...task.todo, etag: '"2"' }) : jsonResponse(204))
+  })
   const { queryClient } = renderWithProviders(
     <>
       <button type="button">Chip</button>
@@ -294,18 +298,208 @@ describe('TaskDetailsPopover', () => {
       })
     })
 
-    it('asks to delete all repeats for a series', async () => {
-      const user = userEvent.setup()
-      const t = occurrenceOf({
-        due: '2026-10-05T00:00:00Z',
-        dueAllDay: true,
-        state: 'current',
+    describe('at a repeat of a series', () => {
+      // A series due Monday, Oct 5 with Tuesday's repeat next; `repeatAt` is a repeat of it, the current one by default.
+      const daily = series({
         recurrenceId: '2026-10-05T00:00:00Z',
-        key: 't1@2026-10-05T00:00:00Z',
+        next: { start: null, due: '2026-10-06T00:00:00Z' },
       })
-      const { dialog } = await open(t, 'Water the flowers')
-      await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
-      expect(within(dialog).getByRole('alert')).toHaveTextContent('This task repeats. Delete all repeats? Completed ones stay.')
+      const repeatAt = (date: string, state: TodoOccurrence['state'], t: Todo = daily) =>
+        occurrenceTask(
+          occurrence({
+            todoId: t.id,
+            calendarId: t.calendarId,
+            title: 'Water the flowers',
+            due: allDay(date),
+            dueAllDay: true,
+            state,
+            recurrenceId: allDay(date),
+            key: `t1@${allDay(date)}`,
+          }),
+          t,
+        )!
+      const question = 'This task repeats. Which repeats should be deleted?'
+      const deletes = (fetch: Awaited<ReturnType<typeof open>>['fetch']) =>
+        fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE').map(([input]) => urlOf(input))
+      const awaitDelete = (fetch: Awaited<ReturnType<typeof open>>['fetch']) =>
+        waitFor(() => {
+          expect(deletes(fetch)).toHaveLength(1)
+        })
+
+      beforeEach(() => {
+        // Only the date: fake timers would stall the requests.
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(new Date(2026, 9, 5, 12))
+      })
+
+      it('asks which repeats to delete at the current repeat, and skips only it', async () => {
+        const user = userEvent.setup()
+        const { dialog, fetch } = await open(repeatAt('2026-10-05', 'current'), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+
+        const asked = within(dialog).getByRole('alertdialog', { name: question })
+        expect(within(asked).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+        expect(within(asked).getAllByRole('button').map((b) => b.textContent)).toEqual([
+          'Only this repeatSkipped. The series goes on Tue, Oct 6.',
+          'All repeatsDone and detached ones stay.',
+          'Cancel',
+        ])
+        // What a delete reaches is red; the repeat done before stays.
+        const [only] = within(asked).getAllByRole('button')
+        expect(Array.from(only!.querySelectorAll('circle'), (c) => c.getAttribute('fill'))).toContain('var(--destructive)')
+        expect(deletes(fetch)).toEqual([])
+
+        await user.click(within(asked).getByRole('button', { name: 'Only this repeat' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1/occurrences/2026-10-05T00%3A00%3A00Z'])
+        expect(useUi.getState().detail).toBeNull()
+      })
+
+      it('ends the series before a later repeat with This and following repeats', async () => {
+        const user = userEvent.setup()
+        const { dialog, fetch } = await open(repeatAt('2026-10-08', 'upcoming'), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+
+        const asked = within(dialog).getByRole('alertdialog', { name: question })
+        expect(within(asked).getAllByRole('button').map((b) => b.textContent)).toEqual([
+          'This and following repeatsThe series ends before Thu, Oct 8.',
+          'All repeatsDone and detached ones stay.',
+          'Cancel',
+        ])
+        // "Only this repeat" is for the current repeat alone, and the question says so.
+        expect(asked).toHaveAccessibleDescription('Only the current repeat can be changed on its own.')
+
+        await user.click(within(asked).getByRole('button', { name: 'This and following repeats' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1/following/2026-10-08T00%3A00%3A00Z'])
+        expect(useUi.getState().detail).toBeNull()
+      })
+
+      it.each([
+        ['current', '2026-10-05'],
+        ['upcoming', '2026-10-08'],
+      ] as const)('deletes the whole series with All repeats from the %s repeat', async (state, date) => {
+        const user = userEvent.setup()
+        const { dialog, fetch } = await open(repeatAt(date, state), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+        await user.click(within(within(dialog).getByRole('alertdialog', { name: question })).getByRole('button', { name: 'All repeats' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1'])
+        expect(useUi.getState().detail).toBeNull()
+      })
+
+      // Review Focus 3: the last repeat is a single task.
+      it('asks only whether to delete the last repeat, and deletes the task', async () => {
+        const user = userEvent.setup()
+        const lastOne = series({ recurrenceId: '2026-10-05T00:00:00Z', next: null })
+        const { dialog, fetch } = await open(repeatAt('2026-10-05', 'current', lastOne), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+
+        expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+        const alert = within(dialog).getByRole('alert')
+        expect(alert).toHaveTextContent('Delete this task?')
+        await user.click(within(alert).getByRole('button', { name: 'Delete task' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1'])
+      })
+
+      // With attendees, no repeat can be split off: "all repeats" is the only option, and it is confirmed, not asked.
+      it('confirms deleting all repeats of a series with attendees at a later repeat', async () => {
+        const user = userEvent.setup()
+        const shared = series({ recurrenceId: '2026-10-05T00:00:00Z', next: daily.next, hasAttendees: true })
+        const { dialog, fetch } = await open(repeatAt('2026-10-08', 'upcoming', shared), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+
+        expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+        const alert = within(dialog).getByRole('alert')
+        expect(alert).toHaveTextContent('This task repeats. Delete all repeats? Completed ones stay.')
+        await user.click(within(alert).getByRole('button', { name: 'Delete task' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1'])
+      })
+
+      it('skips the current repeat of a series with attendees, which detaches nothing', async () => {
+        const user = userEvent.setup()
+        const shared = series({ recurrenceId: '2026-10-05T00:00:00Z', next: daily.next, hasAttendees: true })
+        const { dialog, fetch } = await open(repeatAt('2026-10-05', 'current', shared), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+        await user.click(within(within(dialog).getByRole('alertdialog', { name: question })).getByRole('button', { name: 'Only this repeat' }))
+        await awaitDelete(fetch)
+        expect(deletes(fetch)).toEqual(['/api/v1/todos/t1/occurrences/2026-10-05T00%3A00%3A00Z'])
+      })
+
+      // NFR-27, Review Focus 5: Escape leaves the question, not the details, and the focus goes back.
+      it('cancels only the delete question on Escape, leaving the details open', async () => {
+        const user = userEvent.setup()
+        const { dialog, fetch } = await open(repeatAt('2026-10-05', 'current'), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Delete task' }))
+        within(dialog).getByRole('alertdialog', { name: question })
+
+        await user.keyboard('{Escape}')
+
+        expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+        expect(screen.getByRole('dialog', { name: 'Water the flowers' })).toBe(dialog)
+        expect(within(dialog).getByRole('button', { name: 'Delete task' })).toHaveFocus()
+        expect(deletes(fetch)).toEqual([])
+        expect(useUi.getState().detail).not.toBeNull()
+
+        // A second Escape closes the details, as the question is gone.
+        await user.keyboard('{Escape}')
+        expect(useUi.getState().detail).toBeNull()
+      })
+
+      it('opens the editor at the repeat that was clicked', async () => {
+        const user = userEvent.setup()
+        const clicked = repeatAt('2026-10-08', 'upcoming')
+        const { dialog } = await open(clicked, 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Edit task' }))
+        expect(useUi.getState().taskEditor).toEqual({ mode: 'edit', todo: daily, repeat: repeatOf(clicked) })
+        expect(useUi.getState().taskEditor).toMatchObject({ repeat: { recurrenceId: allDay('2026-10-08'), at: 'upcoming' } })
+        expect(useUi.getState().detail).toBeNull()
+      })
+
+      it('opens the editor at the current repeat', async () => {
+        const user = userEvent.setup()
+        const { dialog } = await open(repeatAt('2026-10-05', 'current'), 'Water the flowers')
+        await user.click(within(dialog).getByRole('button', { name: 'Edit task' }))
+        expect(useUi.getState().taskEditor).toMatchObject({ mode: 'edit', repeat: { recurrenceId: allDay('2026-10-05'), at: 'current' } })
+      })
+
+      describe('a task detached from its series', () => {
+        // "Only this repeat" made this a task of its own; the series it left goes on Mon, Oct 12.
+        const detached = todo({ id: 't9', uid: 'u9', title: 'Water the flowers', due: allDay('2026-10-05'), dueAllDay: true, detachedFrom: 'u1' })
+        const origin = todo({ id: 't1', uid: 'u1', title: 'Water the flowers', rrule: 'FREQ=WEEKLY', recurring: true, due: allDay('2026-10-12'), dueAllDay: true })
+
+        it('shows the mark and where the series goes on', async () => {
+          const { dialog, queryClient } = await open(toCalTask(detached)!, 'Water the flowers')
+          act(() => {
+            queryClient.setQueryData(queryKeys.todos('c1'), { todos: [origin, detached], corrupted: [] })
+          })
+          expect(await within(dialog).findByText('Detached from its series. The series goes on Mon, Oct 12.')).toBeInTheDocument()
+          // The mark sits in the rule row's icon column, which is hidden from screen readers: the sentence says it.
+          expect(dialog.querySelector('[aria-label="Detached from its series"]')).not.toBeNull()
+          // A task of its own repeats no more: no rule.
+          expect(within(dialog).queryByText(/^Every /)).toBeNull()
+        })
+
+        it('says only that it is detached without the series', async () => {
+          const { dialog, queryClient } = await open(toCalTask(detached)!, 'Water the flowers')
+          // Another list has the series' UID; the series is looked up in this task's list.
+          act(() => {
+            queryClient.setQueryData(queryKeys.todos('c1'), { todos: [detached], corrupted: [] })
+            queryClient.setQueryData(queryKeys.todos('c2'), { todos: [{ ...origin, calendarId: 'c2' }], corrupted: [] })
+          })
+          expect(within(dialog).getByText('Detached from its series.')).toBeInTheDocument()
+          expect(within(dialog).queryByText(/The series goes on/)).toBeNull()
+          expect(dialog.querySelector('[aria-label="Detached from its series"]')).not.toBeNull()
+        })
+
+        it('shows nothing of it for a task that never was in a series', async () => {
+          const { dialog } = await open(toCalTask({ ...detached, detachedFrom: null })!, 'Water the flowers')
+          expect(within(dialog).queryByText(/Detached from its series/)).toBeNull()
+          expect(dialog.querySelector('[aria-label="Detached from its series"]')).toBeNull()
+        })
+      })
     })
   })
 })

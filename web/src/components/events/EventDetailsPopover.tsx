@@ -177,6 +177,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
             deleteScope={
               deleteOptions.length > 1
                 ? {
+                    question: t('scope.event.delete'),
                     items: eventScopeItems(t, event, deleteOptions, prefs, now, 'delete'),
                     color: colors.solid,
                     missing: eventScopeMissing(t, deleteScopes),

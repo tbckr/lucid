@@ -176,6 +176,22 @@ export function useCachedTodo(todo: Todo): Todo {
   return data ?? todo
 }
 
+/**
+ * The series `todo` was detached from (FR-17), by its UID among the todos of the
+ * same calendar as the cache holds them, or `undefined` for a task that was never
+ * a repeat, or whose series is not loaded. Reads the cache only and never fetches.
+ */
+export function useSeriesDetachedFrom(todo: Todo): Todo | undefined {
+  const { detachedFrom } = todo
+  const { data } = useQuery({
+    queryKey: queryKeys.todos(todo.calendarId),
+    queryFn: ({ signal }) => endpoints.listTodos(todo.calendarId, signal),
+    enabled: false,
+    select: (list) => (detachedFrom ? list.todos.find((x) => x.uid === detachedFrom) : undefined),
+  })
+  return data
+}
+
 /** The loaded todos; module-level so `useQueries` reruns it only on new data. */
 function combineTodos(results: { data?: TodoList | undefined }[]): Todo[] {
   return results.flatMap((r) => r.data?.todos ?? [])

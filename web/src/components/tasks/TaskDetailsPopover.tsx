@@ -1,17 +1,26 @@
 import { AlignLeftIcon, CheckIcon, FlagIcon, ListChecksIcon, LockIcon, RepeatIcon } from 'lucide-react'
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from '@/components/events/DetailParts'
+import { RecurringMark } from '@/components/events/EventItems'
 import { Popover } from '@/components/ui/popover'
-import { useCachedTodo, useDeleteTodo, useVisibleCalendars } from '@/hooks/queries'
+import {
+  useCachedTodo,
+  useDeleteTodo,
+  useEndTodo,
+  useSeriesDetachedFrom,
+  useSkipTodo,
+  useVisibleCalendars,
+} from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
-import { anchorOf, canComplete, recurringLabel, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { anchorOf, canComplete, recurringLabel, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
 import { formatEventWhen, formatPickerDate } from '@/lib/format'
-import { isOverdue, priorityLevel } from '@/lib/tasks'
+import { scopeOptions, taskScopeItems, taskScopeMissing, type Scope, type ScopeResult } from '@/lib/scope'
+import { isDone, isOverdue, priorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 import { PencilMark } from './TaskItems'
@@ -42,11 +51,19 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const colors = useCalendarColors()(task.calendarId)
   const openDetail = useUi((s) => s.openDetail)
   const openTaskEditor = useUi((s) => s.openTaskEditor)
-  const del = useDeleteTodo()
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
+  // Holds how to cancel the delete scope question while it is open, for the Escape handler below.
+  const cancelScope = useRef<(() => void) | null>(null)
   // The task as it is now: a reload may have replaced the one that was clicked.
   const todo = useCachedTodo(task.todo)
+  // The deletes of a task wait for its other writes, and take the ETag they got (FR-17, NFR-26).
+  const del = useDeleteTodo(todo.id)
+  const skip = useSkipTodo(todo.id)
+  const end = useEndTodo(todo.id)
+  // The repeat of a series these details show, from the series as it is now: none for a plain task
+  // and a done repeat, which no change of the series starts from (FR-17).
+  const repeat = useMemo(() => repeatOf({ ...task, todo }), [task, todo])
   // An occurrence keeps the dates it was clicked at; a plain task picks up the cache's, as before (FR-17).
   const placed = task.occurrence ? task : (toCalTask(todo) ?? task)
   const { done: toggledDone, toggle } = useToggleTodo(todo)
@@ -62,7 +79,16 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   // The series carries its current occurrence's dates, the only one that can be completed and so be late (FR-14, FR-17).
   const overdue = !done && !upcoming && isOverdue(todo, now)
   const hasPriority = priorityLevel(todo.priority) !== 'none'
-  const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring
+  // A task made of a repeat ("Only this repeat", FR-17) says so, and where the series it left goes on.
+  const detached = !!todo.detachedFrom
+  const origin = useSeriesDetachedFrom(todo)
+  const originAt = origin?.recurring && !isDone(origin) ? anchorOf(origin) : null
+  const detachedNotice = detached
+    ? originAt
+      ? t('tasks.detachedNotice', { next: formatPickerDate(originAt, prefs, now) })
+      : t('tasks.detachedNoticeAlone')
+    : null
+  const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring || detached
   // The rule row's hint (FR-17): which occurrence to complete first, that another app already did, or
   // that Lucid can't read the rule at all; the current occurrence, or a plain series, needs none of these.
   const hint = upcoming
@@ -73,8 +99,42 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
         ? t('tasks.ruleUnsupported')
         : null
 
+  // A repeat of a series asks which repeats to delete (FR-17): "only this repeat" skips the current
+  // one, "this and following repeats" ends the series before a later one, "all repeats" deletes it.
+  // The last repeat and a plain task ask only whether; "all repeats" alone is said by its confirm.
+  const deleteScopes: ScopeResult = repeat ? scopeOptions({ kind: 'task', action: 'delete', item: repeat }) : { options: [] }
+  const deleteOptions = deleteScopes.options
+  const deleteScoped = (scope: Scope) => {
+    if (!repeat) return
+    switch (scope) {
+      case 'this':
+        skip.mutate({ todo, repeat })
+        break
+      case 'following':
+        end.mutate({ todo, repeat })
+        break
+      case 'all':
+        del.mutate(todo)
+        break
+    }
+    openDetail(null)
+  }
+
   return (
-    <DetailContent anchor={anchor} label={title} initialFocus={() => editRef.current ?? closeRef.current}>
+    <DetailContent
+      anchor={anchor}
+      label={title}
+      initialFocus={() => editRef.current ?? closeRef.current}
+      onEscapeKeyDown={(e) => {
+        // While the delete scope question is open, Escape cancels it instead of closing the
+        // popover (NFR-27): Radix would otherwise dismiss this popover before the question's own
+        // handler ever ran.
+        if (cancelScope.current) {
+          e.preventDefault()
+          cancelScope.current()
+        }
+      }}
+    >
       {/* The task as it appears in its list: the list's tint and bar, and the round check that completes it (FR-15). */}
       <div
         className="relative grid grid-cols-[1.25rem_1fr] items-start gap-x-3 border-l-4 pt-4 pr-12 pb-3.5 pl-3"
@@ -138,9 +198,18 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
       <div className="grid gap-4 p-4 empty:hidden">
         {hasDetails && (
           <div className="grid gap-3 text-sm">
-            {todo.recurring && (
-              <DetailRow icon={<RepeatIcon />}>
-                <p>{recurringLabel(t, todo, placed.startsAt, prefs, now)}</p>
+            {(todo.recurring || detached) && (
+              <DetailRow
+                icon={
+                  detached ? (
+                    <RecurringMark recurring={todo.recurring} detached label={t('tasks.detached')} className="opacity-100" />
+                  ) : (
+                    <RepeatIcon />
+                  )
+                }
+              >
+                {todo.recurring && <p>{recurringLabel(t, todo, placed.startsAt, prefs, now)}</p>}
+                {detachedNotice && <p className={cn(todo.recurring && 'mt-1 text-muted-foreground')}>{detachedNotice}</p>}
                 {hint && <p className="mt-1 text-muted-foreground">{hint}</p>}
               </DetailRow>
             )}
@@ -188,13 +257,28 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
             editRef={editRef}
             editLabel={t('tasks.edit')}
             deleteLabel={t('tasks.delete')}
-            confirm={todo.recurring ? t('tasks.confirmDeleteSeries') : t('tasks.confirmDelete')}
+            // A series asks whether to delete all repeats, except at its last repeat, which is a task like any other.
+            confirm={todo.recurring && !repeat?.last ? t('tasks.confirmDeleteSeries') : t('tasks.confirmDelete')}
             onEdit={() => {
-              openTaskEditor({ mode: 'edit', todo })
+              openTaskEditor({ mode: 'edit', todo, repeat: repeat ?? undefined })
             }}
             onDelete={() => {
               del.mutate(todo)
               openDetail(null)
+            }}
+            deleteScope={
+              repeat && deleteOptions.length > 1
+                ? {
+                    question: t('scope.task.delete'),
+                    items: taskScopeItems(t, repeat, deleteOptions, prefs, now, 'delete'),
+                    color: colors.solid,
+                    missing: taskScopeMissing(t, deleteScopes),
+                    onChoose: deleteScoped,
+                  }
+                : undefined
+            }
+            onScopeOpenChange={(cancel) => {
+              cancelScope.current = cancel
             }}
           />
         )}

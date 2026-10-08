@@ -348,6 +348,8 @@
     "undoneDetachedKept": "Rückgängig gemacht. Die aus der Serie gelöste Aufgabe wurde in einer anderen App geändert und bleibt.",
     "plannedRepeat": "{{title}}, geplante Wiederholung am {{date}}",
     "detached": "Aus der Serie gelöst",
+    "detachedNotice": "Aus der Serie gelöst. Die Serie geht am {{next}} weiter.",
+    "detachedNoticeAlone": "Aus der Serie gelöst.",
     "repeat": "Wiederholung",
     "repeatInfo": "So funktionieren wiederkehrende Aufgaben",
     "repeatInfoDone": "Beim Abhaken bleibt die erledigte Aufgabe als eigener Eintrag stehen, und die Aufgabe rückt zur nächsten Wiederholung vor. So sehen auch andere Apps wie Apple Erinnerungen oder Tasks.org, was erledigt ist.",

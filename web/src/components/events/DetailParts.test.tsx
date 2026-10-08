@@ -43,15 +43,19 @@ describe('DetailActions', () => {
     expect(onDelete).toHaveBeenCalledOnce()
   })
 
-  it('asks which events to delete with a delete scope, and hands Escape its way to cancel (NFR-27)', async () => {
+  it.each([
+    ['events', 'This event repeats. Which events should be deleted?'],
+    ['repeats', 'This task repeats. Which repeats should be deleted?'],
+  ])('asks which %s to delete with a delete scope, and hands Escape its way to cancel (NFR-27)', async (_what, question) => {
     const user = userEvent.setup()
     const onChoose = vi.fn()
-    const { onDelete, onScopeOpenChange } = setup({ deleteScope: { items, color: '#3b82f6', onChoose } })
+    const { onDelete, onScopeOpenChange } = setup({ deleteScope: { question, items, color: '#3b82f6', onChoose } })
     await user.click(screen.getByRole('button', { name: 'Delete event' }))
-    const question = screen.getByRole('alertdialog', { name: 'This event repeats. Which events should be deleted?' })
+    // The caller words the question: it names events or repeats.
+    const asked = screen.getByRole('alertdialog', { name: question })
     expect(onScopeOpenChange).toHaveBeenCalledExactlyOnceWith(expect.any(Function))
 
-    await user.click(within(question).getByRole('button', { name: 'All events' }))
+    await user.click(within(asked).getByRole('button', { name: 'All events' }))
     expect(onChoose).toHaveBeenCalledExactlyOnceWith('all')
     expect(onDelete).not.toHaveBeenCalled()
   })

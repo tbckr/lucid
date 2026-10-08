@@ -348,6 +348,8 @@
     "undoneDetachedKept": "Undone. The detached task was changed in another app and stays.",
     "plannedRepeat": "{{title}}, planned repeat on {{date}}",
     "detached": "Detached from its series",
+    "detachedNotice": "Detached from its series. The series goes on {{next}}.",
+    "detachedNoticeAlone": "Detached from its series.",
     "repeat": "Repeat",
     "repeatInfo": "How repeating tasks work",
     "repeatInfoDone": "When you complete a repeating task, the completed one stays as its own entry and the task moves on to its next repeat. That way other apps such as Apple Reminders or Tasks.org also see what is done.",

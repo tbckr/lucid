@@ -127,7 +127,7 @@ export function Linked({ text }: { text: string }) {
   )
 }
 
-/** Delete and edit; deleting asks in place first, a series asking which events (FR-17). */
+/** Delete and edit; deleting asks in place first, a series asking which of its events or repeats (FR-17). */
 export function DetailActions({
   editRef,
   editLabel,
@@ -141,18 +141,24 @@ export function DetailActions({
   editRef: Ref<HTMLButtonElement>
   editLabel: string
   deleteLabel: string
-  /** The question before deleting a single event or task. */
+  /** The question before deleting a single event or task, or all repeats of a task series. */
   confirm: string
   onEdit: () => void
   onDelete: () => void
   /**
-   * The question which events of a series to delete (FR-17): the options it offers
-   * (`eventScopeItems`), the series' calendar color, why an option is missing
-   * (`eventScopeMissing`), and what a choice deletes. Always given for an event of a series,
-   * which has two options or more: the plain `confirm` would delete the whole series. A single
-   * event and a task ask the plain `confirm`.
+   * The question which events or repeats of a series to delete (FR-17): the `question` itself, the
+   * options it offers (`eventScopeItems`, `taskScopeItems`), the series' calendar color, why an
+   * option is missing (`eventScopeMissing`, `taskScopeMissing`), and what a choice deletes. Given
+   * wherever there are two options or more: the plain `confirm` would delete the whole series. A
+   * single event or task, and a task series with "all repeats" alone, ask the plain `confirm`.
    */
-  deleteScope?: { items: ScopeItem[]; color: string; missing?: string; onChoose: (scope: Scope) => void }
+  deleteScope?: {
+    question: string
+    items: ScopeItem[]
+    color: string
+    missing?: string
+    onChoose: (scope: Scope) => void
+  }
   /**
    * Reports how to cancel the scope question while it is open, or `null` once it isn't, so the
    * surrounding popover can route Escape to it instead of closing (NFR-27): Radix's dismissable
@@ -182,7 +188,7 @@ export function DetailActions({
     return (
       <ScopeChoice
         tone="destructive"
-        question={t('scope.event.delete')}
+        question={deleteScope.question}
         items={deleteScope.items}
         color={deleteScope.color}
         missing={deleteScope.missing}
