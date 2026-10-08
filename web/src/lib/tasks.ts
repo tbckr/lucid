@@ -31,6 +31,16 @@ export function isDone(todo: Pick<Todo, 'status'>): boolean {
   return todo.status === 'COMPLETED' || todo.status === 'CANCELLED'
 }
 
+/**
+ * Whether `todo` is a repeat made a task of its own ("Only this repeat",
+ * FR-17), marked as such: it names the series it was detached from and repeats
+ * no more. One another app gave a rule since is a series of its own, marked
+ * as one.
+ */
+export function isDetached(todo: Pick<Todo, 'detachedFrom' | 'recurring'>): boolean {
+  return !!todo.detachedFrom && !todo.recurring
+}
+
 /** Priority rank for sorting: 1 (highest) first, "none" (0) last. */
 function priorityRank(p: number): number {
   return p === 0 ? 10 : p

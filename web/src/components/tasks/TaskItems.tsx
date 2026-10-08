@@ -10,6 +10,7 @@ import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
 import { type DragBinding, type ScopePreview } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
+import { isDetached } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
@@ -284,7 +285,7 @@ export function TaskChip({
         <span className={cn('truncate font-medium', pencil && 'text-muted-foreground', done && 'line-through')}>{title}</span>
         <RecurringMark
           recurring={task.todo.recurring}
-          detached={!!task.todo.detachedFrom}
+          detached={isDetached(task.todo)}
           label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
           className={CHIP_MARK_IF_ROOM}
         />
@@ -371,7 +372,7 @@ export function TaskBar({
         <span className={cn('truncate', done && 'line-through')}>{title}</span>
         <RecurringMark
           recurring={task.todo.recurring}
-          detached={!!task.todo.detachedFrom}
+          detached={isDetached(task.todo)}
           label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
         />
       </button>
@@ -447,7 +448,7 @@ export function TaskBlock({
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
           <RecurringMark
             recurring={task.todo.recurring}
-            detached={!!task.todo.detachedFrom}
+            detached={isDetached(task.todo)}
             label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
             className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
@@ -495,7 +496,7 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
           <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
           <RecurringMark
             recurring={task.todo.recurring}
-            detached={!!task.todo.detachedFrom}
+            detached={isDetached(task.todo)}
             label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
           />
         </span>

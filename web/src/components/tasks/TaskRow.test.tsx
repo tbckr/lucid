@@ -279,6 +279,20 @@ describe('TaskRow', () => {
       expect(mark).toHaveClass('lucide-repeat-changed')
     })
 
+    it('marks a detached task another app gave a rule as a series', () => {
+      const t = todo({
+        title: 'Water the roses',
+        detachedFrom: 'u-series',
+        rrule: 'FREQ=DAILY',
+        recurring: true,
+        due: '2026-10-08T00:00:00Z',
+        dueAllDay: true,
+      })
+      renderWithProviders(<TaskRow todo={t} calendar={calendar()} />)
+      expect(screen.getByRole('img', { name: 'Every day' })).not.toHaveClass('lucide-repeat-changed')
+      expect(screen.queryByRole('img', { name: 'Detached from its series' })).toBeNull()
+    })
+
     describe('a change of its current repeat', () => {
       // Due Monday, Oct 5, on Mondays and Thursdays; Monday's is the current repeat.
       const series = todo({

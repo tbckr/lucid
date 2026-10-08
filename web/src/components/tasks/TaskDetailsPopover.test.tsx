@@ -512,6 +512,18 @@ describe('TaskDetailsPopover', () => {
           expect(dialog.querySelector('[aria-label="Detached from its series"]')).not.toBeNull()
         })
 
+        // Another app gave it a rule since: a series of its own, which shows its rule.
+        it('shows nothing of it once another app gave it a rule', async () => {
+          const repeating = { ...detached, rrule: 'FREQ=DAILY', recurring: true }
+          const { dialog, queryClient } = await open(toCalTask(repeating)!, 'Water the flowers')
+          act(() => {
+            queryClient.setQueryData(queryKeys.todos('c1'), { todos: [origin, repeating], corrupted: [] })
+          })
+          expect(within(dialog).getByText('Every day')).toBeInTheDocument()
+          expect(within(dialog).queryByText(/Detached from its series/)).toBeNull()
+          expect(dialog.querySelector('[aria-label="Detached from its series"]')).toBeNull()
+        })
+
         it('shows nothing of it for a task that never was in a series', async () => {
           const { dialog } = await open(toCalTask({ ...detached, detachedFrom: null })!, 'Water the flowers')
           expect(within(dialog).queryByText(/Detached from its series/)).toBeNull()

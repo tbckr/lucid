@@ -424,6 +424,23 @@ describe('task items', () => {
     }
   })
 
+  // Another app gave the detached task a rule: it is a series of its own, marked as one, not as detached.
+  it('marks a detached task another app gave a rule as a series in every view', () => {
+    const t = task({ detachedFrom: 'u-series', rrule: 'FREQ=DAILY', recurring: true })
+    for (const item of [
+      <TaskChip key="chip" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+      <TaskBar key="bar" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+      <TaskBlock key="block" task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />,
+      <TaskAgendaRow key="agenda" task={t} time="10 AM" colors={colors} prefs={prefs} readOnly={false} />,
+    ]) {
+      const { unmount } = renderWithProviders(item)
+      const mark = screen.getByRole('img', { name: 'Every day' })
+      expect(mark).not.toHaveClass('lucide-repeat-changed')
+      expect(screen.queryByRole('img', { name: 'Detached from its series' })).toBeNull()
+      unmount()
+    }
+  })
+
   it('marks no plain task', () => {
     renderWithProviders(<TaskChip task={task()} colors={colors} prefs={prefs} readOnly={false} />)
     expect(screen.queryByRole('img')).toBeNull()

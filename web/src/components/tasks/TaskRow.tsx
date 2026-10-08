@@ -19,7 +19,7 @@ import {
   type Scope,
   type ScopeResult,
 } from '@/lib/scope'
-import { checklistProgress, formatDue, priorityLevel, todoToInput } from '@/lib/tasks'
+import { checklistProgress, formatDue, isDetached, priorityLevel, todoToInput } from '@/lib/tasks'
 import { readableTextColor } from '@/lib/color'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -75,7 +75,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const labels = { today: t('tasks.today'), tomorrow: t('tasks.tomorrow'), yesterday: t('tasks.yesterday') }
   const due = formatDue(todo, now, prefs, labels, { timeOnly })
   const progress = checklistProgress(todo.checklist)
-  const detached = !!todo.detachedFrom
+  const detached = isDetached(todo)
   const hasMeta = due !== null || progress.total > 0 || (!done && todo.priority > 0) || todo.recurring || detached
   const edit = () => {
     openTaskEditor({ mode: 'edit', todo })

@@ -10,6 +10,7 @@ import {
   dueShortcuts,
   formatDue,
   groupTodos,
+  isDetached,
   isOverdue,
   isSeriesCompletion,
   priorityLevel,
@@ -198,6 +199,18 @@ describe('status', () => {
   it('keeps the start date in the input', () => {
     const t = todo({ start: '2026-09-25T07:00:00Z', startAllDay: false })
     expect(todoToInput(t)).toMatchObject({ start: '2026-09-25T07:00:00Z', startAllDay: false })
+  })
+})
+
+// FR-17: a repeat made a task of its own is marked as such until another app gives it a rule of its own.
+describe('isDetached', () => {
+  it.each([
+    ['a task detached from its series', { detachedFrom: 'u1' }, true],
+    ['a detached task another app gave a rule', { detachedFrom: 'u1', rrule: 'FREQ=DAILY', recurring: true }, false],
+    ['a task never in a series', {}, false],
+    ['a series', { rrule: 'FREQ=DAILY', recurring: true }, false],
+  ])('%s', (_, p, want) => {
+    expect(isDetached(todo(p))).toBe(want)
   })
 })
 
