@@ -142,6 +142,52 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
   }
 }
 
+/**
+ * Which of the fields a write to a series compares (title, notes, checklist,
+ * priority) the user edited (FR-17): those that differ from the values the
+ * editor opened with.
+ */
+export interface EditedFields {
+  title?: boolean
+  description?: boolean
+  checklist?: boolean
+  priority?: boolean
+}
+
+/** The fields of `values` that differ from `opened`, the values the editor opened with (FR-17). */
+export function editedFields(opened: TaskFormValues, values: TaskFormValues): Required<EditedFields> {
+  const sameItems =
+    opened.checklist.length === values.checklist.length &&
+    opened.checklist.every((c, i) => {
+      const item = values.checklist[i]
+      return item?.text === c.text && item.done === c.done
+    })
+  return {
+    title: values.title !== opened.title,
+    description: values.description !== opened.description,
+    checklist: !sameItems,
+    priority: values.priority !== opened.priority,
+  }
+}
+
+/**
+ * The body of a write to the task series `series` from the editor (FR-17):
+ * `input`, with the series' own title, notes, checklist and priority where
+ * the user left them alone (`dirty`). The server takes a field as changed
+ * where it differs from the series', and writes it into the repeats; a
+ * repeat's own value the editor showed, such as the title another app gave
+ * a later repeat, is then not mistaken for the user's change.
+ */
+export function seriesEditInput(series: Todo, input: TodoInput, dirty: EditedFields): TodoInput {
+  return {
+    ...input,
+    title: dirty.title ? input.title : series.title,
+    description: dirty.description ? input.description : series.description,
+    checklist: dirty.checklist ? input.checklist : series.checklist,
+    priority: dirty.priority ? input.priority : series.priority,
+  }
+}
+
 const DATE_FIELDS = {
   start: { date: 'startDate', time: 'startTime', other: 'dueTime' },
   due: { date: 'dueDate', time: 'dueTime', other: 'startTime' },

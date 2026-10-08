@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { type TodoInput } from '@/lib/api/schemas'
 import { todo } from '@/test/fixtures'
-import { buildTaskFormSchema, formToTodoInput, formWithDate, taskFormSchema, taskToForm, withDue } from './taskForm'
+import {
+  buildTaskFormSchema,
+  editedFields,
+  formToTodoInput,
+  formWithDate,
+  seriesEditInput,
+  taskFormSchema,
+  taskToForm,
+  withDue,
+} from './taskForm'
 
 const TZ = 'Europe/Berlin'
 
@@ -277,6 +287,79 @@ describe('taskForm', () => {
       expect(formWithDate(v, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '09:00' })
       const noTime = { ...v, dueTime: '', startDate: '2026-10-01', startTime: '' }
       expect(formWithDate(noTime, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '' })
+    })
+  })
+
+  // FR-17: a write to a series carries the series' own values for what the user left alone, so the server, which
+  // compares with the series, never takes a repeat's own value shown in the editor for a change.
+  describe('seriesEditInput', () => {
+    const series = todo({
+      title: 'Water the flowers',
+      description: 'Balcony',
+      checklist: [{ text: 'Can', done: false }],
+      priority: 5,
+      recurring: true,
+      rrule: 'FREQ=DAILY',
+    })
+    const input: TodoInput = {
+      title: 'Water the herbs',
+      description: 'Kitchen',
+      checklist: [{ text: 'Hose', done: true }],
+      start: null,
+      startAllDay: false,
+      due: '2026-10-09T08:00:00.000Z',
+      dueAllDay: false,
+      priority: 1,
+      status: 'NEEDS-ACTION',
+      rrule: 'FREQ=WEEKLY',
+      timezone: TZ,
+    }
+
+    it('takes the fields the user left alone from the series, and the rest from the input', () => {
+      expect(seriesEditInput(series, input, {})).toEqual({
+        ...input,
+        title: 'Water the flowers',
+        description: 'Balcony',
+        checklist: [{ text: 'Can', done: false }],
+        priority: 5,
+      })
+    })
+
+    it('takes the fields the user edited from the input', () => {
+      const all = { title: true, description: true, checklist: true, priority: true }
+      expect(seriesEditInput(series, input, all)).toEqual(input)
+      expect(seriesEditInput(series, input, { title: true })).toEqual({
+        ...input,
+        description: 'Balcony',
+        checklist: [{ text: 'Can', done: false }],
+        priority: 5,
+      })
+    })
+  })
+
+  describe('editedFields', () => {
+    const opened = taskToForm(
+      todo({ title: 'Own', description: 'Notes', checklist: [{ text: 'Can', done: false }], priority: 5 }),
+      TZ,
+    )
+
+    it('names nothing the user left as the form opened', () => {
+      const same = { ...opened, checklist: [{ text: 'Can', done: false }], dueDate: '2026-10-09' }
+      expect(editedFields(opened, same)).toEqual({
+        title: false,
+        description: false,
+        checklist: false,
+        priority: false,
+      })
+    })
+
+    it('names each field that differs from the one the form opened with', () => {
+      expect(editedFields(opened, { ...opened, title: 'New' })).toMatchObject({ title: true, description: false })
+      expect(editedFields(opened, { ...opened, description: 'More' })).toMatchObject({ description: true, title: false })
+      expect(editedFields(opened, { ...opened, priority: 1 })).toMatchObject({ priority: true, checklist: false })
+      expect(editedFields(opened, { ...opened, checklist: [{ text: 'Can', done: true }] }).checklist).toBe(true)
+      expect(editedFields(opened, { ...opened, checklist: [{ text: 'Hose', done: false }] }).checklist).toBe(true)
+      expect(editedFields(opened, { ...opened, checklist: [] }).checklist).toBe(true)
     })
   })
 })

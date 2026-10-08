@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { type ViewKind } from '@/lib/dates'
 import { type CalEvent, type CalItem } from '@/lib/events'
 import { type Todo } from '@/lib/api/schemas'
+import { type TaskRepeat } from '@/lib/calendarTasks'
 import { browserTimeZone } from '@/lib/locale'
 import { draftOf, type CreateOrigin, type CreateWhen, type Draft } from '@/lib/quickCreate'
 import { useSettings } from './settings'
@@ -16,7 +17,11 @@ export interface CreateEditorState {
 
 export type EditorState = CreateEditorState | { mode: 'edit'; event: CalEvent } | null
 
-export type TaskEditorState = CreateEditorState | { mode: 'edit'; todo: Todo } | null
+/**
+ * A task in its editor (FR-16, FR-17): the series `todo`, at its `repeat` that
+ * was clicked; without one, a series opens at its current repeat.
+ */
+export type TaskEditorState = CreateEditorState | { mode: 'edit'; todo: Todo; repeat?: TaskRepeat | undefined } | null
 
 /** The create popover at a click in the calendar (FR-09, FR-16). */
 export interface CreateState {

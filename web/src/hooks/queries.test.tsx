@@ -2913,6 +2913,7 @@ describe('task scope writes', () => {
     at: 'upcoming',
     last: false,
     offRule: false,
+    title: series.title,
     shown: { start: null, startAllDay: false, due: '2026-10-12T00:00:00Z', dueAllDay: true },
   }
   /** The series rolled on to Thu, Oct 8, as a detach or a skip of Mon, Oct 5 answers. */

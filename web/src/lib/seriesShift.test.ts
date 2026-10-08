@@ -191,6 +191,7 @@ describe('taskMoveRefusal', () => {
       at: p.at ?? 'current',
       last: false,
       offRule: false,
+      title: 'Task',
       shown: p.shown,
     }
   }

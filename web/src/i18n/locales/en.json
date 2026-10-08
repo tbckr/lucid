@@ -335,7 +335,6 @@
     "deleteCompletedNote_one": "It's removed from the server, and from other apps too.",
     "deleteCompletedNote_other": "They're removed from the server, and from other apps too.",
     "readOnlyNotice": "This list is read-only.",
-    "seriesNotice": "This task repeats. Changes apply to all upcoming repeats.",
     "ruleUnsupported": "Lucid can't read this repeat. Complete and move it in the app that created it.",
     "upcomingHint": "Can be completed once {{date}} is done.",
     "doneElsewhere": "Completed in another app.",
@@ -352,7 +351,7 @@
     "repeat": "Repeat",
     "repeatInfo": "How repeating tasks work",
     "repeatInfoDone": "When you complete a repeating task, the completed one stays as its own entry and the task moves on to its next repeat. That way other apps such as Apple Reminders or Tasks.org also see what is done.",
-    "repeatInfoOrder": "Repeats can only be completed in order. Moving the task moves it from the current repeat on."
+    "repeatInfoOrder": "Repeats are completed in order. Changing only one repeat makes it a task of its own, and the series goes on."
   },
   "priority": {
     "none": "None",

@@ -335,7 +335,6 @@
     "deleteCompletedNote_one": "Sie wird vom Server gelöscht, auch in anderen Apps.",
     "deleteCompletedNote_other": "Sie werden vom Server gelöscht, auch in anderen Apps.",
     "readOnlyNotice": "Diese Liste ist schreibgeschützt.",
-    "seriesNotice": "Diese Aufgabe wiederholt sich. Änderungen gelten für alle kommenden Wiederholungen.",
     "ruleUnsupported": "Lucid kann diese Wiederholung nicht auswerten. Abhaken und Verschieben gehen in der App, in der sie angelegt wurde.",
     "upcomingHint": "Erst abhakbar, wenn {{date}} erledigt ist.",
     "doneElsewhere": "In einer anderen App erledigt.",
@@ -352,7 +351,7 @@
     "repeat": "Wiederholung",
     "repeatInfo": "So funktionieren wiederkehrende Aufgaben",
     "repeatInfoDone": "Beim Abhaken bleibt die erledigte Aufgabe als eigener Eintrag stehen, und die Aufgabe rückt zur nächsten Wiederholung vor. So sehen auch andere Apps wie Apple Erinnerungen oder Tasks.org, was erledigt ist.",
-    "repeatInfoOrder": "Abhaken lassen sich die Wiederholungen nur der Reihe nach. Verschieben verschiebt die Aufgabe ab der aktuellen Wiederholung."
+    "repeatInfoOrder": "Abhaken lassen sich die Wiederholungen nur der Reihe nach. Ändert man nur eine Wiederholung, wird sie eine eigene Aufgabe, und die Serie läuft weiter."
   },
   "priority": {
     "none": "Keine",

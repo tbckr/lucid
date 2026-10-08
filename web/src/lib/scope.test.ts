@@ -411,7 +411,10 @@ function current(p: Partial<Todo> = {}): TaskRepeat {
 /** The repeat of `series(p)` after the current one, named `rid` and shown on `shown`. */
 function later(p: Partial<Todo> = {}, o: { rid?: string; shown?: TaskDates; offRule?: boolean } = {}): TaskRepeat {
   const rid = o.rid ?? '2026-03-12T08:00:00Z'
-  return { todo: series(p), recurrenceId: rid, at: 'upcoming', last: false, offRule: o.offRule ?? false, shown: o.shown ?? due(rid) }
+  const todo = series(p)
+  const { title } = todo
+  const offRule = o.offRule ?? false
+  return { todo, recurrenceId: rid, at: 'upcoming', last: false, offRule, title, shown: o.shown ?? due(rid) }
 }
 
 describe('scopeOptions for tasks', () => {

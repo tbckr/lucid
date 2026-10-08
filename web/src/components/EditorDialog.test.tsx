@@ -210,6 +210,80 @@ describe('EditorDialog', () => {
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
   })
 
+  // NFR-27, FR-17: the task editor's footer questions get the same Escape routing as the event editor's.
+  describe('the task editor at a repeat of a series', () => {
+    // The current repeat of a series that repeats every day, with a next one.
+    const series = todo({
+      due: '2026-09-25T00:00:00Z',
+      dueAllDay: true,
+      rrule: 'FREQ=DAILY',
+      recurring: true,
+      recurrenceId: '2026-09-25T00:00:00Z',
+      next: { due: '2026-09-26T00:00:00Z', dueAllDay: true },
+    })
+
+    async function openSeries() {
+      const result = await open({ mode: 'create', draft }, undefined, 'event')
+      act(() => {
+        useUi.getState().openTaskEditor({ mode: 'edit', todo: series })
+      })
+      return { ...result, dialog: await screen.findByRole('dialog', { name: 'Edit task' }) }
+    }
+
+    it.each([
+      ['Save', 'This task repeats. Which repeats should change?'],
+      ['Delete task', 'This task repeats. Which repeats should be deleted?'],
+    ])('cancels the question after %s on Escape, and leaves the editor open', async (button, question) => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openSeries()
+
+      await user.click(within(dialog).getByRole('button', { name: button }))
+      within(dialog).getByRole('alertdialog', { name: question })
+      await user.keyboard('{Escape}')
+
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Edit task' })).toBe(dialog)
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT' || init?.method === 'DELETE')).toBe(false)
+    })
+
+    it("does not swallow the next editor's Escape after closing one with its question open", async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openSeries()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      within(dialog).getByRole('alertdialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      act(() => {
+        useUi.getState().openTaskEditor({ mode: 'create', draft })
+      })
+      await screen.findByRole('dialog', { name: 'New task' })
+      await user.keyboard('{Escape}')
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('opens a new editor for another repeat of the same series', async () => {
+      const { dialog } = await openSeries()
+      await userEvent.setup().type(titleField(), ' edited')
+
+      const later = {
+        todo: series,
+        recurrenceId: '2026-09-27T00:00:00Z',
+        at: 'upcoming' as const,
+        last: false,
+        offRule: false,
+        title: 'Task',
+        shown: { start: null, startAllDay: false, due: '2026-09-27T00:00:00Z', dueAllDay: true },
+      }
+      act(() => {
+        useUi.getState().openTaskEditor({ mode: 'edit', todo: series, repeat: later })
+      })
+      expect(titleField()).toHaveValue('Task')
+      expect(within(dialog).getByRole('button', { name: 'Due Sun, Sep 27' })).toBeInTheDocument()
+    })
+  })
+
   it('offers no switch when editing', async () => {
     const { dialog } = await open({ mode: 'edit', event: toCalEvent(apiEvent()) })
     expect(dialog).toHaveAccessibleName('Edit event')

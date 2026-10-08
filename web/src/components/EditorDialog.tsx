@@ -21,9 +21,12 @@ export function EditorDialog() {
   const canSwitch = events && tasks
   // Where only task lists take a new entry, it is a task, as in the create popover.
   const task = editor?.mode === 'create' && !events && tasks ? editor : taskEditor
-  // Holds how to cancel the editor's save scope question while it is open, for the Escape
-  // handler below (FR-17, NFR-27).
+  // Holds how to cancel the editor's footer question (which events or repeats a save or delete
+  // reaches) while it is open, for the Escape handler below (FR-17, NFR-27).
   const cancelScope = useRef<(() => void) | null>(null)
+  const onScopeOpenChange = (cancel: (() => void) | null) => {
+    cancelScope.current = cancel
+  }
 
   const close = () => {
     // Drops a stale cancel from an editor that is about to unmount (its own cleanup effects
@@ -47,9 +50,9 @@ export function EditorDialog() {
           className="top-4 gap-0 translate-y-0 p-0 sm:top-[10dvh] sm:max-h-[calc(90dvh-1rem)]"
           showCloseButton={false}
           onEscapeKeyDown={(e) => {
-            // While the save scope question is open, Escape cancels it instead of closing the
-            // dialog (NFR-27): Radix would otherwise dismiss the editor before the question's
-            // own handler ever ran.
+            // While a footer question is open, Escape cancels it instead of closing the dialog
+            // (NFR-27): Radix would otherwise dismiss the editor before the question's own
+            // handler ever ran.
             if (cancelScope.current) {
               e.preventDefault()
               cancelScope.current()
@@ -58,10 +61,12 @@ export function EditorDialog() {
         >
           {task ? (
             <TaskEditor
-              key={task.mode === 'edit' ? task.todo.id : 'create'}
+              // A repeat of the series is an editor of its own, opened at its dates (FR-17).
+              key={task.mode === 'edit' ? `${task.todo.id}@${task.repeat?.recurrenceId ?? ''}` : 'create'}
               state={task}
               canSwitch={canSwitch}
               onDone={close}
+              onScopeOpenChange={onScopeOpenChange}
             />
           ) : (
             editor && (
@@ -70,9 +75,7 @@ export function EditorDialog() {
                 editor={editor}
                 canSwitch={canSwitch}
                 onDone={close}
-                onScopeOpenChange={(cancel) => {
-                  cancelScope.current = cancel
-                }}
+                onScopeOpenChange={onScopeOpenChange}
               />
             )
           )}

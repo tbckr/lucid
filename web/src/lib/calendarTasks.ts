@@ -1,4 +1,4 @@
-import { addDays, addMinutes, startOfDay } from 'date-fns'
+import { addDays, addMinutes, differenceInCalendarDays, startOfDay } from 'date-fns'
 import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
 import { localDateToUtc, utcDateToLocal } from './dates'
@@ -146,7 +146,8 @@ export function occurrenceTask(occ: TodoOccurrence, todo: Todo): CalTask | null 
  * an override can have moved from its RECURRENCE-ID. `last` marks the current
  * repeat of a series without a next one, which acts as a single task.
  * `offRule` marks a repeat on none of the rule's instances, from which no
- * series can go on.
+ * series can go on. `title` is the one it is shown with, its own where
+ * another app gave it one, which the editor opens with.
  */
 export interface TaskRepeat {
   todo: Todo
@@ -154,6 +155,7 @@ export interface TaskRepeat {
   at: 'current' | 'upcoming'
   last: boolean
   offRule: boolean
+  title: string
   shown: TaskDates
 }
 
@@ -172,6 +174,7 @@ export function repeatOf(task: CalTask): TaskRepeat | null {
     at: occ.state,
     last: occ.state === 'current' && !task.todo.next,
     offRule: occ.offRule,
+    title: task.title,
     shown: { start: occ.start, startAllDay: occ.startAllDay, due: occ.due, dueAllDay: occ.dueAllDay },
   }
 }
@@ -179,9 +182,9 @@ export function repeatOf(task: CalTask): TaskRepeat | null {
 /**
  * The current repeat of `todo`, as the task list shows it (FR-17): named by
  * `todo.recurrenceId` and shown on the series' own dates, which are the
- * current repeat's. `null` without one, for a task that does not repeat or a
- * series that is done. Whether it lies off the rule is not reported for it,
- * and matters only for a later repeat.
+ * current repeat's, with the series' title. `null` without one, for a task
+ * that does not repeat or a series that is done. Whether it lies off the rule
+ * is not reported for it, and matters only for a later repeat.
  */
 export function currentRepeat(todo: Todo): TaskRepeat | null {
   if (!todo.recurrenceId) return null
@@ -191,6 +194,7 @@ export function currentRepeat(todo: Todo): TaskRepeat | null {
     at: 'current',
     last: !todo.next,
     offRule: false,
+    title: todo.title,
     shown: { start: todo.start, startAllDay: todo.startAllDay, due: todo.due, dueAllDay: todo.dueAllDay },
   }
 }
@@ -237,6 +241,47 @@ export function movedDates(dates: TaskDates, days: number, minutes: number): Tas
     due: movedDate(dates.due, dates.dueAllDay, days, minutes),
     dueAllDay: dates.dueAllDay,
   }
+}
+
+/** A wire date as the local `Date` it is shown at: a date (all-day) at local midnight. */
+function shownAt(iso: string, allDay: boolean): Date {
+  return allDay ? utcDateToLocal(iso) : new Date(iso)
+}
+
+/** The days and minutes on the local wall clock from `from` to `to`, as `movedDate` moves by them. */
+function wallDistance(from: Date, to: Date): { days: number; minutes: number } {
+  const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes()
+  return { days: differenceInCalendarDays(to, from), minutes: minutesOf(to) - minutesOf(from) }
+}
+
+/**
+ * The series' own dates, its current repeat's, for "all repeats" chosen at its
+ * later `repeat`, changed from the dates it is shown on to `to` (FR-17): each
+ * of start and due moves by as much as the repeat's own moved, on the wall
+ * clock, as a drag moves them (`movedDates`), so the series moves by the
+ * user's change rather than to the repeat's day. A date the repeat gains,
+ * or turns between a date and a time, is the repeat's new one, moved back by
+ * the distance from the repeat to the current one; one it loses goes.
+ */
+export function allRepeatsDates(repeat: TaskRepeat, to: TaskDates): Required<TaskDates> {
+  const series = repeat.todo
+  const shown = anchorOf(repeat.shown)
+  const own = anchorOf(series)
+  const back = shown && own ? wallDistance(shown, own) : { days: 0, minutes: 0 }
+  const field = (which: 'start' | 'due') => {
+    const flag = which === 'start' ? 'startAllDay' : 'dueAllDay'
+    const next = to[which]
+    const allDay = to[flag]
+    if (!next) return null
+    const was = repeat.shown[which]
+    const value = series[which]
+    if (was && value && repeat.shown[flag] === allDay && series[flag] === allDay) {
+      const by = wallDistance(shownAt(was, allDay), shownAt(next, allDay))
+      return movedDate(value, allDay, by.days, by.minutes)
+    }
+    return movedDate(next, allDay, back.days, back.minutes)
+  }
+  return { start: field('start'), startAllDay: to.startAllDay, due: field('due'), dueAllDay: to.dueAllDay }
 }
 
 /**

@@ -119,9 +119,13 @@ function sameInstant(a: string | null | undefined, b: string | null | undefined)
 /**
  * Whether `input` changes the dates of `todo`: start or due, or their all-day
  * flags. The server compares them the same way to tell a move of a series
- * from an edit that keeps it where it is (FR-17).
+ * from an edit that keeps it where it is (FR-17). `todo` can be a repeat's
+ * dates as shown, which the editor tells a move of that repeat by.
  */
-export function datesChanged(todo: Todo, input: TodoInput): boolean {
+export function datesChanged(
+  todo: Pick<Todo, 'start' | 'startAllDay' | 'due' | 'dueAllDay'>,
+  input: Pick<TodoInput, 'start' | 'startAllDay' | 'due' | 'dueAllDay'>,
+): boolean {
   return (
     !sameInstant(todo.start, input.start) ||
     todo.startAllDay !== input.startAllDay ||

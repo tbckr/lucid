@@ -1,8 +1,10 @@
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
+import { type Todo } from '@/lib/api/schemas'
 import { occurrence, todo } from '@/test/fixtures'
 import {
+  allRepeatsDates,
   anchorOf,
   canComplete,
   canDrag,
@@ -13,6 +15,8 @@ import {
   repeatOf,
   shiftedTask,
   toCalTask,
+  type TaskDates,
+  type TaskRepeat,
 } from './calendarTasks'
 import { isSpanning } from './events'
 import { type FormatPrefs } from './format'
@@ -304,13 +308,19 @@ describe('repeatOf', () => {
   })
 
   it('names the current repeat by its recurrence ID, with the dates it is shown on', () => {
-    const occ = occurrence({ recurrenceId: allDay('2026-09-24'), due: allDay('2026-09-25'), state: 'current' })
+    const occ = occurrence({
+      recurrenceId: allDay('2026-09-24'),
+      title: 'Own',
+      due: allDay('2026-09-25'),
+      state: 'current',
+    })
     expect(repeatOf(occurrenceTask(occ, series)!)).toEqual({
       todo: series,
       recurrenceId: allDay('2026-09-24'),
       at: 'current',
       last: false,
       offRule: false,
+      title: 'Own',
       shown: { start: null, startAllDay: false, due: allDay('2026-09-25'), dueAllDay: true },
     })
   })
@@ -332,8 +342,9 @@ describe('repeatOf', () => {
 })
 
 describe('currentRepeat', () => {
-  it('is the current repeat of a series, shown on the series\' own dates', () => {
+  it('is the current repeat of a series, shown on the series\' own dates and title', () => {
     const series = todo({
+      title: 'Stretch',
       rrule: 'FREQ=DAILY',
       recurring: true,
       start: '2026-09-25T07:00:00Z',
@@ -347,6 +358,7 @@ describe('currentRepeat', () => {
       at: 'current',
       last: false,
       offRule: false,
+      title: 'Stretch',
       shown: { start: '2026-09-25T07:00:00Z', startAllDay: false, due: '2026-09-25T08:00:00Z', dueAllDay: false },
     })
   })
@@ -358,6 +370,80 @@ describe('currentRepeat', () => {
 
   it('is null for a todo without a current repeat', () => {
     expect(currentRepeat(todo({ due: allDay('2026-09-25'), dueAllDay: true }))).toBeNull()
+  })
+})
+
+describe('allRepeatsDates', () => {
+  // Due Mondays and Thursdays at 9:00 in Berlin; the current repeat is Monday, 5 October.
+  const series = todo({
+    rrule: 'FREQ=WEEKLY;BYDAY=MO,TH',
+    recurring: true,
+    due: '2026-10-05T07:00:00Z',
+    recurrenceId: '2026-10-05T07:00:00Z',
+    next: { due: '2026-10-08T07:00:00Z' },
+  })
+  const timed = (due: string, start: string | null = null): TaskDates => ({
+    start,
+    startAllDay: false,
+    due,
+    dueAllDay: false,
+  })
+  /** The repeat of `todo` on Thursday, 8 October, shown on `shown`. */
+  const thursday = (t: Todo, shown: TaskDates): TaskRepeat => ({
+    todo: t,
+    recurrenceId: '2026-10-08T07:00:00Z',
+    at: 'upcoming',
+    last: false,
+    offRule: false,
+    title: t.title,
+    shown,
+  })
+
+  it('moves the series as far as a later repeat moved, on the wall clock', () => {
+    // Thursday 9:00 to Friday 10:00: the series a day and an hour later, from Monday.
+    const repeat = thursday(series, timed('2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(repeat, timed('2026-10-09T08:00:00Z'))).toEqual(timed('2026-10-06T08:00:00.000Z'))
+  })
+
+  it('keeps the series\' dates where the repeat\'s stay', () => {
+    const repeat = thursday(series, timed('2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(repeat, repeat.shown)).toEqual(timed('2026-10-05T07:00:00.000Z'))
+  })
+
+  it('keeps the wall-clock time where the series and the repeat lie across the DST change', () => {
+    // The current repeat on Thursday, 22 October at 9:00 summer time; the later one on the 29th at 9:00 winter time,
+    // moved to Friday the 30th: the series moves to Friday the 23rd at 9:00 summer time.
+    const october = todo({ ...series, due: '2026-10-22T07:00:00Z', recurrenceId: '2026-10-22T07:00:00Z' })
+    const repeat = { ...thursday(october, timed('2026-10-29T08:00:00Z')), recurrenceId: '2026-10-29T08:00:00Z' }
+    expect(allRepeatsDates(repeat, timed('2026-10-30T08:00:00Z'))).toEqual(timed('2026-10-23T07:00:00.000Z'))
+  })
+
+  it('moves each date by its own change', () => {
+    // A span from 9:00 to 10:00 whose end the user moves to 11:00 at the later repeat.
+    const span = todo({ ...series, start: '2026-10-05T07:00:00Z', due: '2026-10-05T08:00:00Z' })
+    const repeat = thursday(span, timed('2026-10-08T08:00:00Z', '2026-10-08T07:00:00Z'))
+    expect(allRepeatsDates(repeat, timed('2026-10-08T09:00:00Z', '2026-10-08T07:00:00Z'))).toEqual(
+      timed('2026-10-05T09:00:00.000Z', '2026-10-05T07:00:00.000Z'),
+    )
+  })
+
+  it("gives a date the repeat gains, or turns into a time, the repeat's new one, moved back to the series", () => {
+    // All-day on Mondays; at Thursday's repeat the user adds a start on Wednesday and gives the due date a time.
+    const days = todo({ ...series, due: allDay('2026-10-05'), dueAllDay: true, recurrenceId: allDay('2026-10-05') })
+    const repeat = thursday(days, { start: null, startAllDay: false, due: allDay('2026-10-08'), dueAllDay: true })
+    const to = { start: allDay('2026-10-07'), startAllDay: true, due: '2026-10-08T08:00:00Z', dueAllDay: false }
+    expect(allRepeatsDates(repeat, to)).toEqual({
+      start: '2026-10-04T00:00:00.000Z',
+      startAllDay: true,
+      due: '2026-10-05T08:00:00.000Z',
+      dueAllDay: false,
+    })
+  })
+
+  it('removes a date the repeat loses', () => {
+    const span = todo({ ...series, start: '2026-10-05T06:00:00Z' })
+    const repeat = thursday(span, timed('2026-10-08T07:00:00Z', '2026-10-08T06:00:00Z'))
+    expect(allRepeatsDates(repeat, timed('2026-10-08T07:00:00Z'))).toEqual(timed('2026-10-05T07:00:00.000Z'))
   })
 })
 
