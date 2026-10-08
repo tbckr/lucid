@@ -838,7 +838,8 @@ func TestUpdateTodoFollowing(t *testing.T) {
 // so that a field left as the series has it keeps the value another app
 // gave R alone, and R's own title does not become the title of every repeat
 // of N. The checklist counts by its items' text, as N's are unchecked
-// anyway. Without a rule, N is R alone, and takes the body as it is (FR-17).
+// anyway. Without a rule, N is R alone, as shown: R's override laid over
+// N's master, open as N is, with the fields the body changes (FR-17).
 func TestTodoFollowingComparesWithSeries(t *testing.T) {
 	t.Parallel()
 	series := todoFields{"Series", "Series notes\n\n- [ ] s", "5"}
@@ -847,12 +848,17 @@ func TestTodoFollowingComparesWithSeries(t *testing.T) {
 	// moves along with N.
 	const moved = "20250325T090000Z"
 	day := shiftedBy(24 * time.Hour)
+	// N without a rule is a single task, open, without R's progress and
+	// subtasks.
+	single := []string{"RRULE", "RECURRENCE-ID", "IN-PROCESS", "PERCENT-COMPLETE", "kid"}
 	for _, tc := range []struct {
 		name      string
 		edit      func(in *domain.TodoInput)
 		rule      *string
 		master    todoFields
 		overrides map[string]todoFields // R's in N, by its RECURRENCE-ID
+		has       []string              // in N as stored
+		lacks     []string
 	}{
 		{name: "the series' fields leave R's own", edit: day, master: series, overrides: map[string]todoFields{moved: own}},
 		{
@@ -897,11 +903,24 @@ func TestTodoFollowingComparesWithSeries(t *testing.T) {
 			overrides: map[string]todoFields{"20250324T090000Z": own},
 		},
 		{
-			name:      "without a rule, N is R as sent",
-			edit:      func(in *domain.TodoInput) { in.Title = "New" },
+			name:      "without a rule, N is R alone, as shown",
 			rule:      ptr(""),
-			master:    todoFields{"New", series.notes, "5"},
+			master:    todoFields{"Own", "Own notes\n\n- [ ] o", "1"},
 			overrides: map[string]todoFields{},
+			has:       []string{"DTSTART:20250324T150000Z", "DUE:20250324T160000Z", "STATUS:NEEDS-ACTION"},
+			lacks:     single,
+		},
+		{
+			name: "without a rule, an edited title goes over R's, wherever R moves",
+			edit: func(in *domain.TodoInput) {
+				day(in)
+				in.Title = "New"
+			},
+			rule:      ptr(""),
+			master:    todoFields{"New", "Own notes\n\n- [ ] o", "1"},
+			overrides: map[string]todoFields{},
+			has:       []string{"DTSTART:20250325T150000Z", "DUE:20250325T160000Z", "STATUS:NEEDS-ACTION"},
+			lacks:     single,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -910,19 +929,23 @@ func TestTodoFollowingComparesWithSeries(t *testing.T) {
 			id := seedSeries(t, e, append([]string{`DESCRIPTION:Series notes\n\n- [ ] s`, "PRIORITY:5"}, weeklyFromMarch3...),
 				[]string{
 					"RECURRENCE-ID:20250324T090000Z", "DTSTART:20250324T150000Z", "SUMMARY:Own",
-					`DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1",
+					`DESCRIPTION:Own notes\n\n- [x] o`, "PRIORITY:1", "STATUS:IN-PROCESS", "PERCENT-COMPLETE:40",
+					"RELATED-TO;RELTYPE=CHILD:kid",
 				})
 			if r := listedRepeat(t, e, id, fourthRepeat); r.Title != "Own" {
 				t.Fatalf("R = %+v; want it listed with its own title", r)
 			}
 			res, _ := updateTodoFollowing(t, e, id, fourthRepeat, func(in *domain.TodoInput) {
 				// The series' fields, as a client sends them, and the edit.
-				tc.edit(in)
+				if tc.edit != nil {
+					tc.edit(in)
+				}
 				if tc.rule != nil {
 					*in = withRule(*in, *tc.rule)
 				}
 			})
 			checkFields(t, e, res.Todo.ID, tc.master, tc.overrides)
+			checkStored(t, "N", storedObject(t, e, res.Todo.ID), tc.has, tc.lacks)
 		})
 	}
 

@@ -818,9 +818,11 @@ the text of its items), and goes into the new series and into the repeat's
 override, if it has one; the others stay as the new series inherited them,
 and the repeat keeps its own. So a title another client gave the repeat
 alone stays the repeat's, and does not become the title of every repeat.
-With `rrule: ""`, the new series is the repeat alone and takes the body's
-fields as they are. Its status and its checklist's state are
-those of a series that rolls on, though: `NEEDS-ACTION`, every item
+With `rrule: ""`, the new series is the repeat alone, as shown: its override,
+if it has one, laid over the series, with its own properties and alarms,
+and the changed fields over those, so that the repeat keeps its own title
+when only the rule goes or the repeat moves. Its status and its checklist's
+state are those of a series that rolls on, though: `NEEDS-ACTION`, every item
 unchecked, whatever the body says. `start` is handled as there: a body without it, or without any date,
 takes the repeat's `start`. `rrule` is the new series' rule: absent, or sent
 as the series has it (`rrule` of the todo, compared case-insensitively), the

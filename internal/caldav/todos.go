@@ -444,9 +444,10 @@ type todoEdit struct {
 	// own before, see convertDoneOverrides.
 	drop func(rid dateValue) bool
 	// onlyEdited says that only the fields of in that differ from the master
-	// as read, cur's, apply to it while the series recurs, see
-	// applyEditedFields, as for the new series N of a split, which keeps the
-	// fields it inherited where in leaves them as they are (see
+	// as read, cur's, apply to it, see applyEditedFields, as for the new
+	// series N of a split, which keeps the fields it inherited where in
+	// leaves them as they are, and whose master, where in removes the rule,
+	// is its first repeat R alone, as shown (see aloneAsShown and
 	// UpdateTodoFollowing); else in's fields replace the master's.
 	onlyEdited bool
 }
@@ -484,8 +485,9 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 
 // applyTodoEdit applies the update e to the todo c in cal, in memory, as
 // UpdateTodo writes it (FR-17): the rule edit, then the dates, then the
-// fields, see applyTodoFields, or, for e.onlyEdited while c recurs, those
-// that differ from the master as read; those go into the override of the
+// fields, see applyTodoFields, or, for e.onlyEdited, those that differ from
+// the master as read, over the current occurrence as shown where the edit
+// removes the rule (see aloneAsShown); those go into the override of the
 // current occurrence as read too, while the edit keeps it, see
 // applyEditedFields. It does no I/O: before it, the caller turns the
 // completions other apps recorded in the overrides e.drop reports into
@@ -515,7 +517,10 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 	switch e.rule {
 	case ruleRemove:
 		// The task stays at the current occurrence, whose dates in carries
-		// (FR-17).
+		// (FR-17). N without a rule is its first repeat alone, as shown.
+		if e.onlyEdited && ov != nil {
+			aloneAsShown(c, ov)
+		}
 		removeRecurrence(cal, c)
 		c.Props.Del(propKDEPending)
 		series = nil
@@ -558,7 +563,7 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		// would restart there and lose its overrides. A new rule wrote them
 		// already (FR-17).
 	}
-	if e.onlyEdited && series != nil {
+	if e.onlyEdited {
 		applyEditedFields(c, ov, e.in, e.cur)
 		applyTodoStatus(c, e.in, now)
 	} else {

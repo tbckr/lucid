@@ -608,11 +608,11 @@ type CalendarService interface {
 	// changed by in as UpdateTodo changes a series from its current repeat,
 	// open, its checklist unchecked, but for the fields: in carries the series'
 	// with the user's edits, and only those that differ from the series' go into
-	// the new series and the repeat's override, all of them where in removes the
-	// rule. in.RRule is the new series' rule, except that the series' own rule,
-	// sent as stored or left out, keeps the rule the new series inherits, with
-	// its COUNT lowered by the repeats before it; "" makes the new series a
-	// single todo. Completions other apps recorded from the repeat on become
+	// the new series and the repeat's override; where in removes the rule, the
+	// new series is the repeat alone, as shown, with those fields. in.RRule is
+	// the new series' rule, except that the series' own rule, sent as stored
+	// or left out, keeps the rule the new series inherits, with its COUNT
+	// lowered by the repeats before it; "" makes the new series a single todo. Completions other apps recorded from the repeat on become
 	// todos of their own first, and leave both series. It returns the new series
 	// as Todo and the old one as Series, and the snapshot RestoreTodo undoes the
 	// change with, which also deletes the new series (nil when either new ETag

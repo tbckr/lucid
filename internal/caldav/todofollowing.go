@@ -145,6 +145,20 @@ func splitTodoOff(cal *ical.Calendar, series *todoSeries, rid time.Time, uid str
 	return n, nil
 }
 
+// aloneAsShown makes c, the master of the new series N of a split whose
+// rule the edit removes, its first repeat R alone, as shown, as splitOff
+// makes a single event of the event shown (FR-17): R's override ov laid
+// over c (see layOver), whose properties and alarms replace c's, but for
+// its UID, RECURRENCE-ID and change properties. As N, it is open, its
+// checklist unchecked, without the links to the series' subtasks (see
+// splitTodoOff); its dates are the edit's. The fields the edit changes from
+// the series then go over R's (see applyEditedFields).
+func aloneAsShown(c, ov *ical.Component) {
+	layOver(c, ov)
+	reopen(c)
+	dropChildLinks(c)
+}
+
 // errSplitRuleUnsupported refuses to split a task series whose rule Lucid
 // cannot evaluate, or not as far as the repeat named, as it cannot tell
 // where that repeat lies in the series (FR-17). Like every split Lucid
@@ -226,7 +240,8 @@ func (s *todoSeries) leaveCompletions(cal *ical.Calendar, from func(rid dateValu
 //     fields, see applyTodoEdit. in carries S's fields with the user's
 //     edits, and only those that differ from S's go into N's master and R's
 //     override, see applyEditedFields, so that R keeps what another app gave
-//     it alone; where in removes the rule, N is R alone and takes them all.
+//     it alone; where in removes the rule, N is R alone, as shown (see
+//     aloneAsShown), with those fields.
 //     N is open, its checklist unchecked, as a series a completion rolls on
 //     (see rolledInput): in echoes S's progress, which belongs to S's
 //     current repeat.

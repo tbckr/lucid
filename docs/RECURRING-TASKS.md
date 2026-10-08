@@ -1028,8 +1028,11 @@ Lucid splits the series at R, by `RECURRENCE-ID`, and writes no
    the rule the series has, compared case-insensitively, keeps the rule the
    new series inherited, with its lowered `COUNT`, so that a move doesn't
    count as a new rule; any other rule is the new series' own from R on,
-   which drops the overrides it took along; an empty rule makes it a single
-   task at the dates and with the fields entered.
+   which drops the overrides it took along; an empty rule makes it R alone
+   as R shows it, a single task: R's override, if it has one, laid over the
+   copy of the master, as for a single event (see
+   [RECURRING-EVENTS.md](RECURRING-EVENTS.md#this-and-following-events)),
+   at the dates entered and with the fields changed over R's own.
 
 At the current occurrence, the last one too, nothing comes before it: "this
 and following" is all of them, the change of the series itself. R must be an
