@@ -169,7 +169,7 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 // splitOff returns the new series N that goes on from the occurrence rid of
 // the series master in cal, whose timing is tm, as the calendar of a
 // resource of its own (FR-17; spec section 4 "Teilen" step 2). cal stays as
-// it is: N is a deep copy, see copySeries, which a caller can change freely.
+// it is: N is a deep copy (see copySeries) that a caller can change freely.
 //   - The VTIMEZONEs and the other components that are no VEVENT, and the
 //     calendar's own properties, are copied as they are.
 //   - The master is copied with all its properties and components, with the

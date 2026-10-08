@@ -96,7 +96,7 @@ func endTodoBefore(cal *ical.Calendar, series *todoSeries, rid time.Time) error 
 // rid of the series series, read from cal, a later instance of its rule, as
 // the calendar of a resource of its own (FR-17; spec section 5 "Teilen und
 // Beenden"), as splitOff does for an event series. cal stays as it is: N is
-// a deep copy, see copySeries, which a caller can change freely.
+// a deep copy (see copySeries) that a caller can change freely.
 //   - The calendar's VTIMEZONEs come along, all of them, as for an event
 //     series.
 //   - The master is copied with all its properties and components, its

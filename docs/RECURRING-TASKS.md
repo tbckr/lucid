@@ -1037,20 +1037,25 @@ for events, also at the current occurrence: one with an `ORGANIZER` or an
 them of a series that ends and of another with a new `UID`; one with an
 `EXRULE`, which Lucid doesn't read and a new series would count from its own
 start; one with more than one `RRULE`, of which Lucid reads and ends only the
-first; and one whose rule Lucid can't evaluate, or not as far as R. A stale R
-is a conflict, as above.
+first; and one whose rule Lucid can't evaluate, or not as far as R. A change
+is refused, too, where the rule can't be walked as far as a completion
+another app recorded from R on (Lucid's iteration cap): Lucid can't tell
+whether it is an occurrence of the rule, which the new series has to
+exclude (see below). A stale R is a conflict, as above.
 
 Completions other apps recorded from R on would keep their place in neither
 series: the change could drop or move them in the new one, and the old one
 ends before them. So they become completed tasks of their own first, as for a
-rule change (see below), and leave both series; the new series excludes such
-an occurrence of its rule with an `EXDATE`, so that it shows once, done, as its
-task, and does not come back open. The writes go in that order: those tasks,
-the new series (`If-None-Match: *`), and the old series (`If-Match`). They fail
-as for events: if the new series can't be written, the old one is not
-written either; if the old one can't be, the new series and those tasks go
-again where Lucid can tell that the write did not land, and stay, with the
-error reported, where it can't.
+rule change (see below), and leave both series. While the new series keeps
+the rule it inherits, it excludes such an occurrence of its rule with an
+`EXDATE`, so that it shows once, done, as its task, and does not come back
+open. A rule of its own drops the `EXDATE`s, as any changed rule does (see
+Limits); an empty rule leaves the new series no occurrences to show. The
+writes go in that order: those tasks, the new series (`If-None-Match: *`),
+and the old series (`If-Match`). They fail as for events: if the new series
+can't be written, the old one is not written either; if the old one can't
+be, the new series and those tasks go again where Lucid can tell that the
+write did not land, and stay, with the error reported, where it can't.
 
 **Ending the series** before a later occurrence R ends its rule with an
 `UNTIL` just before R, in the form RFC 5545 wants with `DTSTART`: the day
@@ -1064,7 +1069,9 @@ past R stays. Other apps' completions from R on become tasks of their own
 first, as above. It is one write of the series, and the series keeps its
 current occurrence, which lies before R, open. At the current occurrence,
 the last one too, nothing comes before it: the task is deleted. The
-refusals are those of a change from R on, but for the move.
+refusals are those of a change from R on, but for the move and for a
+completion beyond Lucid's iteration cap, which ending the series converts
+all the same.
 
 **`X-LUCID-DETACHED-FROM`** is Lucid's own property: only a detach writes
 it, on the detached task, with the series' `UID`, and Lucid reports it as
@@ -1284,12 +1291,17 @@ keeps the properties and components Lucid does not know.
   repeat on that date: Lucid cannot tell which one it was meant for.
 - A changed rule drops the old rule's `EXDATE`s, so an occurrence skipped
   under the old rule comes back where the new one has an occurrence on the
-  same date.
-- Completing a rule occurrence whose next occurrence is off the rule
-  excludes it with an `EXDATE` instead of rolling the master (see Writing).
-  A client that reads only the master, such as Tasks.org or Apple
-  Reminders, then keeps showing the completed occurrence's date as due
-  until a later completion rolls the master past it.
+  same date. So does an occurrence another app completed after the one a
+  change of "this and following" splits at, when the change gives the new
+  series a rule of its own: it shows done, as its task, and open again
+  where the new rule has an occurrence on its date.
+- Completing, detaching or skipping a rule occurrence whose next
+  occurrence is off the rule excludes it with an `EXDATE` instead of
+  rolling the master (see Writing). A client that reads only the master,
+  such as Tasks.org or Apple Reminders, then keeps showing the series as
+  due on that occurrence's date until a later completion, detach or skip
+  rolls the master past it: next to the completed copy or the detached
+  task, or, after a skip, as if nothing was skipped.
 - Converting other clients' completions into entries of their own, on a
   rule change or removal, a split or an end of the series, creates them one
   by one; if the master write then fails, cleanup deletes the entries again,

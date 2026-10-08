@@ -584,34 +584,36 @@ For a recurring todo, these edits are handled specially:
   completing one off the rule drops its override. Otherwise the master rolls
   as usual, also from an occurrence off the rule.
 - **Moving the series** (`start`/`due` different from the stored ones): the
-  master's `DTSTART`/`DUE` become the new dates, keeping their written form
-  (a series without `start` recurs on `due`), and the override of the
-  current occurrence goes (but see one another client moved, below). The
-  rule follows as far as it can, counted from
-  the current occurrence's `RECURRENCE-ID` to the new start in the series'
-  zone: an interval rule stays as it is; a weekly rule whose only other part
-  is `BYDAY` with plain weekdays rotates its days by the move (`BYDAY=MO,TH`
-  moved from a Monday to a Tuesday becomes `BYDAY=TU,FR`; with an `INTERVAL`
-  above 1, only where the start and every day stay in one week); any other
-  rule on fixed days moves only within the day, and to another time of day
-  only without `BYHOUR`, `BYMINUTE` or `BYSECOND`. A move the rule cannot
-  follow is `400 series_move_unsupported`, and nothing is written. What
-  refers to later occurrences moves with them: their overrides, `EXDATE`s
-  and an `UNTIL` from the current occurrence on move by the same amount,
-  whole periods of the rule included, in the wall clock of the series
-  (counted in calendar months, then days, for a `MONTHLY` or `YEARLY` rule).
-  Earlier ones, such as other clients' completions, stay, except an
-  `EXDATE` from the new start on: it excluded an occurrence the series left
-  behind, and goes. A move that would put an occurrence of the series on one
-  another client already marked done or changed, an override that stays, is
-  `400 series_move_unsupported` as well, and nothing is written. A change
-  between all-day and timed dates converts every override (`RECURRENCE-ID`,
-  `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new value type: a date
-  gets the new time of day in the series' zone (an `UNTIL` in UTC), a
-  date-time becomes its date in the series' zone; the later ones first move
-  by the change in date. A `COUNT` no longer counts the rule's instances
-  before the moved occurrence, and an `UNTIL` that would end before the new
-  dates moves onto them.
+  master's `DTSTART`/`DUE` become the new dates, keeping their written form (a
+  series without `start` recurs on `due`), and the override of the current
+  occurrence goes (but see one another client moved, below). The rule follows
+  as far as it can, counted from the current occurrence's `RECURRENCE-ID` to
+  the new start in the series' zone: an interval rule stays as it is; a weekly
+  rule whose only other part is `BYDAY` with plain weekdays rotates its days
+  by the move (`BYDAY=MO,TH` moved from a Monday to a Tuesday becomes
+  `BYDAY=TU,FR`; with an `INTERVAL` above 1, only where the start and every
+  day stay in one week); any other rule on fixed days moves only within the
+  day, and to another time of day only without `BYHOUR`, `BYMINUTE` or
+  `BYSECOND`. A move the rule cannot follow is `400 series_move_unsupported`,
+  and nothing is written. A completed or cancelled series, which reports its
+  stored dates, moves from its `DTSTART` the same way and is refused alike,
+  although there is no "only this one" to offer for it: only a repeat of an
+  open series can be detached. What refers to later occurrences moves with
+  them: their overrides, `EXDATE`s and an `UNTIL` from the current occurrence
+  on move by the same amount, whole periods of the rule included, in the wall
+  clock of the series (counted in calendar months, then days, for a `MONTHLY`
+  or `YEARLY` rule). Earlier ones, such as other clients' completions, stay,
+  except an `EXDATE` from the new start on: it excluded an occurrence the
+  series left behind, and goes. A move that would put an occurrence of the
+  series on one another client already marked done or changed, an override
+  that stays, is `400 series_move_unsupported` as well, and nothing is
+  written. A change between all-day and timed dates converts every override
+  (`RECURRENCE-ID`, `DTSTART`, `DUE`), `EXDATE` and the `UNTIL` to the new
+  value type: a date gets the new time of day in the series' zone (an `UNTIL`
+  in UTC), a date-time becomes its date in the series' zone; the later ones
+  first move by the change in date. A `COUNT` no longer counts the rule's
+  instances before the moved occurrence, and an `UNTIL` that would end before
+  the new dates moves onto them.
   The **last repeat** (a current occurrence with `next: null`) moves to any
   date, also off a rule on fixed days: the rule then ends at it, with an
   `UNTIL` at the new start in the form RFC 5545 wants with `DTSTART`'s (a
@@ -632,8 +634,8 @@ For a recurring todo, these edits are handled specially:
   current, stays out at its new place by its `EXDATE`, which moves along, or
   a new one. The occurrence's override moves along and takes the new dates.
   A change of its `due` alone changes only the occurrence; the last repeat
-  moves to any date as above, wherever it is shown. A move together
-  with a new `rrule` starts the series over, and the undo below restores the
+  moves to any date as above, wherever it is shown. A move together with a
+  new `rrule` starts the series over, and the undo below restores the
   resource: neither is such a move.
 - **Changing `rrule`**: the new rule applies from the current occurrence on;
   earlier occurrences and completed copies are untouched, except that the
@@ -800,9 +802,13 @@ drops the overrides it took along.
 Completions another client recorded from `recurrenceId` on, overrides with
 `STATUS:COMPLETED`, become completed todos of their own first, as when a
 changed rule drops them (see "Completions from other clients" under
-`PUT /todos/{todoId}`), and leave both series: the new series excludes such a
-repeat of its rule with an `EXDATE`, so that it shows once, done, as its own
-todo, and not open again. A change that creates any returns no `undoToken`.
+`PUT /todos/{todoId}`), and leave both series. While the new series keeps
+the rule it inherits, it excludes such a repeat of its rule with an `EXDATE`,
+so that it shows once, done, as its own todo, and not open again. A rule of
+its own drops the `EXDATE`s, as any changed rule does: where it has a repeat
+on such a date, that repeat shows open next to the done todo. With
+`rrule: ""` the new series has no repeats to show. A change that creates any
+returns no `undoToken`.
 
 At the series' **current repeat** nothing comes before it: the request is
 `PUT /todos/{todoId}` with the body, also at its last repeat, no new series is
@@ -838,7 +844,11 @@ todos stay, and the error is answered.
 Errors, with nothing written:
 - `400 invalid_input`: `recurrenceId` is not a valid RFC 3339 timestamp with
   whole seconds; the body is invalid, or completes or cancels the repeat.
-- `400 series_split_unsupported`: as for the `DELETE` below.
+- `400 series_split_unsupported`: as for the `DELETE` below, and also where
+  a completion another client recorded from `recurrenceId` on lies beyond
+  the backend's iteration cap: the backend can't tell whether it is a repeat
+  of the rule, which the new series would show open again. The `DELETE`,
+  which makes no new series, ends the series all the same.
 - `400 series_move_unsupported`: the new series can't follow the move, as for
   `PUT /todos/{todoId}`.
 - `403 read_only`, `404 not_found`, `409 conflict`, `428

@@ -202,15 +202,15 @@ func answerRestore(t *testing.T, mock *caldavtest.Server, objPath string, a rest
 
 // A restore whose PUT of the series fails without the server's refusal, as
 // behind a reverse proxy whose read timeout fired, counts as applied only if
-// the series read back is the restored one: it has the data of the snapshot,
-// or the stamps of its components, as a server that stores them in its own
-// form keeps them. Then it removes what the change created and answers
-// without an ETag. In any other case it answers the error, 502, with nothing
-// removed and the token kept, whether the change created anything or not: the
-// series may have been written by another client, with the restore not
-// applied (a changed ETag says no more), and then removing what the change
-// created would lose its repeats, and an answer of 200 would consume the
-// token. A definite refusal is its error, too (FR-17, A-01, see
+// the series read back is the restored one: it has the stamps of the
+// snapshot's components (see sameChangeProps), which a server that stores
+// the data in its own form keeps. Then it removes what the change created
+// and answers without an ETag. In any other case it answers the error, 502,
+// with nothing removed and the token kept, whether the change created
+// anything or not: the series may have been written by another client, with
+// the restore not applied (a changed ETag says no more), and then removing
+// what the change created would lose its repeats, and an answer of 200 would
+// consume the token. A definite refusal is its error, too (FR-17, A-01, see
 // settleRestore).
 func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 	t.Parallel()
@@ -406,11 +406,12 @@ func TestRestoreAfterAmbiguousWrite(t *testing.T) {
 	}
 }
 
-// sameChangeProps confirms a restore only by the stamps of components of the
-// restored kind: a calendar without one confirms none, also against another
-// without one, as there is nothing to compare (A-01). Its only caller,
-// settleRestore, never passes a restored calendar without one, as
-// restoreResource refuses such a snapshot before it writes.
+// TestSameChangeProps checks that sameChangeProps confirms a restore only by
+// the stamps of components of the restored kind: a calendar without one
+// confirms none, also against another without one, as there is nothing to
+// compare (A-01). Its only caller, settleRestore, never passes a restored
+// calendar without one, as restoreResource refuses such a snapshot before it
+// writes.
 func TestSameChangeProps(t *testing.T) {
 	t.Parallel()
 	todo := []string{

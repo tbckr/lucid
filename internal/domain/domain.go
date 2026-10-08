@@ -426,9 +426,9 @@ type CreatedRef struct {
 	// as kept, when it changed since the write: a completed copy, a record of
 	// the completion that stands on its own. Any other resource may not stay,
 	// as it holds what the series restored holds again: the new series of a
-	// split would show every repeat from the split on twice, a task a detach
-	// made the detached occurrence. The undo is refused then, with nothing
-	// written (FR-17).
+	// split would show every repeat from the split on twice, and a task a
+	// detach made would show the detached occurrence twice. The undo is
+	// refused then, with nothing written (FR-17).
 	MayStay bool
 }
 
@@ -565,21 +565,20 @@ type CalendarService interface {
 	RestoreTodo(ctx context.Context, snap Snapshot) (Todo, error)
 	DeleteTodo(ctx context.Context, todoID, etag string) error
 	// DetachTodoOccurrence turns the current repeat at recurrenceID of the
-	// recurring todo todoID into a todo of its own ("only this one"), changed
-	// by in as UpdateTodo changes a todo, but for in.RRule, which is the
-	// series' and ignored; the series rolls on to its next repeat, as after a
-	// completion, with its own title, notes and priority. It returns the
-	// rolled series with the new todo as DetachedCopy, and the snapshot that
-	// RestoreTodo undoes the change with, which also deletes the new todo
-	// (nil when either ETag is unknown, or the resource has an ORGANIZER or
-	// an ATTENDEE). At the series' last repeat it is UpdateTodo with in, and
-	// answers as that does. A status of in that completes or cancels the
-	// repeat is ErrInvalidInput, and so is a later repeat than the current
-	// one; a resource with an ORGANIZER or an ATTENDEE is
-	// ErrSeriesSplitUnsupported; a recurrenceID that is no open repeat of the
-	// series any more, as in a view not reloaded since, is ErrConflict.
-	// Nothing is written then. etag must match (If-Match), otherwise
-	// ErrConflict (FR-17).
+	// recurring todo todoID into a todo of its own ("only this one"),
+	// changed by in as UpdateTodo changes a todo, but for in.RRule, which is
+	// the series' and ignored; the series rolls on to its next repeat, as
+	// after a completion, with its own title, notes and priority. It returns
+	// the rolled series with the new todo as DetachedCopy, and the snapshot
+	// that RestoreTodo undoes the change with, which also deletes the new
+	// todo (nil when either ETag is unknown). At the series' last repeat it
+	// is UpdateTodo with in, and answers as that does. A status of in that
+	// completes or cancels the repeat is ErrInvalidInput, and so is a later
+	// repeat than the current one; a resource with an ORGANIZER or an
+	// ATTENDEE is ErrSeriesSplitUnsupported; a recurrenceID that is no open
+	// repeat of the series any more, as in a view not reloaded since, is
+	// ErrConflict. Nothing is written then. etag must match (If-Match),
+	// otherwise ErrConflict (FR-17).
 	DetachTodoOccurrence(ctx context.Context, todoID, etag string, recurrenceID time.Time, in TodoInput) (Todo, *Snapshot, error)
 	// SkipTodoOccurrence skips the current repeat at recurrenceID of the
 	// recurring todo todoID: the series rolls on to its next repeat, as after
@@ -624,12 +623,13 @@ type CalendarService interface {
 	// change with, as UpdateTodo does. At the series' current repeat, the
 	// last one too, nothing comes before it: the resource is deleted, and
 	// it returns a zero Todo and no snapshot. A resource with an ORGANIZER
-	// or an ATTENDEE, an EXRULE or more than one RRULE, a rule Lucid cannot
-	// evaluate or walk to recurrenceID, and a repeat off the rule are
-	// ErrSeriesSplitUnsupported, at the current repeat too; a recurrenceID
-	// that is no open repeat of the series any more is ErrConflict. Nothing
-	// is written or deleted then. etag must match (If-Match), otherwise
-	// ErrConflict (FR-17).
+	// or an ATTENDEE, an EXRULE or more than one RRULE, and a rule Lucid
+	// cannot evaluate are ErrSeriesSplitUnsupported, at the current repeat
+	// too; at a later repeat, so are a rule Lucid cannot walk to
+	// recurrenceID and a repeat off the rule. A recurrenceID that is no open
+	// repeat of the series any more is ErrConflict. Nothing is written or
+	// deleted then. etag must match (If-Match), otherwise ErrConflict
+	// (FR-17).
 	DeleteTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
 }
 
