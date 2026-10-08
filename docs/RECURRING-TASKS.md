@@ -1266,8 +1266,9 @@ keeps the properties and components Lucid does not know.
 ### Limits
 
 - Only the current occurrence can be completed, detached or skipped, so
-  occurrences are completed in order. Later ones are a preview: from one of
-  them on, the series can only be changed or ended ("this and following").
+  occurrences are completed in order. Later ones are a preview: the series
+  can be changed or ended from one of them ("this and following"), or as a
+  whole ("all repeats").
 - No occurrence moves on its own within the series: moving the current one,
   one off the rule too, moves the series from it on, and only detaching it
   moves it alone, as a task of its own. A later occurrence moves with the
@@ -1381,7 +1382,8 @@ makes it a task of its own while the series goes on.
   readers, in the calendar, the list and the details. It no longer repeats;
   its details say "Detached from its series. The series goes on *date*.",
   with the series' current repeat, or only the first sentence once the
-  series is gone, done or no longer repeats, or isn't loaded.
+  series is gone, done or no longer repeats, or isn't loaded. Once another
+  app gives it a rule, it is a series of its own, and marked as one.
 - **The question**: a change of a series asks which repeats it reaches, in
   the same form as for events (see
   [RECURRING-EVENTS.md](RECURRING-EVENTS.md#lucids-behavior)): "This task
@@ -1413,25 +1415,27 @@ makes it a task of its own while the series goes on.
   dots: beneath a dragged repeat, in the editor's footer, and below the
   month of the list's date picker where the day doesn't decide it. It says
   "Only this repeat. It becomes a task of its own.", "This and following
-  repeats, as a series of their own.", "Moves all repeats." or "Applies
-  from this repeat on. Done ones stay.", and, in red, "The task stops
-  repeating. Upcoming repeats are removed."; where attendees took the
-  other option away, a second sentence says so. A delete that can only
-  reach all repeats asks "This task repeats. Delete all repeats? Completed
-  ones stay." A task that doesn't repeat, a done repeat, a series Lucid
-  can't read, and the last repeat get no question and no hint: the last
-  repeat is a task like any other, moves to any day, and asks "Delete this
-  task?".
+  repeats, as a series of their own.", "Moves all repeats.", "Applies
+  from this repeat on. Done ones stay." or, at a later repeat, "Applies to
+  all repeats, the current one too. Done ones stay.", and, in red, "The
+  task stops repeating. Upcoming repeats are removed."; where attendees
+  took the other option away, a second sentence says so. A delete that can
+  only reach all repeats asks "This task repeats. Delete all repeats?
+  Completed ones stay." A task that doesn't repeat, a done repeat, a series
+  Lucid can't read, and the last repeat get no question and no hint: the
+  last repeat is a task like any other, moves to any day, and asks "Delete
+  this task?".
 - **Moves the series can't follow**: on fixed days a series moves only as
   far as its rule can follow (see Writing). Where no option is left,
   nothing is written, and the UI says "Can't move. The series stays on its
   days." or "… keeps its times.": a dragged repeat is pencilled in with a
   stop mark and says it beneath itself, which screen readers hear too, and
   a drop there changes nothing, with a toast "Not moved" and the reason;
-  the editor says it under the date and keeps Save disabled until the date
-  changes; the list's date picker says it below the month and leaves the
-  day unpicked. A move only the server can refuse shows "This series can't
-  move like this. Move only this one instead."
+  the editor says it under the date, muted, as a limit and not an error,
+  and keeps Save disabled until the date changes; the list's date picker
+  says it below the month and leaves the day unpicked. A move only the
+  server can refuse shows "This series can't move like this. Move only this
+  one instead."
 - **Dragging**: a dropped repeat with a choice waits at its new place for
   the question, which opens beside it; an option with the pointer or the
   focus rings the repeats in view it reaches. "Only this repeat" keeps the
@@ -1468,10 +1472,13 @@ makes it a task of its own while the series goes on.
     deleting or removing the rule, "The series now ends before *date*.";
   - "All repeats": "Moved to *date*. Then: *date*", "Series moved. Next
     up: *date*" from a later repeat, and "All repeats changed." when no
-    date changed;
-  - the last repeat, which asks nothing: "Moved to *date*."
+    date changed or the rule changed, its dots red where the rule was
+    removed;
+  - the last repeat, which asks nothing: "Moved to *date*." for a move,
+    and nothing for any other change, as for a task that doesn't repeat.
 
-  Deleting a whole task says "Task deleted", without Undo. Only the latest
+  Deleting a whole task says "Task deleted", without Undo, with the red
+  dots of "All repeats" where the question offered it. Only the latest
   change of a series keeps its Undo, and a detach's or a split's goes as
   soon as the detached task or the new series is changed in Lucid. An Undo
   the server can't do anymore says "Nothing to undo anymore." or "Couldn't
