@@ -509,12 +509,13 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 // applied in cal then, which the caller does not write.
 func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.Time) (series *todoSeries, complete bool, err error) {
 	series = e.series
-	// The override of the occurrence in describes, as read: the rule edit
-	// and the move may drop it.
+	// The override of the occurrence in describes, as read, and whether that
+	// occurrence is open: the rule edit and the move may drop it.
 	var ov *ical.Component
+	open := false
 	if series != nil {
 		occ, _ := series.reported(e.cur.Status)
-		ov = occ.override
+		ov, open = occ.override, !occ.done
 	}
 	// shownAlone reports that the rule edit left c the current occurrence
 	// alone, as shown, see aloneAsShown.
@@ -522,8 +523,10 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 	switch e.rule {
 	case ruleRemove:
 		// The task stays at the current occurrence, whose dates in carries,
-		// as shown (FR-17).
-		if ov != nil {
+		// as shown (FR-17). A series whose occurrences are all done reports
+		// its last, done one, which became an entry of its own: the open task
+		// keeps the series' fields.
+		if ov != nil && open {
 			aloneAsShown(c, ov, e.onlyEdited)
 			shownAlone = true
 		}

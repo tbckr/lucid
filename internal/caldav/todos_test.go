@@ -4420,6 +4420,37 @@ func TestUpdateTodoWritesChangedFieldsIntoCurrentOverride(t *testing.T) {
 	}
 }
 
+// Removing the rule of an open series whose repeats other apps all
+// completed leaves the series as it is, with the body's fields: the
+// occurrence it reports is done, and its override, which becomes an entry of
+// its own, is not laid over the open task (FR-17).
+func TestRemoveRuleOfSeriesWithAllRepeatsDone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY;COUNT=2"},
+		[]string{"RECURRENCE-ID:20250310T090000Z", "SUMMARY:Own1", "STATUS:COMPLETED"},
+		[]string{"RECURRENCE-ID:20250317T090000Z", "SUMMARY:Own2", "STATUS:COMPLETED"})
+	f := listedTodo(t, e, id)
+	got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, withRule(editInput(&f), ""))
+	mustNoErr(t, err)
+	if got.Title != "Series" || got.Status == domain.TodoCompleted || got.Recurring {
+		t.Errorf("todo = %q, %s, recurring %v; want the open series %q without a rule", got.Title, got.Status, got.Recurring, "Series")
+	}
+	checkFields(t, e, id, todoFields{"Series", "", ""}, map[string]todoFields{})
+	todos, err := e.svc.ListTodos(t.Context(), e.cals["tasks"])
+	mustNoErr(t, err)
+	var done []string
+	for _, td := range todos {
+		if td.ID != id && td.Status == domain.TodoCompleted {
+			done = append(done, td.Title)
+		}
+	}
+	slices.Sort(done)
+	if want := []string{"Own1", "Own2"}; !slices.Equal(done, want) {
+		t.Errorf("completed entries = %q; want %q", done, want)
+	}
+}
+
 // The undo of a change restores the resource as it was, with a SEQUENCE
 // lower than the one a server may already have sent to the attendees, so a
 // resource with an organizer or attendees gets none, wherever they are, also
