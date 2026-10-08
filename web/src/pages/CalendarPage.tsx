@@ -243,11 +243,23 @@ export function CalendarPage() {
               const e = d.event
               const colors = colorsOf(e.calendarId)
               const bar = e.allDay || e.endsAt.getTime() - e.startsAt.getTime() >= 86_400_000
+              // Beneath, why a dragged task's repeat can't land here, or else which events or repeats of its series
+              // the drop reaches when there is no choice (FR-17). The dots sit on the first line, and a wrapped line
+              // lines up with the text, not under them.
+              const pill = limit ? (
+                <LimitPill className="absolute top-full left-0 mt-1">{limit}</LimitPill>
+              ) : (
+                hint && (
+                  <LimitPill className="absolute top-full left-0 mt-1 flex items-start gap-1.5">
+                    <ScopeGlyph inverted slots={hint.slots} className="mt-[3px] shrink-0" />
+                    <span>{hint.text}</span>
+                  </LimitPill>
+                )
+              )
               if (e.kind === 'task') {
                 // Held back (FR-17): pencilled in on paper, with the reason beneath.
                 const blocked = limit !== null
                 const item = { task: e, colors, prefs, readOnly: false, blocked }
-                const pill = limit && <LimitPill className="absolute top-full left-0 mt-1">{limit}</LimitPill>
                 if (d.type === 'timed') {
                   return (
                     <div className={cn('relative size-full shadow-float', blocked && 'rounded-md bg-surface')}>
@@ -268,14 +280,6 @@ export function CalendarPage() {
                 )
               }
               const drag = { id: 'overlay', data: d, disabled: true }
-              // Which events of its series the drop reaches when there is no choice (FR-17), beneath.
-              // The dots sit on the first line, and a wrapped line lines up with the text, not under them.
-              const pill = hint && (
-                <LimitPill className="absolute top-full left-0 mt-1 flex items-start gap-1.5">
-                  <ScopeGlyph inverted slots={hint.slots} className="mt-[3px] shrink-0" />
-                  <span>{hint.text}</span>
-                </LimitPill>
-              )
               if (d.type === 'timed') {
                 return (
                   <div className="relative size-full shadow-float">

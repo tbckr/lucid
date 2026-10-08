@@ -19,20 +19,24 @@ import {
 import { useMutationState } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScopeChoice } from '@/components/scope/ScopeChoice'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { toast } from 'sonner'
+import { ScopePopover } from '@/components/scope/ScopePopover'
 import {
   MOVE_EVENT_KEY,
   UNDO_EVENT_KEY,
   usePendingSeries,
+  useDetachTodo,
   useMoveEvent,
   useMoveFollowing,
   useMoveOccurrence,
+  useTodoFollowing,
   useUpdateTodo,
   type MoveVars,
 } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
+import { type TodoInput } from '@/lib/api/schemas'
+import { movedDates, repeatOf, type CalTask, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
 import {
   acceptsDrop,
   DRAG_DISTANCE,
@@ -49,15 +53,21 @@ import { formatEventSpan } from '@/lib/format'
 import { timedSegments } from '@/lib/layout'
 import { browserTimeZone } from '@/lib/locale'
 import { draggedWhen } from '@/lib/quickCreate'
+import { type ShiftReason } from '@/lib/seriesShift'
 import {
   eventScopeHint,
   eventScopeItems,
   eventScopeMissing,
   scopeOptions,
+  taskGlyphSlots,
+  taskScopeHint,
+  taskScopeItems,
+  taskScopeMissing,
   type Scope,
   type ScopeHint,
   type ScopeResult,
 } from '@/lib/scope'
+import { todoToInput } from '@/lib/tasks'
 import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
 
@@ -76,15 +86,38 @@ function sameDrop(a: DropResult | null, b: DropResult | null): boolean {
 }
 
 /** A dropped event of a series waiting for the answer which events move (FR-17). */
-interface Asking extends MoveVars {
+interface EventAsking extends MoveVars {
+  kind: 'event'
   /** Its length was changed rather than the event moved. */
   change: boolean
-  /** What the answer can be (`scopeOptions`), two options or more. */
-  options: Scope[]
-  /** What took "This and following events" away (`scopeOptions`), for the question to say. */
-  missing?: ScopeResult['missing']
-  /** Where the drop ended, for the question to point at while the event's tile isn't shown. */
-  at: DOMRect
+}
+
+/**
+ * A dropped repeat of a task series waiting for the answer which repeats move (FR-17): the
+ * `repeat` of `task`, the dates `to` it was dropped on, and `input`, the series moved as far.
+ */
+interface TaskAsking extends TaskMove {
+  kind: 'task'
+}
+
+/**
+ * A dropped event or task's repeat of a series waiting for the answer which ones move (FR-17):
+ * what the answer can be (`scopeOptions`, two options or more), what took an option away, for
+ * the question to say, and where the drop ended, for the question to point at while the tile
+ * isn't shown.
+ */
+type Asking = (EventAsking | TaskAsking) & ScopeResult & { at: DOMRect }
+
+/**
+ * A repeat of a task series dropped on new dates (FR-17): `repeat` of `task`, the dates `to` it
+ * lands on, and `input`, the series' values moved as far as the repeat was, which "All repeats"
+ * saves.
+ */
+interface TaskMove {
+  task: CalTask
+  repeat: TaskRepeat
+  input: TodoInput
+  to: TaskDates
 }
 
 /**
@@ -101,15 +134,45 @@ function dropScopes(d: DragData, result: Extract<DropResult, { kind: 'event' }>,
   })
 }
 
-/** The tile of the event `key` in the views, to give the focus back to (NFR-27). */
-function tileOf(key: string): HTMLElement | undefined {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-event-key]')).find((el) => el.dataset.eventKey === key)
+/**
+ * Which repeats of its series a drop of a task's repeat onto `result` can move (FR-17), with
+ * the dates the repeat lands on; null for a task that does not repeat. The drop moves the
+ * series' own dates, which are its current repeat's, so those are the dates of a dropped
+ * current repeat; a later one lands on its own dates moved as far. Never the dates of a drag
+ * preview, which keeps the repeat's dates of the pick-up.
+ */
+function taskDrop(result: Extract<DropResult, { kind: 'task' }>): (TaskMove & ScopeResult) | null {
+  const repeat = repeatOf(result.task)
+  if (!repeat) return null
+  const { input, delta } = result
+  const to =
+    repeat.at === 'current'
+      ? { start: input.start, startAllDay: input.startAllDay, due: input.due, dueAllDay: input.dueAllDay }
+      : movedDates(repeat.shown, delta.days, delta.minutes)
+  return { task: result.task, repeat, input, to, ...scopeOptions({ kind: 'task', action: 'move', item: repeat, to }) }
+}
+
+/** What refused a move of a repeat that no option allows (FR-17); undefined while one does. */
+function refusedBy(result: ScopeResult): ShiftReason | undefined {
+  return result.options.length === 0 ? result.reason : undefined
 }
 
 /**
- * The question after dropping an event of a series (FR-10, FR-17): a
- * popover at the event's tile at its new place, with its calendar's color
- * bar. Focus goes back to the tile once it closes (NFR-27).
+ * The tile of the event or task `key` in the views, to give the focus back to (NFR-27): an
+ * event's tile is its button; a task's holds its checkbox and its title, which opens and drags it.
+ */
+function tileOf(key: string): HTMLElement | null | undefined {
+  const tile = Array.from(document.querySelectorAll<HTMLElement>('[data-event-key], [data-task-key]')).find(
+    (el) => (el.dataset.eventKey ?? el.dataset.taskKey) === key,
+  )
+  if (tile?.dataset.taskKey === undefined) return tile
+  return tile.querySelector<HTMLElement>('button:not([role="checkbox"])')
+}
+
+/**
+ * The question after dropping an event or task's repeat of a series (FR-10, FR-17): a popover
+ * at its tile at its new place, with its calendar's color bar. Focus goes back to the tile once
+ * it closes (NFR-27).
  */
 function ScopeQuestion({
   asking,
@@ -128,54 +191,51 @@ function ScopeQuestion({
   const prefs = usePrefs()
   const now = useMemo(() => new Date(), [])
   const colorsOf = useCalendarColors()
-  const { event, change, options, at } = asking
-  const color = colorsOf(event.calendarId).solid
-  // The tile at the event's new place; while none is on the page (a full month cell), where the
-  // drop ended. floating-ui follows the scrolling of the tile's ancestors through `contextElement`.
-  const virtualRef = useMemo(
-    () => ({
-      current: {
-        getBoundingClientRect: () => (anchor?.isConnected ? anchor.getBoundingClientRect() : at),
-        contextElement: anchor ?? undefined,
-      },
-    }),
-    [anchor, at],
-  )
+  const { options, at } = asking
+  const question =
+    asking.kind === 'task'
+      ? {
+          key: asking.task.key,
+          color: colorsOf(asking.task.calendarId).solid,
+          question: t('scope.task.move'),
+          items: taskScopeItems(t, asking.repeat, options, prefs, now, 'change'),
+          missing: taskScopeMissing(t, asking),
+        }
+      : {
+          key: asking.event.key,
+          color: colorsOf(asking.event.calendarId).solid,
+          question: asking.change ? t('scope.event.change') : t('scope.event.move'),
+          items: eventScopeItems(t, asking.event, options, prefs, now),
+          missing: eventScopeMissing(t, asking),
+        }
   return (
-    <>
-      <PopoverAnchor virtualRef={virtualRef} />
-      <PopoverContent
-        // The question itself is the alertdialog (NFR-27); the popover around it is no second, unnamed dialog.
-        role={undefined}
-        align="start"
-        className="w-[min(26rem,calc(100vw-2rem))] border-l-4"
-        style={{ borderLeftColor: color }}
-        // ScopeChoice focuses its default choice itself.
-        onOpenAutoFocus={(e) => {
-          e.preventDefault()
-        }}
-        onCloseAutoFocus={(e) => {
-          e.preventDefault()
-          // Back to the event, wherever the answer put it, unless a press beside the question
-          // has given the focus to something else.
-          const focused = document.activeElement
-          if (focused && focused !== document.body) return
-          tileOf(event.key)?.focus()
-        }}
-      >
-        <ScopeChoice
-          question={change ? t('scope.event.change') : t('scope.event.move')}
-          items={eventScopeItems(t, event, options, prefs, now)}
-          color={color}
-          missing={eventScopeMissing(t, asking)}
-          onChoose={onChoose}
-          onCancel={onCancel}
-          onPreview={onPreview}
-        />
-      </PopoverContent>
-    </>
+    <ScopePopover
+      anchor={anchor}
+      at={at}
+      // Back to the event or repeat, wherever the answer put it.
+      returnFocus={() => tileOf(question.key)}
+      question={question.question}
+      items={question.items}
+      color={question.color}
+      missing={question.missing}
+      onChoose={onChoose}
+      onCancel={onCancel}
+      onPreview={onPreview}
+    />
   )
 }
+
+/**
+ * What the pill under a dragged event or task says before the drop (FR-17): which events or
+ * repeats of its series the drop reaches with one option (`hint`), or why no option moves a
+ * dragged repeat there (`limit`).
+ */
+interface DropSays {
+  hint: ScopeHint | null
+  limit: string | null
+}
+
+const NOTHING_SAID: DropSays = { hint: null, limit: null }
 
 /** Snap vertical movement of time-grid items to 15 minutes. */
 const snapTimed: Modifier = ({ transform, active }) => {
@@ -262,10 +322,11 @@ export function CalendarDnd({
 }: {
   children: ReactNode
   /**
-   * `limit`: why the dragged task can't land where it is (FR-17), or null while it can; no task is held back yet,
-   * so it is null for now. `hint`: which events of its series a drop of the dragged event right here reaches when
-   * there is no choice (FR-17); null with a choice, which the question asks, for anything but an event of a series,
-   * and while a drop would change nothing.
+   * `limit`: why the dragged task's repeat can't land where it is (FR-17), as `scope.hint.none` says it with the
+   * reason, when no option of its series moves it there; null while it can. `hint`: which events or repeats of its
+   * series a drop of the dragged event or task right here reaches when there is no choice (FR-17); null with a
+   * choice, which the question asks, for anything but an event or task's repeat of a series, and while a drop would
+   * change nothing.
    */
   renderOverlay: (data: DragData, limit: string | null, hint: ScopeHint | null) => ReactNode
 }) {
@@ -274,47 +335,53 @@ export function CalendarDnd({
   const tz = useMemo(() => browserTimeZone(), [])
   const setCreateWhen = useUi((s) => s.setCreateWhen)
   const [active, setActive] = useState<{ id: string; data: DragData } | null>(null)
-  // In line with the other updates of the dragged task, so none conflicts with another
-  // (FR-16). The scope is the one of the last render, which the pick-up has caused.
-  const draggedTask = active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined
-  const updateTodo = useUpdateTodo(draggedTask)
   /** What a drop right now would save; null while it would change nothing. */
   const [target, setTarget] = useState<DropResult | null>(null)
-  /** Which events of its series a drop of the dragged event right now reaches, when there is no choice (FR-17). */
-  const [hint, setHint] = useState<ScopeHint | null>(null)
+  /**
+   * Which events or repeats of its series a drop of the dragged one right now reaches, when there is no choice, and
+   * why a dragged repeat can't land right here, when no option moves it there (FR-17).
+   */
+  const [said, setSaid] = useState<DropSays>(NOTHING_SAID)
   // The same for the announcements, which dnd-kit calls right after our handlers, before
-  // `target` re-renders. `moved`: the drag has had a target since the pick-up. `hint`: what the
-  // current drop of an event of a series reaches without asking (FR-17). `asked`: the drop asks
-  // which events of a series move (FR-17).
-  const latest = useRef<{
-    target: DropResult | null
-    moved: boolean
-    hint: ScopeHint | null
-    asked: boolean
-  }>({
+  // `target` re-renders. `moved`: the drag has had a target since the pick-up. `hint` and
+  // `limit`: what the drop reaches without asking, and why a repeat can't land here (FR-17).
+  // `asked`: the drop asks which events or repeats of a series move (FR-17).
+  const latest = useRef<{ target: DropResult | null; moved: boolean; asked: boolean } & DropSays>({
     target: null,
     moved: false,
-    hint: null,
     asked: false,
+    ...NOTHING_SAID,
   })
 
-  // FR-17: a dropped event of a series waits for the answer which events move, shown at its new
-  // place meanwhile. `reach`: the option with the focus or the pointer; "All events" rings the
-  // series, "This and following events" its events from the dropped one on.
+  // FR-17: a dropped event or task's repeat of a series waits for the answer which ones move,
+  // shown at its new place meanwhile. `reach`: the option with the focus or the pointer; "All"
+  // rings the series, "This and following" its events or repeats from the dropped one on.
   const [asking, setAsking] = useState<Asking | null>(null)
   const [reach, setReach] = useState<Scope | null>(null)
   // The moves of a series run one after another, each with the ETag the one before got
   // (FR-17): the series of the event the question asks about, or else of the dragged one.
-  const moving = asking?.event ?? (active?.data.event.kind === 'event' ? active.data.event : undefined)
+  const moving =
+    (asking?.kind === 'event' ? asking.event : undefined) ??
+    (active?.data.event.kind === 'event' ? active.data.event : undefined)
   const series = moving?.recurring ? moving.id : undefined
   const move = useMoveEvent(series)
   const moveOccurrence = useMoveOccurrence(series)
   const moveFollowing = useMoveFollowing(series)
+  // In line with the other updates of the task, so none conflicts with another (FR-16, FR-17):
+  // the one the question asks about, or else the dragged one. The scope is the one of the last
+  // render, which the pick-up, or the question, has caused.
+  const todoId =
+    (asking?.kind === 'task' ? asking.repeat.todo.id : undefined) ??
+    (active?.data.event.kind === 'task' ? active.data.event.todo.id : undefined)
+  const updateTodo = useUpdateTodo(todoId)
+  const detachTodo = useDetachTodo(todoId)
+  const todoFollowing = useTodoFollowing(todoId)
   // "Only this event" until its move settles: keeps the event at its new place until the
-  // optimistic update is in, instead of jumping back for a moment (NFR-26).
+  // optimistic update is in, instead of jumping back for a moment (NFR-26). "Only this repeat"
+  // the same until the detached task is in.
   const [held, setHeld] = useState<ScopePreview | null>(null)
-  // The tile of the asking event, which the question points at; a tile that moves takes over
-  // from the one it replaces.
+  // The tile of the asking event or repeat, which the question points at; a tile that moves
+  // takes over from the one it replaces.
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const scopeAnchor = useCallback((el: HTMLElement | null) => {
     if (el) setAnchor(el)
@@ -355,10 +422,12 @@ export function CalendarDnd({
     const announceTarget: Announcements['onDragOver'] = ({ active: a, over }) => {
       const d = dragData(a.data.current)
       if (!d) return undefined
-      const { target: next, moved, hint } = latest.current
+      const { target: next, moved, hint, limit } = latest.current
+      // A repeat no option moves here (FR-17): say why instead of a time it won't get.
+      if (limit) return limit
       if (next) {
         const over = t('dnd.over', { time: formatEventSpan(withDrop(d, next).event, prefs, t('event.allDay')) })
-        // What the drop reaches without asking, like the pill under the event says it (FR-17).
+        // What the drop reaches without asking, like the pill under the event or task says it (FR-17).
         return hint ? `${over} ${hint.text}` : over
       }
       if (!over && d.type !== 'resize') return t('dnd.notOver')
@@ -374,19 +443,42 @@ export function CalendarDnd({
       onDragOver: announceTarget,
       onDragEnd: ({ active: a, over }) => {
         if (!over) return t('dnd.cancelled')
-        const { asked } = latest.current
+        const { asked, limit } = latest.current
+        // A repeat dropped where no option moves it saves nothing: say why, instead of falsely
+        // announcing a move (FR-17, NFR-27).
+        if (limit) return limit
         // Nothing has moved yet: the question asks first, about a change after a resize (FR-17, NFR-27).
         const d = dragData(a.data.current)
-        if (asked) return d?.type === 'resize' ? t('dnd.chooseScopeChange') : t('dnd.chooseScope')
+        if (asked) {
+          if (d?.event.kind === 'task') return t('dnd.chooseRepeats')
+          return d?.type === 'resize' ? t('dnd.chooseScopeChange') : t('dnd.chooseScope')
+        }
         return d?.event.kind === 'task' ? t('dnd.taskDropped') : t('dnd.dropped')
       },
       onDragCancel: () => t('dnd.cancelled'),
     }
   }, [t, prefs])
 
+  /**
+   * What a drop onto `next` says beforehand (FR-17): which events or repeats of the series it
+   * reaches with one option, and, for a repeat no option moves there, why not.
+   */
+  const dropSays = (d: DragData, next: DropResult | null): DropSays => {
+    if (next?.kind === 'event') return { hint: eventScopeHint(t, dropScopes(d, next, tz), false), limit: null }
+    const drop = next?.kind === 'task' ? taskDrop(next) : null
+    if (!drop) return NOTHING_SAID
+    return { hint: taskScopeHint(t, drop, 'move', false, drop.repeat.at), limit: refusal(drop) }
+  }
+
+  /** Why no option moves a dropped repeat (FR-17): `scope.hint.none` with the reason; null while one does. */
+  const refusal = (result: ScopeResult): string | null => {
+    const reason = refusedBy(result)
+    return reason ? t('scope.hint.none', { reason: t(`scope.reason.${reason}`) }) : null
+  }
+
   const onDragStart = (e: DragStartEvent) => {
-    latest.current = { target: null, moved: false, hint: null, asked: false }
-    setHint(null)
+    latest.current = { target: null, moved: false, asked: false, ...NOTHING_SAID }
+    setSaid(NOTHING_SAID)
     const d = dragData(e.active.data.current)
     if (d) setActive({ id: String(e.active.id), data: d })
   }
@@ -398,16 +490,19 @@ export function CalendarDnd({
     if (!d) return
     const drop = dropData(e.over?.data.current)
     const next = dropResult(d, drop, e.delta.y)
-    // FR-17: with one option, the drop of an event of a series won't ask; say beforehand what it
-    // reaches. Worked out again only for a new target, not on every move of the pointer.
-    const hint = sameDrop(latest.current.target, next)
-      ? latest.current.hint
-      : next?.kind === 'event'
-        ? eventScopeHint(t, dropScopes(d, next, tz), false)
-        : null
-    latest.current = { ...latest.current, target: next, moved: latest.current.moved || next !== null, hint }
+    // FR-17: with one option, the drop of an event or repeat of a series won't ask; say
+    // beforehand what it reaches, or why a repeat can't land here. Worked out again only for a
+    // new target, not on every move of the pointer.
+    const says = sameDrop(latest.current.target, next) ? latest.current : dropSays(d, next)
+    latest.current = {
+      ...latest.current,
+      target: next,
+      moved: latest.current.moved || next !== null,
+      hint: says.hint,
+      limit: says.limit,
+    }
     setTarget((prev) => (sameDrop(prev, next) ? prev : next))
-    setHint(hint)
+    setSaid((prev) => (prev.hint === says.hint && prev.limit === says.limit ? prev : { hint: says.hint, limit: says.limit }))
   }
 
   // The create popover's entry takes the times instead of saving them, and a move takes the
@@ -426,7 +521,7 @@ export function CalendarDnd({
   const onDragEnd = (e: DragEndEvent) => {
     setActive(null)
     setTarget(null)
-    setHint(null)
+    setSaid(NOTHING_SAID)
     const d = dragData(e.active.data.current)
     if (!d) return
     const drop = dropData(e.over?.data.current)
@@ -435,26 +530,21 @@ export function CalendarDnd({
       if (result) dropDraft(d, result, drop)
       return
     }
+    // Where the drop ended, for the question to point at while the tile isn't shown.
+    const r = e.active.rect.current.translated ?? e.active.rect.current.initial
+    const at = r ? new DOMRect(r.left, r.top, r.width, r.height) : new DOMRect()
     if (result?.kind === 'event') {
       // FR-17: an event of a series asks which events move before anything is saved, but only
       // when there is a choice; the one thing it can do, it does right away. An invitation to one
       // event of a series (an override without its series) is a single event to Lucid.
       const change = d.type === 'resize'
-      const { options, missing } = dropScopes(d, result, tz)
-      const [only] = options
-      if (options.length > 1) {
-        const r = e.active.rect.current.translated ?? e.active.rect.current.initial
+      const scopes = dropScopes(d, result, tz)
+      const [only] = scopes.options
+      if (scopes.options.length > 1) {
         latest.current.asked = true
         setAnchor(null)
         setReach(null)
-        setAsking({
-          event: result.event,
-          ...result.times,
-          change,
-          options,
-          missing,
-          at: r ? new DOMRect(r.left, r.top, r.width, r.height) : new DOMRect(),
-        })
+        setAsking({ kind: 'event', event: result.event, ...result.times, change, ...scopes, at })
       } else if (only) {
         saveScope(only, { event: result.event, ...result.times, change })
       } else {
@@ -464,11 +554,28 @@ export function CalendarDnd({
       }
     }
     if (result?.kind === 'task') {
-      const byUpcoming = result.task.occurrence?.state === 'upcoming'
-      updateTodo.mutate({ todo: result.task.todo, input: result.input, byUpcoming })
-      // A pending mutation takes over its hook's next options, which lose the scope once
-      // `active` is cleared; detached, it stays in line. Errors still reach the hook's handler.
-      updateTodo.reset()
+      // FR-17: a repeat of a task series asks the same, where there is a choice. A repeat no
+      // option moves here stays where it was and says why; a task that does not repeat, and the
+      // last repeat, move as they are.
+      const taskMove = taskDrop(result)
+      const refused = taskMove && refusedBy(taskMove)
+      latest.current.limit = taskMove && refusal(taskMove)
+      const [only] = taskMove?.options ?? []
+      if (refused) {
+        toast.message(t('dnd.notMoved'), { description: t(`scope.reason.${refused}`) })
+      } else if (taskMove && taskMove.options.length > 1) {
+        latest.current.asked = true
+        setAnchor(null)
+        setReach(null)
+        setAsking({ kind: 'task', ...taskMove, at })
+      } else if (taskMove && only) {
+        saveTaskScope(only, taskMove)
+      } else {
+        updateTodo.mutate({ todo: result.task.todo, input: result.input })
+        // A pending mutation takes over its hook's next options, which lose the scope once
+        // `active` is cleared; detached, it stays in line. Errors still reach the hook's handler.
+        updateTodo.reset()
+      }
     }
   }
 
@@ -488,7 +595,7 @@ export function CalendarDnd({
     switch (scope) {
       case 'this': {
         const key = event.key
-        setHeld({ key, id: event.id, from: event.recurrenceId ?? '', start, end, reach: 'this' })
+        setHeld({ kind: 'event', key, id: event.id, from: event.recurrenceId ?? '', start, end, reach: 'this' })
         // A detached mutation tells only its own promise that it has settled.
         const release = () => {
           setHeld((h) => (h?.key === key ? null : h))
@@ -508,10 +615,55 @@ export function CalendarDnd({
     }
   }
 
+  // "Only this repeat" detaches the repeat, held at its drop until the detached task is in
+  // (NFR-26); "This and following repeats" splits the series at it with its new dates, and "All
+  // repeats" moves the series as far as the repeat moved. Neither of these is optimistic for the
+  // repeats: the series shows its saving state until it is reloaded. Each is detached from its
+  // hook right away, like the events' (FR-17).
+  function saveTaskScope(scope: Scope, { task, repeat, input, to }: TaskMove) {
+    const { todo } = repeat
+    // The series' values with the repeat's new dates.
+    const moved = todoToInput(todo, {
+      start: to.start ?? null,
+      startAllDay: to.startAllDay,
+      due: to.due ?? null,
+      dueAllDay: to.dueAllDay,
+    })
+    switch (scope) {
+      case 'this': {
+        const key = task.key
+        setHeld({ kind: 'task', key, id: todo.id, from: repeat.recurrenceId, to, reach: 'this' })
+        const release = () => {
+          setHeld((h) => (h?.key === key ? null : h))
+        }
+        detachTodo.mutateAsync({ todo, repeat, input: moved, moved: true }).then(release, release)
+        detachTodo.reset()
+        break
+      }
+      case 'following':
+        todoFollowing.mutate({ todo, repeat, input: moved, moved: true })
+        todoFollowing.reset()
+        break
+      case 'all':
+        updateTodo.mutate({
+          todo,
+          input,
+          byUpcoming: repeat.at === 'upcoming',
+          look: { slots: taskGlyphSlots('all', repeat.at) },
+        })
+        updateTodo.reset()
+        break
+    }
+  }
+
   const chooseScope = (scope: Scope) => {
     if (!asking) return
-    const { event, start, end, change } = asking
-    saveScope(scope, { event, start, end, change })
+    if (asking.kind === 'task') {
+      saveTaskScope(scope, asking)
+    } else {
+      const { event, start, end, change } = asking
+      saveScope(scope, { event, start, end, change })
+    }
     cancelScope()
   }
 
@@ -521,20 +673,15 @@ export function CalendarDnd({
   )
   // Stays null while moving, so the context (read by every event) only changes on resize.
   const resize = preview?.type === 'resize' ? preview.event : null
-  const scope = useMemo(
-    () =>
-      asking
-        ? {
-            key: asking.event.key,
-            id: asking.event.id,
-            from: asking.event.recurrenceId ?? '',
-            start: asking.start,
-            end: asking.end,
-            reach,
-          }
-        : null,
-    [asking, reach],
-  )
+  const scope = useMemo((): ScopePreview | null => {
+    if (!asking) return null
+    if (asking.kind === 'task') {
+      const { task, repeat, to } = asking
+      return { kind: 'task', key: task.key, id: repeat.todo.id, from: repeat.recurrenceId, to, reach }
+    }
+    const { event, start, end } = asking
+    return { kind: 'event', key: event.key, id: event.id, from: event.recurrenceId ?? '', start, end, reach }
+  }, [asking, reach])
   const state = useMemo(
     () => ({
       pendingKeys,
@@ -563,32 +710,17 @@ export function CalendarDnd({
         onDragCancel={() => {
           setActive(null)
           setTarget(null)
-          setHint(null)
+          setSaid(NOTHING_SAID)
         }}
       >
         {children}
         <DragOverlay dropAnimation={null}>
-          {preview && preview.type !== 'resize'
-            ? renderOverlay(preview, null, hint)
-            : null}
+          {preview && preview.type !== 'resize' ? renderOverlay(preview, said.limit, said.hint) : null}
         </DragOverlay>
       </DndContext>
-      <Popover
-        open={asking !== null}
-        onOpenChange={(open) => {
-          if (!open) cancelScope()
-        }}
-      >
-        {asking && (
-          <ScopeQuestion
-            asking={asking}
-            anchor={anchor}
-            onChoose={chooseScope}
-            onCancel={cancelScope}
-            onPreview={setReach}
-          />
-        )}
-      </Popover>
+      {asking && (
+        <ScopeQuestion asking={asking} anchor={anchor} onChoose={chooseScope} onCancel={cancelScope} onPreview={setReach} />
+      )}
     </DndStateContext>
   )
 }

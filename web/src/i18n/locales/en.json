@@ -191,7 +191,8 @@
     "cancelled": "Move cancelled.",
     "notMoved": "Not moved",
     "chooseScope": "Choose which events should move.",
-    "chooseScopeChange": "Choose which events should change."
+    "chooseScopeChange": "Choose which events should change.",
+    "chooseRepeats": "Choose which repeats should move."
   },
   "scope": {
     "event": {
@@ -347,6 +348,7 @@
     "undoneCopyKept": "Undone. The completed entry was changed in another app and stays.",
     "undoneDetachedKept": "Undone. The detached task was changed in another app and stays.",
     "plannedRepeat": "{{title}}, planned repeat on {{date}}",
+    "detached": "Detached from its series",
     "repeat": "Repeat",
     "repeatInfo": "How repeating tasks work",
     "repeatInfoDone": "When you complete a repeating task, the completed one stays as its own entry and the task moves on to its next repeat. That way other apps such as Apple Reminders or Tasks.org also see what is done.",

@@ -214,6 +214,7 @@ describe('withScopePreview (FR-17)', () => {
 
   it('shows only the dropped event at the times of the drop', () => {
     const scope = {
+      kind: 'event' as const,
       key: 'e1@25',
       id: 'e1',
       from: '2026-09-25T08:00:00Z',
@@ -231,6 +232,7 @@ describe('withScopePreview (FR-17)', () => {
 
   it('places an all-day event on local days, as loading it would', () => {
     const scope = {
+      kind: 'event' as const,
       key: 'e2@25',
       id: 'e2',
       from: '2026-09-25T00:00:00Z',
@@ -246,6 +248,74 @@ describe('withScopePreview (FR-17)', () => {
   it('leaves the items as they are without a question', () => {
     const items = [first, second]
     expect(withScopePreview(items, null)).toBe(items)
+  })
+
+  // The current and the next repeat of a series due on Mondays and Thursdays, and a timed one.
+  const watering = todo({ id: 't2', rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', recurring: true, due: '2026-10-05T00:00:00Z', dueAllDay: true })
+  const repeatOn = (day: string, p: Parameters<typeof occurrence>[0] = {}) =>
+    occurrenceTask(
+      occurrence({ key: `t2@${day}`, todoId: 't2', recurrenceId: day, due: day, dueAllDay: true, ...p }),
+      watering,
+    )!
+
+  it('shows a held repeat of a task at the dates it was dropped at', () => {
+    const current = repeatOn('2026-10-05T00:00:00Z')
+    const next = repeatOn('2026-10-08T00:00:00Z', { state: 'upcoming' })
+    const scope = {
+      kind: 'task' as const,
+      key: current.key,
+      id: 't2',
+      from: '2026-10-05T00:00:00Z',
+      to: { start: null, startAllDay: false, due: '2026-10-06T00:00:00.000Z', dueAllDay: true },
+      reach: 'this' as const,
+    }
+    const [moved, other, event] = withScopePreview([current, next, first], scope)
+    expect(moved?.startsAt).toEqual(new Date(2026, 9, 6))
+    expect(moved?.endsAt).toEqual(new Date(2026, 9, 7))
+    // Still the same repeat of the series, only shown elsewhere.
+    expect(moved?.key).toBe(current.key)
+    expect(moved?.kind === 'task' && moved.occurrence?.state).toBe('current')
+    expect(other).toBe(next)
+    expect(event).toBe(first)
+  })
+
+  it('places a held repeat by its new times, a span as a span', () => {
+    const timed = repeatOn('2026-10-05T07:00:00Z', { start: '2026-10-05T07:00:00Z', due: '2026-10-05T09:00:00Z', dueAllDay: false })
+    const scope = {
+      kind: 'task' as const,
+      key: timed.key,
+      id: 't2',
+      from: '2026-10-05T07:00:00Z',
+      to: { start: '2026-10-06T08:00:00.000Z', startAllDay: false, due: '2026-10-06T10:00:00.000Z', dueAllDay: false },
+      reach: 'this' as const,
+    }
+    const [moved] = withScopePreview([timed], scope)
+    expect(moved?.startsAt).toEqual(new Date('2026-10-06T08:00:00Z'))
+    expect(moved?.endsAt).toEqual(new Date('2026-10-06T10:00:00Z'))
+  })
+
+  it('moves no event for a task of the same key, and no task for an event', () => {
+    const current = repeatOn('2026-10-05T00:00:00Z')
+    const items = [first, current]
+    const taskScope = {
+      kind: 'task' as const,
+      key: first.key,
+      id: 'e1',
+      from: '2026-09-25T08:00:00Z',
+      to: { start: null, startAllDay: false, due: '2026-10-06T00:00:00.000Z', dueAllDay: true },
+      reach: null,
+    }
+    const eventScope = {
+      kind: 'event' as const,
+      key: current.key,
+      id: 't2',
+      from: '2026-10-05T00:00:00Z',
+      start: '2026-10-06T00:00:00.000Z',
+      end: '2026-10-07T00:00:00.000Z',
+      reach: null,
+    }
+    expect(withScopePreview(items, taskScope)).toEqual(items)
+    expect(withScopePreview(items, eventScope)).toEqual(items)
   })
 })
 

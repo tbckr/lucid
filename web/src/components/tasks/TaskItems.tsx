@@ -1,13 +1,13 @@
 import { useDraggable } from '@dnd-kit/core'
 import { BanIcon, CheckIcon } from 'lucide-react'
-import { useMemo, type CSSProperties, type MouseEvent } from 'react'
+import { useCallback, useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useDndState } from '@/components/dnd/dndState'
+import { ringStyle, useDndState } from '@/components/dnd/dndState'
 import { RecurringMark } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
-import { type DragBinding } from '@/lib/dnd'
+import { type DragBinding, type ScopePreview } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -88,19 +88,58 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
 /**
  * Drags the task item by its title: Space starts a keyboard drag, Enter still
  * opens the details. Without `drag`, disabled, or while the question which
- * events of a series move is open (FR-10, FR-17), the item stays in place.
+ * events or repeats of a series move is open (FR-10, FR-17), the item stays
+ * in place.
+ *
+ * While a dropped repeat of a series waits for the answer which repeats move
+ * (FR-17), its tile anchors the question, and `ringed` marks the tiles the
+ * answer in focus would move.
  */
 function useTaskDrag(task: CalTask, drag: DragBinding | undefined) {
-  const { scope } = useDndState()
+  const { scope, scopeAnchor } = useDndState()
   const draggable = drag !== undefined && !drag.disabled && scope === null
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
     id: drag?.id ?? task.key,
     data: drag?.data,
     disabled: !draggable,
   })
+  // The drag overlay shows the dropped repeat for a moment after the drop, then is gone: as the one
+  // tile of it without a drag binding, it doesn't anchor the question.
+  const anchors = scope?.kind === 'task' && scope.key === task.key && drag !== undefined && !drag.disabled
+  const anchorRef = useCallback(
+    (el: HTMLElement | null) => {
+      setNodeRef(el)
+      scopeAnchor(el)
+    },
+    [setNodeRef, scopeAnchor],
+  )
   // dnd-kit sets role="button"; the title is a real one.
   const handle = { ref: setActivatorNodeRef, ...(draggable ? { ...attributes, ...listeners, role: undefined } : {}) }
-  return { ref: setNodeRef, handle, isDragging }
+  const ringed = scope !== null && reaches(scope, task)
+  return { ref: anchors ? anchorRef : setNodeRef, handle, isDragging, ringed }
+}
+
+/**
+ * Whether the scope question about a dropped repeat rings `task` (FR-17): the
+ * repeat asked about, whatever has the focus; with "This and following
+ * repeats" those of its series from it on, by recurrence ID; with "All
+ * repeats" every open repeat of its series. "Only this repeat" reaches the
+ * repeat alone, and a done one stays as it is either way.
+ */
+function reaches(scope: ScopePreview, task: CalTask): boolean {
+  if (scope.kind !== 'task') return false
+  if (scope.key === task.key) return true
+  const occ = task.occurrence
+  if (scope.id !== task.todo.id || !occ || occ.state === 'done') return false
+  switch (scope.reach) {
+    case 'all':
+      return true
+    case 'following':
+      return Date.parse(occ.recurrenceId) >= Date.parse(scope.from)
+    case 'this':
+    case null:
+      return false
+  }
 }
 
 /** A point shows its time; a span shows start – end unless `compact`. */
@@ -195,7 +234,7 @@ export function TaskChip({
   onOpen?: (task: CalTask) => void
 }) {
   const { t, title, done, toggle, open, pending, now } = useTaskItem(task, onOpen)
-  const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
@@ -211,9 +250,10 @@ export function TaskChip({
         isDragging && 'opacity-40',
         // The chip's own outline only when blocked: a planned repeat pencils in with its mark alone.
         blocked && 'border-[1.5px] border-dashed',
+        ringed && 'ring-2',
         className,
       )}
-      style={blocked ? { borderColor: colors.solid } : undefined}
+      style={{ ...(blocked && { borderColor: colors.solid }), ...ringStyle(ringed, colors) }}
     >
       {!pencil && (
         <TaskCheck
@@ -244,6 +284,7 @@ export function TaskChip({
         <span className={cn('truncate font-medium', pencil && 'text-muted-foreground', done && 'line-through')}>{title}</span>
         <RecurringMark
           recurring={task.todo.recurring}
+          detached={!!task.todo.detachedFrom}
           label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
           className={CHIP_MARK_IF_ROOM}
         />
@@ -274,7 +315,7 @@ export function TaskBar({
   style?: CSSProperties
 }) {
   const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
-  const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
@@ -291,9 +332,15 @@ export function TaskBar({
         done && 'opacity-60',
         isDragging && 'opacity-40',
         pencil && 'border-[1.5px] border-dashed bg-transparent text-muted-foreground',
+        // A filled bar takes the ring's color: the offset sets the ring apart from it.
+        ringed && 'ring-2 ring-offset-1 ring-offset-surface',
         className,
       )}
-      style={pencil ? { borderColor: colors.solid, ...style } : { backgroundColor: colors.solid, color: colors.onSolid, ...style }}
+      style={{
+        ...(pencil ? { borderColor: colors.solid } : { backgroundColor: colors.solid, color: colors.onSolid }),
+        ...ringStyle(ringed, colors),
+        ...style,
+      }}
     >
       {!pencil && (
         <TaskCheck
@@ -322,7 +369,11 @@ export function TaskBar({
           <span className="tabular shrink-0 opacity-85">{formatShortTime(task.startsAt, prefs)}</span>
         )}
         <span className={cn('truncate', done && 'line-through')}>{title}</span>
-        <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
+        <RecurringMark
+          recurring={task.todo.recurring}
+          detached={!!task.todo.detachedFrom}
+          label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+        />
       </button>
     </div>
   )
@@ -348,7 +399,7 @@ export function TaskBlock({
 }) {
   const compact = size === 'xs'
   const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
-  const { ref, handle, isDragging } = useTaskDrag(task, drag)
+  const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
   const pencil = upcoming || blocked
@@ -384,14 +435,19 @@ export function TaskBlock({
           INK_IN,
           pencil ? 'border-[1.5px] border-dashed bg-transparent text-muted-foreground' : 'border-l-[3px]',
           compact ? 'flex-row items-center gap-1 py-0 @container' : 'flex-col py-1',
+          ringed && 'ring-2',
         )}
-        style={pencil ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }}
+        style={{
+          ...(pencil ? { borderColor: colors.solid } : { backgroundColor: colors.tint, borderLeftColor: colors.solid }),
+          ...ringStyle(ringed, colors),
+        }}
       >
         {blocked ? <StopMark className={markClassName} /> : upcoming && <PencilMark color={colors.solid} className={markClassName} />}
         <span className="flex min-w-0 items-center gap-1 font-semibold">
           <span className={cn('truncate', done && 'line-through')}>{title}</span>
           <RecurringMark
             recurring={task.todo.recurring}
+            detached={!!task.todo.detachedFrom}
             label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
             className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
@@ -437,7 +493,11 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
         <span />
         <span className="flex min-w-0 items-center gap-1.5">
           <span className={cn('truncate font-medium', upcoming && 'text-muted-foreground', done && 'line-through')}>{title}</span>
-          <RecurringMark recurring={task.todo.recurring} label={recurringLabel(t, task.todo, task.startsAt, prefs, now)} />
+          <RecurringMark
+            recurring={task.todo.recurring}
+            detached={!!task.todo.detachedFrom}
+            label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+          />
         </span>
       </button>
     </div>

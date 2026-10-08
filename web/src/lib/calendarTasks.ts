@@ -226,6 +226,31 @@ function movedDate(iso: string | null | undefined, allDay: boolean, days: number
 }
 
 /**
+ * `dates` moved `days` and `minutes` later, the way `movedTodo` moves a
+ * todo's (FR-10, FR-17): the dates a dragged repeat lands on, from the ones
+ * it is shown on.
+ */
+export function movedDates(dates: TaskDates, days: number, minutes: number): TaskDates {
+  return {
+    start: movedDate(dates.start, dates.startAllDay, days, minutes),
+    startAllDay: dates.startAllDay,
+    due: movedDate(dates.due, dates.dueAllDay, days, minutes),
+    dueAllDay: dates.dueAllDay,
+  }
+}
+
+/**
+ * `task` shown on `dates` instead (FR-17), still the same entry: a repeat
+ * dropped there while the question which repeats move is open, or while
+ * "only this repeat" saves. Without dates to place it by, it stays as it is.
+ */
+export function placedOn(task: CalTask, dates: TaskDates): CalTask {
+  const p = place(dates)
+  if (!p) return task
+  return { ...task, ...p, occurrence: task.occurrence && { ...task.occurrence, ...dates } }
+}
+
+/**
  * `task` shown `days` and `minutes` later, the way `movedTodo` moves dates
  * (FR-10, FR-17): where a drag previews an upcoming occurrence, which the
  * series' own dates don't place.

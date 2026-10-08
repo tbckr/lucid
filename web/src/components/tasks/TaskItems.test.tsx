@@ -2,16 +2,30 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DndStateContext, type DndState } from '@/components/dnd/dndState'
 import { api } from '@/lib/api/client'
 import { canDrag, occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
+import { type ScopePreview } from '@/lib/dnd'
 import { formatShortTime, type FormatPrefs } from '@/lib/format'
+import { type Scope } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
 import { bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TaskAgendaRow, TaskBar, TaskBlock, TaskChip } from './TaskItems'
 
 const prefs: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
+/** The views' drag state with nothing going on. */
+const dndDefaults: DndState = {
+  pendingKeys: new Set(),
+  pendingSeries: new Set(),
+  pendingTodos: new Set(),
+  resize: null,
+  activeId: null,
+  scope: null,
+  held: null,
+  scopeAnchor: () => undefined,
+}
 const colors = eventColors('#3b82f6', false)
 const task = (p: Parameters<typeof todo>[0] = {}) =>
   toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T08:00:00Z', ...p }))!
@@ -295,5 +309,123 @@ describe('task items', () => {
       expect(screen.getByRole('checkbox')).toBeInTheDocument()
       expect(container.querySelector('.lucide-ban')).toBeNull()
     })
+  })
+
+  // While the question which repeats a dropped one moves is open, the tiles its option in focus reaches get a ring.
+  describe('the reach of the scope question (FR-17)', () => {
+    const weekly = series({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', recurrenceId: '2026-10-05T00:00:00Z' })
+    const repeatOn = (day: string, state: 'current' | 'upcoming' | 'done', todoId = 't1') =>
+      occurrenceTask(
+        occurrence({ key: `${todoId}@${day}`, todoId, title: `${state} ${day.slice(5, 10)}`, recurrenceId: day, due: day, dueAllDay: true, state }),
+        todoId === 't1' ? weekly : series({ id: todoId }),
+      )!
+    // A done repeat, the current one, the one asked about, one after it, and the next repeat of another series.
+    const tiles = [
+      repeatOn('2026-10-01T00:00:00Z', 'done'),
+      repeatOn('2026-10-05T00:00:00Z', 'current'),
+      repeatOn('2026-10-08T00:00:00Z', 'upcoming'),
+      repeatOn('2026-10-12T00:00:00Z', 'upcoming'),
+      repeatOn('2026-10-08T00:00:00Z', 'upcoming', 't9'),
+    ]
+    const asked = tiles[2]!
+
+    function renderAsked(reach: Scope | null, items = tiles) {
+      const scope: ScopePreview = {
+        kind: 'task',
+        key: asked.key,
+        id: 't1',
+        from: '2026-10-08T00:00:00Z',
+        to: { start: null, startAllDay: false, due: '2026-10-09T00:00:00.000Z', dueAllDay: true },
+        reach,
+      }
+      const state = { ...dndDefaults, scope }
+      return renderWithProviders(
+        <DndStateContext value={state}>
+          {items.map((t) => (
+            <TaskChip key={t.key} task={t} colors={colors} prefs={prefs} readOnly={false} />
+          ))}
+        </DndStateContext>,
+      )
+    }
+    const ringed = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll<HTMLElement>('[data-task-key].ring-2')).map(
+        (el) => `${el.dataset.taskKey?.startsWith('t9') ? 'other ' : ''}${el.textContent}`,
+      )
+
+    it.each([
+      // The repeat asked about, wherever the focus is.
+      [null, ['upcoming 10-08']],
+      ['this', ['upcoming 10-08']],
+      // From it on, by recurrence ID.
+      ['following', ['upcoming 10-08', 'upcoming 10-12']],
+      // Every open repeat of the series, the current one too.
+      ['all', ['current 10-05', 'upcoming 10-08', 'upcoming 10-12']],
+    ] as const)('rings for %s the repeats it reaches', (reach, want) => {
+      const { container } = renderAsked(reach)
+      expect(ringed(container)).toEqual(want)
+      const ring = container.querySelector<HTMLElement>('[data-task-key].ring-2')
+      expect(ring?.style.getPropertyValue('--tw-ring-color')).toBe(colors.solid)
+    })
+
+    it('rings a bar and a grid block too', () => {
+      for (const item of [
+        <TaskBar key="bar" task={asked} colors={colors} prefs={prefs} readOnly={false} />,
+        <TaskBlock key="block" task={asked} colors={colors} prefs={prefs} readOnly={false} size="md" />,
+      ]) {
+        const scope: ScopePreview = {
+          kind: 'task',
+          key: asked.key,
+          id: 't1',
+          from: '2026-10-08T00:00:00Z',
+          to: { start: null, startAllDay: false, due: '2026-10-09T00:00:00.000Z', dueAllDay: true },
+          reach: 'all',
+        }
+        const { container, unmount } = renderWithProviders(<DndStateContext value={{ ...dndDefaults, scope }}>{item}</DndStateContext>)
+        expect(container.querySelector('.ring-2')).not.toBeNull()
+        unmount()
+      }
+    })
+
+    it('rings no task while an event of a series is asked about', () => {
+      const scope: ScopePreview = {
+        kind: 'event',
+        key: asked.key,
+        id: 't1',
+        from: '2026-10-08T00:00:00Z',
+        start: '2026-10-09T00:00:00.000Z',
+        end: '2026-10-10T00:00:00.000Z',
+        reach: 'all',
+      }
+      const { container } = renderWithProviders(
+        <DndStateContext value={{ ...dndDefaults, scope }}>
+          {tiles.map((t) => (
+            <TaskChip key={t.key} task={t} colors={colors} prefs={prefs} readOnly={false} />
+          ))}
+        </DndStateContext>,
+      )
+      expect(container.querySelector('.ring-2')).toBeNull()
+    })
+  })
+
+  // A repeat made a task of its own ("Only this repeat", FR-17) no longer repeats, but is marked as one changed on its own.
+  it('marks a task detached from its series in every view', () => {
+    const t = task({ detachedFrom: 'u-series' })
+    for (const item of [
+      <TaskChip key="chip" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+      <TaskBar key="bar" task={t} colors={colors} prefs={prefs} readOnly={false} />,
+      <TaskBlock key="block" task={t} colors={colors} prefs={prefs} readOnly={false} size="md" />,
+      <TaskAgendaRow key="agenda" task={t} time="10 AM" colors={colors} prefs={prefs} readOnly={false} />,
+    ]) {
+      const { unmount } = renderWithProviders(item)
+      const mark = screen.getByRole('img', { name: 'Detached from its series' })
+      // The repeat glyph with the dot of an occurrence changed on its own.
+      expect(mark).toHaveClass('lucide-repeat-changed')
+      unmount()
+    }
+  })
+
+  it('marks no plain task', () => {
+    renderWithProviders(<TaskChip task={task()} colors={colors} prefs={prefs} readOnly={false} />)
+    expect(screen.queryByRole('img')).toBeNull()
   })
 })

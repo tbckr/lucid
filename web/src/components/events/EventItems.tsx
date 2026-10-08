@@ -3,7 +3,7 @@ import { createLucideIcon, RepeatIcon, type LucideProps } from 'lucide-react'
 import { useCallback, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Spinner } from '@/components/ui/spinner'
-import { useDndState } from '@/components/dnd/dndState'
+import { ringStyle, useDndState } from '@/components/dnd/dndState'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type DragBinding, type DragData, type ScopePreview } from '@/lib/dnd'
 import { eventTitle, type CalEvent } from '@/lib/events'
@@ -23,7 +23,7 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
   const openDetail = useUi((s) => s.openDetail)
   const { pendingKeys, pendingSeries, scope, scopeAnchor } = useDndState()
   const pending = pendingKeys.has(event.key) || pendingSeries.has(event.id)
-  const asked = scope?.key === event.key
+  const asked = scope?.kind === 'event' && scope.key === event.key
   const ringed = asked || (scope !== null && reaches(scope, event))
   // The drag overlay shows the dropped event for a moment after the drop, then is gone: as the
   // one tile of it that can't be dragged, it doesn't anchor the question.
@@ -80,7 +80,7 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
  * the asked one on, by recurrence ID, which an event changed on its own keeps.
  */
 function reaches(scope: ScopePreview, event: CalEvent): boolean {
-  if (scope.id !== event.id) return false
+  if (scope.kind !== 'event' || scope.id !== event.id) return false
   switch (scope.reach) {
     case 'all':
       return true
@@ -90,11 +90,6 @@ function reaches(scope: ScopePreview, event: CalEvent): boolean {
     case null:
       return false
   }
-}
-
-/** The 2 px ring of a tile the scope question is about (FR-17), in its calendar's color. */
-function ringStyle(ringed: boolean, colors: EventColors): CSSProperties | undefined {
-  return ringed ? ({ '--tw-ring-color': colors.solid } as CSSProperties) : undefined
 }
 
 /**
@@ -121,21 +116,32 @@ export function RepeatGlyph({ modified = false, ...props }: LucideProps & { modi
  * Marks a recurring event or task (FR-16, FR-17); nothing for a single one.
  * `modified`: the event is an occurrence of a series an override visibly
  * changed (FR-17); the glyph gets a filled dot, the color stays `currentColor`.
+ * `detached`: the task was a repeat of a series, made a task of its own
+ * ("Only this repeat", FR-17). It no longer repeats, but is marked like an
+ * event changed on its own, and named for what it is instead of `label`.
  */
 export function RecurringMark({
   recurring,
   modified,
+  detached = false,
   label,
   className,
 }: {
   recurring: boolean
   modified?: boolean
+  detached?: boolean
   label: string
   className?: string
 }) {
-  if (!recurring) return null
+  const { t } = useTranslation()
+  if (!recurring && !detached) return null
   return (
-    <RepeatGlyph modified={modified} className={cn('size-3 shrink-0 opacity-70', className)} role="img" aria-label={label} />
+    <RepeatGlyph
+      modified={detached || modified}
+      className={cn('size-3 shrink-0 opacity-70', className)}
+      role="img"
+      aria-label={detached ? t('tasks.detached') : label}
+    />
   )
 }
 

@@ -1,7 +1,7 @@
 import { differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
-import { movedTodo, shiftedTask, toCalTask, type CalTask } from './calendarTasks'
+import { movedTodo, placedOn, shiftedTask, toCalTask, type CalTask, type TaskDates } from './calendarTasks'
 import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { snapMinutes } from './dates'
 import { type Scope } from './scope'
@@ -107,27 +107,29 @@ export function withDrop(drag: DragData, result: DropResult): DragData {
 }
 
 /**
- * An event of a series dropped at new times while the user picks which
- * events move (FR-10, FR-17): `key` is the dropped occurrence, `id` its
- * series, `from` its `recurrenceId`, where "This and following events"
- * starts, and `reach` the option that has the focus or the pointer, null
- * while none has.
+ * An event of a series, or a repeat of a task series, dropped at new times
+ * or dates while the user picks which ones move (FR-10, FR-17): `key` is the
+ * dropped occurrence, `id` its series, `from` its `recurrenceId`, where "This
+ * and following" starts, and `reach` the option that has the focus or the
+ * pointer, null while none has. An event lands on `start` and `end`, a
+ * task's repeat on `to`.
  */
-export interface ScopePreview {
+export type ScopePreview = {
   key: string
   id: string
   from: string
-  start: string
-  end: string
   reach: Scope | null
-}
+} & ({ kind: 'event'; start: string; end: string } | { kind: 'task'; to: TaskDates })
 
 /**
- * `items` with the event of `scope.key` at the times it was dropped at, so it
- * shows only at its new place until the answer, like a resize preview.
+ * `items` with the event or task's repeat of `scope.key` where it was dropped,
+ * so it shows only at its new place until the answer, like a resize preview.
  */
 export function withScopePreview(items: CalItem[], scope: ScopePreview | null): CalItem[] {
   if (!scope) return items
+  if (scope.kind === 'task') {
+    return items.map((e) => (e.kind === 'task' && e.key === scope.key ? placedOn(e, scope.to) : e))
+  }
   const times = { start: scope.start, end: scope.end }
   return items.map((e) => (e.kind === 'event' && e.key === scope.key ? withTimes(e, times) : e))
 }
