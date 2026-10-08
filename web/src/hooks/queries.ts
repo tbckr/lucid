@@ -1200,7 +1200,12 @@ export const UPDATE_TODO_KEY = ['updateTodo'] as const
 interface UpdateTodoVars {
   todo: Todo
   input: TodoInput
-  /** Set by a drag of an upcoming occurrence, which moves the series as a whole (FR-17). */
+  /**
+   * Set where "all repeats" was chosen at a later repeat, by a drag or in the
+   * editor: the series moves as far as that repeat moved, so the toast says
+   * that the series moved rather than naming the repeat it goes on with
+   * (FR-17).
+   */
   byUpcoming?: boolean
   /**
    * The repeats "all repeats" reaches from the repeat it was chosen at

@@ -225,9 +225,10 @@ export function canComplete(task: CalTask): boolean {
  * Whether a task can be dragged to move it (FR-10, FR-16, FR-17): what
  * `canComplete` allows, and an upcoming occurrence of a series whose rule can
  * be read. A plain task's eligibility doesn't depend on being done, so it
- * keeps moving after completion, like before occurrences existed. An upcoming
- * occurrence moves the series by the distance it was dragged, as an event's
- * occurrence does.
+ * keeps moving after completion, like before occurrences existed. A dropped
+ * repeat moves what the question after the drop chose, or what its one option
+ * reaches (`scopeOptions`): an upcoming one this and the following repeats as
+ * a series of their own, or all of them by the distance it was dragged.
  */
 export function canDrag(task: CalTask): boolean {
   if (task.occurrence?.state === 'upcoming') return !task.todo.ruleUnsupported

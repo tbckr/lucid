@@ -100,7 +100,8 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
 export function withDrop(drag: DragData, result: DropResult): DragData {
   if (result.kind === 'event') return { ...drag, event: withTimes(result.event, result.times) }
   if (drag.type === 'resize') return drag
-  // An upcoming occurrence moves the series (FR-17), but shows where it lands itself.
+  // An upcoming occurrence shows where it lands itself; which repeats move with it, the question after the drop
+  // decides (FR-17).
   const { task, delta } = result
   if (task.occurrence?.state === 'upcoming') return { ...drag, event: shiftedTask(task, delta.days, delta.minutes) }
   return { ...drag, event: toCalTask({ ...task.todo, ...result.input }) ?? task }
