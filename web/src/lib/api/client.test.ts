@@ -40,6 +40,29 @@ describe('ApiClient', () => {
     expect(headers(calls[0])['X-CSRF-Token']).toBeUndefined()
   })
 
+  it('sends X-Lucid-Revalidate with the GETs made while revalidating, and only then', async () => {
+    const { fetch, calls } = mockFetch(
+      jsonResponse(200, {}),
+      new Response(null, { status: 204 }),
+      jsonResponse(200, {}),
+      jsonResponse(200, {}),
+    )
+    const client = new ApiClient('/api/v1', fetch)
+    client.setCsrfToken('tok')
+    await client.revalidating(async () => {
+      await client.request('/calendars')
+      await client.request('/auth/logout', { method: 'POST' })
+    })
+    await expect(
+      client.revalidating(async () => {
+        await client.request('/calendars')
+        throw new Error('refresh failed')
+      }),
+    ).rejects.toThrow('refresh failed')
+    await client.request('/calendars')
+    expect(calls.map((c) => headers(c)['X-Lucid-Revalidate'])).toEqual(['1', undefined, '1', undefined])
+  })
+
   it('sends If-Match verbatim and JSON bodies', async () => {
     const { fetch, calls } = mockFetch(jsonResponse(200, { id: 'x' }))
     const client = new ApiClient('/api/v1', fetch)

@@ -108,6 +108,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **FR-20:** **Offline Indicator:** Visual feedback when backend connection is lost (React Query networkMode).
 * **FR-21:** **Internationalization (i18n):** The UI must support multiple languages (English as default). Translations stored in JSON files.
 * **FR-22:** **Localization (l10n):** Date and time formats (24h vs AM/PM, Week start Mon vs Sun) must automatically adapt to the browser's navigator.language / locale settings by default, **but must be manually overridable by the user via a settings menu**.
+* **FR-23:** **Manual Refresh:** A button in the top bar (in the account menu on screens too narrow for it) and the `r` shortcut reload the calendars, events and tasks on screen from the CalDAV server, past the backend's cache freshness (`X-Lucid-Revalidate`, NFR-01), so a change made in another app shows at once. The button says when it is busy and when it is done, its tooltip tells when the data on screen was loaded, and a failure says which state is still shown.
 
 ## **5\. Non-Functional Requirements (NFR)**
 

@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"testing"
@@ -132,6 +133,77 @@ func TestObjectCacheConcurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// TestObjectCacheRevalidation: a list asked to revalidate (a manual refresh)
+// sees another client's change within the freshness window, for events and
+// tasks alike, and an unchanged calendar still costs only the PROPFIND
+// (FR-23).
+func TestObjectCacheRevalidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		put  func(t *testing.T, e *env, uid string)
+		list func(t *testing.T, e *env, ctx context.Context) int
+	}{
+		{
+			name: "events",
+			put: func(t *testing.T, e *env, uid string) {
+				t.Helper()
+				e.put(t, "personal", uid+".ics", "BEGIN:VEVENT", "UID:"+uid, "DTSTAMP:20250101T000000Z",
+					"DTSTART:20250305T100000Z", "DTEND:20250305T110000Z", "SUMMARY:"+uid, "END:VEVENT")
+			},
+			list: func(t *testing.T, e *env, ctx context.Context) int {
+				t.Helper()
+				evs, err := e.svc.ListEvents(ctx, e.cals["personal"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+				mustNoErr(t, err)
+				return len(evs)
+			},
+		},
+		{
+			name: "tasks",
+			put: func(t *testing.T, e *env, uid string) {
+				t.Helper()
+				e.put(t, "tasks", uid+".ics", "BEGIN:VTODO", "UID:"+uid, "DTSTAMP:20250101T000000Z",
+					"SUMMARY:"+uid, "END:VTODO")
+			},
+			list: func(t *testing.T, e *env, ctx context.Context) int {
+				t.Helper()
+				todos, err := e.svc.ListTodos(ctx, e.cals["tasks"])
+				mustNoErr(t, err)
+				return len(todos)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			revalidate := domain.WithRevalidation(t.Context())
+			tt.put(t, e, "a")
+			if n := tt.list(t, e, t.Context()); n != 1 {
+				t.Fatalf("cold: got %d; want 1", n)
+			}
+			e.mock.ResetCounts()
+
+			// Unchanged and fresh: revalidating asks for the CTag only.
+			if n := tt.list(t, e, revalidate); n != 1 {
+				t.Fatalf("unchanged: got %d; want 1", n)
+			}
+			if pf, rep := e.mock.Count("PROPFIND"), e.mock.Count("REPORT"); pf != 1 || rep != 0 {
+				t.Fatalf("unchanged: PROPFIND=%d REPORT=%d; want 1/0", pf, rep)
+			}
+
+			// Changed by another client within the freshness window.
+			tt.put(t, e, "b")
+			if n := tt.list(t, e, t.Context()); n != 1 {
+				t.Fatalf("fresh without revalidation: got %d; want 1 (cached)", n)
+			}
+			if n := tt.list(t, e, revalidate); n != 2 {
+				t.Fatalf("revalidated: got %d; want 2", n)
+			}
+		})
+	}
 }
 
 func TestCacheKeyIsolation(t *testing.T) {

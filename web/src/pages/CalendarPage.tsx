@@ -1,7 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { CalendarDnd } from '@/components/dnd/CalendarDnd'
 import { LimitPill } from '@/components/dnd/LimitPill'
 import { CreatePopover } from '@/components/create/CreatePopover'
@@ -26,6 +25,7 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useMediaQuery, WIDE_QUERY } from '@/hooks/useMediaQuery'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
+import { useLoadErrorToast, useRefresh } from '@/hooks/useRefresh'
 import { useShortcuts } from '@/hooks/useShortcuts'
 import { endpoints } from '@/lib/api/endpoints'
 import { eachDay, stepDate, visibleRange } from '@/lib/dates'
@@ -55,6 +55,7 @@ export function CalendarPage() {
   const tasksOpen = useSettings((s) => s.tasksOpen)
   const updateSettings = useSettings((s) => s.update)
   const [mobileTasks, setMobileTasks] = useState(false)
+  const { state: refreshState, refresh } = useRefresh()
 
   const range = useMemo(() => visibleRange(view, date, prefs.weekStartsOn), [view, date, prefs.weekStartsOn])
   const { events: allEvents, corrupted: corruptedEvents, isFetching, errors } = useEvents(range)
@@ -76,15 +77,9 @@ export function CalendarPage() {
     document.title = `${title} – Lucid`
   }, [title])
 
-  const firstError = errors[0]
-  useEffect(() => {
-    if (firstError) toast.error(t('errors.eventsLoadFailed'), { id: 'events-load' })
-  }, [firstError, t])
-
-  const firstRepeatError = repeatErrors[0]
-  useEffect(() => {
-    if (firstRepeatError) toast.error(t('errors.repeatsLoadFailed'), { id: 'repeats-load' })
-  }, [firstRepeatError, t])
+  const refreshing = refreshState === 'running'
+  useLoadErrorToast(errors[0], 'events-load', t('errors.eventsLoadFailed'), refreshing)
+  useLoadErrorToast(repeatErrors[0], 'repeats-load', t('errors.repeatsLoadFailed'), refreshing)
 
   const toggleTasks = useCallback(() => {
     if (wide) updateSettings({ tasksOpen: !useSettings.getState().tasksOpen })
@@ -113,9 +108,12 @@ export function CalendarPage() {
         case 'toggleTasks':
           toggleTasks()
           break
+        case 'refresh':
+          refresh()
+          break
       }
     },
-    [toggleTasks],
+    [toggleTasks, refresh],
   )
   useShortcuts(onShortcut)
 
@@ -200,6 +198,7 @@ export function CalendarPage() {
         title={title}
         view={view}
         fetching={isFetching}
+        refresh={refreshState}
         username={session?.username}
         serverUrl={session?.serverUrl}
         tasksOpen={wide ? tasksOpen : mobileTasks}
@@ -214,6 +213,7 @@ export function CalendarPage() {
         }}
         onView={setView}
         onToggleTasks={toggleTasks}
+        onRefresh={refresh}
         onSettings={() => {
           setSettingsOpen(true)
         }}

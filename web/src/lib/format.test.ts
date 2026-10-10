@@ -9,6 +9,7 @@ import {
   formatEventSpan,
   formatEventWhen,
   formatHour,
+  formatLoadedAt,
   formatMonthDay,
   formatPeriodTitle,
   formatPickerDate,
@@ -24,6 +25,17 @@ import { apiEvent, todo } from '@/test/fixtures'
 
 const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const deDE: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
+
+describe('formatLoadedAt', () => {
+  const now = new Date(2026, 2, 11, 9, 0)
+  it.each([
+    ['today, the time only', new Date(2026, 2, 11, 8, 32), us, '8:32 AM'],
+    ['another day, with its date', new Date(2026, 2, 10, 14, 32), us, 'Tue, Mar 10, 2:32 PM'],
+    ['in German', new Date(2026, 2, 10, 14, 32), deDE, 'Di., 10. März, 14:32'],
+  ])('%s', (_, at, p, want) => {
+    expect(formatLoadedAt(at, p, now)).toBe(want)
+  })
+})
 
 describe('formatDuration', () => {
   it.each([

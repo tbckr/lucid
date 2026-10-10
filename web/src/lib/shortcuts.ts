@@ -7,6 +7,7 @@ export type ShortcutAction =
   | { type: 'create' }
   | { type: 'help' }
   | { type: 'toggleTasks' }
+  | { type: 'refresh' }
 
 export interface KeyLike {
   key: string
@@ -14,6 +15,7 @@ export interface KeyLike {
   metaKey: boolean
   altKey: boolean
   defaultPrevented: boolean
+  repeat: boolean
   target: EventTarget | null
 }
 
@@ -34,6 +36,7 @@ export const SHORTCUTS: { keys: string[]; labelKey: string; group: ShortcutGroup
   { keys: ['a'], labelKey: 'shortcuts.agenda', group: 'views' },
   { keys: ['g'], labelKey: 'shortcuts.tasks', group: 'views' },
   { keys: ['c'], labelKey: 'shortcuts.create', group: 'actions' },
+  { keys: ['r'], labelKey: 'shortcuts.refresh', group: 'actions' },
   { keys: ['Space', '←↑→↓'], labelKey: 'shortcuts.moveEvent', group: 'actions', sequence: true },
   { keys: ['?'], labelKey: 'shortcuts.help', group: 'actions' },
 ]
@@ -74,6 +77,10 @@ export function resolveShortcut(e: KeyLike): ShortcutAction | null {
       return { type: 'view', view: 'agenda' }
     case 'c':
       return { type: 'create' }
+    case 'r':
+    case 'R':
+      // Once per press: a held key would refresh again and again.
+      return e.repeat ? null : { type: 'refresh' }
     case 'g':
       return { type: 'toggleTasks' }
     case '?':

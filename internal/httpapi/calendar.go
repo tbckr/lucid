@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -124,12 +125,27 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, msg)
 		return
 	}
-	events, err := svc.ListEvents(r.Context(), calID, start, end)
+	events, err := svc.ListEvents(revalidating(r.Context(), r.Header), calID, start, end)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	middleware.WriteJSON(w, http.StatusOK, eventsResponse{Events: nonNil(events)})
+}
+
+// revalidateHeader asks a list request to check with the CalDAV server past
+// the cache freshness, as a manual refresh does (FR-23). Not Cache-Control:
+// no-cache: browsers add that to every fetch with cache: 'no-store', as the
+// frontend makes them.
+const revalidateHeader = "X-Lucid-Revalidate"
+
+// revalidating returns ctx asking the service to revalidate its cache when h
+// carries revalidateHeader.
+func revalidating(ctx context.Context, h http.Header) context.Context {
+	if h.Get(revalidateHeader) == "1" {
+		return domain.WithRevalidation(ctx)
+	}
+	return ctx
 }
 
 func parseRange(r *http.Request) (start, end time.Time, msg string) {
@@ -392,7 +408,7 @@ func (s *Server) handleListTodos(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	todos, err := svc.ListTodos(r.Context(), calID)
+	todos, err := svc.ListTodos(revalidating(r.Context(), r.Header), calID)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -425,7 +441,7 @@ func (s *Server) handleListTodoOccurrences(w http.ResponseWriter, r *http.Reques
 		middleware.WriteError(w, http.StatusBadRequest, codeInvalidInput, msg)
 		return
 	}
-	occurrences, err := svc.ListTodoOccurrences(r.Context(), calID, start, end)
+	occurrences, err := svc.ListTodoOccurrences(revalidating(r.Context(), r.Header), calID, start, end)
 	if err != nil {
 		s.fail(w, r, err)
 		return

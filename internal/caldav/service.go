@@ -97,12 +97,13 @@ func (s *service) invalidate(calPath string) {
 }
 
 // objects returns all objects of the given component type in calPath, using
-// the cache when it is fresh or its CTag/sync-token is unchanged.
+// the cache when it is fresh or its CTag/sync-token is unchanged. A ctx from
+// domain.WithRevalidation skips the freshness window (FR-23).
 func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObject, error) {
 	key := s.cacheKey(calPath, comp)
 	now := s.p.now()
 	entry, cached := s.p.cache.Get(key)
-	if cached && now.Sub(time.Unix(0, entry.checked.Load())) < s.p.opts.CacheFreshness {
+	if cached && !domain.Revalidation(ctx) && now.Sub(time.Unix(0, entry.checked.Load())) < s.p.opts.CacheFreshness {
 		s.p.metrics.hits.Inc()
 		return entry.objects, nil
 	}

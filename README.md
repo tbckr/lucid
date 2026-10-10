@@ -52,7 +52,8 @@ of your server.
 - **Easy login:** enter just your domain; Lucid finds the CalDAV endpoint via
   `/.well-known/caldav` and DNS SRV records.
 - **Fast:** repeated requests are answered from a short-lived cache that
-  checks your server for changes.
+  checks your server for changes. Changed something on your phone? Refresh
+  with a click or `r` to see it right away.
 - **Yours to adjust:** light and dark mode, English and German, date and time
   formats that follow your locale or your own choice in the settings.
 - **Keyboard friendly:** shortcuts and full keyboard navigation (WCAG 2.1 AA

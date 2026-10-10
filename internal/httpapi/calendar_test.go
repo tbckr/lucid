@@ -209,6 +209,43 @@ func TestListEvents(t *testing.T) {
 	}
 }
 
+// TestListRevalidation: a list request with X-Lucid-Revalidate: 1, as a
+// manual refresh sends, has the service check the CalDAV server past its
+// cache freshness, for events and tasks alike. Cache-Control: no-cache does
+// not: browsers add it to every fetch with cache: 'no-store' (FR-23).
+func TestListRevalidation(t *testing.T) {
+	t.Parallel()
+	const window = "?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"
+	paths := []string{
+		"/api/v1/calendars/cal-1/events" + window,
+		"/api/v1/calendars/cal-1/todos",
+		"/api/v1/calendars/cal-1/todos/occurrences" + window,
+	}
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{"no header", nil, false},
+		{"revalidate", map[string]string{"X-Lucid-Revalidate": "1"}, true},
+		{"other value", map[string]string{"X-Lucid-Revalidate": "0"}, false},
+		{"browser no-cache", map[string]string{"Cache-Control": "no-cache", "Pragma": "no-cache"}, false},
+	}
+	for _, path := range paths {
+		for _, tt := range tests {
+			t.Run(path+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t, nil)
+				c := h.login(t)
+				decode(t, h.do(t, c, req{method: http.MethodGet, path: path, headers: tt.headers}), http.StatusOK, nil)
+				if h.svc.gotRevalidate != tt.want {
+					t.Errorf("revalidate = %v; want %v", h.svc.gotRevalidate, tt.want)
+				}
+			})
+		}
+	}
+}
+
 func TestEventWrites(t *testing.T) {
 	t.Parallel()
 	ifMatch := map[string]string{"If-Match": `"etag-1"`}

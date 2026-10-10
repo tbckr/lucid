@@ -135,6 +135,8 @@ export class ApiClient {
   private sessionRefresh: Promise<Session> | null = null
   private readonly unauthenticatedListeners = new Set<Listener>()
   private readonly networkListeners = new Set<(reachable: boolean) => void>()
+  /** Pending revalidating() calls; GETs send X-Lucid-Revalidate while any is. */
+  private revalidations = 0
 
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
@@ -156,6 +158,21 @@ export class ApiClient {
   onUnauthenticated(listener: Listener): () => void {
     this.unauthenticatedListeners.add(listener)
     return () => this.unauthenticatedListeners.delete(listener)
+  }
+
+  /**
+   * Runs `fn`, sending `X-Lucid-Revalidate: 1` with every GET made until it
+   * settles, so the backend checks the CalDAV server past its cache freshness
+   * (a manual refresh, FR-23). Not `Cache-Control: no-cache`: the browser adds
+   * that to every request here, which are made with `cache: 'no-store'`.
+   */
+  async revalidating<T>(fn: () => Promise<T>): Promise<T> {
+    this.revalidations++
+    try {
+      return await fn()
+    } finally {
+      this.revalidations--
+    }
   }
 
   /** Called with false when the backend is unreachable, true when a request succeeds again. */
@@ -219,6 +236,7 @@ export class ApiClient {
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
     if (mutating && this.csrfToken !== null) headers['X-CSRF-Token'] = this.csrfToken
     if (opts.etag !== undefined) headers['If-Match'] = opts.etag
+    if (!mutating && this.revalidations > 0) headers['X-Lucid-Revalidate'] = '1'
 
     let res: Response
     try {

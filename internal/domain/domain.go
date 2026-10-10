@@ -647,6 +647,21 @@ type CalendarService interface {
 	DeleteTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
 }
 
+type revalidationKey struct{}
+
+// WithRevalidation returns a context that has a CalendarService check with
+// the CalDAV server before it serves objects from its cache, however fresh,
+// as a manual refresh asks (FR-23).
+func WithRevalidation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, revalidationKey{}, true)
+}
+
+// Revalidation reports whether ctx comes from WithRevalidation.
+func Revalidation(ctx context.Context) bool {
+	v, _ := ctx.Value(revalidationKey{}).(bool)
+	return v
+}
+
 // Provider connects users to their CalDAV server.
 type Provider interface {
 	// Connect performs auto-discovery (.well-known, DNS SRV) and verifies the

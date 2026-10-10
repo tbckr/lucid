@@ -407,6 +407,7 @@
     "day": "Tagesansicht",
     "agenda": "Terminübersicht",
     "create": "Termin oder Aufgabe erstellen",
+    "refresh": "Aktualisieren",
     "tasks": "Aufgaben ein- oder ausblenden",
     "help": "Tastenkürzel anzeigen",
     "moveEvent": "Fokussierten Termin verschieben",
@@ -421,6 +422,14 @@
   "offline": {
     "label": "Offline",
     "description": "Lucid erreicht seinen Server nicht. Änderungen pausieren und werden fortgesetzt, sobald die Verbindung zurück ist."
+  },
+  "refresh": {
+    "label": "Aktualisieren",
+    "loadedAt": "Stand: {{time}}",
+    "offline": "Lucid erreicht seinen Server gerade nicht.",
+    "done": "Aktualisiert",
+    "failed": "Aktualisieren fehlgeschlagen. Versuche es gleich noch einmal.",
+    "failedShowing": "Aktualisieren fehlgeschlagen. Angezeigt wird der Stand von {{time}}."
   },
   "account": {
     "menu": "Konto {{user}}",

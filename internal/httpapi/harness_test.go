@@ -92,6 +92,9 @@ type fakeService struct {
 	gotSnap  domain.Snapshot
 	gotRID   time.Time
 	gotOcc   domain.OccurrenceInput
+	// gotRevalidate is whether the last list call's context asked to
+	// revalidate the cache (domain.Revalidation).
+	gotRevalidate bool
 }
 
 func (f *fakeService) record(name string) error {
@@ -111,9 +114,9 @@ func (f *fakeService) ListCalendars(context.Context) ([]domain.Calendar, error) 
 	return f.calendars, nil
 }
 
-func (f *fakeService) ListEvents(_ context.Context, cal string, start, end time.Time) ([]domain.Event, error) {
+func (f *fakeService) ListEvents(ctx context.Context, cal string, start, end time.Time) ([]domain.Event, error) {
 	f.mu.Lock()
-	f.gotCal, f.gotStart, f.gotEnd = cal, start, end
+	f.gotCal, f.gotStart, f.gotEnd, f.gotRevalidate = cal, start, end, domain.Revalidation(ctx)
 	f.mu.Unlock()
 	if err := f.record("ListEvents"); err != nil {
 		return nil, err
@@ -205,9 +208,9 @@ func (f *fakeService) UpdateFollowing(_ context.Context, id, etag string, rid ti
 	return domain.FollowingResult{Event: domain.Event{ID: "n1", Title: in.Title, ETag: `"n"`}, ETag: `"4"`}, snap, nil
 }
 
-func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, error) {
+func (f *fakeService) ListTodos(ctx context.Context, cal string) ([]domain.Todo, error) {
 	f.mu.Lock()
-	f.gotCal = cal
+	f.gotCal, f.gotRevalidate = cal, domain.Revalidation(ctx)
 	f.mu.Unlock()
 	if err := f.record("ListTodos"); err != nil {
 		return nil, err
@@ -215,9 +218,9 @@ func (f *fakeService) ListTodos(_ context.Context, cal string) ([]domain.Todo, e
 	return f.todos, nil
 }
 
-func (f *fakeService) ListTodoOccurrences(_ context.Context, cal string, start, end time.Time) ([]domain.TodoOccurrence, error) {
+func (f *fakeService) ListTodoOccurrences(ctx context.Context, cal string, start, end time.Time) ([]domain.TodoOccurrence, error) {
 	f.mu.Lock()
-	f.gotCal, f.gotStart, f.gotEnd = cal, start, end
+	f.gotCal, f.gotStart, f.gotEnd, f.gotRevalidate = cal, start, end, domain.Revalidation(ctx)
 	f.mu.Unlock()
 	if err := f.record("ListTodoOccurrences"); err != nil {
 		return nil, err

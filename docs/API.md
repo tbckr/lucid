@@ -19,6 +19,15 @@ This is the contract between the frontend (`web/`) and the Go backend
   with code `csrf_invalid`; the frontend should refetch `/session` and retry once.
 - **Concurrency**: `PUT`/`DELETE` of events and todos must send
   `If-Match: <etag>` (the `etag` field, verbatim). Mismatch → `409 conflict`.
+- **Freshness**: the event and todo lists (`.../events`, `.../todos`,
+  `.../todos/occurrences`) come from a cache that is served without asking
+  the CalDAV server for `LUCID_CACHE_FRESHNESS` after its last check, so a
+  change made in another app can take that long to show. A request with
+  `X-Lucid-Revalidate: 1` skips that window: the backend checks the
+  calendar's CTag (or sync-token) first and reloads it only if it changed.
+  The frontend sends it on a manual refresh. `Cache-Control: no-cache` does
+  not skip it, because browsers add it to every `fetch` made with
+  `cache: 'no-store'`.
 - Errors always have this shape:
 
   ```json

@@ -407,6 +407,7 @@
     "day": "Day view",
     "agenda": "Agenda view",
     "create": "Create event or task",
+    "refresh": "Refresh",
     "tasks": "Show or hide tasks",
     "help": "Show shortcuts",
     "moveEvent": "Move a focused event",
@@ -421,6 +422,14 @@
   "offline": {
     "label": "Offline",
     "description": "Lucid can't reach its server. Changes are paused and resume when the connection is back."
+  },
+  "refresh": {
+    "label": "Refresh",
+    "loadedAt": "As of {{time}}",
+    "offline": "Lucid can't reach its server right now.",
+    "done": "Refreshed",
+    "failed": "Couldn't refresh. Try again in a moment.",
+    "failedShowing": "Couldn't refresh. Showing what was loaded at {{time}}."
   },
   "account": {
     "menu": "Account {{user}}",

@@ -197,6 +197,12 @@ export function formatPickerDate(date: Date, p: FormatPrefs, now: Date): string 
   }).format(date)
 }
 
+/** When data was loaded (FR-23): the time, with the date when it was not today, e.g. "Tue, Mar 10, 2:32 PM". */
+export function formatLoadedAt(date: Date, p: FormatPrefs, now: Date): string {
+  if (isSameDay(date, now)) return formatTime(date, p)
+  return `${formatPickerDate(date, p, now)}, ${formatTime(date, p)}`
+}
+
 /** Day and month without the year, e.g. "March 11" (yearly repeats). */
 export function formatMonthDay(date: Date, p: FormatPrefs): string {
   return new Intl.DateTimeFormat(p.tag, { day: 'numeric', month: 'long' }).format(date)

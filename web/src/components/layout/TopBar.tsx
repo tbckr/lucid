@@ -5,6 +5,7 @@ import {
   ListTodoIcon,
   LogOutIcon,
   MenuIcon,
+  RefreshCwIcon,
   SettingsIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -24,12 +25,17 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { VIEWS, type ViewKind } from '@/lib/dates'
 import { Logo } from '@/components/Logo'
+import { type RefreshState } from '@/hooks/useRefresh'
+import { cn } from '@/lib/utils'
+import { useUi } from '@/stores/ui'
 import { OfflineIndicator } from './OfflineIndicator'
+import { LoadedAt, RefreshButton } from './RefreshButton'
 
 export function TopBar({
   title,
   view,
   fetching,
+  refresh,
   username,
   serverUrl,
   tasksOpen,
@@ -38,6 +44,7 @@ export function TopBar({
   onStep,
   onView,
   onToggleTasks,
+  onRefresh,
   onSettings,
   onShortcuts,
   onLogout,
@@ -45,6 +52,7 @@ export function TopBar({
   title: string
   view: ViewKind
   fetching: boolean
+  refresh: RefreshState
   username: string | undefined
   serverUrl: string | undefined
   tasksOpen: boolean
@@ -53,12 +61,14 @@ export function TopBar({
   onStep: (dir: 1 | -1) => void
   onView: (v: ViewKind) => void
   onToggleTasks: () => void
+  onRefresh: () => void
   onSettings: () => void
   onShortcuts: () => void
   onLogout: () => void
 }) {
   const { t } = useTranslation()
   const initial = (username ?? '?').slice(0, 1).toUpperCase()
+  const reachable = useUi((s) => s.backendReachable)
 
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-1 px-2 py-2 sm:h-16 sm:flex-nowrap sm:gap-2 sm:px-3 sm:py-0">
@@ -87,10 +97,17 @@ export function TopBar({
       >
         {title}
       </h1>
-      {fetching && <Spinner className="ml-1 text-muted-foreground" aria-label={t('common.loading')} />}
+      {fetching && (
+        <Spinner
+          // The refresh button spins instead, where there is room for it (FR-23).
+          className={cn('ml-1 text-muted-foreground', refresh === 'running' && 'lg:hidden')}
+          aria-label={t('common.loading')}
+        />
+      )}
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
         <OfflineIndicator />
+        <RefreshButton state={refresh} onRefresh={onRefresh} className="hidden lg:inline-flex" />
 
         <ToggleGroup
           type="single"
@@ -153,6 +170,12 @@ export function TopBar({
               <span className="truncate">{serverUrl}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {/* Below lg, the top bar has no room for the refresh button (FR-23). */}
+            <DropdownMenuItem onSelect={onRefresh} disabled={!reachable} className="lg:hidden">
+              <RefreshCwIcon aria-hidden />
+              {t('refresh.label')}
+              <LoadedAt className="ml-auto pl-4 text-xs text-muted-foreground" />
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onShortcuts}>
               <KeyboardIcon aria-hidden />
               {t('shortcuts.title')}

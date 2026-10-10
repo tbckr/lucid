@@ -7,6 +7,7 @@ const key = (k: string, p: Partial<KeyLike> = {}): KeyLike => ({
   metaKey: false,
   altKey: false,
   defaultPrevented: false,
+  repeat: false,
   target: document.body,
   ...p,
 })
@@ -23,6 +24,8 @@ describe('resolveShortcut', () => {
     ['d', { type: 'view', view: 'day' }],
     ['a', { type: 'view', view: 'agenda' }],
     ['c', { type: 'create' }],
+    ['r', { type: 'refresh' }],
+    ['R', { type: 'refresh' }],
     ['g', { type: 'toggleTasks' }],
     ['?', { type: 'help' }],
   ])('%s', (k, action) => {
@@ -34,6 +37,12 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(key('t', { metaKey: true }))).toBeNull()
     expect(resolveShortcut(key('t', { altKey: true }))).toBeNull()
     expect(resolveShortcut(key('t', { defaultPrevented: true }))).toBeNull()
+    // Holding r down refreshes once, not again and again.
+    expect(resolveShortcut(key('r', { repeat: true }))).toBeNull()
+    expect(resolveShortcut(key('j', { repeat: true }))).toEqual({ type: 'step', dir: 1 })
+    // Ctrl+R and Cmd+R stay the browser's reload.
+    expect(resolveShortcut(key('r', { ctrlKey: true }))).toBeNull()
+    expect(resolveShortcut(key('r', { metaKey: true }))).toBeNull()
     expect(resolveShortcut(key('x'))).toBeNull()
     for (const tag of ['input', 'textarea', 'select']) {
       expect(resolveShortcut(key('t', { target: document.createElement(tag) }))).toBeNull()
