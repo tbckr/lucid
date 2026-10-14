@@ -132,6 +132,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Not the runner's preinstalled Go, which can lag behind the latest
+          # patch release: govulncheck checks the standard library of the Go
+          # it runs with.
+          check-latest: true
 
       # Runs on every change: whether vulnerable code is reachable depends on
       # our code, not only on the dependencies (NFR-11).
