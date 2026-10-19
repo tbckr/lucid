@@ -29,6 +29,12 @@ checklists, light and dark mode. Your data stays where it is. There is nothing
 to migrate and no database to run, just a single binary or container in front
 of your server.
 
+Lucid is also a contribution to [DI.DAY](https://di.day), the Digital
+Independence Day, which invites you to swap one Big Tech service for a
+privacy-friendly alternative on the first Sunday of every month. Your calendar
+can be one of them: move it to your own CalDAV server or a provider you trust,
+and Lucid keeps the comfort you're used to from Google Calendar.
+
 <p align="center">
   <img src="docs/screenshots/month-light.png" alt="Lucid's month view with the task sidebar">
 </p>
