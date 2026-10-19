@@ -55,6 +55,11 @@ and Lucid keeps the comfort you're used to from Google Calendar.
   lines, so your other apps can still read them.
 - **Recurring events and time zones:** recurring series, all-day and timed
   events, always shown in your local time zone.
+- **Custom repeats:** beyond daily, weekly, monthly and yearly, the repeat
+  editor builds repeats of events and tasks such as "every 2 weeks on Monday
+  and Thursday" or "every month on the last weekday", with an end date or a
+  number of times. It shows the repeat as a sentence and lists its next
+  dates; everywhere else, repeats are shown in words too.
 - **Easy login:** enter just your domain; Lucid finds the CalDAV endpoint via
   `/.well-known/caldav` and DNS SRV records.
 - **Fast:** repeated requests are answered from a short-lived cache that

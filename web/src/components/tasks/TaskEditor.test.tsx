@@ -327,6 +327,7 @@ describe('TaskEditor', () => {
         'Every week on Monday',
         'Every month on day 5',
         'Every year on October 5',
+        'Custom…',
       ])
       await user.click(screen.getByRole('option', { name: 'Every day' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -337,8 +338,7 @@ describe('TaskEditor', () => {
     it('removes the repeat of a series with "Does not repeat"', async () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(series)
-      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Custom rule')
-      expect(within(dialog).getByText('Every week on Monday and Thursday')).toBeInTheDocument()
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Monday and Thursday')
       expect(dialog).not.toHaveTextContent(/FREQ/)
 
       await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
@@ -362,6 +362,42 @@ describe('TaskEditor', () => {
       expect(path).toBe('/api/v1/todos/t1')
       expect(body).toMatchObject({ title: 'Water the flowers and the herbs' })
       expect(body).not.toHaveProperty('rrule')
+    })
+
+    // FR-17: the server starts a series over on any new rule text, so Done on an untouched rule keeps it as stored.
+    it('keeps an untidy rule as stored through the repeat editor when Done changes nothing', async () => {
+      const user = userEvent.setup()
+      const t = { ...series, rrule: 'FREQ=WEEKLY;BYDAY=MO,TH;' }
+      const { fetch, dialog } = await openTask(t)
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      await user.click(within(screen.getByRole('dialog', { name: 'Custom repeat' })).getByRole('button', { name: 'Done' }))
+
+      await user.type(within(dialog).getByPlaceholderText('Add a title'), ' and the herbs')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: /^All repeats/ }))
+      const { body } = await wrote(fetch, 'PUT')
+      expect(body).not.toHaveProperty('rrule')
+    })
+
+    it('warns before the repeat editor replaces a series of dates without a rule', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask({ ...series, rrule: '' })
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Repeats on set dates')
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      expect(
+        within(screen.getByRole('dialog', { name: 'Custom repeat' })).getByText(
+          "This repeat comes from another app and Lucid can't show all of it here. Done replaces it with the repeat above.",
+        ),
+      ).toBeInTheDocument()
+    })
+
+    // FR-17: the hours of a rule from another app repeat at the minute of the task's time, 9:30 here.
+    it('names the times of a rule after the task\'s time', async () => {
+      const t = todo({ due: '2026-10-05T07:30:00Z', dueAllDay: false, rrule: 'FREQ=DAILY;BYHOUR=9,17', recurring: true })
+      const { dialog } = await openTask(t)
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every day at 9:30 AM and 5:30 PM')
     })
 
     it('asks for a date before a task repeats', async () => {
@@ -389,6 +425,28 @@ describe('TaskEditor', () => {
       })
       const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
       expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: 'Europe/Berlin' })
+    })
+
+    // The repeat editor itself is RecurrenceDialog's to test; this is its wiring into the task form.
+    it('creates a task with a custom repeat from the repeat editor', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openNew(slides)
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+      await user.clear(interval)
+      await user.type(interval, '2')
+      await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every 2 weeks on Wednesday')
+      await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
+      await waitFor(() => {
+        expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+      })
+      const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+      expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2' })
     })
 
     it('explains repeating tasks behind the info button', async () => {
@@ -471,11 +529,15 @@ describe('TaskEditor', () => {
       ).toBeInTheDocument()
       expect(within(dialog).getByRole('checkbox', { name: 'Completed' })).toBeDisabled()
       expect(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' })).toBeDisabled()
-      expect(within(dialog).getByText('Repeats by a rule from another app')).toBeInTheDocument()
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Repeats by a rule from another app')
       expect(dialog).not.toHaveTextContent(/FREQ/)
 
       await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
-      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Does not repeat', 'Custom rule'])
+      // Lucid can't replace a rule it can't read: no "Custom…".
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'Does not repeat',
+        'Repeats by a rule from another app',
+      ])
       await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 

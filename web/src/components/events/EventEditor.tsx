@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { KindSwitch } from '@/components/create/KindSwitch'
+import { RepeatField } from '@/components/recurrence/RepeatField'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { Button } from '@/components/ui/button'
@@ -24,7 +25,7 @@ import {
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
-import { parseDayKey } from '@/lib/dates'
+import { dayAt, parseDayKey } from '@/lib/dates'
 import {
   editFormValues,
   eventFormSchema,
@@ -39,7 +40,7 @@ import { type CalEvent } from '@/lib/events'
 import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
-import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
+import { RECURRENCE_PRESETS } from '@/lib/rrule'
 import {
   eventScopeHint,
   eventScopeItems,
@@ -147,15 +148,16 @@ function EditorForm({
     reValidateMode: 'onChange',
   })
   const { register, control, handleSubmit, setValue, getValues, setFocus, subscribe, formState } = form
-  const [allDay, recurrence, calendarId, startDate, startTime, endDate, endTime] = useWatch({
+  const [allDay, recurrence, customRule, calendarId, startDate, startTime, endDate, endTime] = useWatch({
     control,
-    name: ['allDay', 'recurrence', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
+    name: ['allDay', 'recurrence', 'customRule', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
   })
   const pending = create.isPending || update.isPending || updateOccurrence.isPending || updateFollowing.isPending
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
-  const start = parseDayKey(startDate)
+  // The start as the form shows it, with its time: a rule's hours repeat at its minute (FR-17).
+  const start = allDay ? parseDayKey(startDate) : dayAt(startDate, startTime)
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
   useEffect(() => {
@@ -280,10 +282,7 @@ function EditorForm({
     return m ? t(m as 'validation.date') : undefined
   }
 
-  // The presets repeat on the start's weekday or date (FREQ only); say which. A custom rule
-  // reads the same way where it can.
-  const repeatText = (rule: string) => describeRRule(rule, start, prefs, now, t)
-  const customRule = recurrence === 'custom' ? getValues('customRule') : ''
+  const repeatOpts = { shouldDirty: true, shouldValidate: formState.isSubmitted }
 
   if (calendars.length === 0 && !event) {
     return (
@@ -483,28 +482,19 @@ function EditorForm({
           <Label htmlFor={`${id}-repeat`} className="sr-only">
             {t('event.repeat')}
           </Label>
-          <Controller
-            control={control}
-            name="recurrence"
-            render={({ field }) => (
-              <Select value={field.value} onValueChange={field.onChange}>
-                <SelectTrigger id={`${id}-repeat`} className="w-auto min-w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RECURRENCE_PRESETS.map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {repeatText(buildRRule(r))}
-                    </SelectItem>
-                  ))}
-                  {recurrence === 'custom' && <SelectItem value="custom">{t('recurrence.custom')}</SelectItem>}
-                </SelectContent>
-              </Select>
-            )}
+          <RepeatField
+            id={`${id}-repeat`}
+            value={{ recurrence, customRule }}
+            onChange={(v) => {
+              setValue('recurrence', v.recurrence, repeatOpts)
+              setValue('customRule', v.customRule, repeatOpts)
+            }}
+            start={start}
+            timeZone={tz}
+            presets={RECURRENCE_PRESETS}
+            customizable
+            explicit={event?.recurring ?? false}
           />
-          {customRule && (
-            <p className="pt-1 text-xs text-muted-foreground">{repeatText(customRule)}</p>
-          )}
         </EditorRow>
 
         <EditorRow icon={<MapPinIcon />}>

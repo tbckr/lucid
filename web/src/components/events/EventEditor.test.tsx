@@ -83,7 +83,50 @@ describe('EventEditor', () => {
       'Every week on Wednesday',
       'Every month on day 11',
       'Every year on March 11',
+      'Custom…',
     ])
+  })
+
+  it('creates an event with a custom repeat from the repeat editor', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+    await user.clear(interval)
+    await user.type(interval, '2')
+    await user.click(within(repeat).getByRole('button', { name: 'Monday' }))
+    await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every 2 weeks on Monday and Wednesday')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+    expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;WKST=SU' })
+  })
+
+  // FR-17: a timed series ends with the end of its last day, as UTC, so that day's event stays.
+  it('ends a custom repeat at the end of its last day', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    // The end date defaults to three months after the start: Thursday, June 11.
+    await user.click(within(repeat).getByRole('radio', { name: 'On' }))
+    await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Wednesday, until Thu, Jun 11')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+    expect(bodyOf(init)).toMatchObject({ rrule: 'FREQ=WEEKLY;UNTIL=20260611T215959Z' })
   })
 
   it.each([
@@ -92,9 +135,17 @@ describe('EventEditor', () => {
   ])('puts a custom rule into words (%s)', async (rrule, text) => {
     const event = toCalEvent(apiEvent({ recurring: true, rrule }))
     const { dialog } = await openEditor({ mode: 'edit', event })
-    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Custom rule')
-    expect(within(dialog).getByText(text)).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent(text)
     expect(dialog).not.toHaveTextContent(/FREQ/)
+  })
+
+  // FR-17: the hours of a rule from another app repeat at the start's minute, 10:30 in Berlin here.
+  it('names the times of a rule after the start time', async () => {
+    const event = toCalEvent(
+      apiEvent({ recurring: true, rrule: 'FREQ=DAILY;BYHOUR=9,17', start: '2026-09-25T08:30:00Z', end: '2026-09-25T09:00:00Z' }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every day at 9:30 AM and 5:30 PM')
   })
 
   it('shows the calendar as fixed when editing a series', async () => {
@@ -411,6 +462,88 @@ describe('EventEditor', () => {
     })
     const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
     expect(bodyOf(init)).toHaveProperty('rrule', 'FREQ=WEEKLY;INTERVAL=1')
+  })
+
+  // FR-17: Done on an untouched rule hands it back as it came, so saving is no rule change.
+  it('keeps a rule verbatim through the repeat editor when Done changes nothing', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY;INTERVAL=1', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    await user.click(within(screen.getByRole('dialog', { name: 'Custom repeat' })).getByRole('button', { name: 'Done' }))
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    // An unchanged rule leaves "Only this event" among the choices; a new one would reach the series only.
+    expect(within(question).getByRole('button', { name: /^Only this event/ })).toBeInTheDocument()
+    await user.click(within(question).getByRole('button', { name: 'All events' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
+    expect(bodyOf(init)).toHaveProperty('rrule', 'FREQ=WEEKLY;INTERVAL=1')
+  })
+
+  // FR-17: "All events" applies a changed rule from the series' start; the days chosen at a later event go along.
+  it('writes the days chosen at a later event of a series into the rule', async () => {
+    const user = userEvent.setup()
+    // Friday, September 25 is the last Friday of its month.
+    const event = toCalEvent(
+      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=MONTHLY;BYDAY=-1FR', recurrenceId: '2026-09-25T08:00:00Z' }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    await user.click(within(repeat).getByRole('radio', { name: 'On day' }))
+    await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every month on day 25')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    await user.click(within(question).getByRole('button', { name: /^All events/ }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([input, init]) => init?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))).toBe(
+        true,
+      )
+    })
+    const [, init] = fetch.mock.calls.find(([input, i]) => i?.method === 'PUT' && urlOf(input).endsWith('/events/e1'))!
+    expect(bodyOf(init)).toHaveProperty('rrule', 'FREQ=MONTHLY;BYMONTHDAY=25')
+  })
+
+  // NFR-27: the focus goes back where it came from, on Done and on Escape.
+  it.each([
+    ['Done', (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('button', { name: 'Done' }))],
+    ['Escape', (user: ReturnType<typeof userEvent.setup>) => user.keyboard('{Escape}')],
+  ])('gives the focus back to the repeat select when the repeat editor closes (%s)', async (_, close) => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+    await user.click(select)
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    await close(user)
+    expect(screen.queryByRole('dialog', { name: 'Custom repeat' })).toBeNull()
+    expect(select).toHaveFocus()
+  })
+
+  // FR-17: a series of dates from another app repeats; the repeat editor warns before it replaces them.
+  it('names a series of dates without a rule, and warns before replacing it', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ id: 'e1', recurring: true, rrule: '', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Repeats on set dates')
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    expect(
+      within(screen.getByRole('dialog', { name: 'Custom repeat' })).getByText(
+        "This repeat comes from another app and Lucid can't show all of it here. Done replaces it with the repeat above.",
+      ),
+    ).toBeInTheDocument()
   })
 
   it('cancels only the scope question on Escape, leaving the editor open (NFR-27)', async () => {

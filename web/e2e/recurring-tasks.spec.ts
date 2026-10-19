@@ -367,3 +367,31 @@ test('set and remove the repeat of a task in the editor', async ({ page }) => {
   await expect(planned).toHaveCount(0)
   await expect(allDay(page, today).getByRole('checkbox', { name: `Completed: ${title}` })).toBeVisible()
 })
+
+// FR-17: the repeat editor builds a repeat beyond the presets, shown in words only.
+test('give a task a custom repeat in the repeat editor', async ({ page }) => {
+  const title = 'E2E custom repeat'
+  await openWith(page, { title, due: today.toISOString(), dueAllDay: true }, 'w')
+  const editor = page.getByRole('dialog', { name: 'Edit task' })
+  await page.getByRole('button', { name: `Edit task: ${title}` }).click()
+  await editor.getByRole('combobox', { name: 'Repeat' }).click()
+  await page.getByRole('option', { name: 'Custom…' }).click()
+
+  const repeat = page.getByRole('dialog', { name: 'Custom repeat' })
+  await repeat.getByRole('combobox', { name: 'Days, weeks, months or years' }).click()
+  await page.getByRole('option', { name: 'month', exact: true }).click()
+  await repeat.getByRole('radio', { name: 'On the' }).click()
+  await repeat.getByRole('combobox', { name: 'Which one' }).click()
+  await page.getByRole('option', { name: 'last', exact: true }).click()
+  await repeat.getByRole('combobox', { name: 'Day', exact: true }).click()
+  await page.getByRole('option', { name: 'weekday', exact: true }).click()
+  await repeat.getByRole('button', { name: 'Done' }).click()
+  await expect(repeat).toBeHidden()
+  await editor.getByRole('button', { name: 'Save' }).click()
+  await expect(editor).toBeHidden()
+
+  // Saved: the editor opens on the repeat, in words.
+  await page.getByRole('button', { name: `Edit task: ${title}` }).click()
+  await expect(editor.getByRole('combobox', { name: 'Repeat' })).toHaveText('Every month on the last weekday')
+  await expect(editor).not.toContainText('FREQ')
+})

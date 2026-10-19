@@ -672,3 +672,39 @@ test('ends a series before an event', async ({ page }) => {
   await pageWeeks(page, -2)
   await expectAt(block, '9 AM – 9:30 AM')
 })
+
+// FR-17: the repeat editor builds a repeat beyond the presets, and the details put it into words.
+test('create an event with a custom repeat', async ({ page }) => {
+  const title = `E2E custom repeat ${Date.now()}`
+  const morning = new Date()
+  morning.setUTCHours(8, 30, 0, 0)
+  await page.clock.setFixedTime(morning)
+  await login(page)
+  await page.keyboard.press('d')
+  // 8:30 UTC is a morning in Berlin, the time zone of the config: the same day either way.
+  const weekday = await page.evaluate(() => new Date().toLocaleDateString('en-US', { weekday: 'long' }))
+
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  await dialog.getByPlaceholder('Add a title').fill(title)
+  await dialog.getByRole('combobox', { name: 'Repeat' }).click()
+  await page.getByRole('option', { name: 'Custom…' }).click()
+
+  const repeat = page.getByRole('dialog', { name: 'Custom repeat' })
+  await repeat.getByRole('spinbutton', { name: 'Repeat every' }).fill('2')
+  await repeat.getByRole('radio', { name: 'After' }).click()
+  await repeat.getByRole('spinbutton', { name: 'Number of times' }).fill('3')
+  await expect(repeat.getByRole('region', { name: 'Next dates' }).getByRole('listitem')).toHaveCount(3)
+  await repeat.getByRole('button', { name: 'Done' }).click()
+  await expect(repeat).toBeHidden()
+
+  const sentence = `Every 2 weeks on ${weekday}, 3 times`
+  await expect(dialog.getByRole('combobox', { name: 'Repeat' })).toHaveText(sentence)
+  await dialog.getByRole('button', { name: 'Create event' }).click()
+  await expect(dialog).toBeHidden()
+
+  await page.getByRole('main').locator('[data-event-key]', { hasText: title }).click()
+  const details = page.getByRole('dialog', { name: title })
+  await expect(details).toContainText(sentence)
+  await expect(details).not.toContainText('FREQ')
+})

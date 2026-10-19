@@ -16,6 +16,7 @@ import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { KindSwitch } from '@/components/create/KindSwitch'
+import { RepeatField } from '@/components/recurrence/RepeatField'
 import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { TimeSelect } from '@/components/events/TimeSelect'
@@ -46,10 +47,10 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type TodoInput } from '@/lib/api/schemas'
 import { allRepeatsDates, currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
-import { parseDayKey } from '@/lib/dates'
+import { dayAt, parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
-import { buildRRule, describeRRule, RECURRENCE_PRESETS } from '@/lib/rrule'
+import { RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
 import {
   scopeOptions,
   taskGlyphSlots,
@@ -83,6 +84,9 @@ import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
 
 const LEVELS: PriorityLevel[] = ['none', 'low', 'medium', 'high']
+
+// A rule Lucid can't read can only be kept or removed (FR-17).
+const NONE: readonly Recurrence[] = ['none']
 
 // The chosen level in the colors of its chip in the task list.
 const LEVEL_ON: Record<PriorityLevel, string> = {
@@ -194,9 +198,9 @@ export function TaskEditor({
   })
   const { register, control, handleSubmit, formState, setValue, getValues, setFocus, subscribe } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
-  const [completed, startDate, startTime, dueDate, dueTime, items, recurrence] = useWatch({
+  const [completed, startDate, startTime, dueDate, dueTime, items, recurrence, customRule] = useWatch({
     control,
-    name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence'],
+    name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence', 'customRule'],
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
   // Overdue as the task list will show it once saved (FR-14).
@@ -205,10 +209,8 @@ export function TaskEditor({
 
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
   const ruleUnsupported = todo?.ruleUnsupported ?? false
-  const customRule = recurrence === 'custom' ? getValues('customRule') : ''
-  // The presets repeat on the weekday or date of the start, else of the due date; say which.
-  const anchorDay = startDate ? parseDayKey(startDate) : dueDate ? parseDayKey(dueDate) : now
-  const repeatText = (rule: string) => describeRRule(rule, anchorDay, prefs, now, t)
+  // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it.
+  const anchorDay = startDate ? dayAt(startDate, startTime) : dueDate ? dayAt(dueDate, dueTime) : now
 
   useEffect(() => {
     // The footer asks in place: focus its "Cancel", and "Delete task" again once it is back (NFR-27).
@@ -608,32 +610,21 @@ export function TaskEditor({
             <Label htmlFor={`${id}-repeat`} className="sr-only">
               {t('tasks.repeat')}
             </Label>
-            <Controller
-              control={control}
-              name="recurrence"
-              render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange} disabled={readOnly}>
-                  <SelectTrigger
-                    id={`${id}-repeat`}
-                    className="w-auto min-w-48"
-                    aria-invalid={repeatError ? true : undefined}
-                    aria-describedby={repeatError ? `${id}-repeat-error` : undefined}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(ruleUnsupported ? (['none'] as const) : RECURRENCE_PRESETS).map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {repeatText(buildRRule(r))}
-                      </SelectItem>
-                    ))}
-                    {/* Only a rule the task already has: the presets are all the editor writes. */}
-                    {formState.defaultValues?.recurrence === 'custom' && (
-                      <SelectItem value="custom">{t('recurrence.custom')}</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              )}
+            <RepeatField
+              id={`${id}-repeat`}
+              value={{ recurrence, customRule }}
+              onChange={(v) => {
+                setValue('recurrence', v.recurrence, setOpts)
+                setValue('customRule', v.customRule, setOpts)
+              }}
+              start={anchorDay}
+              timeZone={tz}
+              presets={ruleUnsupported ? NONE : RECURRENCE_PRESETS}
+              customizable={!ruleUnsupported && !readOnly}
+              explicit={todo?.recurring ?? false}
+              disabled={readOnly}
+              invalid={!!repeatError}
+              describedBy={repeatError ? `${id}-repeat-error` : undefined}
             />
             {/* How repeating tasks behave, for those who want to know; the rest of the UI only shows it (FR-17). */}
             {recurrence !== 'none' && (
@@ -659,9 +650,6 @@ export function TaskEditor({
               </Popover>
             )}
           </div>
-          {customRule && (
-            <p className="pt-1 text-xs text-muted-foreground">{repeatText(customRule)}</p>
-          )}
           {repeatError && (
             <p id={`${id}-repeat-error`} className="pt-1 text-sm text-destructive">
               {repeatError}

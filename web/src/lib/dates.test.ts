@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENDA_DAYS,
   atMinutes,
+  dayAt,
   dayKey,
   eachDay,
   fetchRange,
@@ -129,5 +130,15 @@ describe('small helpers', () => {
     expect(at.getHours()).toBe(9)
     expect(at.getMinutes()).toBe(30)
     expect(dayKey(at)).toBe('2026-03-29')
+  })
+})
+
+describe('dayAt', () => {
+  it.each([
+    ['2026-03-11', '09:30', new Date(2026, 2, 11, 9, 30)],
+    ['2026-03-11', '', new Date(2026, 2, 11)],
+    ['2026-03-11', 'soon', new Date(2026, 2, 11)],
+  ])('reads %s %j as local time', (date, time, at) => {
+    expect(dayAt(date, time)).toEqual(at)
   })
 })

@@ -129,6 +129,12 @@ export function atMinutes(day: Date, minutes: number): Date {
   return d
 }
 
+/** A form's "yyyy-MM-dd" date at its "HH:mm" time, as local time; midnight without a valid time. */
+export function dayAt(date: string, time: string): Date {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time)
+  return m ? atMinutes(parseDayKey(date), Number(m[1]) * 60 + Number(m[2])) : parseDayKey(date)
+}
+
 /** Round minutes to the nearest step. */
 export function snapMinutes(minutes: number, step = 15): number {
   return Math.round(minutes / step) * step
