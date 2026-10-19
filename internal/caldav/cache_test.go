@@ -96,6 +96,43 @@ func TestObjectCache(t *testing.T) {
 	}
 }
 
+// TestObjectCacheFreshnessWindow: a cached calendar is served without a
+// request until CacheFreshness has passed since its last check, and from then
+// on checks its CTag again (NFR-01).
+func TestObjectCacheFreshnessWindow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// early: how long before the end of the window the list comes.
+		early        time.Duration
+		wantPropfind int
+	}{
+		{name: "a nanosecond before its end", early: time.Nanosecond, wantPropfind: 0},
+		{name: "at its end", early: 0, wantPropfind: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			e.put(t, "personal", "a.ics", "BEGIN:VEVENT", "UID:a", "DTSTAMP:20250101T000000Z",
+				"DTSTART:20250305T100000Z", "DTEND:20250305T110000Z", "SUMMARY:A", "END:VEVENT")
+			list := func() {
+				t.Helper()
+				_, err := e.svc.ListEvents(t.Context(), e.cals["personal"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+				mustNoErr(t, err)
+			}
+			list()
+			e.mock.ResetCounts()
+
+			e.clock.Advance(e.p.opts.CacheFreshness - tt.early)
+			list()
+			if pf, rep := e.mock.Count("PROPFIND"), e.mock.Count("REPORT"); pf != tt.wantPropfind || rep != 0 {
+				t.Fatalf("PROPFIND=%d REPORT=%d; want %d/0", pf, rep, tt.wantPropfind)
+			}
+		})
+	}
+}
+
 func TestObjectCacheErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
