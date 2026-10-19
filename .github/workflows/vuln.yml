@@ -1,7 +1,9 @@
-# Vulnerability scans of main (NFR-11/30), daily and whenever the dependency
-# manifests change. Only precise signals fail the run (see "Updating
-# dependencies" in CONTRIBUTING.md):
+# Vulnerability scans of main (NFR-11/30), daily and whenever the frontend
+# dependency manifests change. Only precise signals fail the run (see
+# "Updating dependencies" in CONTRIBUTING.md):
 #   - govulncheck reports only vulnerabilities whose code is reachable.
+#     ci.yml runs it on every change, so only the daily and manual runs run
+#     it here: they catch vulnerabilities published while main stays put.
 #   - pnpm audit --prod covers only the packages shipped in the bundle: a
 #     vulnerability needs attacker input, and build and test tools only
 #     process our own code.
@@ -13,8 +15,7 @@
 #     as the next release would ship it. The tag moves upstream, not with our
 #     commits, so only the daily and manual runs scan it. Only high or
 #     critical vulnerabilities that have a fix fail it.
-# ci.yml also runs govulncheck on every change to Go code; vuln-release.yml
-# scans the latest release.
+# vuln-release.yml scans the latest release.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly.
@@ -24,8 +25,6 @@ on:
   push:
     branches: [main]
     paths:
-      - go.mod
-      - go.sum
       - web/package.json
       - web/pnpm-lock.yaml
       - web/pnpm-workspace.yaml
@@ -33,8 +32,6 @@ on:
       - .github/workflows/vuln.yml
   pull_request:
     paths:
-      - go.mod
-      - go.sum
       - web/package.json
       - web/pnpm-lock.yaml
       - web/pnpm-workspace.yaml
@@ -57,6 +54,7 @@ env:
 jobs:
   govulncheck:
     name: govulncheck (main)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

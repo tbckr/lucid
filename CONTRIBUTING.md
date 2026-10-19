@@ -184,12 +184,12 @@ security fixes. `just outdated` lists what to review on every upgrade:
 
 **Automation:**
 
-- `vuln.yml`, daily and whenever the dependency manifests change:
-  `govulncheck` on `main`, `pnpm audit --prod` on the packages shipped in
-  the bundle, and a check for known malware (CWE-506) in every frontend
-  package, devDependencies included. Only in the daily run: Grype on the
-  distroless base image the `Dockerfile` references, as the next release
-  would ship it.
+- `vuln.yml`, daily and whenever the frontend dependency manifests change:
+  `pnpm audit --prod` on the packages shipped in the bundle, and a check for
+  known malware (CWE-506) in every frontend package, devDependencies
+  included. Only in the daily run: `govulncheck` on `main` (`ci.yml` runs it
+  on every change), and Grype on the distroless base image the `Dockerfile`
+  references, as the next release would ship it.
 - `vuln-release.yml`, daily: the latest release, which users keep running
   after `main` has a fix. `govulncheck` on the binary, `pnpm audit --prod` on
   the lockfile its frontend was built from (with the audit settings of
