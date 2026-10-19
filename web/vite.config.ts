@@ -75,6 +75,9 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // The editor tests drive Radix menus and dialogs: 2–3 s each under v8 coverage, twice that
+    // on a runner busy with the other test files, past Vitest's default of 5 s.
+    testTimeout: 10_000,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
