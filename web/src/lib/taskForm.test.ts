@@ -192,6 +192,16 @@ describe('taskForm', () => {
       next: { start: null, due: allDay('2026-10-08') },
     })
 
+    it('ends the series of an all-day task with a date', () => {
+      const v = { ...taskToForm(single, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;UNTIL=20261231T225959Z' }
+      expect(formToTodoInput(v, TZ)).toMatchObject({ rrule: 'FREQ=WEEKLY;UNTIL=20261231' })
+    })
+
+    it('ends the series of a timed task with the end of its last day, as UTC', () => {
+      const v = { ...taskToForm(single, TZ), dueTime: '09:00', recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;UNTIL=20261231' }
+      expect(formToTodoInput(v, TZ)).toMatchObject({ rrule: 'FREQ=WEEKLY;UNTIL=20261231T225959Z' })
+    })
+
     it('round-trips a rule the presets cannot express as custom', () => {
       const v = taskToForm(series, TZ)
       expect(v).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=WEEKLY;BYDAY=MO,TH' })

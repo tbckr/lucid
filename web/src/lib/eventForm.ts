@@ -4,7 +4,7 @@ import { type EventInput, type OccurrenceInput } from './api/schemas'
 import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
-import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
+import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 
 const dateRe = /^\d{4}-\d{2}-\d{2}$/
 const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -64,7 +64,8 @@ export function createFormValues(
 
 /** Values for editing an existing occurrence (shown in the browser time zone). */
 export function editFormValues(event: CalEvent, timeZone: string): EventFormValues {
-  const recurrence: Recurrence = recurrenceFromRRule(event.rrule)
+  // A series of dates without a rule repeats too: "custom" without a rule, kept as it is (FR-17).
+  const recurrence: Recurrence = event.recurring && !event.rrule.trim() ? 'custom' : recurrenceFromRRule(event.rrule)
   const base = {
     title: event.title,
     calendarId: event.calendarId,
@@ -131,7 +132,9 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
   // changed rule, losing the fast path that keeps the series' own time zone.
   const initial = event ? editFormValues(event, timeZone) : undefined
   const rrule =
-    event?.recurring && initial && keepsRuleAndAllDay(v, initial) ? event.rrule : buildRRule(v.recurrence, v.customRule)
+    event?.recurring && initial && keepsRuleAndAllDay(v, initial)
+      ? event.rrule
+      : fitUntil(buildRRule(v.recurrence, v.customRule), v.allDay, timeZone)
   return {
     title: v.title.trim(),
     description: v.description,

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
 import { anchorOf } from './calendarTasks'
 import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
-import { buildRRule, recurrenceFromRRule, type Recurrence } from './rrule'
+import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { todoToInput } from './tasks'
 
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
@@ -136,8 +136,11 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
     dueAllDay: due.allDay,
     priority: v.priority,
     status: v.completed ? 'COMPLETED' : keepStatus,
-    // Absent keeps the stored rule, "" removes it (FR-17).
-    ...(repeatChanged(v, original) ? { rrule: buildRRule(v.recurrence, v.customRule) } : {}),
+    // Absent keeps the stored rule, "" removes it (FR-17). The rule recurs from
+    // the start, else the due date, whose form its UNTIL takes.
+    ...(repeatChanged(v, original)
+      ? { rrule: fitUntil(buildRRule(v.recurrence, v.customRule), v.startDate ? v.startTime === '' : v.dueTime === '', timeZone) }
+      : {}),
     timezone: timeZone,
   }
 }

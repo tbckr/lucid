@@ -338,7 +338,8 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(series)
       expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Custom rule')
-      expect(within(dialog).getByTitle('FREQ=WEEKLY;BYDAY=MO,TH')).toHaveTextContent('Every week on Monday and Thursday')
+      expect(within(dialog).getByText('Every week on Monday and Thursday')).toBeInTheDocument()
+      expect(dialog).not.toHaveTextContent(/FREQ/)
 
       await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
       await user.click(screen.getByRole('option', { name: 'Does not repeat' }))
@@ -470,7 +471,8 @@ describe('TaskEditor', () => {
       ).toBeInTheDocument()
       expect(within(dialog).getByRole('checkbox', { name: 'Completed' })).toBeDisabled()
       expect(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' })).toBeDisabled()
-      expect(within(dialog).getByTitle('FREQ=SOMETIMES')).toHaveTextContent('FREQ=SOMETIMES')
+      expect(within(dialog).getByText('Repeats by a rule from another app')).toBeInTheDocument()
+      expect(dialog).not.toHaveTextContent(/FREQ/)
 
       await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
       expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Does not repeat', 'Custom rule'])

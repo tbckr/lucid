@@ -63,9 +63,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const tz = useMemo(() => browserTimeZone(), [])
   const now = useMemo(() => new Date(), [])
   const title = eventTitle(event, t('event.untitled'))
-  const repeats = event.rrule
-    ? (describeRRule(event.rrule, event.startsAt, prefs, now, t) ?? t('recurrence.customRule', { rule: event.rrule }))
-    : t('event.recurring')
+  const repeats = event.rrule ? describeRRule(event.rrule, event.startsAt, prefs, now, t) : t('recurrence.dates')
   const inZone = zoneTimes(event, tz, prefs, now)
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
   // An event of a series asks which events to delete (FR-17); a single event only whether.

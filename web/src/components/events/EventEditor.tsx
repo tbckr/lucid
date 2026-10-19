@@ -503,9 +503,7 @@ function EditorForm({
             )}
           />
           {customRule && (
-            <p className="truncate pt-1 text-xs text-muted-foreground" title={customRule}>
-              {repeatText(customRule) ?? customRule}
-            </p>
+            <p className="pt-1 text-xs text-muted-foreground">{repeatText(customRule)}</p>
           )}
         </EditorRow>
 

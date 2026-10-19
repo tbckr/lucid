@@ -211,14 +211,19 @@ describe('recurringLabel', () => {
     expect(recurringLabel(t, series, new Date(2026, 9, 5), prefs, now)).toBe('Every day')
   })
 
-  it('names a rule it cannot put into words verbatim', () => {
+  it('puts a rule from another app into words', () => {
     const series = todo({ rrule: 'FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Custom rule: FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO')
+    expect(recurringLabel(t, series, null, prefs, now)).toBe('Every month on the last Monday')
   })
 
-  it('names the rule verbatim without any anchor at all', () => {
+  it('names a rule without any anchor at all as one from another app', () => {
     const series = todo({ rrule: 'FREQ=DAILY', recurring: true, ruleUnsupported: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Custom rule: FREQ=DAILY')
+    expect(recurringLabel(t, series, null, prefs, now)).toBe('Repeats by a rule from another app')
+  })
+
+  it('names a series of dates without a rule', () => {
+    const series = todo({ rrule: '', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
+    expect(recurringLabel(t, series, null, prefs, now)).toBe('Repeats on set dates')
   })
 })
 

@@ -71,13 +71,14 @@ function anchorDate(d: TaskDates): TaskDate | null {
 /**
  * The rule a `RecurringMark` names, in words (FR-17): anchored on the series'
  * own dates, else `fallback` (a placed occurrence's, when the series itself
- * has none). A rule `describeRRule` cannot put into words, or no anchor at
- * all, falls back to naming it verbatim.
+ * has none). A series of dates without a rule says so; a rule without any
+ * anchor at all, which only another app writes, is named as one from it.
  */
 export function recurringLabel(t: TFunction, todo: Todo, fallback: Date | null, prefs: FormatPrefs, now: Date): string {
+  if (!todo.rrule.trim()) return todo.recurring ? t('recurrence.dates') : t('recurrence.none')
   const anchor = anchorOf(todo) ?? fallback
-  if (!anchor) return t('recurrence.customRule', { rule: todo.rrule })
-  return describeRRule(todo.rrule, anchor, prefs, now, t) ?? t('recurrence.customRule', { rule: todo.rrule })
+  if (!anchor) return t('recurrence.foreign')
+  return describeRRule(todo.rrule, anchor, prefs, now, t)
 }
 
 type Placement = Pick<CalTask, 'allDay' | 'point' | 'dates' | 'startsAt' | 'endsAt'>

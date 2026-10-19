@@ -63,10 +63,13 @@ describe('EventDetailsPopover', () => {
 
   it.each([
     ['FREQ=WEEKLY;BYDAY=MO,TH', 'Every week on Monday and Thursday'],
-    ['FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO', 'Custom rule: FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO'],
+    ['FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO', 'Every month on the last Monday'],
+    ['FREQ=WEEKLY;RSCALE=GREGORIAN', 'Repeats by a rule from another app'],
+    ['', 'Repeats on set dates'],
   ])('says how the event repeats (%s)', async (rrule, text) => {
     const { dialog } = await openDetails({ recurring: true, rrule })
     expect(within(dialog).getByText(text)).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent(/FREQ/)
   })
 
   it.each([

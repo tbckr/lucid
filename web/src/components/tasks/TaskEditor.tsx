@@ -660,9 +660,7 @@ export function TaskEditor({
             )}
           </div>
           {customRule && (
-            <p className="truncate pt-1 text-xs text-muted-foreground" title={customRule}>
-              {repeatText(customRule) ?? customRule}
-            </p>
+            <p className="pt-1 text-xs text-muted-foreground">{repeatText(customRule)}</p>
           )}
           {repeatError && (
             <p id={`${id}-repeat-error`} className="pt-1 text-sm text-destructive">

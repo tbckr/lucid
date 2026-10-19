@@ -95,6 +95,28 @@ describe('formToInput', () => {
     expect(formToInput(unchanged, TZ, occurrence).rrule).toBe('FREQ=WEEKLY;INTERVAL=1')
     expect(formToInput({ ...unchanged, recurrence: 'daily' }, TZ, occurrence).rrule).toBe('FREQ=DAILY')
   })
+
+  it('keeps a series of dates without a rule as it is', () => {
+    const dates = toCalEvent(apiEvent({ recurring: true, rrule: '', recurrenceId: '2026-09-25T08:00:00Z' }))
+    const v = editFormValues(dates, TZ)
+    expect(v).toMatchObject({ recurrence: 'custom', customRule: '' })
+    expect(formToInput(v, TZ, dates).rrule).toBe('')
+  })
+
+  it('ends a timed series with the end of its last day, as UTC', () => {
+    const input = formToInput({ ...base, recurrence: 'custom', customRule: 'FREQ=WEEKLY;UNTIL=20261231' }, TZ)
+    expect(input.rrule).toBe('FREQ=WEEKLY;UNTIL=20261231T225959Z')
+  })
+
+  it('ends an all-day series with a date', () => {
+    const input = formToInput({ ...base, allDay: true, recurrence: 'custom', customRule: 'FREQ=WEEKLY;UNTIL=20261231T225959Z' }, TZ)
+    expect(input.rrule).toBe('FREQ=WEEKLY;UNTIL=20261231')
+  })
+
+  it('sends a kept rule verbatim, whatever its end', () => {
+    const series = toCalEvent(apiEvent({ allDay: true, recurring: true, rrule: 'FREQ=WEEKLY;UNTIL=20261231T225959Z' }))
+    expect(formToInput(editFormValues(series, TZ), TZ, series).rrule).toBe('FREQ=WEEKLY;UNTIL=20261231T225959Z')
+  })
 })
 
 describe('occurrenceInput', () => {
