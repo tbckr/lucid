@@ -59,9 +59,18 @@ if [[ -n "$ref" ]]; then
   args+=(--diff "$ref" --output-statuses lc)
 fi
 
-GOBIN="$tmp/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@$gremlins_version"
+# A gremlins already on PATH saves the install, but only in the pinned
+# version, which the caveats above were measured with.
+gremlins=gremlins
+if [[ "$(gremlins --version 2>/dev/null)" != "gremlins version ${gremlins_version#v} "* ]]; then
+  if command -v gremlins >/dev/null; then
+    echo "mutation: the gremlins on PATH is not $gremlins_version, installing that"
+  fi
+  gremlins="$tmp/bin/gremlins"
+  GOBIN="$tmp/bin" go install "github.com/go-gremlins/gremlins/cmd/gremlins@$gremlins_version"
+fi
 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.context GIT_CONFIG_VALUE_0=0 \
-  GOCACHE="$tmp/gocache" TMPDIR="$tmp" "$tmp/bin/gremlins" unleash "${args[@]}" .
+  GOCACHE="$tmp/gocache" TMPDIR="$tmp" "$gremlins" unleash "${args[@]}" .
 if [[ -n "$ref" ]]; then
   exit 0
 fi
