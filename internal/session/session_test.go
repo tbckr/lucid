@@ -83,6 +83,19 @@ func TestNewGeneratesKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() without key: %v", err)
 	}
+	if len(s.opts.Key) != KeySize {
+		t.Fatalf("generated key is %d bytes, want %d", len(s.opts.Key), KeySize)
+	}
+	if bytes.Equal(s.opts.Key, make([]byte, KeySize)) {
+		t.Error("generated key is all zeros")
+	}
+	other, err := New(Options{})
+	if err != nil {
+		t.Fatalf("second New() without key: %v", err)
+	}
+	if bytes.Equal(s.opts.Key, other.opts.Key) {
+		t.Error("two stores generated the same key")
+	}
 	acct := domain.Account{Username: "u", Password: "p", ServerURL: "https://dav.example/"}
 	sess, err := s.Login("", acct) // seal with the generated key …
 	if err != nil {
