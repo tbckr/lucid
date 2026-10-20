@@ -10,6 +10,14 @@ let
   toEnv = value: if lib.isBool value then lib.boolToString value else toString value;
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [
+      "services"
+      "lucid"
+      "environmentFile"
+    ] "Lucid's configuration holds no secrets any more: the session key is random per start.")
+  ];
+
   options.services.lucid = {
     enable = lib.mkEnableOption "Lucid, a self-hostable CalDAV web client";
 
