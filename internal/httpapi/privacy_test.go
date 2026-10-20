@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"io"
@@ -10,10 +11,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/emersion/go-ical"
 
 	"github.com/tbckr/lucid/internal/caldav"
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
@@ -33,7 +37,7 @@ const (
 	canaryPass = canary + "-pass"
 )
 
-// canaryEvent is stored on the CalDAV server as canary-obj.ics, with the canary
+// canaryEvent is stored on the CalDAV server as zz-canary-obj.ics, with the canary
 // in every value.
 const canaryEvent = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n" +
 	"X-WR-CALNAME:" + canary + " calendar name\r\n" +
@@ -229,14 +233,71 @@ func containsCanary(s string) bool {
 	return strings.Contains(strings.ToLower(s), canary)
 }
 
-// securityEvent matches the attribute of a security event in a text log line.
-var securityEvent = regexp.MustCompile(`(^|\s)security_event=`)
+// canaryUserRE matches the user name of the account, in any case.
+var canaryUserRE = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(canaryUser))
 
-// isSecurityEvent reports whether a log line is a security event, which keeps
-// the user name by design (NFR-23).
+// basicCredentials are the credentials of the account as HTTP basic auth sends
+// them, in every base64 encoding: an Authorization header that was logged
+// would show them.
+var basicCredentials = func() []string {
+	raw := []byte(canaryUser + ":" + canaryPass)
+	return []string{
+		base64.StdEncoding.EncodeToString(raw), base64.URLEncoding.EncodeToString(raw),
+		base64.RawStdEncoding.EncodeToString(raw), base64.RawURLEncoding.EncodeToString(raw),
+	}
+}()
+
+// secretIn names the secret that s shows, "" if it shows none: the password, in
+// any case, or the credentials of the basic auth header. They may be nowhere,
+// not even in a security event (NFR-36).
+func secretIn(s string) string {
+	if strings.Contains(strings.ToLower(s), canaryPass) {
+		return "the password"
+	}
+	for _, c := range basicCredentials {
+		if strings.Contains(s, c) {
+			return "the basic auth credentials"
+		}
+	}
+	return ""
+}
+
+// textKeys returns the keys of the attributes of a line of slog's text handler,
+// key=value pairs where a value with a space, a quote or an equals sign is
+// quoted: text inside a quoted value is no key.
+func textKeys(line string) []string {
+	var keys []string
+	for i := 0; i < len(line); {
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		eq := strings.IndexByte(line[i:], '=')
+		if eq < 0 {
+			break
+		}
+		keys = append(keys, line[i:i+eq])
+		i += eq + 1
+		if i < len(line) && line[i] == '"' {
+			for i++; i < len(line) && line[i] != '"'; i++ {
+				if line[i] == '\\' {
+					i++
+				}
+			}
+			i++
+		} else {
+			for i < len(line) && line[i] != ' ' {
+				i++
+			}
+		}
+	}
+	return keys
+}
+
+// isSecurityEvent reports whether a log line is a security event: one with the
+// attribute security_event, which keeps the user name by design (NFR-23).
 func isSecurityEvent(line string, jsonLog bool) bool {
 	if !jsonLog {
-		return securityEvent.MatchString(line)
+		return slices.Contains(textKeys(line), "security_event")
 	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
@@ -253,6 +314,12 @@ func isSecurityEvent(line string, jsonLog bool) bool {
 // that returns contents, does (NFR-36, FR-36).
 func TestNoContentsInLogsOrReport(t *testing.T) {
 	t.Parallel()
+	// The premise of the broken object: the error of the parser echoes a value
+	// of the document. If go-ical stops doing that, nothing below would show a
+	// problem reason that forwards the error text, so fail instead of passing.
+	if _, err := ical.NewDecoder(strings.NewReader(canaryBroken)).Decode(); err == nil || !containsCanary(err.Error()) {
+		t.Fatalf("go-ical's error for the broken object = %v; want one that has the canary, as the test relies on", err)
+	}
 	for _, tc := range []struct {
 		name  string
 		local bool
@@ -422,7 +489,7 @@ func runCanaryFlow(t *testing.T, local bool) {
 	}
 
 	// Nothing a user can download has the canary, and no log line has it, but
-	// the security events, which keep the user name.
+	// the user name in a security event.
 	for name, body := range map[string]string{
 		"report": reportBody, "report after the forced logout": afterBody,
 		"skeleton of the broken object": skeletons["broken"], "skeleton of the event": skeletons["event"],
@@ -430,37 +497,46 @@ func runCanaryFlow(t *testing.T, local bool) {
 		if containsCanary(body) {
 			t.Errorf("%s contains the canary:\n%s", name, body)
 		}
+		if secret := secretIn(body); secret != "" {
+			t.Errorf("%s shows %s:\n%s", name, secret, body)
+		}
 	}
 	checkLogs(t, logs.String(), !local)
 }
 
-// checkLogs fails t for every log line with the canary, except those of security
-// events, and for every line with the password, security events included.
+// checkLogs fails t for every log line with the canary, a security event only
+// being let keep the user name, and for every line with a secret, security
+// events included.
 func checkLogs(t *testing.T, logs string, jsonLog bool) {
 	t.Helper()
-	var lines, security, problems int
+	var lines, security, problems, homeExchanges int
 	for _, line := range strings.Split(logs, "\n") {
 		if line == "" {
 			continue
 		}
 		lines++
-		if strings.Contains(strings.ToLower(line), canaryPass) {
-			t.Errorf("log line has the password:\n%s", line)
+		if secret := secretIn(line); secret != "" {
+			t.Errorf("log line shows %s:\n%s", secret, line)
 		}
+		rest := line
 		if isSecurityEvent(line, jsonLog) {
 			security++
-			continue
+			rest = canaryUserRE.ReplaceAllString(line, "<user>")
+		}
+		if containsCanary(rest) {
+			t.Errorf("log line has the canary beyond the user name of a security event:\n%s", line)
 		}
 		if strings.Contains(line, "caldav problem") {
 			problems++
 		}
-		if containsCanary(line) {
-			t.Errorf("log line has the canary:\n%s", line)
+		if strings.Contains(line, "caldav exchange") && strings.Contains(line, "{home}/cal-") {
+			homeExchanges++
 		}
 	}
-	// A log without the lines the flow causes proves nothing.
-	if lines < 20 || security < 2 || problems < 3 {
-		t.Errorf("log has %d lines, %d of security events and %d of problems; want the flow to have logged more:\n%s",
-			lines, security, problems, logs)
+	// A log without the lines the flow causes proves nothing: the paths of the
+	// calendar must have been logged, and as pseudonyms.
+	if lines < 20 || security < 2 || problems < 3 || homeExchanges < 1 {
+		t.Errorf("log has %d lines, %d of security events, %d of problems and %d exchanges with a {home}/cal- path; "+
+			"want the flow to have logged more:\n%s", lines, security, problems, homeExchanges, logs)
 	}
 }
