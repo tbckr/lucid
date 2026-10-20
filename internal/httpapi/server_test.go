@@ -87,17 +87,16 @@ func TestLocalMode(t *testing.T) {
 		t.Errorf("server: status %d, cookie Secure = %v", w.Code, w.Result().Cookies()[0].Secure)
 	}
 
-	// The console window of local mode gets no access line per request at
-	// info (FR-35); server mode keeps it.
-	const accessAtInfo = `"level":"INFO","msg":"http request"`
-	if strings.Contains(local.logs.String(), accessAtInfo) {
-		t.Errorf("local mode logged a request at info: %s", local.logs.String())
-	}
-	if !strings.Contains(local.logs.String(), `"level":"DEBUG","msg":"http request"`) {
-		t.Errorf("local mode did not log the request at debug: %s", local.logs.String())
-	}
-	if !strings.Contains(server.logs.String(), accessAtInfo) {
-		t.Errorf("server mode did not log the request at info: %s", server.logs.String())
+	// Both modes log each request at debug only (NFR-23): neither the console
+	// window of local mode (FR-35) nor the default log of server mode gets a
+	// line per request.
+	for name, h := range map[string]*harness{"local": local, "server": server} {
+		if strings.Contains(h.logs.String(), `"level":"INFO","msg":"http request"`) {
+			t.Errorf("%s mode logged a request at info: %s", name, h.logs.String())
+		}
+		if !strings.Contains(h.logs.String(), `"level":"DEBUG","msg":"http request"`) {
+			t.Errorf("%s mode did not log the request at debug: %s", name, h.logs.String())
+		}
 	}
 }
 

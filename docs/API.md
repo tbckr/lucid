@@ -1028,4 +1028,4 @@ which mode that is, for a removed one what replaces it or why it is gone.
 | `LUCID_CACHE_SIZE`                | Both   | `256`                      | Cached entries (LRU), one per user, calendar and component (events or tasks) |
 | `LUCID_CACHE_FRESHNESS`           | Both   | `10s`                      | Serve cache without CTag check for this long |
 | `LUCID_UPSTREAM_TIMEOUT`          | Both   | `20s`                      | Timeout for requests to CalDAV servers |
-| `LUCID_LOG_LEVEL`                 | Both   | `info`                     | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode (which logs each request only at `debug`), JSON in server mode |
+| `LUCID_LOG_LEVEL`                 | Both   | `info`                     | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode, JSON in server mode; each request is logged only at `debug` |

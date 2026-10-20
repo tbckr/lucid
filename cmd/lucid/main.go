@@ -149,7 +149,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	if cfg.Local {
 		handler = slog.NewTextHandler(stdout, handlerOpts)
 	}
-	logger := slog.New(handler)
+	logger := slog.New(middleware.NewContextHandler(handler)) // request_id on every line (NFR-23)
 	slog.SetDefault(logger)
 	return serve(ctx, &cfg, logger, build, stdout, openURL)
 }

@@ -59,9 +59,8 @@ type Options struct {
 	// LoginLimiter additionally limits login attempts per client. Optional.
 	LoginLimiter *middleware.Limiter
 	// Local is local mode (FR-35): plain HTTP on loopback, so the session
-	// cookie drops Secure (NFR-03), the Host header must name localhost or
-	// 127.0.0.1, and requests are logged at debug so the console window stays
-	// quiet.
+	// cookie drops Secure (NFR-03) and the Host header must name localhost or
+	// 127.0.0.1.
 	Local bool
 	// TrustProxyHeaders takes the client IP from X-Forwarded-For.
 	TrustProxyHeaders bool
@@ -139,8 +138,8 @@ func New(opts Options) (*Server, error) {
 	mux.Handle("/", newSPA(opts.Assets))
 
 	mws := []func(http.Handler) http.Handler{
-		middleware.RequestContext(opts.TrustProxyHeaders),         // must stay outermost
-		middleware.Observe(opts.Logger, opts.Metrics, opts.Local), // quiet in local mode (FR-35)
+		middleware.RequestContext(opts.TrustProxyHeaders), // must stay outermost
+		middleware.Observe(opts.Logger, opts.Metrics),
 		middleware.SecurityHeaders,
 	}
 	if opts.Local {

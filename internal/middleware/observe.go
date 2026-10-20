@@ -45,16 +45,17 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 // rejected by the rate limiter).
 const routeUnmatched = "unmatched"
 
-// Observe logs every request as a structured record and records metrics.
-// Metrics are labeled with the ServeMux route pattern, never the raw path,
-// to keep label cardinality bounded. metrics may be nil.
+// Observe logs every request as a structured record at debug level and
+// records metrics. Metrics are labeled with the ServeMux route pattern, never
+// the raw path, to keep label cardinality bounded. metrics may be nil.
 //
-// quiet logs the request lines at debug instead of info (FR-35). Local mode
-// writes to the console window of a double-clicked binary, and on Windows 10's
-// classic console a click there starts a QuickEdit selection that blocks every
-// write until it ends. A line per request at info would stall the requests
-// behind it.
-func Observe(logger *slog.Logger, metrics *Metrics, quiet bool) func(http.Handler) http.Handler {
+// The line per request is at debug in both modes (NFR-23): it is a diagnostic
+// aid, and at info it would drown the log in probes and polling. In local mode
+// (FR-35) there is a second reason: the log goes to the console window of a
+// double-clicked binary, and on Windows 10's classic console a click there
+// starts a QuickEdit selection that blocks every write until it ends. A line
+// per request at info would stall the requests behind it.
+func Observe(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -73,15 +74,7 @@ func Observe(logger *slog.Logger, metrics *Metrics, quiet bool) func(http.Handle
 				metrics.duration.WithLabelValues(method, route).Observe(elapsed.Seconds())
 			}
 
-			level := slog.LevelInfo
-			if quiet {
-				level = slog.LevelDebug
-			}
-			switch r.URL.Path {
-			case "/healthz", "/readyz":
-				level = slog.LevelDebug // probes would drown the log
-			}
-			logger.LogAttrs(r.Context(), level, "http request",
+			logger.LogAttrs(r.Context(), slog.LevelDebug, "http request",
 				slog.String("request_id", RequestID(r.Context())),
 				slog.String("client_ip", ClientIP(r.Context())),
 				slog.String("method", r.Method),

@@ -199,7 +199,7 @@ func TestObserve(t *testing.T) {
 		_, _ = io.WriteString(w, "tea")
 	})
 	mux.HandleFunc("GET /healthz", okHandler)
-	h := Chain(mux, RequestContext(false), Observe(logger, metrics, false))
+	h := Chain(mux, RequestContext(false), Observe(logger, metrics))
 
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/items/1", http.NoBody),
@@ -229,43 +229,48 @@ func TestObserve(t *testing.T) {
 		first["path"] != "/items/1" || first["request_id"] == "" || first["client_ip"] != "192.0.2.1" {
 		t.Errorf("access log = %v", first)
 	}
-	if lines[2]["level"] != "DEBUG" {
-		t.Errorf("healthz log level = %v, want DEBUG", lines[2]["level"])
+	for i, line := range lines {
+		if line["level"] != "DEBUG" {
+			t.Errorf("log line %d level = %v, want DEBUG", i, line["level"])
+		}
 	}
 
 	// nil metrics are allowed.
-	Observe(logger, nil, false)(okHandler).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	Observe(logger, nil)(okHandler).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 }
 
-// TestObserveQuiet covers the local-mode access log (FR-35): the console
-// window of a double-clicked binary must not see a line per request, because
-// a QuickEdit selection blocks every write to it.
-func TestObserveQuiet(t *testing.T) {
+// TestObserveLogsAtDebug covers the access log (NFR-23, FR-35): every request
+// line is at debug in both modes, so a console window of local mode and the
+// default log of server mode see no line per request.
+func TestObserveLogsAtDebug(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name  string
-		quiet bool
-		path  string
-		want  string
-	}{
-		{"server mode logs requests at info", false, "/items/1", "INFO"},
-		{"local mode logs requests at debug", true, "/items/1", "DEBUG"},
-		{"server mode probes stay at debug", false, "/healthz", "DEBUG"},
-		{"local mode probes stay at debug", true, "/healthz", "DEBUG"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items/{id}", okHandler)
+	mux.HandleFunc("GET /healthz", okHandler)
+
+	for _, path := range []string{"/items/1", "/healthz"} {
+		t.Run("info hides "+path, func(t *testing.T) {
+			t.Parallel()
+			buf := &syncBuffer{}
+			logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			h := Chain(mux, RequestContext(false), Observe(logger, nil))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
+			if got := buf.String(); got != "" {
+				t.Errorf("logger at info wrote %q, want nothing", got)
+			}
+		})
+		t.Run("debug shows "+path, func(t *testing.T) {
 			t.Parallel()
 			logger, buf := testLogger(t)
-			h := Chain(okHandler, RequestContext(false), Observe(logger, nil, tt.quiet))
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
+			h := Chain(mux, RequestContext(false), Observe(logger, nil))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
 
 			lines := buf.lines(t)
 			if len(lines) != 1 {
 				t.Fatalf("got %d log lines, want 1", len(lines))
 			}
-			if lines[0]["msg"] != "http request" || lines[0]["level"] != tt.want {
-				t.Errorf("log line = %v, want level %s", lines[0], tt.want)
+			if lines[0]["msg"] != "http request" || lines[0]["level"] != "DEBUG" || lines[0]["route"] == "" {
+				t.Errorf("log line = %v, want one DEBUG http request with a route", lines[0])
 			}
 		})
 	}
