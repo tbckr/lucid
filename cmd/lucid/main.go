@@ -159,7 +159,6 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		return err
 	}
 	store, err := session.New(session.Options{
-		Key:         cfg.SessionKey,
 		TTL:         cfg.SessionTTL,
 		IdleTimeout: cfg.SessionIdleTimeout,
 	})
@@ -193,7 +192,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		Assets:            web.Dist(),
 		APILimiter:        apiLimiter,
 		LoginLimiter:      loginLimiter,
-		Local:             cfg.CookieInsecure, // interim until cfg.Local exists
+		Local:             cfg.Local,
 		TrustProxyHeaders: cfg.TrustProxyHeaders,
 		Version:           build.version,
 	}
@@ -282,22 +281,18 @@ func newServer(cfg *config.Config, h http.Handler, logger *slog.Logger) *http.Se
 	}
 }
 
-// warnInsecure logs configuration choices that weaken security.
+// warnInsecure logs server-mode configuration choices that weaken security.
+// Local mode has none: it serves loopback only and warns about nothing.
 func warnInsecure(cfg *config.Config, logger *slog.Logger) {
-	if cfg.SessionKeyGenerated {
-		logger.Warn("LUCID_SESSION_KEY is not set: generated a random key, sessions will not survive a restart")
+	if cfg.Local {
+		return
 	}
 	if !cfg.TLSEnabled() && !cfg.TrustProxyHeaders {
-		if cfg.CookieInsecure {
-			logger.Warn("INSECURE: no TLS, no reverse proxy and LUCID_COOKIE_INSECURE=true - " +
-				"credentials and session cookies travel in clear text; use this for local development only")
-		} else {
-			logger.Warn("no TLS configured: Lucid must run behind a TLS-terminating reverse proxy, " +
-				"browsers will not send the Secure session cookie over plain HTTP")
-		}
+		logger.Warn("no TLS configured: Lucid must run behind a TLS-terminating reverse proxy, " +
+			"browsers will not send the Secure session cookie over plain HTTP")
 	}
 	if cfg.AllowPrivateNetworks {
-		logger.Warn("LUCID_ALLOW_PRIVATE_NETWORKS=true: SSRF protection for internal addresses is disabled")
+		logger.Warn("LUCID_PRIVATE_NETWORKS=all: SSRF protection for internal addresses is disabled")
 	}
 }
 

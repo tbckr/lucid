@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -22,6 +23,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/tbckr/lucid/internal/config"
 )
 
 type syncBuffer struct {
@@ -212,9 +215,8 @@ func get(t *testing.T, client *http.Client, url string) (int, string) {
 func TestRunServes(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{
-		"LUCID_ADDR":            "127.0.0.1:0",
-		"LUCID_COOKIE_INSECURE": "true",
-		"LUCID_LOG_LEVEL":       "debug",
+		"LUCID_ADDR":      "127.0.0.1:0",
+		"LUCID_LOG_LEVEL": "debug",
 	}
 	addrs, logs, stop := startServer(t, env, 1)
 	base := "http://" + addrs[0]
@@ -251,6 +253,20 @@ func TestRunServes(t *testing.T) {
 	if code, _ := get(t, client, base+"/"); code != http.StatusOK {
 		t.Errorf("spa: %d", code)
 	}
+	// Server mode has no Host check: a public hostname behind a proxy works.
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/healthz", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "calendar.example.com"
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /healthz with foreign Host: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz with Host calendar.example.com: %d", resp.StatusCode)
+	}
 
 	// The healthcheck subcommand probes the running server.
 	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[0]}), io.Discard); err != nil {
@@ -260,9 +276,14 @@ func TestRunServes(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatalf("run() = %v", err)
 	}
-	for _, want := range []string{"LUCID_SESSION_KEY is not set", "INSECURE", "shutting down", "stopped"} {
+	for _, want := range []string{"shutting down", "stopped"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"LUCID_SESSION_KEY is not set", "INSECURE"} {
+		if strings.Contains(logs.String(), unwanted) {
+			t.Errorf("logs contain %q", unwanted)
 		}
 	}
 	// After shutdown the healthcheck fails.
@@ -275,12 +296,11 @@ func TestRunSeparateMetricsAndTLS(t *testing.T) {
 	t.Parallel()
 	certFile, keyFile := writeCert(t)
 	env := map[string]string{
-		"LUCID_ADDR":                   "127.0.0.1:0",
-		"LUCID_METRICS_ADDR":           "127.0.0.1:0",
-		"LUCID_TLS_CERT":               certFile,
-		"LUCID_TLS_KEY":                keyFile,
-		"LUCID_SESSION_KEY":            strings.Repeat("ab", 32),
-		"LUCID_ALLOW_PRIVATE_NETWORKS": "true",
+		"LUCID_ADDR":             "127.0.0.1:0",
+		"LUCID_METRICS_ADDR":     "127.0.0.1:0",
+		"LUCID_TLS_CERT":         certFile,
+		"LUCID_TLS_KEY":          keyFile,
+		"LUCID_PRIVATE_NETWORKS": "all",
 	}
 	addrs, logs, stop := startServer(t, env, 2)
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
@@ -311,8 +331,8 @@ func TestRunSeparateMetricsAndTLS(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatalf("run() = %v", err)
 	}
-	if strings.Contains(logs.String(), "LUCID_SESSION_KEY is not set") || !strings.Contains(logs.String(), "SSRF protection") {
-		t.Error("unexpected warnings")
+	if !strings.Contains(logs.String(), "LUCID_PRIVATE_NETWORKS=all: SSRF protection") {
+		t.Error("missing SSRF protection warning")
 	}
 }
 
@@ -338,6 +358,36 @@ func TestWarnBehindProxy(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "reverse proxy") {
 		t.Error("missing TLS/proxy warning")
+	}
+}
+
+func TestWarnInsecure(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		cfg  config.Config
+		want []string // substrings that must appear; none = no log output at all
+	}{
+		{"local mode warns about nothing", config.Config{Local: true, AllowPrivateNetworks: true}, nil},
+		{"server without TLS or proxy", config.Config{}, []string{"reverse proxy"}},
+		{"server with TLS", config.Config{TLSCert: "/c.pem", TLSKey: "/k.pem"}, nil},
+		{"server behind a proxy", config.Config{TrustProxyHeaders: true}, nil},
+		{"server with all private networks", config.Config{TrustProxyHeaders: true, AllowPrivateNetworks: true}, []string{"LUCID_PRIVATE_NETWORKS=all: SSRF protection"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var out syncBuffer
+			warnInsecure(&tt.cfg, slog.New(slog.NewJSONHandler(&out, nil)))
+			if len(tt.want) == 0 && out.String() != "" {
+				t.Errorf("unexpected log output: %s", out.String())
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("logs %q do not contain %q", out.String(), want)
+				}
+			}
+		})
 	}
 }
 

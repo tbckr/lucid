@@ -1,40 +1,61 @@
 // Package config loads the Lucid runtime configuration from LUCID_*
-// environment variables (NFR-20: secrets via environment only).
+// environment variables (NFR-20: no secrets in the configuration).
+//
+// Without LUCID_ADDR Lucid runs in local mode (FR-35), with it in server
+// mode. Variables that only make sense in the other mode, and variables that
+// no longer exist, are startup errors rather than silently ignored.
 package config
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// SessionKeySize is the required length of LUCID_SESSION_KEY (AES-256).
-const SessionKeySize = 32
+// DefaultLocalPort is the port of local mode unless LUCID_LOCAL_PORT is set.
+const DefaultLocalPort = 3456
+
+// serverOnly and localOnly name the variables that are an error in the other
+// mode, so that a setting never goes unnoticed because it has no effect.
+var (
+	serverOnly = []string{
+		"LUCID_METRICS_ADDR", "LUCID_TLS_CERT", "LUCID_TLS_KEY", "LUCID_TRUST_PROXY_HEADERS",
+	}
+	localOnly = []string{"LUCID_LOCAL_PORT", "LUCID_OPEN_BROWSER"}
+)
+
+// removed lists the variables of earlier versions, in the order their errors
+// are reported, each with a hint on what to do instead.
+var removed = []struct{ name, hint string }{
+	{"LUCID_SESSION_KEY", "the session key is random per start"},
+	{"LUCID_COOKIE_INSECURE", "for plain HTTP use local mode (leave LUCID_ADDR unset)"},
+	{"LUCID_ALLOW_PRIVATE_NETWORKS", "use LUCID_PRIVATE_NETWORKS"},
+	{"LUCID_ALLOWED_CIDRS", "use LUCID_PRIVATE_NETWORKS"},
+}
 
 // Config is the complete runtime configuration.
 type Config struct {
-	Addr        string
+	// Local is local mode (FR-35): LUCID_ADDR is unset, Lucid listens on
+	// 127.0.0.1:LocalPort over plain HTTP and opens the browser.
+	Local       bool
+	Addr        string // LUCID_ADDR, or "127.0.0.1:<LocalPort>" in local mode
+	LocalPort   int    // local mode only
+	OpenBrowser bool   // local mode only; false in server mode
 	MetricsAddr string
 	TLSCert     string
 	TLSKey      string
 
-	// SessionKey encrypts credentials stored in sessions (AES-256-GCM).
-	SessionKey []byte
-	// SessionKeyGenerated is true when LUCID_SESSION_KEY was unset and a
-	// random key was generated. The caller should log a warning.
-	SessionKeyGenerated bool
-	SessionTTL          time.Duration
-	SessionIdleTimeout  time.Duration
-	CookieInsecure      bool
+	SessionTTL         time.Duration
+	SessionIdleTimeout time.Duration
 
+	// From LUCID_PRIVATE_NETWORKS (NFR-22): "all" sets AllowPrivateNetworks,
+	// a list fills AllowedCIDRs, "none" neither.
 	AllowPrivateNetworks bool
 	AllowedCIDRs         []netip.Prefix
 
@@ -57,16 +78,19 @@ func (c *Config) TLSEnabled() bool { return c.TLSCert != "" }
 // validation errors are returned together.
 func Load(getenv func(string) string) (Config, error) {
 	p := parser{getenv: getenv}
+	// LUCID_ADDR decides the mode, which in turn decides the defaults.
+	addr := p.str("LUCID_ADDR", "")
+	local := addr == ""
 	cfg := Config{
-		Addr:                 p.str("LUCID_ADDR", ":8080"),
+		Local:                local,
+		Addr:                 addr,
+		LocalPort:            p.port("LUCID_LOCAL_PORT", DefaultLocalPort),
+		OpenBrowser:          p.boolean("LUCID_OPEN_BROWSER", true) && local, // pointless in server mode
 		MetricsAddr:          p.str("LUCID_METRICS_ADDR", ""),
 		TLSCert:              p.str("LUCID_TLS_CERT", ""),
 		TLSKey:               p.str("LUCID_TLS_KEY", ""),
 		SessionTTL:           p.duration("LUCID_SESSION_TTL", 12*time.Hour),
 		SessionIdleTimeout:   p.duration("LUCID_SESSION_IDLE_TIMEOUT", 2*time.Hour),
-		CookieInsecure:       p.boolean("LUCID_COOKIE_INSECURE", false),
-		AllowPrivateNetworks: p.boolean("LUCID_ALLOW_PRIVATE_NETWORKS", false),
-		AllowedCIDRs:         p.cidrs("LUCID_ALLOWED_CIDRS"),
 		RateLimitRPS:         p.float("LUCID_RATE_LIMIT_RPS", 20),
 		RateLimitBurst:       p.integer("LUCID_RATE_LIMIT_BURST", 60),
 		LoginRateLimitPerMin: p.integer("LUCID_LOGIN_RATE_LIMIT_PER_MIN", 10),
@@ -76,49 +100,17 @@ func Load(getenv func(string) string) (Config, error) {
 		UpstreamTimeout:      p.duration("LUCID_UPSTREAM_TIMEOUT", 20*time.Second),
 		LogLevel:             p.level("LUCID_LOG_LEVEL", slog.LevelInfo),
 	}
-
-	if raw := getenv("LUCID_SESSION_KEY"); raw != "" {
-		key, err := DecodeKey(raw)
-		if err != nil {
-			p.fail("LUCID_SESSION_KEY", err)
-		}
-		cfg.SessionKey = key
-	} else {
-		key := make([]byte, SessionKeySize)
-		if _, err := rand.Read(key); err != nil {
-			p.fail("LUCID_SESSION_KEY", fmt.Errorf("generating random key: %w", err))
-		}
-		cfg.SessionKey = key
-		cfg.SessionKeyGenerated = true
+	// Local mode runs on the user's own machine, where reaching a CalDAV
+	// server on it or in the LAN is the point; a server defaults to none.
+	privateDefault := "none"
+	if local {
+		privateDefault = "all"
+		cfg.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.LocalPort))
 	}
+	cfg.AllowPrivateNetworks, cfg.AllowedCIDRs = p.privateNetworks("LUCID_PRIVATE_NETWORKS", privateDefault)
 
 	p.validate(&cfg)
 	return cfg, errors.Join(p.errs...)
-}
-
-// DecodeKey decodes a 32-byte key given as hex or base64 (standard or
-// URL alphabet, padded or unpadded).
-func DecodeKey(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
-	if len(s) == hex.EncodedLen(SessionKeySize) {
-		if b, err := hex.DecodeString(s); err == nil {
-			return b, nil
-		}
-	}
-	for _, enc := range []*base64.Encoding{
-		base64.StdEncoding, base64.RawStdEncoding,
-		base64.URLEncoding, base64.RawURLEncoding,
-	} {
-		b, err := enc.DecodeString(s)
-		if err != nil {
-			continue
-		}
-		if len(b) != SessionKeySize {
-			return nil, fmt.Errorf("key must be %d bytes, got %d", SessionKeySize, len(b))
-		}
-		return b, nil
-	}
-	return nil, fmt.Errorf("key must be %d bytes encoded as hex or base64", SessionKeySize)
 }
 
 type parser struct {
@@ -214,11 +206,39 @@ func (p *parser) level(name string, def slog.Level) slog.Level {
 	return l
 }
 
-func (p *parser) cidrs(name string) []netip.Prefix {
+// port parses a TCP port (1-65535).
+func (p *parser) port(name string, def int) int {
 	v := p.str(name, "")
 	if v == "" {
-		return nil
+		return def
 	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		p.fail(name, err)
+		return def
+	}
+	if n < 1 || n > math.MaxUint16 {
+		p.fail(name, errors.New("must be between 1 and 65535"))
+		return def
+	}
+	return n
+}
+
+// privateNetworks parses the value of name, which is "all", "none" (both
+// case-insensitive) or a comma-separated list of CIDRs and addresses. def is
+// the value used when name is unset.
+func (p *parser) privateNetworks(name, def string) (all bool, cidrs []netip.Prefix) {
+	v := p.str(name, def)
+	switch strings.ToLower(v) {
+	case "all":
+		return true, nil
+	case "none":
+		return false, nil
+	}
+	return false, p.cidrList(name, v)
+}
+
+func (p *parser) cidrList(name, v string) []netip.Prefix {
 	var out []netip.Prefix
 	for part := range strings.SplitSeq(v, ",") {
 		part = strings.TrimSpace(part)
@@ -240,15 +260,36 @@ func (p *parser) cidrs(name string) []netip.Prefix {
 	return out
 }
 
+// isSet reports whether the user set name at all, whatever its value.
+func (p *parser) isSet(name string) bool { return p.str(name, "") != "" }
+
 func (p *parser) validate(cfg *Config) {
-	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
-		p.fail("LUCID_TLS_CERT/LUCID_TLS_KEY", errors.New("both or neither must be set"))
+	for _, r := range removed {
+		if p.isSet(r.name) {
+			p.fail(r.name, errors.New("no longer supported: "+r.hint))
+		}
+	}
+	if cfg.Local {
+		for _, name := range serverOnly {
+			if p.isSet(name) {
+				p.fail(name, errors.New("only valid in server mode (set LUCID_ADDR)"))
+			}
+		}
+	} else {
+		for _, name := range localOnly {
+			if p.isSet(name) {
+				p.fail(name, errors.New("only valid in local mode (leave LUCID_ADDR unset)"))
+			}
+		}
+		if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+			p.fail("LUCID_TLS_CERT/LUCID_TLS_KEY", errors.New("both or neither must be set"))
+		}
+		// Port 0 (ephemeral) may legitimately appear twice.
+		if cfg.MetricsAddr != "" && cfg.MetricsAddr == cfg.Addr && !strings.HasSuffix(cfg.Addr, ":0") {
+			p.fail("LUCID_METRICS_ADDR", errors.New("must differ from LUCID_ADDR"))
+		}
 	}
 	if cfg.SessionIdleTimeout > cfg.SessionTTL {
 		p.fail("LUCID_SESSION_IDLE_TIMEOUT", errors.New("must not exceed LUCID_SESSION_TTL"))
-	}
-	// Port 0 (ephemeral) may legitimately appear twice.
-	if cfg.MetricsAddr != "" && cfg.MetricsAddr == cfg.Addr && !strings.HasSuffix(cfg.Addr, ":0") {
-		p.fail("LUCID_METRICS_ADDR", errors.New("must differ from LUCID_ADDR"))
 	}
 }
