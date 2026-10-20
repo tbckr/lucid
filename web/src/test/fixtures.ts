@@ -1,4 +1,10 @@
-import { type ApiEvent, type Calendar, type Todo, type TodoOccurrence } from '@/lib/api/schemas'
+import {
+  type ApiEvent,
+  type Calendar,
+  type DiagnosticsReport,
+  type Todo,
+  type TodoOccurrence,
+} from '@/lib/api/schemas'
 
 export function apiEvent(p: Partial<ApiEvent> = {}): ApiEvent {
   return {
@@ -77,6 +83,34 @@ export function calendar(p: Partial<Calendar> = {}): Calendar {
     readOnly: false,
     supportsEvents: true,
     supportsTodos: true,
+    ...p,
+  }
+}
+
+/** A problem report as `GET /api/v1/diagnostics` returns it (docs/API.md), with the problem of one unreadable object. */
+export function diagnosticsReport(p: Partial<DiagnosticsReport> = {}): DiagnosticsReport {
+  return {
+    format: 1,
+    createdAt: '2026-10-20T08:09:10Z',
+    lucid: { version: '1.2.3', mode: 'server', os: 'linux', arch: 'amd64' },
+    authenticated: true,
+    server: { host: 'dav.example.com', product: 'Nextcloud', dav: '1, 3, calendar-access' },
+    account: { endpoint: 'https://dav.example.com/remote.php/dav/', principal: '/p/{user}/', home: '/c/{user}/' },
+    calendars: [{ path: '{home}/cal-1a2b3c4d/', readOnly: false, events: true, todos: false, objects: 12 }],
+    exchanges: [
+      { at: '2026-10-20T08:09:00Z', method: 'PROPFIND', host: 'dav.example.com', path: '{home}/', status: 207 },
+    ],
+    problems: [
+      {
+        at: '2026-10-20T08:09:01Z',
+        requestId: '4f9c0a7e2b1d3c58',
+        kind: 'unparsable_object',
+        path: '{home}/cal-1a2b3c4d/obj-5e6f7a8b.ics',
+        objectId: 'obj-id-1',
+        reason: 'missing END:VCALENDAR',
+        skeleton: { text: 'BEGIN:VCALENDAR\nVERSION:2.0\n' },
+      },
+    ],
     ...p,
   }
 }

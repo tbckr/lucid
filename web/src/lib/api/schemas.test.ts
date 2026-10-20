@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { apiEvent, calendar, occurrence } from '@/test/fixtures'
+import { apiEvent, calendar, diagnosticsReport, occurrence } from '@/test/fixtures'
 import {
   calendarSchema,
   deletedOccurrenceSchema,
+  diagnosticsReportSchema,
   eventRestoreSchema,
   eventSchema,
   followingSchema,
+  objectContentSchema,
+  objectSkeletonSchema,
   parseList,
   restoredTodoSchema,
   sessionSchema,
+  skeletonSchema,
   todoFollowingSchema,
   todoOccurrenceSchema,
   todoSchema,
@@ -288,5 +292,123 @@ describe('parseList', () => {
     const r = eventSchema.safeParse({ id: 'x', start: 'nope' })
     if (r.success) throw new Error('expected failure')
     expect(toCorrupted({ id: 'x', start: 'nope' }, 'c', 0, r.error)).toMatchObject({ key: 'x', start: null })
+  })
+})
+
+describe('toCorrupted issues', () => {
+  it('lists each issue by field path and code, apart from the reason shown in the UI', () => {
+    const raw = { key: 'bad', id: 'bad', title: 5, end: 'zz-canary', start: '2026-09-26T10:00:00Z' }
+    const r = eventSchema.safeParse(raw)
+    if (r.success) throw new Error('expected failure')
+    const item = toCorrupted(raw, 'cal', 0, r.error)
+    expect(item.issues.length).toBeGreaterThan(1)
+    expect(item.issues).toContainEqual({ path: 'title', code: 'invalid_type' })
+    expect(item.issues.map((i) => i.path)).toContain('end')
+    for (const issue of item.issues) expect(Object.keys(issue).sort()).toEqual(['code', 'path'])
+    // The reason keeps its text for the UI; the issues carry none of it.
+    expect(item.reason).toContain('title: ')
+    expect(JSON.stringify(item.issues)).not.toContain('zz-canary')
+  })
+
+  it('names a failure of the whole item (root)', () => {
+    const r = eventSchema.safeParse('garbage')
+    if (r.success) throw new Error('expected failure')
+    expect(toCorrupted('garbage', 'cal', 3, r.error).issues).toEqual([{ path: '(root)', code: 'invalid_type' }])
+  })
+
+  it('counts a refinement of the whole item under its path', () => {
+    const raw = apiEvent({ start: '2026-09-25T09:00:00Z', end: '2026-09-25T08:00:00Z' })
+    const r = eventSchema.safeParse(raw)
+    if (r.success) throw new Error('expected failure')
+    expect(toCorrupted(raw, 'cal', 0, r.error).issues).toEqual([{ path: 'end', code: 'custom' }])
+  })
+})
+
+describe('diagnostics schemas', () => {
+  it('accepts a documented report', () => {
+    const r = diagnosticsReportSchema.safeParse(diagnosticsReport())
+    expect(r.success).toBe(true)
+  })
+
+  it('rejects a report without format, or with another one', () => {
+    const { format: _f, ...unformatted } = diagnosticsReport()
+    expect(diagnosticsReportSchema.safeParse(unformatted).success).toBe(false)
+    expect(diagnosticsReportSchema.safeParse({ ...diagnosticsReport(), format: 2 }).success).toBe(false)
+  })
+
+  it('keeps an unknown top-level key, and unknown keys inside what it validates', () => {
+    const base = diagnosticsReport()
+    const raw = {
+      ...base,
+      future: { a: 1 },
+      lucid: { version: '1', mode: 'local', os: 'linux', arch: 'arm64', future: true },
+      server: { host: 'h', product: 'p', dav: 'd', future: 'x' },
+    }
+    const parsed = diagnosticsReportSchema.parse(raw)
+    expect(parsed.future).toEqual({ a: 1 })
+    expect(parsed.lucid.os).toBe('linux')
+    expect(parsed.lucid.future).toBe(true)
+    expect(parsed.server.future).toBe('x')
+    // The parts the browser does not read stay as they were.
+    expect(parsed.calendars).toEqual(base.calendars)
+    expect(parsed.account).toEqual(base.account)
+    expect(parsed.exchanges).toEqual(base.exchanges)
+  })
+
+  it('needs the fields it reads', () => {
+    for (const key of ['lucid', 'authenticated', 'server', 'exchanges', 'problems'] as const) {
+      const { [key]: _gone, ...rest } = diagnosticsReport()
+      expect(diagnosticsReportSchema.safeParse(rest).success, key).toBe(false)
+    }
+    const { version: _v, ...noVersion } = diagnosticsReport().lucid
+    expect(diagnosticsReportSchema.safeParse({ ...diagnosticsReport(), lucid: noVersion }).success).toBe(false)
+  })
+
+  it('reads problems with or without an object, request ID and truncation', () => {
+    const base = { at: 'x', kind: 'invalid_xml', path: '{home}/', reason: 'HTTP 500', skeleton: { text: '<a/>' } }
+    const parsed = diagnosticsReportSchema.parse(
+      diagnosticsReport({
+        problems: [
+          base,
+          { ...base, requestId: 'r1', objectId: 'o1', skeleton: { text: '<a/>', truncated: true } },
+          { ...base, newKey: 1 },
+        ],
+      }),
+    )
+    expect(parsed.problems.map((p) => p.objectId)).toEqual([undefined, 'o1', undefined])
+    expect(parsed.problems[0]?.requestId).toBeUndefined()
+    expect(parsed.problems[0]?.skeleton.truncated).toBeUndefined()
+    expect(parsed.problems[1]?.skeleton.truncated).toBe(true)
+    expect(parsed.problems[2]?.newKey).toBe(1)
+    // Not filled in: the report stays what the server wrote.
+    expect('truncated' in (parsed.problems[0]?.skeleton ?? {})).toBe(false)
+  })
+
+  it('rejects a problem without kind, path, reason or skeleton', () => {
+    const base = { kind: 'invalid_xml', path: 'p', reason: 'r', skeleton: { text: 't' } }
+    for (const key of ['kind', 'path', 'reason', 'skeleton'] as const) {
+      const { [key]: _gone, ...rest } = base
+      expect(diagnosticsReportSchema.safeParse({ ...diagnosticsReport(), problems: [rest] }).success, key).toBe(false)
+    }
+  })
+
+  it('reads a skeleton whose truncated flag is left out', () => {
+    expect(skeletonSchema.parse({ text: 'BEGIN:VCALENDAR\n' })).toEqual({ text: 'BEGIN:VCALENDAR\n' })
+    expect(skeletonSchema.parse({ text: 'x', truncated: true }).truncated).toBe(true)
+    expect(skeletonSchema.safeParse({ truncated: true }).success).toBe(false)
+  })
+
+  it('reads the skeleton and the content of an object', () => {
+    expect(objectSkeletonSchema.parse({ id: 'o1', skeleton: { text: 't' } })).toEqual({
+      id: 'o1',
+      skeleton: { text: 't' },
+    })
+    expect(objectSkeletonSchema.safeParse({ id: 'o1' }).success).toBe(false)
+    expect(objectContentSchema.parse({ id: 'o1', content: 'BEGIN:VCALENDAR\r\n' })).toEqual({
+      id: 'o1',
+      content: 'BEGIN:VCALENDAR\r\n',
+    })
+    expect(objectContentSchema.safeParse({ id: 'o1', content: 5 }).success).toBe(false)
+    expect(objectContentSchema.safeParse({ content: 'x' }).success).toBe(false)
   })
 })

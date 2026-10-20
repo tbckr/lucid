@@ -3,9 +3,12 @@ import { api, type ApiClient } from './client'
 import {
   calendarSchema,
   deletedOccurrenceSchema,
+  diagnosticsReportSchema,
   eventRestoreSchema,
   eventSchema,
   followingSchema,
+  objectContentSchema,
+  objectSkeletonSchema,
   parseList,
   restoredTodoSchema,
   sessionSchema,
@@ -17,9 +20,12 @@ import {
   type Calendar,
   type CorruptedItem,
   type DeletedOccurrence,
+  type DiagnosticsReport,
   type EventInput,
   type EventRestore,
   type Following,
+  type ObjectContent,
+  type ObjectSkeleton,
   type OccurrenceInput,
   type RestoredTodo,
   type Session,
@@ -227,6 +233,18 @@ export function createEndpoints(client: ApiClient) {
       const { items, corrupted } = parseList(todoOccurrenceSchema, res.occurrences, calendarId)
       return { occurrences: items, corrupted }
     },
+
+    /** The problem report of the session (FR-36), for an anonymous one too. It asks the CalDAV server for nothing. */
+    getDiagnostics: (signal?: AbortSignal): Promise<DiagnosticsReport> =>
+      client.request('/diagnostics', { schema: diagnosticsReportSchema, ...(signal ? { signal } : {}) }),
+
+    /** The skeleton of a calendar object, from one request to the CalDAV server; authenticated sessions only. */
+    getObjectSkeleton: (id: string): Promise<ObjectSkeleton> =>
+      client.request(`/diagnostics/objects/${enc(id)}`, { schema: objectSkeletonSchema }),
+
+    /** The data of a calendar object, only for the user who viewed its skeleton and adds it to the report. */
+    getObjectContent: (id: string): Promise<ObjectContent> =>
+      client.request(`/diagnostics/objects/${enc(id)}/content`, { schema: objectContentSchema }),
   }
 }
 

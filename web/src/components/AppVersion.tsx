@@ -1,9 +1,8 @@
 import { ArrowUpRightIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useSession } from '@/hooks/queries'
+import { REPO_URL } from '@/lib/diagnostics'
 import { cn } from '@/lib/utils'
-
-const REPO_URL = 'https://github.com/tbckr/lucid'
 
 /** Version of the running binary (from the session) and a link to the source code. */
 export function AppVersion({ className }: { className?: string }) {

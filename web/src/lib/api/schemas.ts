@@ -213,6 +213,50 @@ export const errorBodySchema = z.object({
   error: z.object({ code: z.string(), message: z.string().optional().default('') }),
 })
 
+/**
+ * The shape of a document without its values (FR-36): names and formats, cut at a line boundary. The server
+ * leaves `truncated` out when it is false. Unknown keys stay, as everywhere in the report.
+ */
+export const skeletonSchema = z.looseObject({ text: z.string(), truncated: z.boolean().optional() })
+export type Skeleton = z.infer<typeof skeletonSchema>
+
+/**
+ * GET /api/v1/diagnostics: the problem report of the caller's session (FR-36). The browser adds to it and
+ * downloads it, so every object on the way is loose and what it does not read, such as `createdAt`, `account` and
+ * `calendars`, reaches the file as the server wrote it. Only `format: 1` is understood; the version changes when a
+ * field is removed or changes its meaning.
+ */
+export const diagnosticsReportSchema = z.looseObject({
+  format: z.literal(1),
+  lucid: z.looseObject({ version: z.string(), mode: z.string() }),
+  authenticated: z.boolean(),
+  server: z.looseObject({ host: z.string(), product: z.string(), dav: z.string() }),
+  exchanges: z.array(z.unknown()),
+  problems: z.array(
+    z.looseObject({
+      kind: z.string(),
+      path: z.string(),
+      reason: z.string(),
+      skeleton: skeletonSchema,
+      // The object the problem is about, for the two routes below; left out without one and after a forced logout.
+      objectId: z.string().optional(),
+      requestId: z.string().optional(),
+    }),
+  ),
+})
+export type DiagnosticsReport = z.infer<typeof diagnosticsReportSchema>
+
+/** GET /api/v1/diagnostics/objects/{objectId}: the skeleton of a calendar object as the server sends it now. */
+export const objectSkeletonSchema = z.object({ id: z.string(), skeleton: skeletonSchema })
+export type ObjectSkeleton = z.infer<typeof objectSkeletonSchema>
+
+/**
+ * GET /api/v1/diagnostics/objects/{objectId}/content: the data of a calendar object, unparsed. The one answer
+ * that returns calendar contents, for the report and only on the user's request for that object (NFR-36).
+ */
+export const objectContentSchema = z.object({ id: z.string(), content: z.string() })
+export type ObjectContent = z.infer<typeof objectContentSchema>
+
 /** Payload for POST/PUT of events (domain.EventInput). */
 export interface EventInput {
   title: string
@@ -266,7 +310,15 @@ export interface CorruptedItem {
   calendarId: string
   /** Best-effort start, used to position the placeholder in views. */
   start: Date | null
+  /** What failed, for the UI. It can contain what Zod received, so it never goes into the problem report. */
   reason: string
+  /** The Zod issues by field path and code alone, no message and no value: what the problem report may carry (NFR-36). */
+  issues: { path: string; code: string }[]
+}
+
+/** Dotted field path of an issue, `(root)` for one of the whole item. */
+function issuePath(issue: z.ZodError['issues'][number]): string {
+  return issue.path.map(String).join('.') || '(root)'
 }
 
 function readString(raw: unknown, field: string): string | undefined {
@@ -286,7 +338,8 @@ export function toCorrupted(raw: unknown, calendarId: string, index: number, err
     key: readString(raw, 'key') ?? readString(raw, 'id') ?? `corrupted:${calendarId}:${index}`,
     calendarId,
     start: Number.isNaN(startMs) ? null : new Date(startMs),
-    reason: error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; '),
+    reason: error.issues.map((i) => `${issuePath(i)}: ${i.message}`).join('; '),
+    issues: error.issues.map((i) => ({ path: issuePath(i), code: i.code })),
   }
 }
 

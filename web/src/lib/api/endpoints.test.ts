@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
+import { apiEvent, bodyOf, calendar, diagnosticsReport, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import i18n from '@/i18n'
 import { apiErrorMessage } from '../errors'
 import { ApiClient, isApiError, type ApiErrorCode } from './client'
@@ -336,5 +336,47 @@ describe('endpoints', () => {
     const { api, client } = setup(jsonResponse(200, { authenticated: false, csrfToken: 'x' }))
     await api.getSession()
     expect(client.token).toBe('x')
+  })
+
+  describe('diagnostics', () => {
+    it('gets the problem report, validated, with unknown keys kept', async () => {
+      const raw = { ...diagnosticsReport(), future: 1 }
+      const { api, calls } = setup(jsonResponse(200, raw))
+      const controller = new AbortController()
+      const res = await api.getDiagnostics(controller.signal)
+      expect(calls[0]?.url).toBe('/api/v1/diagnostics')
+      expect(calls[0]?.init.method ?? 'GET').toBe('GET')
+      expect(calls[0]?.init.signal).toBe(controller.signal)
+      expect(res).toEqual(raw)
+    })
+
+    it('fails a report of another format as a bad response', async () => {
+      const { api } = setup(jsonResponse(200, { ...diagnosticsReport(), format: 2 }))
+      await expect(api.getDiagnostics()).rejects.toMatchObject({ code: 'bad_response' })
+    })
+
+    it('gets the skeleton of an object by its encoded ID', async () => {
+      const { api, calls } = setup(jsonResponse(200, { id: 'a/b_c-d', skeleton: { text: 'BEGIN:VCALENDAR\n' } }))
+      const res = await api.getObjectSkeleton('a/b_c-d')
+      expect(calls[0]?.url).toBe('/api/v1/diagnostics/objects/a%2Fb_c-d')
+      expect(res).toEqual({ id: 'a/b_c-d', skeleton: { text: 'BEGIN:VCALENDAR\n' } })
+    })
+
+    it('gets the content of an object by its encoded ID', async () => {
+      const { api, calls } = setup(jsonResponse(200, { id: 'a/b', content: 'BEGIN:VCALENDAR\r\n' }))
+      const res = await api.getObjectContent('a/b')
+      expect(calls[0]?.url).toBe('/api/v1/diagnostics/objects/a%2Fb/content')
+      expect(res).toEqual({ id: 'a/b', content: 'BEGIN:VCALENDAR\r\n' })
+    })
+
+    it('keeps the error of an object that is gone', async () => {
+      const { api } = setup(jsonResponse(404, { error: { code: 'not_found', message: 'gone' } }))
+      await expect(api.getObjectSkeleton('x')).rejects.toMatchObject({ code: 'not_found', status: 404 })
+    })
+
+    it('fails an answer without content as a bad response', async () => {
+      const { api } = setup(jsonResponse(200, { id: 'x' }))
+      await expect(api.getObjectContent('x')).rejects.toMatchObject({ code: 'bad_response' })
+    })
   })
 })

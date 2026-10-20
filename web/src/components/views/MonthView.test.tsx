@@ -43,7 +43,14 @@ function renderMonth(
         now={new Date(2026, 8, 25, 12)}
         events={events}
         corrupted={[
-          { kind: 'corrupted', key: 'bad', calendarId: 'c1', start: new Date(2026, 8, 26, 9), reason: 'title: bad' },
+          {
+            kind: 'corrupted',
+            key: 'bad',
+            calendarId: 'c1',
+            start: new Date(2026, 8, 26, 9),
+            reason: 'title: bad',
+            issues: [{ path: 'title', code: 'invalid_type' }],
+          },
         ]}
         prefs={prefs}
         colorsOf={() => colors}
