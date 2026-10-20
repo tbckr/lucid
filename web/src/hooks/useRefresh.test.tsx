@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
-import { toast } from 'sonner'
+import { toast, type ToastT } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api/client'
 import { isReported, markReported } from '@/lib/refresh'
@@ -147,9 +147,10 @@ describe('useRefresh', () => {
   })
 })
 
-/** The description of the live toast `id`, sonner's own state. */
+/** The description of the live toast `id`, sonner's own state (its list also holds dismissals, `{ id, dismiss }`). */
 function descriptionOf(id: string): unknown {
-  return toast.getToasts().find((x) => x.id === id)?.description
+  const shown = toast.getToasts().find((x): x is ToastT => x.id === id && !('dismiss' in x))
+  return shown?.description
 }
 
 /** A new error each time: a refresh marks the errors it told about, and these tests share the module. */
