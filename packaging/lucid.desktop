@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lucid
+GenericName=Calendar
+Comment=Run Lucid and open it in the browser
+Exec=sh -c "lucid || { echo 'Press Enter to close this window.'; read _; }"
+Icon=lucid
+Terminal=true
+Categories=Office;Calendar;
+Keywords=CalDAV;calendar;tasks;todo;

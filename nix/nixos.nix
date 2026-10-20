@@ -74,7 +74,9 @@ in
 
         # Hardening (NFR-21): Lucid keeps no state on disk and needs no
         # privileges, like the distroless container. Only a port below 1024
-        # gets CAP_NET_BIND_SERVICE, the usual nixpkgs pattern.
+        # gets CAP_NET_BIND_SERVICE, the usual nixpkgs pattern. The unit of
+        # the Linux packages (packaging/lucid.service) has the same list for
+        # a port of 1024 or above; keep both in sync.
         DynamicUser = true;
         AmbientCapabilities = lib.mkIf lowPort [ "CAP_NET_BIND_SERVICE" ];
         CapabilityBoundingSet = if lowPort then [ "CAP_NET_BIND_SERVICE" ] else "";

@@ -57,6 +57,67 @@ archives:
       - README.md
       - SECURITY.md
 
+# Linux packages (NFR-35): deb, rpm and Arch, attached to the release like the
+# archives, with no package repository. checksums.txt lists them, so the
+# cosign signature and the provenance attestation cover them too. No SBOM of
+# their own: each holds the binary of its platform's archive, which has one.
+# Server mode runs as a hardened system service that the packages install
+# but do not enable; the menu entry starts local mode (FR-35) in a terminal.
+nfpms:
+  - id: lucid
+    ids:
+      - lucid
+    package_name: lucid
+    maintainer: Tim <11543666+tbckr@users.noreply.github.com>
+    description: Modern CalDAV web client for calendars and tasks
+    homepage: https://github.com/tbckr/lucid
+    license: GPL-3.0-only
+    section: web
+    formats:
+      - deb
+      - rpm
+      - archlinux
+    # Local mode opens the browser with xdg-open. A weak dependency for deb
+    # and rpm; nfpm has no equivalent for Arch.
+    recommends:
+      - xdg-utils
+    contents:
+      - src: packaging/lucid.service
+        dst: /usr/lib/systemd/system/lucid.service
+      - src: packaging/lucid.env
+        dst: /etc/lucid/lucid.env
+        type: config|noreplace
+        file_info:
+          mode: 0640
+      - src: packaging/lucid.desktop
+        dst: /usr/share/applications/lucid.desktop
+      - src: web/public/favicon.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/lucid.svg
+      - src: LICENSE
+        dst: /usr/share/licenses/lucid/LICENSE
+        type: license
+        packager: rpm
+      - src: LICENSE
+        dst: /usr/share/licenses/lucid/LICENSE
+        packager: archlinux
+      - src: LICENSE
+        dst: /usr/share/doc/lucid/copyright
+        packager: deb
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    archlinux:
+      packager: Tim <11543666+tbckr@users.noreply.github.com>
+      scripts:
+        # pacman runs only post_upgrade on an upgrade.
+        postupgrade: packaging/scripts/postinstall.sh
+    overrides:
+      archlinux:
+        # Without an epoch nfpm drops the pre-release part from pkgver
+        # (1.2.3-rc.1 would become 1.2.3-1). pacman treats epoch 0 as none.
+        epoch: "0"
+
 checksum:
   name_template: checksums.txt
   algorithm: sha256
