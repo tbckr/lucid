@@ -57,7 +57,8 @@ const (
 
 // Options configures a Store.
 type Options struct {
-	// Key is the 32-byte AES-256 key. Required.
+	// Key is the 32-byte AES-256 key. nil generates a random key; sessions live
+	// only in memory, so nothing else needs it (NFR-20).
 	Key []byte
 	// TTL is the absolute lifetime of an authenticated session.
 	TTL time.Duration
@@ -118,6 +119,10 @@ type Store struct {
 
 // New creates a Store.
 func New(opts Options) (*Store, error) {
+	if opts.Key == nil {
+		opts.Key = make([]byte, KeySize)
+		_, _ = rand.Read(opts.Key) // never fails since Go 1.24 (it crashes instead)
+	}
 	if len(opts.Key) != KeySize {
 		return nil, fmt.Errorf("session: key must be %d bytes", KeySize)
 	}

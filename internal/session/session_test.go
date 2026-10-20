@@ -77,6 +77,23 @@ func TestNewValidatesKey(t *testing.T) {
 	}
 }
 
+func TestNewGeneratesKey(t *testing.T) {
+	t.Parallel()
+	s, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New() without key: %v", err)
+	}
+	acct := domain.Account{Username: "u", Password: "p", ServerURL: "https://dav.example/"}
+	sess, err := s.Login("", acct) // seal with the generated key …
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Account(sess.ID) // … and open again
+	if err != nil || got != acct {
+		t.Fatalf("Account() = %+v, %v", got, err)
+	}
+}
+
 func TestCreateAndGet(t *testing.T) {
 	t.Parallel()
 	s, clk := newStore(t, nil)
