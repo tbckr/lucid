@@ -16,10 +16,6 @@
           LUCID_CACHE_SIZE = 64;
           LUCID_TRUST_PROXY_HEADERS = true;
         };
-        # Test-only key; real deployments keep this file out of the store.
-        environmentFile = pkgs.writeText "lucid.env" ''
-          LUCID_SESSION_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
-        '';
       };
 
       environment.systemPackages = [ pkgs.curl ];
@@ -35,7 +31,10 @@
     # The embedded SPA is served, not the placeholder page.
     machine.succeed("curl -fsS http://127.0.0.1:8080/ | grep -qi '<script'")
 
-    # LUCID_SESSION_KEY arrived through the environment file.
-    machine.fail("journalctl -u lucid.service | grep -q 'LUCID_SESSION_KEY is not set'")
+    # Server mode (LUCID_ADDR is set) always sets the Secure cookie flag.
+    machine.succeed("curl -fsSi http://127.0.0.1:8080/api/v1/session | grep -qi '^set-cookie:.*; secure'")
+
+    # /metrics is served only on LUCID_METRICS_ADDR, not on the main listener.
+    machine.fail("curl -fsS http://127.0.0.1:8080/metrics | grep -q go_goroutines")
   '';
 }

@@ -5,9 +5,7 @@
 # (Caddy, Traefik, nginx, ...) and only expose it to that proxy, or set
 # LUCID_TLS_CERT / LUCID_TLS_KEY to serve HTTPS directly.
 #
-# 1. Create lucid.env next to this file (keep it out of version control):
-#      LUCID_SESSION_KEY=<output of: openssl rand -base64 32>
-# 2. docker compose up -d
+# Start it with: docker compose up -d
 services:
   lucid:
     image: ghcr.io/tbckr/lucid:latest # pin a version (e.g. :1.2.3) or a digest in production
@@ -15,9 +13,6 @@ services:
     # Bind to localhost only; the reverse proxy on the host forwards to it.
     ports:
       - "127.0.0.1:8080:8080"
-    env_file:
-      - path: lucid.env
-        required: true
     environment:
       LUCID_ADDR: ":8080"
       LUCID_LOG_LEVEL: info
@@ -25,9 +20,7 @@ services:
       # reachable exclusively through that proxy.
       LUCID_TRUST_PROXY_HEADERS: "true"
       # Uncomment when your CalDAV server lives on a private network/LAN:
-      # LUCID_ALLOW_PRIVATE_NETWORKS: "true"
-      # or, more narrowly:
-      # LUCID_ALLOWED_CIDRS: "192.168.1.10/32"
+      # LUCID_PRIVATE_NETWORKS: "192.168.1.10/32"   # or "all"
     # Hardening (NFR-21): non-root (set in the image), read-only root FS,
     # no Linux capabilities, no privilege escalation.
     read_only: true

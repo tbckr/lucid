@@ -34,24 +34,11 @@ in
       default = { };
       example = {
         LUCID_TRUST_PROXY_HEADERS = true;
-        LUCID_ALLOWED_CIDRS = "192.168.1.10/32";
+        LUCID_PRIVATE_NETWORKS = "192.168.1.10/32";
       };
       description = ''
         `LUCID_*` environment variables, see the configuration table in the
-        README. These values end up world-readable in the Nix store; set
-        secrets such as `LUCID_SESSION_KEY` through
-        {option}`services.lucid.environmentFile` instead.
-      '';
-    };
-
-    environmentFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      example = "/run/secrets/lucid.env";
-      description = ''
-        File with additional `LUCID_*` variables in systemd `EnvironmentFile`
-        format, e.g. `LUCID_SESSION_KEY=...`. It is read at service start and
-        never copied to the Nix store.
+        README.
       '';
     };
   };
@@ -67,7 +54,6 @@ in
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
-        EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
 
         # Hardening (NFR-21): Lucid keeps no state on disk and needs no
