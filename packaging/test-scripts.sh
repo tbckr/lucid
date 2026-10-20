@@ -19,6 +19,7 @@ trap 'rm -rf "$stub"' EXIT
 cat >"$stub/systemctl" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$CALLS"
+[ -z "${SYSTEMCTL_FAILS:-}" ]
 EOF
 chmod +x "$stub/systemctl"
 
@@ -38,6 +39,18 @@ check() {
   fi
   if [[ "$(cat "$calls")" != "$expected" ]]; then
     echo "FAIL: $script $*: got [$(paste -sd ';' "$calls")], want [${expected//$'\n'/;}]"
+    failed=1
+  fi
+}
+
+# tolerates SCRIPT [ARG...]: SCRIPT must succeed although every systemctl
+# call fails, e.g. a service that does not start again after an upgrade: a
+# failed maintainer script would leave the package half-installed.
+tolerates() {
+  local script=$1
+  shift
+  if ! PATH="$stub:$PATH" CALLS=/dev/null SYSTEMCTL_FAILS=1 sh "$scripts/$script.sh" "$@"; then
+    echo "FAIL: $script $*: exited non-zero when systemctl failed"
     failed=1
   fi
 }
@@ -69,6 +82,11 @@ check preremove "$stop" 0:1.2.3-1
 # deb postrm remove, rpm %postun 0
 check postremove "$reload" remove
 check postremove "$reload" 0
+
+tolerates postinstall configure 1.2.2
+tolerates postinstall 2
+tolerates preremove remove
+tolerates postremove remove
 
 if [[ $failed -ne 0 ]]; then
   exit 1
