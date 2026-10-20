@@ -397,14 +397,20 @@ jobs:
       - name: Maintainer scripts
         run: packaging/test-scripts.sh
 
-      # The snapshot version is 0.0.0-SNAPSHOT-<commit>, a pre-release: each
-      # package must sort before the final 0.0.0.
+      # The snapshot version is a pre-release, <version>-SNAPSHOT-<commit>:
+      # 0.0.0 on a branch, the tag's version in a release run. Each package
+      # must sort before that final version.
+      - name: Final version
+        run: |
+          version="$(jq -r .version dist/metadata.json)"
+          echo "FINAL=${version%%-*}" >>"$GITHUB_ENV"
+
       - name: deb (Ubuntu, systemd)
         run: |
           debs=(dist/lucid_*_linux_amd64.deb)
           [[ ${#debs[@]} -eq 1 && -f ${debs[0]} ]]
           deb="./${debs[0]}"
-          dpkg --compare-versions "$(dpkg-deb -f "$deb" Version)" lt 0.0.0
+          dpkg --compare-versions "$(dpkg-deb -f "$deb" Version)" lt "$FINAL"
 
           sudo apt-get install -y --no-install-recommends "$deb"
           # Installed, but neither enabled nor started.
@@ -416,8 +422,9 @@ jobs:
             sudo apt-get install -y -qq --no-install-recommends desktop-file-utils
           fi
           desktop-file-validate /usr/share/applications/lucid.desktop
-          # verify also reports on other units of the runner; only ours count.
-          verify="$(sudo systemd-analyze verify lucid.service 2>&1)"
+          # Errors only in lucid.service count, not in the units it pulls in;
+          # warnings about it count too.
+          verify="$(sudo systemd-analyze verify --recursive-errors=no lucid.service 2>&1)"
           if grep -i lucid <<<"$verify"; then exit 1; fi
 
           sudo systemctl enable --now lucid
@@ -443,31 +450,32 @@ jobs:
           [[ ! -e /usr/bin/lucid ]]
           sudo test -f /etc/lucid/lucid.env
 
-      # RPM 6 (Fedora 45 and later) refuses unsigned packages by default.
-      # Enforcing it here tests the README's install command on any Fedora.
-      - name: rpm (Fedora, signature checking enforced)
+      # The rpm is unsigned. dnf installs a local package as it is unless
+      # localpkg_gpgcheck is set; the README names --nogpgcheck for that case.
+      # Both commands of the README are tested, the second where dnf checks.
+      - name: rpm (Fedora)
         run: |
-          docker run -i --rm -v "$PWD/dist:/dist:ro" fedora:latest bash -euxo pipefail -s <<'EOF'
+          docker run -i --rm -e FINAL -v "$PWD/dist:/dist:ro" fedora:latest bash -euxo pipefail -s <<'EOF'
           rpms=(/dist/lucid_*_linux_amd64.rpm)
           [[ ${#rpms[@]} -eq 1 && -f ${rpms[0]} ]]
-          echo '%_pkgverify_level all' >/etc/rpm/macros.verify
-          opts=(-y --disablerepo='*' --setopt=install_weak_deps=False)
-          if dnf install "${opts[@]}" "${rpms[0]}"; then
-            echo "an unsigned rpm installed although signatures are enforced" >&2
+          strict=(-y --disablerepo='*' --setopt=localpkg_gpgcheck=True)
+          if dnf install "${strict[@]}" "${rpms[0]}"; then
+            echo "dnf installed an unsigned rpm although it checks local packages" >&2
             exit 1
           fi
-          dnf install "${opts[@]}" --nogpgcheck "${rpms[0]}"
+          dnf install -y --disablerepo='*' "${rpms[0]}"
+          dnf reinstall "${strict[@]}" --nogpgcheck "${rpms[0]}"
           lucid --version
           rpm -q --configfiles lucid | grep -qx /etc/lucid/lucid.env
           test -f /usr/lib/systemd/system/lucid.service
           test -f /usr/share/licenses/lucid/LICENSE
           version="$(rpm -q --qf '%{VERSION}' lucid)"
-          [[ "$(rpm --eval "%{lua: print(rpm.vercmp('$version', '0.0.0'))}")" == -1 ]]
+          [[ "$(rpm --eval "%{lua: print(rpm.vercmp('$version', '$FINAL'))}")" == -1 ]]
           EOF
 
       - name: Arch package
         run: |
-          docker run -i --rm -v "$PWD/dist:/dist:ro" archlinux:latest bash -euxo pipefail -s <<'EOF'
+          docker run -i --rm -e FINAL -v "$PWD/dist:/dist:ro" archlinux:latest bash -euxo pipefail -s <<'EOF'
           pkgs=(/dist/lucid_*_linux_amd64.pkg.tar.zst)
           [[ ${#pkgs[@]} -eq 1 && -f ${pkgs[0]} ]]
           pacman -U --noconfirm "${pkgs[0]}"
@@ -475,7 +483,7 @@ jobs:
           version="$(pacman -Q lucid | cut -d' ' -f2)"
           # nfpm keeps the pre-release part only with an epoch (.goreleaser.yaml).
           [[ $version == *SNAPSHOT* ]]
-          [[ "$(vercmp "$version" 0:0.0.0-1)" == -1 ]]
+          [[ "$(vercmp "$version" "0:$FINAL-1")" == -1 ]]
           pacman -Qii lucid | grep -q '/etc/lucid/lucid.env'
           test -f /usr/lib/systemd/system/lucid.service
           test -f /usr/share/licenses/lucid/LICENSE
