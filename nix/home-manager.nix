@@ -13,17 +13,6 @@ let
   inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin;
 
   credentials = lucidLib.credentials cfg;
-  # systemd expands %d to the credentials directory in Environment=.
-  systemdTLS = {
-    cert = "%d/tls-cert";
-    key = "%d/tls-key";
-  };
-  # launchd has no credentials mechanism: Lucid reads the files directly.
-  rawTLS = {
-    cert = cfg.tls.certFile;
-    key = cfg.tls.keyFile;
-  };
-  environment = tls: lucidLib.environment cfg (if lucidLib.hasTLS cfg then tls else null);
 
   # A file directly in ~/Library/Logs, which always exists: launchd does not
   # create missing directories.
@@ -50,7 +39,7 @@ in
           Service = {
             ExecStart = lib.getExe cfg.package;
             Restart = "on-failure";
-            Environment = lib.mapAttrsToList (n: v: "${n}=${v}") (environment systemdTLS);
+            Environment = lib.mapAttrsToList (n: v: "${n}=${v}") (lucidLib.systemdEnvironment cfg);
             LoadCredential = lib.mkIf (credentials != [ ]) credentials;
 
             # The sandboxing of Home Manager's own syncthing user service,
@@ -87,7 +76,9 @@ in
           enable = true;
           config = {
             ProgramArguments = [ (lib.getExe cfg.package) ];
-            EnvironmentVariables = environment rawTLS;
+            # launchd has no credentials mechanism: Lucid reads the TLS
+            # files directly.
+            EnvironmentVariables = lucidLib.environment cfg;
             RunAtLoad = true;
             KeepAlive = {
               Crashed = true;

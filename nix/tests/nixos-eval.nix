@@ -96,6 +96,33 @@ import ./run-tests.nix {
       expected = "[::]:8080";
     };
 
+    # systemd expands %-specifiers in Environment= and LoadCredential=; an
+    # IPv6 zone or a path with % must reach Lucid unchanged.
+    testPercentEscaped = {
+      expr =
+        let
+          c = eval {
+            mode = "server";
+            address = "fe80::1%eth0";
+            tls.certFile = "/etc/lucid/c%ert.pem";
+            tls.keyFile = "/etc/lucid/key.pem";
+          };
+        in
+        {
+          addr = (env c).LUCID_ADDR;
+          cert = (env c).LUCID_TLS_CERT;
+          cred = c.systemd.services.lucid.serviceConfig.LoadCredential;
+        };
+      expected = {
+        addr = "[fe80::1%%eth0]:8080";
+        cert = "%d/tls-cert";
+        cred = [
+          "tls-cert:/etc/lucid/c%%ert.pem"
+          "tls-key:/etc/lucid/key.pem"
+        ];
+      };
+    };
+
     testTuning = {
       expr = env (eval {
         privateNetworks = [

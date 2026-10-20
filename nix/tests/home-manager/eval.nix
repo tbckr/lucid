@@ -93,6 +93,25 @@ import "${lucid}/nix/tests/run-tests.nix" {
       ];
     };
 
+    # systemd needs % escaped, launchd takes values as they are.
+    testPercentPerPlatform = {
+      expr =
+        let
+          cfg = {
+            mode = "server";
+            address = "fe80::1%eth0";
+          };
+        in
+        {
+          linux = (hmEval linux cfg).systemd.user.services.lucid.Service.Environment;
+          darwin = (hmEval darwin cfg).launchd.agents.lucid.config.EnvironmentVariables.LUCID_ADDR;
+        };
+      expected = {
+        linux = [ "LUCID_ADDR=[fe80::1%%eth0]:8080" ];
+        darwin = "[fe80::1%eth0]:8080";
+      };
+    };
+
     testDarwinLocal = {
       expr =
         let

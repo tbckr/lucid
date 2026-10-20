@@ -12,15 +12,6 @@ let
   cfg = config.services.lucid;
   lucidLib = import ./lib.nix { inherit lib; };
 
-  # systemd expands %d to the credentials directory in Environment=.
-  tls =
-    if lucidLib.hasTLS cfg then
-      {
-        cert = "%d/tls-cert";
-        key = "%d/tls-key";
-      }
-    else
-      null;
   credentials = lucidLib.credentials cfg;
 
   # Binding a port below 1024 needs CAP_NET_BIND_SERVICE in the host's user
@@ -71,7 +62,7 @@ in
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
 
-      environment = lucidLib.environment cfg tls;
+      environment = lucidLib.systemdEnvironment cfg;
 
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;

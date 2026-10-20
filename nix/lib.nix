@@ -13,10 +13,10 @@ rec {
 
   icon = ../web/public/favicon.svg;
 
-  # The LUCID_* variables for cfg. tls says where the process finds the
-  # certificate and key ({ cert, key }), or is null without TLS.
+  # The LUCID_* variables for cfg, as Lucid reads them (launchd passes them
+  # on unchanged).
   environment =
-    cfg: tls:
+    cfg:
     let
       local = cfg.mode == "local";
       # toJSON renders 0.5 as "0.5"; toString would give "0.500000".
@@ -54,9 +54,9 @@ rec {
           LUCID_ADDR = hostPort cfg.address cfg.port;
         }
         // lib.optionalAttrs cfg.trustProxyHeaders { LUCID_TRUST_PROXY_HEADERS = "true"; }
-        // lib.optionalAttrs (tls != null) {
-          LUCID_TLS_CERT = tls.cert;
-          LUCID_TLS_KEY = tls.key;
+        // lib.optionalAttrs (hasTLS cfg) {
+          LUCID_TLS_CERT = cfg.tls.certFile;
+          LUCID_TLS_KEY = cfg.tls.keyFile;
         }
         // lib.optionalAttrs cfg.metrics.enable {
           LUCID_METRICS_ADDR = hostPort cfg.metrics.address cfg.metrics.port;
@@ -66,13 +66,27 @@ rec {
   # Whether Lucid serves TLS itself.
   hasTLS = cfg: cfg.mode == "server" && cfg.tls.certFile != null && cfg.tls.keyFile != null;
 
+  # systemd expands %-specifiers in Environment= and LoadCredential=, so a %
+  # in a value (an IPv6 zone, a path) must be doubled to reach Lucid as is.
+  escapeSpecifiers = lib.replaceStrings [ "%" ] [ "%%" ];
+
+  # environment for a systemd unit: values escaped, and the TLS files taken
+  # from the credentials directory (%d) that credentials fills.
+  systemdEnvironment =
+    cfg:
+    lib.mapAttrs (_: escapeSpecifiers) (environment cfg)
+    // lib.optionalAttrs (hasTLS cfg) {
+      LUCID_TLS_CERT = "%d/tls-cert";
+      LUCID_TLS_KEY = "%d/tls-key";
+    };
+
   # systemd LoadCredential= entries for the TLS files (strings, never store
   # paths: types.externalPath).
   credentials =
     cfg:
     lib.optionals (hasTLS cfg) [
-      "tls-cert:${cfg.tls.certFile}"
-      "tls-key:${cfg.tls.keyFile}"
+      "tls-cert:${escapeSpecifiers cfg.tls.certFile}"
+      "tls-key:${escapeSpecifiers cfg.tls.keyFile}"
     ];
 
   serverOnlyMessage =
