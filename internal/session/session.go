@@ -5,6 +5,10 @@
 // so a ciphertext cannot be moved to another session. The store itself never
 // keeps raw session IDs: entries are keyed by SHA-256(ID), so a memory dump of
 // the map alone does not yield usable cookies.
+//
+// Every session also owns a bounded diagnostics buffer (FR-36): the recent
+// CalDAV exchanges and problems of that session, as metadata only (NFR-36).
+// It lives and dies with the session, in memory.
 package session
 
 import (
@@ -23,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -103,6 +108,10 @@ type entry struct {
 	expires   time.Time
 	lastSeen  atomic.Int64 // unix nanos; updated under the read lock
 	anonElem  *list.Element
+	// diag is the session's diagnostics buffer (FR-36). It is never nil, and
+	// is not changed once the entry is in the map: Login and Demote set it
+	// before they add the entry.
+	diag *diag.Buffer
 }
 
 type hashKey [sha256.Size]byte
@@ -169,14 +178,9 @@ func (s *Store) Create() (Session, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for s.anon.Len() >= s.opts.MaxAnonymous {
-		s.removeLocked(s.anon.Front().Value.(hashKey)) //nolint:forcetypeassert // list only holds hashKeys
+	if err := s.addAnonymousLocked(k, e); err != nil {
+		return Session{}, err
 	}
-	if len(s.sessions) >= s.opts.MaxSessions {
-		return Session{}, ErrFull
-	}
-	e.anonElem = s.anon.PushBack(k)
-	s.sessions[k] = e
 	return snapshot(id, e), nil
 }
 
@@ -212,9 +216,25 @@ func (s *Store) Account(id string) (domain.Account, error) {
 	return acct, nil
 }
 
+// Diagnostics returns the diagnostics buffer of a session (FR-36), with the
+// errors of Get; it refreshes the idle timer too. The buffer is the same one
+// on every call for as long as the session lives, and safe for concurrent use.
+// Deleting the session does not empty a buffer someone still holds, the store
+// just stops handing it out.
+func (s *Store) Diagnostics(id string) (*diag.Buffer, error) {
+	e, err := s.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	return e.diag, nil
+}
+
 // Login creates a new authenticated session for acct and destroys oldID
 // (if any). Issuing a fresh ID and CSRF token on login prevents session
-// fixation.
+// fixation. The new session takes over the diagnostics buffer of oldID, so
+// what was recorded while logging in survives the login, with the limits of
+// a session (diag.SessionLimits, FR-36); without an old session it starts with
+// an empty one.
 func (s *Store) Login(oldID string, acct domain.Account) (Session, error) {
 	id, e := s.newEntry()
 	plain, err := json.Marshal(acct) //nolint:gosec // G117: serialized only to be encrypted right below
@@ -232,13 +252,59 @@ func (s *Store) Login(oldID string, acct domain.Account) (Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if oldID != "" {
-		s.removeLocked(hashID(oldID))
+		k := hashID(oldID)
+		if old, ok := s.sessions[k]; ok {
+			e.diag = old.diag
+		}
+		s.removeLocked(k)
 	}
 	if len(s.sessions) >= s.opts.MaxSessions {
 		return Session{}, ErrFull
 	}
+	e.diag.SetLimits(diag.SessionLimits)
 	s.sessions[hashID(id)] = e
 	return snapshot(id, e), nil
+}
+
+// Demote replaces the authenticated session id by a new anonymous one, for a
+// session whose credentials the CalDAV server no longer accepts. The new
+// session has a new ID and CSRF token, the anonymous lifetime and counts
+// against MaxAnonymous like one from Create; id is gone. It holds none of the
+// account, but a copy of the diagnostics buffer without what is not
+// pseudonymous (diag.Buffer.WithoutObjects), so the problem report can still
+// be downloaded after the forced logout (FR-36, NFR-36). The old buffer is left
+// as it was.
+//
+// It fails with ErrNotFound or ErrExpired like Get, and with
+// ErrNotAuthenticated for an anonymous session, which is left as it is.
+func (s *Store) Demote(id string) (Session, error) {
+	if !validID(id) {
+		return Session{}, ErrNotFound
+	}
+	k := hashID(id)
+	newID, e := s.newEntry()
+	e.expires = e.created.Add(s.opts.AnonymousTTL)
+	nk := hashID(newID)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old, ok := s.sessions[k]
+	if !ok {
+		return Session{}, ErrNotFound
+	}
+	if s.expired(old, s.opts.Now()) {
+		s.removeLocked(k)
+		return Session{}, ErrExpired
+	}
+	if old.sealed == nil {
+		return Session{}, ErrNotAuthenticated
+	}
+	e.diag = old.diag.WithoutObjects()
+	s.removeLocked(k) // frees its slot first, as Login does
+	if err := s.addAnonymousLocked(nk, e); err != nil {
+		return Session{}, err
+	}
+	return snapshot(newID, e), nil
 }
 
 // Delete destroys a session. Unknown IDs are ignored.
@@ -331,9 +397,26 @@ func (s *Store) removeLocked(k hashKey) {
 	delete(s.sessions, k)
 }
 
+// addAnonymousLocked stores the anonymous entry e under k. It first evicts the
+// oldest anonymous sessions until there is room under MaxAnonymous, and fails
+// with ErrFull if the store holds MaxSessions then.
+func (s *Store) addAnonymousLocked(k hashKey, e *entry) error {
+	for s.anon.Len() >= s.opts.MaxAnonymous {
+		s.removeLocked(s.anon.Front().Value.(hashKey)) //nolint:forcetypeassert // list only holds hashKeys
+	}
+	if len(s.sessions) >= s.opts.MaxSessions {
+		return ErrFull
+	}
+	e.anonElem = s.anon.PushBack(k)
+	s.sessions[k] = e
+	return nil
+}
+
+// newEntry returns a new ID and an entry with a fresh CSRF token and an empty
+// diagnostics buffer with diag.AnonymousLimits (FR-36).
 func (s *Store) newEntry() (string, *entry) {
 	now := s.opts.Now()
-	e := &entry{csrf: randomToken(tokenBytes), created: now}
+	e := &entry{csrf: randomToken(tokenBytes), created: now, diag: diag.NewBuffer(diag.AnonymousLimits)}
 	e.lastSeen.Store(now.UnixNano())
 	return randomToken(idBytes), e
 }
