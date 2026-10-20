@@ -59,8 +59,11 @@ in
     systemd.services.lucid = {
       description = "Lucid CalDAV web client";
       wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      # Local mode only binds loopback, so it need not wait for the network
+      # (an offline laptop would delay it); a server may bind a configured
+      # address.
+      wants = lib.optional (cfg.mode == "server") "network-online.target";
+      after = [ (if cfg.mode == "server" then "network-online.target" else "network.target") ];
 
       environment = lucidLib.systemdEnvironment cfg;
 

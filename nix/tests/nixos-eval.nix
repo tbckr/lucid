@@ -266,6 +266,35 @@ import ./run-tests.nix {
       ];
     };
 
+    # Local mode only binds loopback: an offline laptop must not delay it.
+    testNetworkOrdering = {
+      expr =
+        map
+          (
+            c:
+            let
+              s = (eval c).systemd.services.lucid;
+            in
+            {
+              inherit (s) after wants;
+            }
+          )
+          [
+            { }
+            { mode = "server"; }
+          ];
+      expected = [
+        {
+          after = [ "network.target" ];
+          wants = [ ];
+        }
+        {
+          after = [ "network-online.target" ];
+          wants = [ "network-online.target" ];
+        }
+      ];
+    };
+
     testLowPortCapabilities = {
       expr =
         lib.getAttrs [ "AmbientCapabilities" "CapabilityBoundingSet" "PrivateUsers" ]
