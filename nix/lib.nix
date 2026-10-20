@@ -2,10 +2,14 @@
 # in nix/options.nix mean for Lucid's environment.
 { lib }:
 rec {
-  # host:port as Go's net.Listen expects it, with IPv6 hosts in brackets.
+  # host:port as Go's net.Listen expects it, with IPv6 hosts in brackets,
+  # whether or not the address was written with them.
   hostPort =
     address: port:
-    if lib.hasInfix ":" address then "[${address}]:${toString port}" else "${address}:${toString port}";
+    let
+      host = lib.removePrefix "[" (lib.removeSuffix "]" address);
+    in
+    if lib.hasInfix ":" host then "[${host}]:${toString port}" else "${host}:${toString port}";
 
   # Where the app-menu entry points. 127.0.0.1, not localhost: localhost may
   # resolve to ::1, where local mode does not listen (FR-35).
@@ -115,5 +119,26 @@ rec {
         assertion = (cfg.tls.certFile == null) == (cfg.tls.keyFile == null);
         message = "services.lucid.tls.certFile and services.lucid.tls.keyFile must be set together.";
       }
+      {
+        assertion = !(cfg.mode == "server" && cfg.metrics.enable && metricsCollides cfg);
+        message = "services.lucid.metrics needs a port of its own: it collides with services.lucid.port on the same address.";
+      }
     ];
+
+  # Whether the metrics listener would bind what the main listener binds: the
+  # same port on the same address, or on a wildcard address covering it.
+  metricsCollides =
+    cfg:
+    let
+      wildcard =
+        a:
+        lib.elem a [
+          ""
+          "0.0.0.0"
+          "::"
+          "[::]"
+        ];
+    in
+    cfg.metrics.port == cfg.port
+    && (cfg.metrics.address == cfg.address || wildcard cfg.address || wildcard cfg.metrics.address);
 }

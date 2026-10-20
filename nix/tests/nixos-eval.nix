@@ -179,6 +179,93 @@ import ./run-tests.nix {
       expected = true;
     };
 
+    # Values Lucid would reject at start, or read as unset, fail at
+    # evaluation instead.
+    testEmptyPrivateNetworkEntryRejected = {
+      expr = rejects { privateNetworks = [ "" ]; };
+      expected = true;
+    };
+
+    testPortZeroRejected = {
+      expr = rejects { port = 0; };
+      expected = true;
+    };
+
+    testZeroDurationRejected = {
+      expr = rejects { session.ttl = "0s"; };
+      expected = true;
+    };
+
+    # The positive-duration check must not reject positive values written
+    # with zeros.
+    testDurationsWithZerosAccepted = {
+      expr = lib.getAttrs [ "LUCID_CACHE_FRESHNESS" "LUCID_SESSION_TTL" ] (
+        env (eval {
+          cache.freshness = "0.5s";
+          session.ttl = "0h30m";
+        })
+      );
+      expected = {
+        LUCID_CACHE_FRESHNESS = "0.5s";
+        LUCID_SESSION_TTL = "0h30m";
+      };
+    };
+
+    testBracketedAddress = {
+      expr =
+        (env (eval {
+          mode = "server";
+          address = "[::1]";
+        })).LUCID_ADDR;
+      expected = "[::1]:8080";
+    };
+
+    testMetricsCollision = {
+      expr =
+        map
+          (
+            c:
+            failed (
+              eval (
+                {
+                  mode = "server";
+                }
+                // c
+              )
+            )
+          )
+          [
+            {
+              metrics = {
+                enable = true;
+                port = 8080;
+              };
+            }
+            {
+              address = "0.0.0.0";
+              metrics = {
+                enable = true;
+                port = 8080;
+              };
+            }
+            {
+              metrics = {
+                enable = true;
+                port = 9100;
+              };
+            }
+          ];
+      expected = [
+        [
+          "services.lucid.metrics needs a port of its own: it collides with services.lucid.port on the same address."
+        ]
+        [
+          "services.lucid.metrics needs a port of its own: it collides with services.lucid.port on the same address."
+        ]
+        [ ]
+      ];
+    };
+
     testLowPortCapabilities = {
       expr =
         lib.getAttrs [ "AmbientCapabilities" "CapabilityBoundingSet" "PrivateUsers" ]

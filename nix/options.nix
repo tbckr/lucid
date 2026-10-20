@@ -11,9 +11,17 @@ let
   inherit (lib) mkOption types;
   cfg = config.services.lucid;
 
-  goDuration = types.strMatching "([0-9]+(\\.[0-9]*)?(ns|us|µs|μs|ms|s|m|h))+" // {
-    description = "Go duration (e.g. 90s, 15m, 12h)";
-  };
+  # Not types.port: 0 would let the system pick a port.
+  port = types.ints.between 1 65535;
+
+  # Lucid only takes positive durations: at least one non-zero digit.
+  goDuration =
+    types.addCheck (types.strMatching "([0-9]+(\\.[0-9]*)?(ns|us|µs|μs|ms|s|m|h))+") (
+      s: builtins.match ".*[1-9].*" s != null
+    )
+    // {
+      description = "positive Go duration (e.g. 90s, 15m, 12h)";
+    };
 
   # Tuning options are null unless set, so Lucid's own defaults apply.
   tuning =
@@ -45,7 +53,7 @@ in
     };
 
     port = mkOption {
-      type = types.port;
+      type = port;
       default = if cfg.mode == "local" then 3456 else 8080;
       defaultText = lib.literalMD "`3456` in local mode, `8080` in server mode";
       description = ''
@@ -111,7 +119,7 @@ in
         description = "Address of the metrics listener. Keep it internal.";
       };
       port = mkOption {
-        type = types.port;
+        type = port;
         example = 9100;
         description = "Port of the metrics listener; required with {option}`metrics.enable`.";
       };
@@ -122,7 +130,7 @@ in
         types.either (types.enum [
           "all"
           "none"
-        ]) (types.nonEmptyListOf types.str)
+        ]) (types.nonEmptyListOf types.nonEmptyStr)
       );
       default = null;
       example = [ "192.168.1.10/32" ];
