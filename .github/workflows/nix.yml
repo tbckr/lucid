@@ -1,4 +1,5 @@
-# Nix support (flake.nix): the package, the dev shell and the NixOS module.
+# Nix support (flake.nix): the package, the dev shell, the NixOS module and
+# the Home Manager module.
 # Runs on Linux and macOS because the dev shell is meant for both.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
@@ -51,10 +52,16 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       # Builds the package (with the cmd/lucid tests and the NFR-31 source map
-      # gate), the dev shell and the formatting check; on Linux also boots
-      # the NixOS module test VM.
+      # gate), the dev shell and the formatting check; on Linux also runs the
+      # NixOS module's eval tests and boots its test VMs.
       - name: Flake check
         run: nix flake check --print-build-logs --keep-going
+
+      # The Home Manager module's tests live in a flake of their own, so Home
+      # Manager is no input of the main flake: eval tests everywhere, a VM with
+      # two users' services on Linux, the generated launchd agent on macOS.
+      - name: Home Manager test flake
+        run: nix flake check --print-build-logs --keep-going ./nix/tests/home-manager
 
       - name: Smoke test the package
         run: |

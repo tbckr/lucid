@@ -67,6 +67,17 @@
               ;
           };
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          vm = pkgs.testers.runNixOSTest (import ./vm.nix { inherit lucid home-manager; });
+        }
+        # launchd cannot run in CI; check the agent Home Manager generates.
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          launchd-plist = pkgs.runCommand "lucid-launchd-plist" { } ''
+            grep -q '<string>3456</string>' \
+              ${(hmConfiguration system { }).activationPackage}/LaunchAgents/org.nix-community.home.lucid.plist
+            touch $out
+          '';
+        }
       );
     };
 }
