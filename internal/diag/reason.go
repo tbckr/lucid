@@ -9,33 +9,15 @@ import (
 const maxReason = 300
 
 // fixedNames are the uppercase tokens a parser message may carry without
-// them being calendar content: names of the protocols and of the iCalendar
-// vocabulary (RFC 5545), which the parsers use in their wording ("invalid
-// VEVENT STATUS"). A token is a run of capitals and inner hyphens (UTF-8 is the
-// one with a digit); anything else uppercase is dropped by Reason.
-var fixedNames = []string{
-	// Parsers and encodings.
-	"EOF", "XML", "UTF", "UTF-8",
-	// Components (3.6).
-	"VCALENDAR", "VEVENT", "VTODO", "VJOURNAL", "VFREEBUSY", "VTIMEZONE", "VALARM", "STANDARD", "DAYLIGHT",
-	// Properties (3.7, 3.8).
-	"CALSCALE", "METHOD", "PRODID", "VERSION",
-	"ATTACH", "CATEGORIES", "CLASS", "COMMENT", "DESCRIPTION", "GEO", "LOCATION", "PERCENT-COMPLETE",
-	"PRIORITY", "RESOURCES", "STATUS", "SUMMARY",
-	"COMPLETED", "DTEND", "DUE", "DTSTART", "DURATION", "FREEBUSY", "TRANSP",
-	"TZID", "TZNAME", "TZOFFSETFROM", "TZOFFSETTO", "TZURL",
-	"ATTENDEE", "CONTACT", "ORGANIZER", "RECURRENCE-ID", "RELATED-TO", "URL", "UID",
-	"EXDATE", "RDATE", "RRULE",
-	"ACTION", "REPEAT", "TRIGGER",
-	"CREATED", "DTSTAMP", "LAST-MODIFIED", "SEQUENCE",
-	"REQUEST-STATUS", "BEGIN", "END",
-	// Parameters (3.2).
-	"ALTREP", "CN", "CUTYPE", "DELEGATED-FROM", "DELEGATED-TO", "DIR", "ENCODING", "FMTTYPE", "FBTYPE",
-	"LANGUAGE", "MEMBER", "PARTSTAT", "RANGE", "RELATED", "RELTYPE", "ROLE", "RSVP", "SENT-BY", "VALUE",
-	// Value types (3.3).
+// them being calendar content: the parsers' own words, the iCalendar
+// vocabulary (icalNames), which the parsers use in their wording ("invalid
+// VEVENT STATUS"), and the names of the value types (RFC 5545 3.3). A token is a
+// run of capitals and inner hyphens (UTF-8 is the one with a digit); anything
+// else uppercase is dropped by Reason.
+var fixedNames = append(append([]string{"EOF", "XML", "UTF", "UTF-8"}, icalNames...),
 	"BINARY", "BOOLEAN", "CAL-ADDRESS", "DATE", "DATE-TIME", "FLOAT", "INTEGER", "PERIOD", "RECUR", "TEXT",
 	"TIME", "URI", "UTC-OFFSET",
-}
+)
 
 var (
 	// runeLiteral matches a Go-quoted rune, 'x' with backslash escapes. It is

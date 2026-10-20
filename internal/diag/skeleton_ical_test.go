@@ -253,7 +253,7 @@ func TestICalSkeletonMalformed(t *testing.T) {
 		{"unterminated quote", `ATTENDEE;CN="Bob zz-canary:mailto:bob@zz-canary.example`, "<malformed line>"},
 		{"quote that closes late", `ATTENDEE;CN="Bob: zz-canary":mailto:x`, "ATTENDEE;CN=…:…"},
 		{"parameter without a value", "ATTENDEE;zz-canary:mailto:x", "ATTENDEE;…:…"},
-		{"parameter named like text", "ATTENDEE;zz canary=1:mailto:x", "ATTENDEE;…:…"},
+		{"parameter named like text", "ATTENDEE;zz canary=1:mailto:x", "ATTENDEE;…=…:…"},
 		{"no parameter at all", "ATTENDEE;:mailto:x", "ATTENDEE;…:…"},
 		{"empty parameter before one", "ATTENDEE;;CN=x:mailto:x", "ATTENDEE;…;CN=…:…"},
 		{"blank line first", "\nSUMMARY:x", "SUMMARY:…"},
@@ -337,11 +337,79 @@ func TestICalSkeletonMasksWhatDoesNotLookRight(t *testing.T) {
 	}
 }
 
-func TestICalSkeletonKeepsKeywordCase(t *testing.T) {
+// TestICalSkeletonMasksNamesThatAreNotNames: names are judged by what they are,
+// not by how they are spelled. A line that lost its fold or an unescaped line
+// break in a text has text where a name should be ("Bob: bring the files"), and
+// a document that a parser rejected is where that happens.
+func TestICalSkeletonMasksNamesThatAreNotNames(t *testing.T) {
 	t.Parallel()
-	// Names are case-insensitive in iCalendar; what is kept stays as sent.
-	got := icalText(t, crlf("dtstart;tzid=Europe/Berlin;value=date:20240315", "summary:zz-canary", "status:confirmed", "rrule:freq=daily;until=20240315"))
-	want := "dtstart;tzid=Europe/Berlin;value=date:00000000\nsummary:…\nstatus:confirmed\nrrule:freq=daily;until=00000000"
+	tests := []struct{ line, want string }{
+		{"Bob: bring the files", "…:…"},
+		{"Diagnose;Depression=x:y", "…;…=…:…"},
+		{"Bob;Smith:zz-canary", "…;…:…"},
+		{"Bob;Smith=:zz-canary", "…;…=:…"},
+		{"Bob:", "…:"},
+		{"ATTENDEE;Bob=x;CN=y;Smith:z", "ATTENDEE;…=…;CN=…;…:…"},
+		{"ATTENDEE;PARTSTAT=ACCEPTED;Bob=ACCEPTED:z", "ATTENDEE;PARTSTAT=ACCEPTED;…=…:…"},
+		// Only uppercase names are the names.
+		{"Status:CONFIRMED", "…:…"},
+		{"status:confirmed", "…:…"},
+		{"dtstart;tzid=Europe/Berlin;value=date:20240315", "…;…=…;…=…:…"},
+		{"rrule:freq=daily", "…:…"},
+		{"ATTENDEE;Cn=Bob;partstat=ACCEPTED:z", "ATTENDEE;…=…;…=…:…"},
+		{"begin:VEVENT", "…:…"},
+		// X-names are the vendors', in uppercase.
+		{"X-MOZ-LASTACK:20240101T000000Z", "X-MOZ-LASTACK:…"},
+		{"X-WR-CALNAME;X-LANG=de:zz-canary", "X-WR-CALNAME;X-LANG=…:…"},
+		{"X-Men:zz-canary", "…:…"},
+		{"X-:zz-canary", "…:…"},
+		{"X-A_B:zz-canary", "<malformed line>"}, // an underscore is no part of a name
+		{"x-wr-calname:zz-canary", "…:…"},
+		// BEGIN and END show a name or nothing.
+		{"BEGIN:VEVENT", "BEGIN:VEVENT"},
+		{"BEGIN:X-VENDOR-THING", "BEGIN:X-VENDOR-THING"},
+		{"BEGIN:Bob", "BEGIN:…"},
+		{"END:Bob", "END:…"},
+		{"BEGIN:vevent", "BEGIN:…"},
+		{"BEGIN:X-Men", "BEGIN:…"},
+		{"END:zz-canary", "END:…"},
+		// The names of RFC 6638, 7986, 9073 and 9074.
+		{"COLOR:turquoise", "COLOR:…"},
+		{"NAME:zz-canary", "NAME:…"},
+		{"REFRESH-INTERVAL;VALUE=DURATION:P1D", "REFRESH-INTERVAL;VALUE=DURATION:…"},
+		{"IMAGE;VALUE=URI;DISPLAY=BADGE:https://zz-canary.example/i.png", "IMAGE;VALUE=URI;DISPLAY=…:…"},
+		{"CONFERENCE;VALUE=URI;FEATURE=AUDIO;LABEL=zz-canary:https://zz-canary.example", "CONFERENCE;VALUE=URI;FEATURE=…;LABEL=…:…"},
+		{"ATTENDEE;SCHEDULE-AGENT=CLIENT;SCHEDULE-STATUS=\"1.2\";SCHEDULE-FORCE-SEND=REQUEST:x", "ATTENDEE;SCHEDULE-AGENT=…;SCHEDULE-STATUS=…;SCHEDULE-FORCE-SEND=…:…"},
+		{"PARTICIPANT-TYPE:ACTIVE", "PARTICIPANT-TYPE:…"},
+		{"CALENDAR-ADDRESS:mailto:zz-canary@example.com", "CALENDAR-ADDRESS:…"},
+		{"STYLED-DESCRIPTION;VALUE=TEXT:zz-canary", "STYLED-DESCRIPTION;VALUE=TEXT:…"},
+		{"STRUCTURED-DATA;VALUE=TEXT:zz-canary", "STRUCTURED-DATA;VALUE=TEXT:…"},
+		{"ACKNOWLEDGED:20240101T000000Z", "ACKNOWLEDGED:…"},
+		{"PROXIMITY:ARRIVE", "PROXIMITY:…"},
+		{"BEGIN:VLOCATION", "BEGIN:VLOCATION"},
+		{"END:PARTICIPANT", "END:PARTICIPANT"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.line, func(t *testing.T) {
+			t.Parallel()
+			got := icalText(t, crlf(tc.line))
+			if got != tc.want {
+				t.Errorf("ICalSkeleton(%q) = %q, want %q", tc.line, got, tc.want)
+			}
+			for _, leak := range []string{"Bob", "Smith", "Diagnose", "Depression", "bring", "canary", "turquoise"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("ICalSkeleton(%q) = %q leaks %q", tc.line, got, leak)
+				}
+			}
+		})
+	}
+}
+
+func TestICalSkeletonLowercaseZoneIsNoZone(t *testing.T) {
+	t.Parallel()
+	// A component whose name is not shown is not a time zone either.
+	got := icalText(t, crlf("BEGIN:vtimezone", "TZID:Europe/Berlin", "END:vtimezone", "TZID:Europe/Berlin"))
+	want := "BEGIN:…\nTZID:…\nEND:…\nTZID:…"
 	if got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
 	}

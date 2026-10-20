@@ -2,12 +2,13 @@ package diag
 
 import (
 	"bytes"
+	"iter"
 	"regexp"
 	"strings"
 )
 
 // malformedLine stands for a line that is no content line: no colon, or a
-// name that is not one.
+// name that cannot be one.
 const malformedLine = "<malformed line>"
 
 // dateKept are the characters, besides digits, that a date, a date-time and a
@@ -109,10 +110,13 @@ var rruleParts = map[string]*regexp.Regexp{
 // "<malformed line>".
 //
 // A line is unfolded (CRLF or LF, then a space or tab) and split into
-// NAME;PARAM=VALUE:VALUE, quote-aware. Every value is masked as "…" (an empty
-// one stays empty) except:
+// NAME;PARAM=VALUE:VALUE, quote-aware. A name is shown only if it is a name
+// (knownName: the vocabulary of icalNames in uppercase, or an uppercase
+// x-name); any other is "…", and so is its value: on malformed input a name is
+// as likely to be somebody's text as a value is. Every value is masked as "…"
+// (an empty one stays empty) except:
 //
-//   - BEGIN and END values that look like names, and the values of VERSION,
+//   - BEGIN and END values that are names, and the values of VERSION,
 //     CALSCALE, METHOD, PRODID, STATUS, CLASS, TRANSP, ACTION, PRIORITY,
 //     SEQUENCE, PERCENT-COMPLETE, REPEAT, DURATION and TRIGGER that look
 //     like what they hold (PRODID: anything);
@@ -122,49 +126,62 @@ var rruleParts = map[string]*regexp.Regexp{
 //     masked like a date;
 //   - the time zone properties inside a VTIMEZONE, as they are.
 //
-// Parameter names stay. Parameter values are masked, except TZID and the
-// enumerations VALUE, RELATED, RANGE, FBTYPE, ENCODING, PARTSTAT, ROLE, CUTYPE
-// and RSVP. The text is cut on a line boundary at MaxSkeleton bytes.
+// Parameter values are masked, except TZID and the enumerations VALUE,
+// RELATED, RANGE, FBTYPE, ENCODING, PARTSTAT, ROLE, CUTYPE and RSVP. The text
+// is cut on a line boundary at MaxSkeleton bytes.
 func ICalSkeleton(data []byte) Skeleton {
-	var (
-		out   capped
-		state icalState
-		cur   []byte // the logical line being unfolded
-		open  bool
-	)
-	flush := func() bool {
-		if !open {
-			return true
-		}
-		open = false
-		return out.add(oneLine(state.render(string(cur))))
-	}
-	for len(data) > 0 {
-		var line []byte
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			line, data = data[:i], data[i+1:]
-		} else {
-			line, data = data, nil
-		}
-		line = bytes.TrimSuffix(line, []byte{'\r'})
-		if open && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-			cur = append(cur, line[1:]...) // a fold: the line goes on
-			continue
-		}
-		if !flush() {
-			return out.skeleton()
-		}
-		if len(line) > 0 { // a blank line only ends the one before
-			cur = append(cur[:0], line...)
-			open = true
+	var out capped
+	for line := range icalLines(data) {
+		if !out.add(line) {
+			break
 		}
 	}
-	flush()
 	return out.skeleton()
 }
 
+// icalLines yields the skeleton line of every content line, whole, in order. A
+// consumer that is full stops it, and nothing after the line it stopped at is
+// read.
+func icalLines(data []byte) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		var (
+			state icalState
+			cur   []byte // the logical line being unfolded
+			open  bool
+		)
+		flush := func() bool {
+			if !open {
+				return true
+			}
+			open = false
+			return yield(oneLine(state.render(string(cur))))
+		}
+		for len(data) > 0 {
+			var line []byte
+			if i := bytes.IndexByte(data, '\n'); i >= 0 {
+				line, data = data[:i], data[i+1:]
+			} else {
+				line, data = data, nil
+			}
+			line = bytes.TrimSuffix(line, []byte{'\r'})
+			if open && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+				cur = append(cur, line[1:]...) // a fold: the line goes on
+				continue
+			}
+			if !flush() {
+				return
+			}
+			if len(line) > 0 { // a blank line only ends the one before
+				cur = append(cur[:0], line...)
+				open = true
+			}
+		}
+		flush()
+	}
+}
+
 // icalState is what the lines before one tell about it: the components it sits
-// in, upper-cased; "" for one whose name is not one.
+// in; "" for one whose name is not shown.
 type icalState struct {
 	stack []string
 }
@@ -180,35 +197,36 @@ func (s *icalState) render(line string) string {
 	if !isToken(name) {
 		return malformedLine
 	}
-	upper := strings.ToUpper(name)
 
 	switch {
-	case upper == "BEGIN" || upper == "END":
-		s.track(upper == "BEGIN", value)
-		if value != "" && !isToken(value) {
+	case name == "BEGIN" || name == "END":
+		s.track(name == "BEGIN", value)
+		if value != "" && !knownName(value) {
 			value = mask
 		}
-	case zoneProps[upper] && s.inZone():
-		return line
+	case zoneProps[name] && s.inZone():
+		// The value stays as sent, the parameters as anywhere.
 	default:
-		value = propertyValue(upper, params, value)
+		value = propertyValue(name, params, value)
+	}
+	if !knownName(name) {
+		name = mask
 	}
 	return composeLine(name, params, value)
 }
 
 // track records a BEGIN or an END.
 func (s *icalState) track(begin bool, value string) {
-	name := strings.ToUpper(value)
 	switch {
-	case begin && isToken(value):
-		s.stack = append(s.stack, name)
+	case begin && knownName(value):
+		s.stack = append(s.stack, value)
 	case begin:
 		s.stack = append(s.stack, "")
-	case isToken(value):
+	case knownName(value):
 		// An END closes the innermost component of its name, and what is
 		// open inside that one.
 		for i := len(s.stack) - 1; i >= 0; i-- {
-			if s.stack[i] == name {
+			if s.stack[i] == value {
 				s.stack = s.stack[:i]
 				return
 			}
@@ -244,31 +262,42 @@ func composeLine(name string, params []string, value string) string {
 	return b.String()
 }
 
-// renderParam shows a parameter: its name if it is one, and its value if it is
-// kept. TZID is kept as sent, and so is a TZID nobody would call a zone: it is
-// what time zone bugs hinge on, and the design decides that it is not personal.
+// renderParam shows a parameter: its name if it is a name, and its value if it
+// is kept; a parameter that is neither a name nor has a value to show is "…".
+// TZID is kept as sent, and so is a TZID nobody would call a zone: it is what
+// time zone bugs hinge on, and the design decides that it is not personal.
 func renderParam(param string) string {
 	name, value, ok := strings.Cut(param, "=")
-	if !ok || !isToken(name) {
+	if !ok {
 		return mask
 	}
-	upper := strings.ToUpper(name)
-	if value != "" && upper != "TZID" && !matches(keptParams[upper], value) {
+	if !knownName(name) {
+		name, value = mask, maskNonEmpty(value)
+	} else if value != "" && name != "TZID" && !matches(keptParams[name], value) {
 		value = mask
 	}
 	return name + "=" + value
 }
 
-// propertyValue shows the value of a property.
-func propertyValue(upper string, params []string, value string) string {
+// maskNonEmpty is mask for a value that is there, and nothing for one that is not.
+func maskNonEmpty(value string) string {
+	if value == "" {
+		return ""
+	}
+	return mask
+}
+
+// propertyValue shows the value of the property called name, which is only
+// the property of that name if it is written in uppercase.
+func propertyValue(name string, params []string, value string) string {
 	switch {
 	case value == "":
 		return ""
-	case dateProps[upper] || upper == "TRIGGER" && hasDateTimeValue(params):
+	case dateProps[name] || name == "TRIGGER" && hasDateTimeValue(params):
 		return maskDate(value)
-	case upper == "RRULE" || upper == "EXRULE":
+	case name == "RRULE" || name == "EXRULE":
 		return maskRRule(value)
-	case matches(keptValues[upper], value):
+	case matches(keptValues[name], value):
 		return value
 	}
 	return mask
@@ -283,7 +312,7 @@ func matches(re *regexp.Regexp, s string) bool {
 func hasDateTimeValue(params []string) bool {
 	for _, param := range params {
 		name, value, _ := strings.Cut(param, "=")
-		if strings.EqualFold(name, "VALUE") && strings.EqualFold(value, "DATE-TIME") {
+		if name == "VALUE" && strings.EqualFold(value, "DATE-TIME") {
 			return true
 		}
 	}

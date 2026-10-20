@@ -21,40 +21,47 @@ type Skeleton struct {
 
 // capped collects the lines of a skeleton up to MaxSkeleton bytes. The first
 // line that does not fit ends it: the lines after it are not tried, so the text
-// stays a prefix of the document's shape.
+// stays a prefix of the document's shape. It is the one place that knows what
+// the cap counts: the bytes of the text, line breaks included.
 type capped struct {
-	buf       []byte
+	front     []byte // lines that go in front of the others, each ended by "\n"
+	buf       []byte // the other lines, each ended by "\n"
 	truncated bool
 }
 
-// add appends line, preceded by a line break unless it is the first, and
-// reports whether it fitted. After a line has not, nothing fits any more.
-func (c *capped) add(line string) bool {
+// add appends line, and with it the lines in front that it needs: the
+// namespace header of an XML skeleton lists the namespaces of the lines kept,
+// so a line brings its own. It does so if the text, with all of it, stays
+// within MaxSkeleton, and reports whether it did. After a line that did not
+// fit, nothing fits any more.
+func (c *capped) add(line string, front ...string) bool {
 	if c.truncated {
 		return false
 	}
-	need := len(line)
-	if len(c.buf) > 0 {
-		need++
+	// Every line counts with its line break, the last one's is cut off again.
+	size := len(c.front) + len(c.buf) + len(line) + 1
+	for _, f := range front {
+		size += len(f) + 1
 	}
-	if len(c.buf)+need > MaxSkeleton {
+	if size > MaxSkeleton+1 {
 		c.truncated = true
 		return false
 	}
-	if len(c.buf) > 0 {
-		c.buf = append(c.buf, '\n')
+	for _, f := range front {
+		c.front = append(append(c.front, f...), '\n')
 	}
-	c.buf = append(c.buf, line...)
+	c.buf = append(append(c.buf, line...), '\n')
 	return true
 }
 
 func (c *capped) skeleton() Skeleton {
-	return Skeleton{Text: string(c.buf), Truncated: c.truncated}
+	text := strings.TrimSuffix(string(c.front)+string(c.buf), "\n")
+	return Skeleton{Text: text, Truncated: c.truncated}
 }
 
-// isToken reports whether s is a name as RFC 5545 has them: letters, digits and
-// hyphens, at least one. It is what a component, property or parameter name
-// looks like, and what a name that is really text does not.
+// isToken reports whether s is made as a name of RFC 5545 is: letters, digits
+// and hyphens, at least one. A line whose name is not even that, "Bob Smith: x",
+// is no content line.
 func isToken(s string) bool {
 	if s == "" {
 		return false

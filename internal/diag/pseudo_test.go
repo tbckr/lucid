@@ -139,7 +139,7 @@ func TestPathUsernameForms(t *testing.T) {
 		{"email other case", "alice@example.com", "/dav/ALICE%40Example.COM/", "/dav/{user}/"},
 		{"local part", "alice@example.com", "/dav/alice/", "/dav/{user}/"},
 		{"non-ascii", "jörg", "/dav/j%C3%B6rg/", "/dav/{user}/"},
-		{"in a file name", "alice", "/dav/alice/cal.ics", "/dav/{user}/cal.ics"},
+		{"in a name that is no object", "alice", "/dav/alice/cal.txt", "/dav/{user}/cal.txt"},
 		{"caldav kept", "cal", "/caldav/", "/caldav/"},
 		{"calendars kept", "cal", "/calendars/", "/calendars/"},
 		{"well-known kept", "cal", "/.well-known/caldav", "/.well-known/caldav"},
@@ -229,5 +229,130 @@ func TestRedactUser(t *testing.T) {
 	}
 	if got := RedactUser("", "/a/b/"); got != "/a/b/" {
 		t.Errorf("RedactUser with no username = %q, want it unchanged", got)
+	}
+}
+
+func TestPathHomeBehindAPrefix(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	n := Names{Username: "alice", Home: "/remote.php/dav/calendars/alice/"}
+	object := regexp.MustCompile(`^/nextcloud/\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}\.ics$`)
+
+	// The probe of the review: the server sits below /nextcloud, so the home is
+	// not a prefix of the path, and the calendar and object names must not show.
+	const probe = "/nextcloud/remote.php/dav/calendars/alice/therapy/6f1c-uid-0042.ics"
+	got := p.Path(n, probe)
+	if !object.MatchString(got) {
+		t.Errorf("Path(%q) = %q, want /nextcloud/{home}/cal-<h>/obj-<h>.ics", probe, got)
+	}
+	for _, leak := range []string{"therapy", "6f1c", "0042", "alice"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("Path(%q) = %q leaks %q", probe, got, leak)
+		}
+	}
+	// The same names give the same placeholders as below a home that is a prefix.
+	if direct := p.Path(n, "/remote.php/dav/calendars/alice/therapy/6f1c-uid-0042.ics"); "/nextcloud/"+direct != got {
+		t.Errorf("behind a prefix %q, as a prefix %q: the placeholders differ", got, direct)
+	}
+
+	for _, tc := range []struct{ name, path, want string }{
+		{"the home itself", "/nextcloud/remote.php/dav/calendars/alice/", "/nextcloud/{home}/"},
+		{"two prefix segments", "/a/b/remote.php/dav/calendars/alice/", "/a/b/{home}/"},
+		{"escaped", "/nextcloud/remote.php/dav/calendars/ali%63e/", "/nextcloud/{home}/"},
+		{"without the leading slash", "nextcloud/remote.php/dav/calendars/alice/", "nextcloud/{home}/"},
+		{"username in the prefix", "/alice/remote.php/dav/calendars/alice/", "/{user}/{home}/"},
+		{"object name in the prefix", "/x.ics/remote.php/dav/calendars/alice/", "/obj-" + p.hash("x.ics") + ".ics/{home}/"},
+	} {
+		if got := p.Path(n, tc.path); got != tc.want {
+			t.Errorf("%s: Path(%q) = %q, want %q", tc.name, tc.path, got, tc.want)
+		}
+	}
+
+	// The run has to be whole and contiguous, and has to reach past the home.
+	for _, path := range []string{
+		"/nextcloud/remote.php/dav/calendars/alice",
+		"/nextcloud/remote.php/x/dav/calendars/alice/c/",
+		"/nextcloud/remote.php/dav/calendars/",
+		"/nextcloud/remote.php/dav/calendars/alicex/c/",
+	} {
+		if got := p.Path(n, path); strings.Contains(got, "{home}") {
+			t.Errorf("Path(%q) = %q, want no home in it", path, got)
+		}
+	}
+	// The first run is the home, a later one is a calendar that is named like it.
+	got = p.Path(n, "/remote.php/dav/calendars/alice/remote.php/dav/calendars/alice/x")
+	if !regexp.MustCompile(`^\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}(/seg-[0-9a-f]{8}){3}$`).MatchString(got) {
+		t.Errorf("home inside the home = %q, want the first run to be the home", got)
+	}
+}
+
+func TestPathPrincipalBehindAPrefix(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	n := Names{Principal: "/dav/principals/users/alice/", Home: "/dav/calendars/alice/"}
+
+	if got := p.Path(n, "/nextcloud/dav/principals/users/alice/inbox/zz.ics"); !regexp.MustCompile(`^/nextcloud/\{principal\}/seg-[0-9a-f]{8}/seg-[0-9a-f]{8}$`).MatchString(got) {
+		t.Errorf("below the principal behind a prefix = %q", got)
+	}
+	// The home wins when both are in the path.
+	if got := p.Path(Names{Principal: "/dav/", Home: "/dav/calendars/alice/"}, "/nextcloud/dav/calendars/alice/c/"); !strings.HasPrefix(got, "/nextcloud/{home}/cal-") {
+		t.Errorf("home and principal = %q, want the home rule", got)
+	}
+}
+
+func TestPathRootHome(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	// A server that keeps its calendars at the root: everything is below the home.
+	n := Names{Home: "/"}
+	if got := p.Path(n, "/work/x.ics"); !regexp.MustCompile(`^\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}\.ics$`).MatchString(got) {
+		t.Errorf("below the root home = %q", got)
+	}
+	if got := p.Path(n, "/"); got != "{home}/" {
+		t.Errorf("root = %q, want {home}/", got)
+	}
+	if got := p.Path(n, ""); got != "" {
+		t.Errorf("empty path = %q, want it unchanged", got)
+	}
+}
+
+func TestPathObjectNamesOutsideTheHome(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	n := Names{Username: "alice", Home: "/dav/calendars/alice/"}
+	ics := regexp.MustCompile(`^/other/\{user\}/obj-[0-9a-f]{8}\.ics$`)
+
+	for _, path := range []string{"/other/alice/zz-canary.ics", "/other/alice/zz-canary.ICS"} {
+		got := p.Path(n, path)
+		if !ics.MatchString(got) || strings.Contains(strings.ToLower(got), "canary") {
+			t.Errorf("Path(%q) = %q, want /other/{user}/obj-<h>.ics", path, got)
+		}
+	}
+	// Whatever else is there stays, as it is outside both.
+	if got := p.Path(n, "/other/zz-canary/"); got != "/other/zz-canary/" {
+		t.Errorf("Path = %q, want it unchanged", got)
+	}
+	// An object has the same placeholder wherever it is.
+	inside := p.Path(n, "/dav/calendars/alice/c/zz.ics")
+	outside := p.Path(n, "/elsewhere/zz.ics")
+	if !strings.HasSuffix(inside, "/"+outside[strings.LastIndex(outside, "/")+1:]) {
+		t.Errorf("inside %q and outside %q name the object differently", inside, outside)
+	}
+}
+
+func TestURLHomeBehindAPrefix(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	n := Names{Username: "alice", Home: "/remote.php/dav/calendars/alice/"}
+
+	u := mustParse(t, "https://u:p@dav.example.com/nextcloud/remote.php/dav/calendars/alice/therapy/x.ics?a=1#frag")
+	got := p.URL(n, u)
+	if !regexp.MustCompile(`^https://dav\.example\.com/nextcloud/\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}\.ics$`).MatchString(got) {
+		t.Errorf("URL = %q, want https://dav.example.com/nextcloud/{home}/cal-<h>/obj-<h>.ics", got)
+	}
+	// Outside the home an object is named by its placeholder too.
+	got = p.URL(n, mustParse(t, "https://dav.example.com/public/zz-canary.ics"))
+	if !regexp.MustCompile(`^https://dav\.example\.com/public/obj-[0-9a-f]{8}\.ics$`).MatchString(got) {
+		t.Errorf("URL = %q, want https://dav.example.com/public/obj-<h>.ics", got)
 	}
 }

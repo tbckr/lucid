@@ -1,6 +1,9 @@
 package diag
 
 import (
+	"encoding/xml"
+	"errors"
+	"io"
 	"net/url"
 	"regexp"
 	"strings"
@@ -115,19 +118,54 @@ func TestXMLSkeletonUnknownNamespace(t *testing.T) {
 	if got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
 	}
+}
 
-	// An element in no namespace has no prefix, and a prefix the document never
-	// declared is listed like any other namespace.
-	got = xmlText(t, `<html><nope:b/></html>`)
-	if want := "# x1=nope\nhtml\n  x1:b"; got != want {
+func TestXMLSkeletonMasksNamesOfNoDeclaredNamespace(t *testing.T) {
+	t.Parallel()
+	// A name is shown if its namespace is declared in the document. An element
+	// in no namespace and a prefix that was never declared (encoding/xml leaves
+	// it as the namespace) are not, and neither are their attributes.
+	got := xmlText(t, `<html lang="en"><nope:b nope:c="x" d="y"/><d:c xmlns:d="DAV:" nope:e="z" f="g"><d:h/></d:c></html>`)
+	want := strings.Join([]string{
+		`… …="…"`,
+		`  … …="…" …="…"`,
+		`  d:c …="…" f="…"`,
+		`    d:h`,
+	}, "\n")
+	if got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+	if got := xmlText(t, `<z:a xmlns:z="urn:zz canary"><z:b/></z:a>`); got != "…\n  …" {
+		t.Errorf("a namespace with a blank in it is no URI: %q", got)
+	}
+	// A declaration inside a text-only element is part of its text.
+	got = xmlText(t, `<d:a xmlns:d="DAV:"><d:displayname><q:x xmlns:q="urn:q"/></d:displayname><q:y/></d:a>`)
+	if want := "d:a\n  d:displayname\n    …\n  …"; got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestXMLSkeletonHeaderListsTheNamespacesOfTheLinesKept(t *testing.T) {
+	t.Parallel()
+	// The last line that fits ends the text, and a namespace that only the line
+	// after it uses is not listed.
+	name := strings.Repeat("c", MaxSkeleton-len("d:a\n  d:"))
+	sk := XMLSkeleton([]byte(`<d:a xmlns:d="DAV:" xmlns:z="urn:z"><d:`+name+`/><z:b/></d:a>`), NewPseudonymizer(testKey), xmlTestNames)
+	if sk.Text != "d:a\n  d:"+name || !sk.Truncated {
+		t.Errorf("XMLSkeleton = {%d bytes %q, %v}, want the two lines and Truncated, no header", len(sk.Text), sk.Text[:min(len(sk.Text), 30)], sk.Truncated)
+	}
+	// And the header takes its bytes from the lines: with it, this one is the
+	// line that no longer fits.
+	sk = XMLSkeleton([]byte(`<z:a xmlns:z="urn:z"><z:`+name+`/></z:a>`), NewPseudonymizer(testKey), xmlTestNames)
+	if want := "# x1=urn:z\nx1:a"; sk.Text != want || !sk.Truncated {
+		t.Errorf("XMLSkeleton = {%q, %v}, want {%q, true}", sk.Text[:min(len(sk.Text), 30)], sk.Truncated, want)
 	}
 }
 
 func TestXMLSkeletonAttributes(t *testing.T) {
 	t.Parallel()
 	got := xmlText(t, `<c:calendar-query xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:d="DAV:" version="zz-canary" empty="">
-  <d:prop><c:calendar-data><c:comp name="VCALENDAR"><c:comp name="VEVENT"/><c:prop name="UID"/></c:comp></c:calendar-data></d:prop>
+  <d:prop><c:supported-calendar-component-set><c:comp name="VCALENDAR"><c:comp name="VEVENT"/><c:prop name="UID"/></c:comp></c:supported-calendar-component-set></d:prop>
   <c:time-range start="20240101T000000Z" end="20240201T000000Z"/>
   <c:comp name="X-VENDOR-THING"/>
   <d:other name="VEVENT"/>
@@ -137,7 +175,7 @@ func TestXMLSkeletonAttributes(t *testing.T) {
 	want := strings.Join([]string{
 		`c:calendar-query version="…" empty=""`,
 		"  d:prop",
-		"    c:calendar-data",
+		"    c:supported-calendar-component-set",
 		`      c:comp name="VCALENDAR"`,
 		`        c:comp name="VEVENT"`,
 		`        c:prop name="…"`,
@@ -205,7 +243,8 @@ func TestXMLSkeletonHref(t *testing.T) {
 		{"home", "/dav/calendars/alice/", "{home}/"},
 		{"object", "/dav/calendars/alice/cal/obj.ics", p.Path(xmlTestNames, "/dav/calendars/alice/cal/obj.ics")},
 		{"principal", "/dav/principals/users/alice/", "{principal}/"},
-		{"outside both", "/dav/calendars/alice-zz/x", "/dav/calendars/alice-zz/x"},
+		{"object outside both", "/other/zz-canary.ics", "/other/obj-" + p.hash("zz-canary.ics") + ".ics"},
+		{"behind a prefix", "/nextcloud/dav/calendars/alice/c/o.ics", "/nextcloud/" + p.Path(xmlTestNames, "/dav/calendars/alice/c/o.ics")},
 		{"user name outside", "/other/alice/x", "/other/{user}/x"},
 		{"escaped", "/dav/calendars/alice/zz%20canary/", p.Path(xmlTestNames, "/dav/calendars/alice/zz%20canary/")},
 		{"whitespace around", " \n /dav/calendars/alice/c/ \n ", p.Path(xmlTestNames, "/dav/calendars/alice/c/")},
@@ -253,7 +292,7 @@ func TestXMLSkeletonVerbatimText(t *testing.T) {
 		{"exception that is text", `<s:exception xmlns:s="http://sabredav.org/ns">Mr. zz-canary says no</s:exception>`, "s:exception …"},
 		{"status of another namespace", `<x:status xmlns:x="urn:zz">HTTP/1.1 200 OK</x:status>`, "# x1=urn:zz\nx1:status …"},
 		{"exception of another namespace", `<d:exception xmlns:d="DAV:">Sabre\DAV\Exception\Forbidden</d:exception>`, "d:exception …"},
-		{"status with children", `<d:status xmlns:d="DAV:">HTTP/1.1 200 OK<d:x/></d:status>`, "d:status HTTP/1.1 200 OK\n  d:x"},
+		{"status with children", `<d:status xmlns:d="DAV:">HTTP/1.1 200 OK<d:x/></d:status>`, "d:status HTTP/1.1 200 OK\n  …"},
 		{"too long", `<s:exception xmlns:s="http://sabredav.org/ns">` + strings.Repeat("A", 2*MaxSkeleton) + `</s:exception>`, "s:exception …"},
 	}
 	for _, tc := range tests {
@@ -302,7 +341,7 @@ func TestXMLSkeletonBroken(t *testing.T) {
 			if !strings.Contains(sk.Text, "<!-- parse error: ") || !strings.HasSuffix(sk.Text, " -->") {
 				t.Errorf("skeleton lacks the parse error note:\n%s", sk.Text)
 			}
-			if tc.want != "" && sk.Text != tc.want {
+			if sk.Text != tc.want {
 				t.Errorf("skeleton:\n%s\nwant:\n%s", sk.Text, tc.want)
 			}
 		})
@@ -348,16 +387,16 @@ func TestXMLSkeletonEmpty(t *testing.T) {
 
 func TestXMLSkeletonOneLinePerElement(t *testing.T) {
 	t.Parallel()
-	// Names that would break the line structure never reach the output, and
-	// neither do the control characters of a namespace.
-	got := xmlText(t, "<a xmlns:z=\"urn:z\nz\tz\x7f\"><z:b/><z:c/></a>")
-	want := "# x1=urn:z?z?z?\na\n  x1:b\n  x1:c"
+	// A namespace with a control character in it does not break the line
+	// structure of the header.
+	got := xmlText(t, "<z:a xmlns:z=\"urn:z\x7f\"><z:b/><z:c/></z:a>")
+	want := "# x1=urn:z?\nx1:a\n  x1:b\n  x1:c"
 	if got != want {
 		t.Errorf("skeleton:\n%q\nwant:\n%q", got, want)
 	}
 	// An element name that is no name is masked.
-	got = xmlText(t, `<a><é/><b-c.d/></a>`)
-	if want := "a\n  …\n  b-c.d"; got != want {
+	got = xmlText(t, `<d:a xmlns:d="DAV:"><d:é/><d:b-c.d/></d:a>`)
+	if want := "d:a\n  …\n  d:b-c.d"; got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -394,11 +433,11 @@ func TestXMLSkeletonCapBoundary(t *testing.T) {
 	t.Parallel()
 	// The namespace header counts towards the cap: a skeleton of exactly
 	// MaxSkeleton bytes is whole, and one byte more drops the last line.
-	const base = "# x1=urn:z\na\n  x1:b …"
+	const base = "# x1=urn:z\nx1:a\n  x1:b …"
 	doc := func(nameLen int) []byte {
-		return []byte(`<a xmlns:z="urn:z"><z:b>t</z:b><` + strings.Repeat("c", nameLen) + `/></a>`)
+		return []byte(`<z:a xmlns:z="urn:z"><z:b>t</z:b><z:` + strings.Repeat("c", nameLen) + `/></z:a>`)
 	}
-	nameLen := MaxSkeleton - len(base+"\n  ")
+	nameLen := MaxSkeleton - len(base+"\n  x1:")
 	sk := XMLSkeleton(doc(nameLen), NewPseudonymizer(testKey), xmlTestNames)
 	if len(sk.Text) != MaxSkeleton || sk.Truncated {
 		t.Errorf("exact fit: len = %d, Truncated = %v, want %d, false", len(sk.Text), sk.Truncated, MaxSkeleton)
@@ -411,7 +450,7 @@ func TestXMLSkeletonCapBoundary(t *testing.T) {
 
 func TestXMLSkeletonDeepNesting(t *testing.T) {
 	t.Parallel()
-	doc := strings.Repeat("<a>", 1<<18)
+	doc := `<d:a xmlns:d="DAV:">` + strings.Repeat("<d:a>", 1<<18)
 	sk := XMLSkeleton([]byte(doc), NewPseudonymizer(testKey), xmlTestNames)
 	if !sk.Truncated || len(sk.Text) > MaxSkeleton {
 		t.Errorf("deep nesting: len = %d, Truncated = %v", len(sk.Text), sk.Truncated)
@@ -421,7 +460,7 @@ func TestXMLSkeletonDeepNesting(t *testing.T) {
 func TestXMLSkeletonManyAttributes(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
-	b.WriteString("<a")
+	b.WriteString(`<d:a xmlns:d="DAV:"`)
 	for i := 0; b.Len() < 1<<20; i++ {
 		b.WriteString(` x` + strings.Repeat("y", i%7) + `="zz-canary"`)
 	}
@@ -437,14 +476,14 @@ func TestXMLSkeletonCapAtTheNote(t *testing.T) {
 	p := NewPseudonymizer(testKey)
 	// The element that is cut off by the break does not fit: no note either,
 	// the skeleton is truncated and ends before it.
-	sk := XMLSkeleton([]byte("<a><"+strings.Repeat("b", 2*MaxSkeleton)+">"), p, xmlTestNames)
-	if sk.Text != "a" || !sk.Truncated {
-		t.Errorf("XMLSkeleton = {%d bytes, %v}, want a and Truncated", len(sk.Text), sk.Truncated)
+	sk := XMLSkeleton([]byte(`<d:a xmlns:d="DAV:"><d:`+strings.Repeat("b", 2*MaxSkeleton)+">"), p, xmlTestNames)
+	if sk.Text != "d:a" || !sk.Truncated {
+		t.Errorf("XMLSkeleton = {%d bytes, %v}, want d:a and Truncated", len(sk.Text), sk.Truncated)
 	}
 	// It fits, and the note after it does not.
-	name := strings.Repeat("b", MaxSkeleton-len("a\n  "))
-	sk = XMLSkeleton([]byte("<a><"+name+">"), p, xmlTestNames)
-	if sk.Text != "a\n  "+name || !sk.Truncated {
+	name := strings.Repeat("b", MaxSkeleton-len("d:a\n  d:"))
+	sk = XMLSkeleton([]byte(`<d:a xmlns:d="DAV:"><d:`+name+">"), p, xmlTestNames)
+	if sk.Text != "d:a\n  d:"+name || !sk.Truncated {
 		t.Errorf("XMLSkeleton = {%d bytes, %v}, want the element and Truncated, without the note", len(sk.Text), sk.Truncated)
 	}
 }
@@ -456,5 +495,123 @@ func TestXMLSkeletonHeaderTooLong(t *testing.T) {
 	sk := XMLSkeleton([]byte(`<z:a xmlns:z="`+strings.Repeat("n", 2*MaxSkeleton)+`"/>`), NewPseudonymizer(testKey), xmlTestNames)
 	if sk.Text != "" || !sk.Truncated {
 		t.Errorf("XMLSkeleton = {%d bytes, %v}, want nothing and Truncated", len(sk.Text), sk.Truncated)
+	}
+}
+
+func TestXMLSkeletonTextOnlyElements(t *testing.T) {
+	t.Parallel()
+	const root = `<d:root xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" ` +
+		`xmlns:a="http://apple.com/ns/ical/" xmlns:s="http://sabredav.org/ns">`
+	// What an unescaped "<Bob Smith>" in the text of these elements parses as.
+	const inner = `Meet <Bob Smith zz="zz-canary">bring the files</Bob>`
+	for _, name := range []string{
+		"c:calendar-data", "d:displayname", "c:calendar-description", "c:calendar-timezone", "a:calendar-color",
+		"s:message", "d:href", "d:status", "d:getetag", "cs:getctag", "d:sync-token", "d:responsedescription",
+		"s:exception",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := xmlText(t, root+"<"+name+">"+inner+"</"+name+"></d:root>")
+			// The element is shown, the elements in its text are not.
+			lines := strings.Split(got, "\n")
+			if len(lines) < 3 || lines[0] != "d:root" || !strings.HasPrefix(lines[1], "  "+name) {
+				t.Fatalf("skeleton:\n%s", got)
+			}
+			for _, line := range lines[2:] {
+				if !strings.HasPrefix(line, "    …") {
+					t.Errorf("line %q below %s is not masked", line, name)
+				}
+			}
+			for _, leak := range []string{"Bob", "Smith", "zz", "canary", "bring"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("skeleton leaks %q:\n%s", leak, got)
+				}
+			}
+		})
+	}
+
+	// The same markup in an element that is not text-only is structure, and
+	// when the default namespace is declared its names are in it.
+	got := xmlText(t, `<d:prop xmlns:d="DAV:" xmlns="DAV:">`+inner+`</d:prop>`)
+	if want := "d:prop …\n  d:Bob Smith=\"…\" zz=\"…\" …"; got != want {
+		t.Errorf("control: skeleton:\n%s\nwant:\n%s", got, want)
+	}
+	// And inside a text-only one it is not, with or without the default namespace.
+	for _, doc := range []string{
+		`<c:calendar-data xmlns:c="urn:ietf:params:xml:ns:caldav">` + inner + `</c:calendar-data>`,
+		`<c:calendar-data xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns="DAV:">` + inner + `</c:calendar-data>`,
+	} {
+		got := xmlText(t, doc)
+		if want := "c:calendar-data …\n  … …=\"…\" …=\"…\" …"; got != want {
+			t.Errorf("skeleton of %q:\n%s\nwant:\n%s", doc, got, want)
+		}
+	}
+}
+
+func TestXMLSkeletonDecodesLeniently(t *testing.T) {
+	t.Parallel()
+	// Neither the missing end tags nor the bare attribute value are well-formed.
+	const doc = `<d:a xmlns:d="DAV:"><d:b attr=bare>text<d:c>more</d:a>`
+	dec := xml.NewDecoder(strings.NewReader(doc))
+	var strictErr error
+	for strictErr == nil {
+		_, strictErr = dec.Token()
+	}
+	if errors.Is(strictErr, io.EOF) {
+		t.Fatal("the input is well-formed: it does not test the lenient decoding")
+	}
+
+	got := xmlText(t, doc)
+	want := "d:a\n  d:b attr=\"…\" …\n    d:c …"
+	if got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestXMLSkeletonStatusPhrase(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ status, want string }{
+		{"HTTP/1.1 200 OK", "HTTP/1.1 200 OK"},
+		{"HTTP/1.1 207 Multi-Status", "HTTP/1.1 207 Multi-Status"},
+		{"HTTP/1.1 404 Not Found", "HTTP/1.1 404 Not Found"},
+		{"HTTP/1.1 424 Failed Dependency", "HTTP/1.1 424 Failed Dependency"},
+		{"HTTP/1.1 418 I'm a teapot", "HTTP/1.1 418 I'm a teapot"}, // RFC 9110 names come from net/http
+		{"HTTP/1.0 200 OK", "HTTP/1.0 200 OK"},
+		{"HTTP/1.1 200", "HTTP/1.1 200"},
+		// The phrase of another code, another case, or none that exists.
+		{"HTTP/1.1 200 Not Found", "HTTP/1.1 200 …"},
+		{"HTTP/1.1 200 ok", "HTTP/1.1 200 …"},
+		{"HTTP/1.1 200 OK ", "HTTP/1.1 200 OK"}, // the text is trimmed
+		{"HTTP/1.1 999 Whatever", "HTTP/1.1 999 …"},
+		{"HTTP/1.1 200 zz-canary", "HTTP/1.1 200 …"},
+		{"HTTP/1.1 200 OK zz-canary: 1", "HTTP/1.1 200 …"},
+		{"HTTP/1.1 200  OK", "HTTP/1.1 200 …"},
+		// Not a status.
+		{"HTTP/1.1 20 OK", "…"},
+		{"HTTP/2 200 OK", "…"},
+		{"zz-canary", "…"},
+	}
+	for _, tc := range tests {
+		got := xmlText(t, `<d:status xmlns:d="DAV:">`+tc.status+`</d:status>`)
+		if want := "d:status " + tc.want; got != want {
+			t.Errorf("status %q: skeleton %q, want %q", tc.status, got, want)
+		}
+	}
+}
+
+func TestXMLSkeletonHrefBehindAPrefix(t *testing.T) {
+	t.Parallel()
+	// The probe of the review: the server sits below /nextcloud, so the home is
+	// not a prefix of the href.
+	names := Names{Username: "alice", Home: "/remote.php/dav/calendars/alice/"}
+	const href = "/nextcloud/remote.php/dav/calendars/alice/therapy/6f1c-uid-0042.ics"
+	sk := XMLSkeleton([]byte(`<d:href xmlns:d="DAV:">`+href+`</d:href>`), NewPseudonymizer(testKey), names)
+	if !regexp.MustCompile(`^d:href /nextcloud/\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}\.ics$`).MatchString(sk.Text) {
+		t.Errorf("skeleton = %q, want d:href /nextcloud/{home}/cal-<h>/obj-<h>.ics", sk.Text)
+	}
+	for _, leak := range []string{"therapy", "6f1c", "0042", "alice"} {
+		if strings.Contains(sk.Text, leak) {
+			t.Errorf("skeleton %q leaks %q", sk.Text, leak)
+		}
 	}
 }

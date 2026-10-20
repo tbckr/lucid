@@ -5,6 +5,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"iter"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -21,81 +23,70 @@ var knownNamespaces = map[string]string{
 	"http://sabredav.org/ns":        "s",
 }
 
+// textOnly are the elements whose content is text: a name or a value, a
+// calendar object. A document that is not well-formed inside one (an
+// unescaped "<Bob Smith>" in the text of a calendar-data) shows elements that
+// are text, so what is nested in them is masked, names included.
+var textOnly = map[string]bool{
+	"c:calendar-data": true, "d:displayname": true, "c:calendar-description": true,
+	"c:calendar-timezone": true, "a:calendar-color": true, "s:message": true, "d:href": true,
+	"d:status": true, "d:getetag": true, "cs:getctag": true, "d:sync-token": true,
+	"d:responsedescription": true, "s:exception": true,
+}
+
 var (
-	// xmlName is what an element or attribute name has to look like to be
-	// shown; anything else is masked.
+	// xmlName is what the local name of an element or attribute has to look
+	// like to be shown; anything else is masked.
 	xmlName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9._-]*$`)
-	// statusLine splits a DAV:status into its protocol and code and the reason
-	// phrase.
-	statusLine = regexp.MustCompile(`^(HTTP/\d\.\d \d{3})(?: (.*))?$`)
+	// statusLine splits a DAV:status into protocol, code and reason phrase.
+	statusLine = regexp.MustCompile(`^(HTTP/\d\.\d) (\d{3})(?: (.*))?$`)
 	// exceptionClass is a Sabre exception: a PHP class name.
 	exceptionClass = regexp.MustCompile(`^[A-Za-z0-9_\\]{1,200}$`)
 )
-
-// reasonPhrases are the reason phrases of the HTTP status codes, lower-cased.
-// A phrase is shown when it is one of them.
-var reasonPhrases = func() map[string]bool {
-	phrases := map[string]bool{}
-	for _, phrase := range []string{
-		"OK", "Created", "Accepted", "No Content", "Multi-Status",
-		"Moved Permanently", "Found", "See Other", "Not Modified", "Temporary Redirect", "Permanent Redirect",
-		"Bad Request", "Unauthorized", "Forbidden", "Not Found", "Method Not Allowed", "Not Acceptable",
-		"Request Timeout", "Conflict", "Gone", "Length Required", "Precondition Failed",
-		"Payload Too Large", "Request Entity Too Large", "URI Too Long", "Unsupported Media Type",
-		"Unprocessable Entity", "Locked", "Failed Dependency", "Too Many Requests",
-		"Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout",
-		"Insufficient Storage",
-	} {
-		phrases[strings.ToLower(phrase)] = true
-	}
-	return phrases
-}()
 
 // XMLSkeleton returns the shape of a WebDAV/CalDAV XML document: one line per
 // element, indented two spaces per level of depth, with the element's
 // attributes after its name. The element's text follows as "…" and is shown
 // only where it is a fixed word or a path: d:status (the code, and the reason
-// phrase if it is a standard one), d:href (a path through p, see
+// phrase if it is the standard one), d:href (a path through p, see
 // Pseudonymizer.Path, an absolute http(s) URL through Pseudonymizer.URL; any
 // other href is masked) and s:exception (a Sabre class name).
 //
-// Namespaces get fixed prefixes: d (DAV:), c (CalDAV), cs (calendarserver.org),
-// a (apple.com/ns/ical), s (sabredav.org/ns). Any other is x1, x2 and so on,
-// listed in front as "# x1=<namespace>". Attribute names stay and their values
-// are masked, except name on c:comp. Comments, processing instructions and
-// namespace declarations are left out.
+// An element or attribute name is shown only if its namespace was declared in
+// the document, and not inside a text-only element (textOnly); otherwise it is
+// "…". An attribute without a prefix has the namespace of its element. A
+// namespace gets a fixed prefix: d (DAV:), c (CalDAV), cs (calendarserver.org),
+// a (apple.com/ns/ical), s (sabredav.org/ns); any other is x1, x2 and so on,
+// listed in front as "# x1=<namespace>", for the lines shown only. Attribute
+// values are masked, except name on c:comp, if it is a component name.
+// Comments, processing instructions and namespace declarations are left out.
 //
 // A document that cannot be decoded gives its elements up to the break and a
 // final line "<!-- parse error: <Reason> -->". The text is cut on a line
 // boundary at MaxSkeleton bytes. It decodes leniently (Strict = false): the
 // point is to see as much of the structure as possible.
 func XMLSkeleton(data []byte, p *Pseudonymizer, n Names) Skeleton {
-	dec := xml.NewDecoder(bytes.NewReader(data))
-	dec.Strict = false
-	// A declared charset must not hide the structure; text that is not UTF-8 is
-	// an error of its own.
-	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
-
-	b := &xmlSkeleton{p: p, n: n, prefixes: map[string]string{}}
-	for !b.full {
-		tok, err := dec.Token()
-		if err != nil {
-			b.flush()
-			if !errors.Is(err, io.EOF) {
-				b.add("<!-- parse error: " + Reason(err) + " -->")
-			}
+	b := &xmlSkeleton{p: p, n: n, prefixes: map[string]string{}, declared: map[string]bool{}}
+	var out capped
+	shown := 0 // namespaces the lines kept so far have in the header
+	for line := range b.lines(data) {
+		var header []string
+		for i := shown; i < line.namespaces; i++ {
+			header = append(header, "# x"+strconv.Itoa(i+1)+"="+oneLine(b.unknown[i]))
+		}
+		if !out.add(line.text, header...) {
 			break
 		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			b.start(t)
-		case xml.EndElement:
-			b.end()
-		case xml.CharData:
-			b.text(t)
-		}
+		shown = line.namespaces
 	}
-	return b.skeleton()
+	return out.skeleton()
+}
+
+// xmlLine is a line of an XML skeleton, and how many of the unknown namespaces
+// it and the lines before it use: the first of them, x1 to x<namespaces>.
+type xmlLine struct {
+	text       string
+	namespaces int
 }
 
 // xmlSkeleton is the state of one XMLSkeleton run.
@@ -103,13 +94,13 @@ type xmlSkeleton struct {
 	p *Pseudonymizer
 	n Names
 
+	declared map[string]bool   // the namespaces the document declares
 	prefixes map[string]string // namespace to prefix, for the unknown ones
 	unknown  []string          // those namespaces, in the order of their prefixes
-	body     []string          // the lines, without the namespace header
-	size     int               // what body takes as text
-	depth    int               // elements open
+	frames   []bool            // per open element: is what is nested in it masked
 	pending  *xmlElement       // the last element started, its line not yet written
-	full     bool              // a line did not fit: nothing more is read
+	yield    func(xmlLine) bool
+	stopped  bool // the consumer wants no more lines
 }
 
 // xmlElement is an element whose line waits for its text.
@@ -123,33 +114,75 @@ type xmlElement struct {
 	overflow bool
 }
 
+// lines decodes data and yields the lines of the skeleton, whole, in order,
+// until the document ends or the consumer stops.
+func (b *xmlSkeleton) lines(data []byte) iter.Seq[xmlLine] {
+	return func(yield func(xmlLine) bool) {
+		b.yield = yield
+		dec := xml.NewDecoder(bytes.NewReader(data))
+		dec.Strict = false
+		// A declared charset must not hide the structure; text that is not UTF-8
+		// is an error of its own.
+		dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
+
+		for !b.stopped {
+			tok, err := dec.Token()
+			if err != nil {
+				b.flush()
+				if !errors.Is(err, io.EOF) {
+					b.emit("<!-- parse error: " + Reason(err) + " -->")
+				}
+				return
+			}
+			switch t := tok.(type) {
+			case xml.StartElement:
+				b.start(t)
+			case xml.EndElement:
+				b.end()
+			case xml.CharData:
+				b.text(t)
+			}
+		}
+	}
+}
+
+// emit hands a line to the consumer.
+func (b *xmlSkeleton) emit(text string) {
+	if !b.stopped && !b.yield(xmlLine{text: oneLine(text), namespaces: len(b.unknown)}) {
+		b.stopped = true
+	}
+}
+
 func (b *xmlSkeleton) start(t xml.StartElement) {
 	b.flush()
-	name := b.qualify(t.Name)
+	masked := len(b.frames) > 0 && b.frames[len(b.frames)-1]
+	if !masked {
+		b.declare(t.Attr)
+	}
+	name := b.elementName(t.Name, masked)
 	head := name
 	for _, a := range t.Attr {
-		if a.Name.Space == "xmlns" || (a.Name.Space == "" && a.Name.Local == "xmlns") {
+		if isNamespaceDecl(a.Name) {
 			continue // a declaration: the prefixes are fixed
 		}
-		head += " " + b.qualify(a.Name) + `="` + attrValue(name, a) + `"`
+		head += " " + b.attrName(a.Name, t.Name.Space, masked) + `="` + attrValue(name, a) + `"`
 		if len(head) > MaxSkeleton {
-			b.full = true // the line can never fit, and neither can any after it
-			return
+			break // the line cannot fit, and more of it is of no use
 		}
 	}
 	b.pending = &xmlElement{
 		name:    name,
 		head:    head,
-		depth:   b.depth,
+		depth:   len(b.frames),
 		special: name == "d:href" || name == "d:status" || name == "s:exception",
 	}
-	b.depth++
+	b.frames = append(b.frames, masked || textOnly[name])
 }
 
 func (b *xmlSkeleton) end() {
 	b.flush()
-	if b.depth > 0 {
-		b.depth--
+	if len(b.frames) > 0 {
+		b.frames = b.frames[:len(b.frames)-1]
 	}
 }
 
@@ -159,7 +192,7 @@ func (b *xmlSkeleton) text(t xml.CharData) {
 	}
 	e := b.pending
 	if e == nil { // text after a child, or outside any element
-		b.add(strings.Repeat("  ", b.depth) + mask)
+		b.emit(strings.Repeat("  ", len(b.frames)) + mask)
 		return
 	}
 	e.hasText = true
@@ -184,7 +217,7 @@ func (b *xmlSkeleton) flush() {
 	if e.hasText {
 		line += " " + b.render(e)
 	}
-	b.add(line)
+	b.emit(line)
 }
 
 // render shows the text of an element.
@@ -227,18 +260,20 @@ func (b *xmlSkeleton) href(text string) string {
 }
 
 // status shows a DAV:status: protocol and code, and the reason phrase if it is
-// a standard one.
+// the standard one of the code.
 func status(text string) string {
 	m := statusLine.FindStringSubmatch(text)
-	switch {
-	case m == nil:
+	if m == nil {
 		return mask
-	case m[2] == "":
-		return m[1]
-	case reasonPhrases[strings.ToLower(m[2])]:
-		return m[1] + " " + m[2]
 	}
-	return m[1] + " " + mask
+	line := m[1] + " " + m[2]
+	switch code, _ := strconv.Atoi(m[2]); {
+	case m[3] == "":
+		return line
+	case m[3] == http.StatusText(code):
+		return line + " " + m[3]
+	}
+	return line + " " + mask
 }
 
 // attrValue shows the value of an attribute of the element called elem.
@@ -246,22 +281,57 @@ func attrValue(elem string, a xml.Attr) string {
 	switch {
 	case a.Value == "":
 		return ""
-	case elem == "c:comp" && a.Name.Space == "" && a.Name.Local == "name" && isToken(a.Value):
+	case elem == "c:comp" && a.Name.Space == "" && a.Name.Local == "name" && knownName(a.Value):
 		return a.Value
 	}
 	return mask
 }
 
-// qualify writes a name with its fixed prefix.
-func (b *xmlSkeleton) qualify(name xml.Name) string {
-	local := name.Local
-	if !xmlName.MatchString(local) {
-		local = mask
+// isNamespaceDecl reports whether an attribute name is that of an xmlns
+// declaration.
+func isNamespaceDecl(name xml.Name) bool {
+	return name.Space == "xmlns" || (name.Space == "" && name.Local == "xmlns")
+}
+
+// declare records the namespaces an element declares. A namespace with
+// whitespace in it is no URI and is not one the document declares.
+func (b *xmlSkeleton) declare(attrs []xml.Attr) {
+	for _, a := range attrs {
+		if isNamespaceDecl(a.Name) && a.Value != "" && !strings.ContainsAny(a.Value, " \t\r\n") {
+			b.declared[a.Value] = true
+		}
 	}
-	if name.Space == "" {
-		return local
+}
+
+// shown reports whether a name is one to show: in a namespace the document
+// declared (encoding/xml leaves a prefix that is not declared as the
+// namespace), and shaped like a name.
+func (b *xmlSkeleton) shown(space, local string) bool {
+	return b.declared[space] && xmlName.MatchString(local)
+}
+
+// elementName writes the name of an element with its fixed prefix, or masks it.
+func (b *xmlSkeleton) elementName(name xml.Name, masked bool) string {
+	if masked || !b.shown(name.Space, name.Local) {
+		return mask
 	}
-	return b.prefix(name.Space) + ":" + local
+	return b.prefix(name.Space) + ":" + name.Local
+}
+
+// attrName writes the name of an attribute, or masks it. An attribute without a
+// prefix belongs to the namespace of its element, and is written without one.
+func (b *xmlSkeleton) attrName(name xml.Name, elementSpace string, masked bool) string {
+	space := name.Space
+	if space == "" {
+		space = elementSpace
+	}
+	switch {
+	case masked || !b.shown(space, name.Local):
+		return mask
+	case name.Space == "":
+		return name.Local
+	}
+	return b.prefix(name.Space) + ":" + name.Local
 }
 
 // prefix returns the prefix of a namespace, giving an unknown one the next x<n>.
@@ -276,41 +346,4 @@ func (b *xmlSkeleton) prefix(namespace string) string {
 	b.prefixes[namespace] = p
 	b.unknown = append(b.unknown, namespace)
 	return p
-}
-
-// add takes a line of the body if it fits, and stops the run if it does not.
-func (b *xmlSkeleton) add(line string) {
-	if b.full {
-		return
-	}
-	line = oneLine(line)
-	need := len(line)
-	if len(b.body) > 0 {
-		need++
-	}
-	if b.size+need > MaxSkeleton {
-		b.full = true
-		return
-	}
-	b.body = append(b.body, line)
-	b.size += need
-}
-
-// skeleton puts the namespace header and the body together. The header counts
-// towards the cap, so the body can be cut once more here.
-func (b *xmlSkeleton) skeleton() Skeleton {
-	lines := make([]string, 0, len(b.unknown)+len(b.body))
-	for i, namespace := range b.unknown {
-		lines = append(lines, "# x"+strconv.Itoa(i+1)+"="+oneLine(namespace))
-	}
-	lines = append(lines, b.body...)
-
-	var out capped
-	for _, line := range lines {
-		if !out.add(line) {
-			break
-		}
-	}
-	out.truncated = out.truncated || b.full
-	return out.skeleton()
 }
