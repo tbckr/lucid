@@ -118,7 +118,7 @@ type loadedSeries struct {
 // one that already has an override, orphaned or not (spec section 2 steps
 // 1-2, FR-17). It is shared by UpdateOccurrence and DeleteOccurrence.
 func (s *service) loadSeries(ctx context.Context, eventID, etag string, recurrenceID time.Time) (loadedSeries, error) {
-	objPath, calPath, err := decodeObjectID(s.homePath, eventID)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, eventID)
 	if err != nil {
 		return loadedSeries{}, err
 	}
@@ -210,7 +210,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 		return domain.Event{}, nil, err
 	}
 
-	calendarID := encodeID(calPath)
+	ref := s.ref(o.path, s.p.ids.encode(calPath))
 	from, to := in.Start, in.End
 	if rid.Before(from) {
 		from = rid
@@ -221,7 +221,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	to = to.Add(time.Second)
 	// Like ListEvents, look among the events expandObject yields even with an
 	// error: a rule rrule-go cannot parse still yields the override.
-	evs, err := expandObject(o, calendarID, from, to)
+	evs, err := expandObject(o, ref, from, to)
 	for i := range evs {
 		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
 			return evs[i], s.eventSnapshot(eventID, ls.raw, o.etag, attendees), nil

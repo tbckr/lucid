@@ -74,7 +74,10 @@ type Account struct {
 
 // Calendar is a CalDAV calendar collection.
 type Calendar struct {
-	ID             string `json:"id"` // opaque, URL-safe
+	ID string `json:"id"` // opaque, URL-safe; valid until Lucid restarts (NFR-36)
+	// StableID is the same across restarts, for settings the frontend
+	// persists per calendar. It never appears in a URL.
+	StableID       string `json:"stableId"`
 	Name           string `json:"name"`
 	Description    string `json:"description,omitempty"`
 	Color          string `json:"color"` // "#rrggbb"; a default is assigned when the server has none

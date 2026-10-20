@@ -205,7 +205,7 @@ func TestListEventsExpansion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
-			got, err := expandObject(o, "cal", tt.from, tt.to)
+			got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, tt.from, tt.to)
 			mustNoErr(t, err)
 			if tt.name == "orphan override only" {
 				if len(got) != 1 || got[0].RecurrenceID == nil || got[0].Title != "Invite" {
@@ -235,7 +235,7 @@ func TestListEventsOverrideFields(t *testing.T) {
 		"END:VEVENT",
 	}
 	o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(lines...))}
-	got, err := expandObject(o, "cal", date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
+	got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
 	mustNoErr(t, err)
 
 	var found *domain.Event
@@ -296,7 +296,7 @@ func TestListEventsModified(t *testing.T) {
 		"END:VEVENT",
 	}
 	o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(lines...))}
-	got, err := expandObject(o, "cal", date(2025, 6, 1, 0, 0), date(2025, 7, 5, 0, 0))
+	got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, date(2025, 6, 1, 0, 0), date(2025, 7, 5, 0, 0))
 	mustNoErr(t, err)
 
 	tests := []struct {
@@ -450,7 +450,7 @@ func TestListEventsMarksFirstAndAttendees(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
-			got, err := expandObject(o, "cal", tt.from, date(2025, 5, 1, 0, 0))
+			got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, tt.from, date(2025, 5, 1, 0, 0))
 			mustNoErr(t, err)
 			if len(got) != tt.count {
 				t.Fatalf("got %d events; want %d: %+v", len(got), tt.count, got)
@@ -532,7 +532,7 @@ func TestListEventsInstanceCap(t *testing.T) {
 	t.Parallel()
 	o := calObject{path: "/c/x.ics", cal: mustParse(t, ics("BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z",
 		"DTSTART:20250101T000000Z", "RRULE:FREQ=MINUTELY", "END:VEVENT"))}
-	got, err := expandObject(o, "c", date(2025, 1, 1, 0, 0), date(2026, 1, 1, 0, 0))
+	got, err := expandObject(o, objRef{id: "id", calendarID: "c"}, date(2025, 1, 1, 0, 0), date(2026, 1, 1, 0, 0))
 	mustNoErr(t, err)
 	if len(got) != maxInstancesPerSeries {
 		t.Fatalf("got %d instances; want cap %d", len(got), maxInstancesPerSeries)
@@ -553,7 +553,7 @@ func TestListEventsInvalidData(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			o := calObject{path: "/c/x.ics", cal: mustParse(t, ics(tt.lines...))}
-			if _, err := expandObject(o, "c", date(2024, 1, 1, 0, 0), date(2026, 1, 1, 0, 0)); err == nil {
+			if _, err := expandObject(o, objRef{id: "id", calendarID: "c"}, date(2024, 1, 1, 0, 0), date(2026, 1, 1, 0, 0)); err == nil {
 				t.Fatal("expected error")
 			}
 		})
@@ -634,7 +634,7 @@ func TestCreateEvent(t *testing.T) {
 			if ev.ETag == "" || ev.UID == "" || ev.CalendarID != e.cals["personal"] || ev.Location != tt.in.Location {
 				t.Fatalf("unexpected event %+v", ev)
 			}
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), ev.ID)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), ev.ID)
 			mustNoErr(t, err)
 			if !strings.HasSuffix(objPath, "/"+ev.UID+".ics") {
 				t.Fatalf("object path %q does not use UID", objPath)
@@ -682,8 +682,8 @@ func TestCreateEventErrors(t *testing.T) {
 		{"end before start", e.cals["personal"], domain.EventInput{Title: "x", Start: ok.End, End: ok.Start}, domain.ErrInvalidInput},
 		{"read-only calendar", e.cals["holidays"], ok, domain.ErrReadOnly},
 		{"todo-only calendar", e.cals["tasks"], ok, domain.ErrUnsupportedComponent},
-		{"unknown calendar", encodeID(e.mock.HomePath() + "nope/"), ok, domain.ErrNotFound},
-		{"calendar outside home", encodeID("/other/cal/"), ok, domain.ErrNotFound},
+		{"unknown calendar", e.p.ids.encode(e.mock.HomePath() + "nope/"), ok, domain.ErrNotFound},
+		{"calendar outside home", e.p.ids.encode("/other/cal/"), ok, domain.ErrNotFound},
 		{"garbage id", "!!!", ok, domain.ErrNotFound},
 	}
 	for _, tt := range tests {
@@ -1927,7 +1927,7 @@ func TestUpdateAndDeleteErrors(t *testing.T) {
 	todo, err := e.svc.CreateTodo(ctx, e.cals["tasks"], domain.TodoInput{Title: "t"})
 	mustNoErr(t, err)
 	roID := e.put(t, "holidays", "h.ics", "BEGIN:VEVENT", "UID:h", "DTSTAMP:20240101T000000Z", "DTSTART:20250101T000000Z", "END:VEVENT")
-	missing := encodeID(e.paths["personal"] + "missing.ics")
+	missing := e.p.ids.encode(e.paths["personal"] + "missing.ics")
 
 	tests := []struct {
 		name string
@@ -1943,7 +1943,7 @@ func TestUpdateAndDeleteErrors(t *testing.T) {
 		{"read-only", roID, `"x"`, in, domain.ErrReadOnly},
 		{"todo is not an event", todo.ID, todo.ETag, in, domain.ErrNotFound},
 		{"calendar id instead of object id", e.cals["personal"], `"x"`, in, domain.ErrNotFound},
-		{"path traversal", encodeID(e.paths["personal"] + "../../x.ics"), `"x"`, in, domain.ErrNotFound},
+		{"path traversal", e.p.ids.encode(e.paths["personal"] + "../../x.ics"), `"x"`, in, domain.ErrNotFound},
 	}
 	for _, tt := range tests {
 		t.Run("update "+tt.name, func(t *testing.T) {

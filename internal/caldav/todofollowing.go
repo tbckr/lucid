@@ -320,7 +320,7 @@ func (s *service) UpdateTodoFollowing(ctx context.Context, todoID, etag string, 
 	}
 	nm := mainComponent(n, ical.CompToDo)
 	created := calObject{path: objectPath(tr.calPath, uid+".ics"), cal: n}
-	edit, err := newTodoEdit(n, nm, todoFromObject(created, "", nm), rolledInput(in))
+	edit, err := newTodoEdit(n, nm, todoFromObject(created, objRef{}, nm), rolledInput(in))
 	if err != nil {
 		return domain.TodoFollowing{}, nil, err
 	}
@@ -353,10 +353,10 @@ func (s *service) UpdateTodoFollowing(ctx context.Context, todoID, etag string, 
 	if err != nil {
 		return domain.TodoFollowing{}, nil, err
 	}
-	calendarID := encodeID(tr.calPath)
+	calendarID := s.p.ids.encode(tr.calPath)
 	res := domain.TodoFollowing{
-		Todo:   todoFromObject(created, calendarID, nm),
-		Series: todoFromObject(calObject{path: tr.objPath, cal: cal, etag: next}, calendarID, master),
+		Todo:   todoFromObject(created, s.ref(created.path, calendarID), nm),
+		Series: todoFromObject(calObject{path: tr.objPath, cal: cal, etag: next}, s.ref(tr.objPath, calendarID), master),
 	}
 	// An undo needs both ETags: without S's it could not tell its own
 	// change from another client's, and without N's it could not delete N,
@@ -424,6 +424,6 @@ func (s *service) DeleteTodoFollowing(ctx context.Context, todoID, etag string, 
 	if o.etag, err = s.putAfterEntries(ctx, tr.objPath, tr.calPath, tr.cal, etag, entries); err != nil {
 		return domain.Todo{}, nil, err
 	}
-	t := todoFromObject(o, encodeID(tr.calPath), tr.master)
+	t := todoFromObject(o, s.ref(o.path, s.p.ids.encode(tr.calPath)), tr.master)
 	return t, s.snapshot(todoID, tr.todo, tr.raw, t, entries), nil
 }

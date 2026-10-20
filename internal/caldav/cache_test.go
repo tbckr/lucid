@@ -145,7 +145,7 @@ func TestObjectCacheErrors(t *testing.T) {
 	})
 	_, err := e.svc.ListEvents(t.Context(), e.cals["personal"], date(2025, 3, 1, 0, 0), date(2025, 4, 1, 0, 0))
 	mustErr(t, err, domain.ErrUpstream)
-	_, err = e.svc.ListTodos(t.Context(), encodeID(e.mock.HomePath()+"missing/"))
+	_, err = e.svc.ListTodos(t.Context(), e.p.ids.encode(e.mock.HomePath()+"missing/"))
 	mustErr(t, err, domain.ErrNotFound)
 	if got := counterValue(t, e.p.metrics.errors); got != 2 {
 		t.Fatalf("errors metric = %v; want 2", got)

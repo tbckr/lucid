@@ -108,7 +108,7 @@ func TestUpdateOccurrenceCreatesOverride(t *testing.T) {
 				t.Fatalf("unexpected update result %+v", up)
 			}
 
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			data, ok := e.mock.Object(objPath)
 			if !ok {
@@ -192,7 +192,7 @@ func TestUpdateOccurrenceEditsExistingOverride(t *testing.T) {
 		t.Errorf("Title = %q; want Retro", up.Title)
 	}
 
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), inst.ID)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), inst.ID)
 	mustNoErr(t, err)
 	data, ok := e.mock.Object(objPath)
 	if !ok {
@@ -259,7 +259,7 @@ func TestUpdateOccurrenceOrphan(t *testing.T) {
 		t.Errorf("Title = %q; want Changed", up.Title)
 	}
 
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), orphan.ID)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), orphan.ID)
 	mustNoErr(t, err)
 	data, _ := e.mock.Object(objPath)
 	if len(vevents(mustParse(t, data))) != 2 {
@@ -323,7 +323,7 @@ func TestUpdateOccurrenceEmptyDescription(t *testing.T) {
 		t.Errorf("Description = %q; want empty", up.Description)
 	}
 
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	data, _ := e.mock.Object(objPath)
 	ves := vevents(mustParse(t, data))
@@ -774,7 +774,7 @@ func TestDeleteOccurrence(t *testing.T) {
 			next, _, err := e.svc.DeleteOccurrence(ctx, id, etag, tt.rid)
 			mustNoErr(t, err)
 
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			data, stored := e.mock.Object(objPath)
 			var cal *ical.Calendar

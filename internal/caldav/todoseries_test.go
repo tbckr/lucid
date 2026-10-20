@@ -354,7 +354,7 @@ func TestTodoSeriesErrors(t *testing.T) {
 			if err := s.walk(time.Time{}, func(todoOcc) bool { return true }); err == nil {
 				t.Error("walk() succeeded; want an error")
 			}
-			got := todoFromObject(calObject{path: "/c/s.ics", cal: cal}, "c", s.master)
+			got := todoFromObject(calObject{path: "/c/s.ics", cal: cal}, objRef{id: "id", calendarID: "c"}, s.master)
 			if !got.Recurring || !got.RuleUnsupported || got.Next != nil || !sameTime(got.Start, tc.start) {
 				t.Errorf("todo = %+v; want a recurring todo with an unsupported rule at its raw start %v", got, tc.start)
 			}

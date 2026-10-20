@@ -18,7 +18,7 @@ func TestDecodeIDs(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
-		raw     string // used instead of encodeID(path) if set
+		raw     string // used instead of the encoded path if set
 		wantCal string // "" means ErrNotFound for calendar IDs
 		wantObj bool
 	}{
@@ -41,14 +41,15 @@ func TestDecodeIDs(t *testing.T) {
 		{name: "empty", raw: ""},
 		{name: "too long", raw: strings.Repeat("A", 5000)},
 	}
+	c := newTestCodec(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			id := tt.raw
 			if tt.raw == "" && tt.path != "" {
-				id = encodeID(tt.path)
+				id = c.encode(tt.path)
 			}
-			cal, err := decodeCalendarID(home, id)
+			cal, err := c.decodeCalendarID(home, id)
 			if tt.wantCal != "" {
 				mustNoErr(t, err)
 				if cal != tt.wantCal {
@@ -57,7 +58,7 @@ func TestDecodeIDs(t *testing.T) {
 			} else if !errors.Is(err, domain.ErrNotFound) {
 				t.Fatalf("decodeCalendarID err = %v; want ErrNotFound", err)
 			}
-			obj, parent, err := decodeObjectID(home, id)
+			obj, parent, err := c.decodeObjectID(home, id)
 			if tt.wantObj {
 				mustNoErr(t, err)
 				if obj != tt.path || parent != home+"work/" {

@@ -67,11 +67,13 @@ func newEnv(t *testing.T, opts caldavtest.Options) *env {
 		{Slug: "holidays", Name: "Holidays", ReadOnly: true},
 	} {
 		e.paths[c.Slug] = mock.AddCalendar(c)
-		e.cals[c.Slug] = encodeID(e.paths[c.Slug])
 	}
 	e.ts = httptest.NewServer(mock)
 	t.Cleanup(e.ts.Close)
 	e.p = newProvider(t, e.ts.Client())
+	for slug, p := range e.paths {
+		e.cals[slug] = e.p.ids.encode(p)
+	}
 	e.clock = &fakeClock{t: time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)}
 	e.p.now = e.clock.Now
 	acct, err := e.p.Connect(t.Context(), domain.Credentials{
@@ -99,7 +101,12 @@ func (e *env) put(t *testing.T, slug, name string, lines ...string) string {
 	if err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
-	return encodeID(p)
+	return e.p.ids.encode(p)
+}
+
+// stableID is the StableID ListCalendars gives the calendar slug.
+func (e *env) stableID(slug string) string {
+	return stableCalendarID(e.svc.(*service).identity(), e.paths[slug])
 }
 
 // ics wraps component lines into a VCALENDAR.

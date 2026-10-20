@@ -119,7 +119,7 @@ func TestTodosCRUD(t *testing.T) {
 	if len(todos) != 1 || !reflect.DeepEqual(todos[0], created) {
 		t.Fatalf("ListTodos = %+v; want [%+v]", todos, created)
 	}
-	objPath, _, _ := decodeObjectID(e.mock.HomePath(), created.ID)
+	objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), created.ID)
 	data, _ := e.mock.Object(objPath)
 	for _, want := range []string{"DUE;VALUE=DATE:20250307", "PRIORITY:1", "STATUS:NEEDS-ACTION", `DESCRIPTION:From the shop\n\n- [ ] oat\n- [x] soy`} {
 		if !strings.Contains(data, want) {
@@ -312,7 +312,7 @@ func TestUpdateTodoKeepsUnchangedDates(t *testing.T) {
 		Due: r.Due, DueAllDay: r.DueAllDay, Status: domain.TodoCompleted, RRuleOmitted: true,
 	})
 	mustNoErr(t, err)
-	objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	data, _ := e.mock.Object(objPath)
 	for _, want := range []string{
 		"DTSTART;TZID=Europe/Berlin:20250310T090000", "DUE;TZID=Europe/Berlin:20250310T110000", "STATUS:COMPLETED", "RRULE:FREQ=WEEKLY;COUNT=1",
@@ -329,7 +329,7 @@ func TestUpdateTodoWritesStart(t *testing.T) {
 	ctx := t.Context()
 	stored := func(id string) string {
 		t.Helper()
-		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		data, _ := e.mock.Object(objPath)
 		return data
 	}
@@ -457,7 +457,7 @@ func TestUpdateTodoKeepsStart(t *testing.T) {
 			if !sameTime(got.Start, f.Start) || got.StartAllDay != f.StartAllDay {
 				t.Errorf("start = %v; want %v", got.Start, f.Start)
 			}
-			objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			if data, _ := e.mock.Object(objPath); !strings.Contains(data, tc.keeps) {
 				t.Errorf("stored todo lacks %q:\n%s", tc.keeps, data)
 			}
@@ -747,7 +747,7 @@ func TestUpdateTodoKeepsSeriesDates(t *testing.T) {
 			if got.Title != "Renamed" || !sameTime(got.Start, tc.start) || !sameTime(got.Due, f.Due) || !sameNext(got.Next, f.Next) {
 				t.Errorf("updated todo = %+v; want %q at start %v, due %v, next %+v", got, "Renamed", tc.start, f.Due, f.Next)
 			}
-			objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			data, _ := e.mock.Object(objPath)
 			for _, want := range tc.keeps {
 				if !strings.Contains(data, want) {
@@ -1119,7 +1119,7 @@ func completeListed(t *testing.T, e *env, id string) domain.Todo {
 // storedObject returns the stored data of the object with the given ID.
 func storedObject(t *testing.T, e *env, id string) string {
 	t.Helper()
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	data, ok := e.mock.Object(objPath)
 	if !ok {
@@ -1633,7 +1633,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
 		f := listedTodo(t, e, id)
-		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
 			if r.Method == http.MethodPut && r.URL.Path == objPath {
 				w.WriteHeader(http.StatusPreconditionFailed)
@@ -1660,7 +1660,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
 		f := listedTodo(t, e, id)
-		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
 			switch {
 			case r.Method == http.MethodPut && r.URL.Path == objPath:
@@ -1694,7 +1694,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=DAILY"})
 		f := listedTodo(t, e, id)
-		objPath, _, _ := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, _ := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
@@ -3664,7 +3664,7 @@ func TestMoveRepeatShownElsewhereMovesSeries(t *testing.T) {
 // other than the todo with the given ID.
 func otherObjects(t *testing.T, e *env, id string) []string {
 	t.Helper()
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	var out []string
 	for _, p := range e.mock.ObjectPaths(e.paths["tasks"]) {
@@ -3824,7 +3824,7 @@ func TestRuleChangeKeepsCompletions(t *testing.T) {
 			)
 			before := storedObject(t, e, id)
 			f := listedTodo(t, e, id)
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
 				if r.Method == http.MethodPut && r.URL.Path == objPath {
@@ -3937,7 +3937,7 @@ func TestRuleChangeKeepsCompletions(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"},
 			[]string{"RECURRENCE-ID:20250310T090000Z", "STATUS:COMPLETED"})
-		objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		mustNoErr(t, err)
 		answerWithFailingETagReadback(e.mock, objPath)
 		f := listedTodo(t, e, id)
@@ -4597,7 +4597,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 			!reflect.DeepEqual(snap.Created, []domain.CreatedRef{{ID: done.CompletedCopy.ID, MayStay: true}}) {
 			t.Fatalf("completion = %+v, snapshot %+v; want a copy without ETag and a snapshot", done, snap)
 		}
-		copyPath, _, err := decodeObjectID(e.mock.HomePath(), done.CompletedCopy.ID)
+		copyPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), done.CompletedCopy.ID)
 		mustNoErr(t, err)
 		other := strings.Replace(storedObject(t, e, done.CompletedCopy.ID), "SUMMARY:Series", "SUMMARY:Other", 1)
 		if _, err := e.mock.PutObject(e.paths["tasks"], path.Base(copyPath), other); err != nil {
@@ -4692,7 +4692,7 @@ func TestRestoreTodoFailures(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			a.hook(e.mock, objPath)
 			f := listedTodo(t, e, id)
@@ -4876,7 +4876,7 @@ func TestCompleteKeepsCopyWhenETagUnknown(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
 	id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	answerWithFailingETagReadback(e.mock, objPath)
 	f := listedTodo(t, e, id)
@@ -4993,7 +4993,7 @@ func TestCompensateOnlyWhenWriteRefused(t *testing.T) {
 				e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
 				id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"}, c.overrides...)
 				before := storedObject(t, e, id)
-				objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+				objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 				mustNoErr(t, err)
 				f := listedTodo(t, e, id)
 				answerPutWith(e.mock, objPath, tc.apply, tc.status, tc.propfindStatus)
@@ -5129,7 +5129,7 @@ func TestAmbiguousFailureOfPlainEditIsAnError(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			id := e.put(t, "tasks", "r.ics", tc.lines...)
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			other := strings.Replace(ics(tc.lines...), "SUMMARY:Task", "SUMMARY:Other", 1)
 			e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
@@ -5202,7 +5202,7 @@ func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
 	var logs bytes.Buffer
 	e.p.log = slog.New(slog.NewTextHandler(&logs, nil))
 	id := seedSeries(t, e, []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=WEEKLY"})
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	answerCreateWithoutETag(e.mock, e.paths["tasks"], objPath)
 	f := listedTodo(t, e, id)
@@ -5314,7 +5314,7 @@ func TestCreateTodoKeepsObjectWhenETagUnknown(t *testing.T) {
 	if got.ETag != "" {
 		t.Errorf("created todo = %+v; want no ETag", got)
 	}
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), got.ID)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), got.ID)
 	mustNoErr(t, err)
 	if data, ok := e.mock.Object(objPath); !ok || !strings.Contains(data, "SUMMARY:Buy milk") {
 		t.Errorf("object %s not stored as created; want the write kept", objPath)

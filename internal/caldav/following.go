@@ -581,11 +581,11 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 	bumpChangeProps(master, now)
 	masterFirst(cal, master)
 
-	calendarID := encodeID(fs.calPath)
 	created := calObject{path: objectPath(fs.calPath, uid+".ics"), cal: n}
+	ref := s.ref(created.path, s.p.ids.encode(fs.calPath))
 	// Located before anything is written, from N as it is written; the ETag
 	// follows from the write.
-	ev, err := editedEvent(created, calendarID, nm, instance, moved, in)
+	ev, err := editedEvent(created, ref, nm, instance, moved, in)
 	if err != nil {
 		return domain.FollowingResult{}, nil, err
 	}
@@ -606,7 +606,7 @@ func (s *service) UpdateFollowing(ctx context.Context, eventID, etag string, rec
 		snap = s.eventSnapshot(eventID, fs.raw, next, false)
 	}
 	if snap != nil {
-		snap.Created = []domain.CreatedRef{{ID: encodeID(created.path), ETag: created.etag}}
+		snap.Created = []domain.CreatedRef{{ID: ref.id, ETag: created.etag}}
 	}
 	return domain.FollowingResult{Event: ev, ETag: next}, snap, nil
 }

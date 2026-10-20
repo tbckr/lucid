@@ -23,7 +23,7 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 	if s.err != nil {
 		return nil, s.err
 	}
-	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	calPath, err := s.p.ids.decodeCalendarID(s.homePath, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +34,7 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 	todos := []domain.Todo{}
 	for _, o := range objs {
 		if c := mainComponent(o.cal, ical.CompToDo); c != nil {
-			todos = append(todos, todoFromObject(o, calendarID, c))
+			todos = append(todos, todoFromObject(o, s.ref(o.path, calendarID), c))
 		}
 	}
 	slices.SortStableFunc(todos, func(a, b domain.Todo) int {
@@ -43,16 +43,17 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 	return todos, nil
 }
 
-// todoFromObject converts the todo c of o into a Todo. A recurring todo
+// todoFromObject converts the todo c of o into a Todo with the IDs of ref
+// (none for the zero objRef, where only its fields count). A recurring todo
 // reports its current and next occurrence; any todo of the resource, c or one
 // of its overrides, with an ORGANIZER or an ATTENDEE makes it report
 // attendees (FR-16, FR-17). Its zone is that of its anchor, DTSTART, else
 // DUE, as an event's is that of its DTSTART: the zone a series recurs in.
-func todoFromObject(o calObject, calendarID string, c *ical.Component) domain.Todo {
+func todoFromObject(o calObject, ref objRef, c *ical.Component) domain.Todo {
 	desc, checklist := splitChecklist(text(c.Props, ical.PropDescription))
 	t := domain.Todo{
-		ID:           encodeID(o.path),
-		CalendarID:   calendarID,
+		ID:           ref.id,
+		CalendarID:   ref.calendarID,
 		UID:          text(c.Props, ical.PropUID),
 		ETag:         o.etag,
 		Title:        text(c.Props, ical.PropSummary),
@@ -98,7 +99,7 @@ func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, st
 	if s.err != nil {
 		return nil, s.err
 	}
-	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	calPath, err := s.p.ids.decodeCalendarID(s.homePath, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,7 @@ func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, st
 		}
 		// Only open, readable recurring series with a rule Lucid can
 		// evaluate: todoFromObject already resolves that via setSeries (FR-17).
-		t := todoFromObject(o, calendarID, c)
+		t := todoFromObject(o, s.ref(o.path, calendarID), c)
 		if !t.Recurring || t.RuleUnsupported || t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
 			continue
 		}
@@ -125,7 +126,7 @@ func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, st
 		if series == nil {
 			continue
 		}
-		got, err := seriesOccurrences(series, encodeID(o.path), calendarID, t.Title, start, end)
+		got, err := seriesOccurrences(series, t.ID, calendarID, t.Title, start, end)
 		if err != nil {
 			s.p.log.WarnContext(ctx, "skipping unevaluable recurring todo", "path", o.path, "error", err)
 		}
@@ -295,7 +296,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if s.err != nil {
 		return domain.Todo{}, s.err
 	}
-	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	calPath, err := s.p.ids.decodeCalendarID(s.homePath, calendarID)
 	if err != nil {
 		return domain.Todo{}, err
 	}
@@ -333,7 +334,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	if err != nil {
 		return domain.Todo{}, err
 	}
-	return todoFromObject(o, calendarID, c), nil
+	return todoFromObject(o, s.ref(o.path, calendarID), c), nil
 }
 
 // UpdateTodo implements domain.CalendarService. Unknown properties and
@@ -345,7 +346,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if s.err != nil {
 		return domain.Todo{}, nil, s.err
 	}
-	objPath, calPath, err := decodeObjectID(s.homePath, todoID)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, todoID)
 	if err != nil {
 		return domain.Todo{}, nil, err
 	}
@@ -369,7 +370,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if c == nil {
 		return domain.Todo{}, nil, fmt.Errorf("%w: %w", domain.ErrNotFound, errWrongComponent)
 	}
-	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
+	cur := todoFromObject(calObject{path: objPath, cal: cal}, objRef{}, c)
 	edit, err := newTodoEdit(cal, c, cur, in)
 	if err != nil {
 		return domain.Todo{}, nil, err
@@ -410,7 +411,7 @@ func (s *service) UpdateTodo(ctx context.Context, todoID, etag string, in domain
 	if o.etag, err = s.putAfterEntries(ctx, objPath, calPath, cal, etag, entries); err != nil {
 		return domain.Todo{}, nil, err
 	}
-	t := todoFromObject(o, encodeID(calPath), c)
+	t := todoFromObject(o, s.ref(o.path, s.p.ids.encode(calPath)), c)
 	return t, s.snapshot(todoID, cur, raw, t, entries), nil
 }
 
@@ -638,7 +639,7 @@ func (s *service) RestoreTodo(ctx context.Context, snap domain.Snapshot) (domain
 	if err != nil {
 		return domain.Todo{}, err
 	}
-	t := todoFromObject(o, encodeID(calPath), c)
+	t := todoFromObject(o, s.ref(o.path, s.p.ids.encode(calPath)), c)
 	t.CopyKept = createdKept
 	return t, nil
 }
@@ -749,19 +750,19 @@ func (s *service) completeOccurrence(ctx context.Context, objPath, calPath, etag
 // returns both as written: the series, with its new ETag if the server tells
 // it, and the todo split off.
 func (s *service) writeOffCurrent(ctx context.Context, objPath, calPath, etag string, cal *ical.Calendar, c *ical.Component, series *todoSeries, in domain.TodoInput, completed bool) (t, split domain.Todo, err error) {
-	cur := todoFromObject(calObject{path: objPath, cal: cal}, "", c)
+	cur := todoFromObject(calObject{path: objPath, cal: cal}, objRef{}, c)
 	cc, copyCal, err := s.splitOffCurrent(cal, c, series, in, cur, completed, s.p.now().UTC())
 	if err != nil {
 		return domain.Todo{}, domain.Todo{}, err
 	}
 	defer s.invalidate(calPath)
-	calendarID := encodeID(calPath)
+	calendarID := s.p.ids.encode(calPath)
 	copyObj := calObject{path: objectPath(calPath, text(cc.Props, ical.PropUID)+".ics"), cal: copyCal}
 	o := calObject{path: objPath, cal: cal}
 	if o.etag, err = s.writeCreatedThenMaster(ctx, calPath, &copyObj, objPath, cal, etag); err != nil {
 		return domain.Todo{}, domain.Todo{}, err
 	}
-	return todoFromObject(o, calendarID, c), todoFromObject(copyObj, calendarID, cc), nil
+	return todoFromObject(o, s.ref(o.path, calendarID), c), todoFromObject(copyObj, s.ref(copyObj.path, calendarID), cc), nil
 }
 
 // splitOffCurrent splits the current occurrence of the open series c in cal,

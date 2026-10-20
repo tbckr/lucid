@@ -379,7 +379,7 @@ func TestForbiddenTargetPreserved(t *testing.T) {
 	svc := p.Service(domain.Account{Username: "u", CalendarHomeURL: "https://dav.example/home/"})
 	_, err := svc.ListCalendars(t.Context())
 	mustErr(t, err, domain.ErrForbiddenTarget)
-	_, err = svc.ListEvents(t.Context(), encodeID("/home/cal/"), date(2025, 1, 1, 0, 0), date(2025, 2, 1, 0, 0))
+	_, err = svc.ListEvents(t.Context(), p.ids.encode("/home/cal/"), date(2025, 1, 1, 0, 0), date(2025, 2, 1, 0, 0))
 	mustErr(t, err, domain.ErrForbiddenTarget)
 	var ue *url.Error
 	if !errors.As(err, &ue) {

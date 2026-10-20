@@ -66,7 +66,7 @@ var errStaleRepeat = fmt.Errorf("%w: not an open repeat of the series any more",
 // events (see UpdateEvent). A rule Lucid cannot evaluate, or not as far as
 // recurrenceID, is errRuleUnsupported, which a route may refuse otherwise.
 func (s *service) loadTodoRepeat(ctx context.Context, todoID, etag string, recurrenceID time.Time) (todoRepeat, error) {
-	objPath, calPath, err := decodeObjectID(s.homePath, todoID)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, todoID)
 	if err != nil {
 		return todoRepeat{}, err
 	}
@@ -89,7 +89,7 @@ func (s *service) loadTodoRepeat(ctx context.Context, todoID, etag string, recur
 	}
 	tr := todoRepeat{
 		objPath: objPath, calPath: calPath, cal: cal, raw: raw, master: c,
-		todo: todoFromObject(calObject{path: objPath, cal: cal}, "", c), series: newTodoSeries(cal, c),
+		todo: todoFromObject(calObject{path: objPath, cal: cal}, objRef{}, c), series: newTodoSeries(cal, c),
 	}
 	if tr.series == nil || tr.todo.Status == domain.TodoCompleted || tr.todo.Status == domain.TodoCancelled {
 		return todoRepeat{}, errStaleRepeat
@@ -247,6 +247,6 @@ func (s *service) SkipTodoOccurrence(ctx context.Context, todoID, etag string, r
 	if err != nil {
 		return domain.Todo{}, nil, err
 	}
-	t := todoFromObject(o, encodeID(tr.calPath), tr.master)
+	t := todoFromObject(o, s.ref(o.path, s.p.ids.encode(tr.calPath)), tr.master)
 	return t, s.snapshot(todoID, tr.todo, tr.raw, t, nil), nil
 }

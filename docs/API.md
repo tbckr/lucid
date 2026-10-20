@@ -9,8 +9,12 @@ This is the contract between the frontend (`web/`) and the Go backend
   (UTF-8). Request bodies are limited to 1 MiB.
 - All timestamps are RFC 3339 strings. The backend returns UTC (`...Z`).
   All-day events use midnight UTC of the date, `end` is exclusive.
-- IDs (`calendarId`, `eventId`, `todoId`) are opaque URL-safe strings. Use them
-  verbatim in paths.
+- IDs (`calendarId`, `eventId`, `todoId`) are opaque URL-safe strings, valid
+  until Lucid restarts; persist a calendar's `stableId`, not its `id`. Use
+  them verbatim in paths. They are encrypted resource paths under a key that
+  exists only in RAM, so access and reverse-proxy logs show nothing of
+  usernames, calendar or object names; an ID from before a restart is
+  `404 not_found`.
 - Authentication: session cookie `lucid_session` (HttpOnly, SameSite=Strict,
   and Secure in server mode; in local mode, which serves plain HTTP on the
   loopback interface only, it is not Secure). The frontend never sees
@@ -96,9 +100,15 @@ The session ID is rotated. Response `200`: same shape as `GET /session`
 ### `GET /api/v1/calendars`
 
 ```json
-{ "calendars": [ { "id": "...", "name": "Personal", "description": "", "color": "#3b82f6",
+{ "calendars": [ { "id": "...", "stableId": "LnPSpWilT2g0Vp-af-NYtX", "name": "Personal",
+                   "description": "", "color": "#3b82f6",
                    "readOnly": false, "supportsEvents": true, "supportsTodos": false } ] }
 ```
+
+`stableId` (22 URL-safe characters) is the same across restarts, for the same
+account and calendar: the key for settings the frontend persists per calendar.
+It never appears in a URL; requests take the `id`. Calendars of the same name
+are ordered by it.
 
 `supportsEvents`/`supportsTodos` come from the calendar's
 `supported-calendar-component-set`; without it, both are `true`. Some servers

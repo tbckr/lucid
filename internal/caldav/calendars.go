@@ -63,7 +63,8 @@ func (s *service) ListCalendars(ctx context.Context) ([]domain.Calendar, error) 
 			continue
 		}
 		c := domain.Calendar{
-			ID:          encodeID(calPath),
+			ID:          s.p.ids.encode(calPath),
+			StableID:    stableCalendarID(s.identity(), calPath),
 			Name:        cmp.Or(str(pr.DisplayName), path.Base(calPath)),
 			Description: str(pr.Description),
 			Color:       normalizeColor(str(pr.Color)),
@@ -79,10 +80,11 @@ func (s *service) ListCalendars(ctx context.Context) ([]domain.Calendar, error) 
 		}
 		cals = append(cals, c)
 	}
+	// By StableID within a name, not by ID: the order stays across restarts.
 	slices.SortStableFunc(cals, func(a, b domain.Calendar) int {
 		return cmp.Or(
 			cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)),
-			cmp.Compare(a.ID, b.ID),
+			cmp.Compare(a.StableID, b.StableID),
 		)
 	})
 	return cals, nil

@@ -165,7 +165,7 @@ func TestLoadTodoRepeatRefuses(t *testing.T) {
 			id := e.put(t, "work", "ev.ics", "BEGIN:VEVENT", "UID:ev", "DTSTAMP:20240101T000000Z", "SUMMARY:Event",
 				"DTSTART:20250310T090000Z", "DTEND:20250310T100000Z", "RRULE:FREQ=WEEKLY", "END:VEVENT")
 			// Its ETag as the server tells it, so that only its kind refuses.
-			objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+			objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 			mustNoErr(t, err)
 			etag, err := e.svc.(*service).objectETag(t.Context(), objPath)
 			mustNoErr(t, err)
@@ -563,7 +563,7 @@ func TestDetachTodoOccurrence(t *testing.T) {
 		seeded := storedObject(t, e, id)
 		f := listedTodo(t, e, id)
 		rid := currentRepeat(t, e, id)
-		objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+		objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 		mustNoErr(t, err)
 		e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
 			if r.Method == http.MethodPut && r.URL.Path == objPath {
@@ -621,7 +621,7 @@ func TestDetachTodoOccurrence(t *testing.T) {
 			t.Fatal("no snapshot")
 		}
 		rolled := storedObject(t, e, id)
-		copyPath, _, err := decodeObjectID(e.mock.HomePath(), got.DetachedCopy.ID)
+		copyPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), got.DetachedCopy.ID)
 		mustNoErr(t, err)
 		other := strings.Replace(storedDetached(t, e, &got), "SUMMARY:Series", "SUMMARY:Other", 1)
 		if _, err := e.mock.PutObject(e.paths["tasks"], path.Base(copyPath), other); err != nil {

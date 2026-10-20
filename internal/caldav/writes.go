@@ -269,7 +269,7 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 	if snap.Kind != kind {
 		return calObject{}, nil, "", false, fmt.Errorf("%w: snapshot of another kind", domain.ErrNotFound)
 	}
-	objPath, calPath, err := decodeObjectID(s.homePath, snap.ID)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, snap.ID)
 	if err != nil {
 		return calObject{}, nil, "", false, err
 	}
@@ -333,7 +333,7 @@ func (s *service) unchangedCreated(ctx context.Context, refs []domain.CreatedRef
 			there = append(there, ref)
 			continue
 		}
-		objPath, _, err := decodeObjectID(s.homePath, ref.ID)
+		objPath, _, err := s.p.ids.decodeObjectID(s.homePath, ref.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +370,7 @@ func (s *service) removeCreated(ctx context.Context, refs []domain.CreatedRef) (
 // removeCreatedRef deletes the resource ref created, unless it no longer has
 // the ETag of ref, and reports whether it is gone, see removeCreated.
 func (s *service) removeCreatedRef(ctx context.Context, ref domain.CreatedRef) bool {
-	objPath, _, err := decodeObjectID(s.homePath, ref.ID)
+	objPath, _, err := s.p.ids.decodeObjectID(s.homePath, ref.ID)
 	switch {
 	case err != nil:
 	case ref.ETag == "":

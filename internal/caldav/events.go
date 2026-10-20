@@ -29,7 +29,7 @@ func (s *service) ListEvents(ctx context.Context, calendarID string, start, end 
 	if s.err != nil {
 		return nil, s.err
 	}
-	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	calPath, err := s.p.ids.decodeCalendarID(s.homePath, calendarID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (s *service) ListEvents(ctx context.Context, calendarID string, start, end 
 	}
 	events := []domain.Event{}
 	for _, o := range objs {
-		evs, err := expandObject(o, calendarID, start, end)
+		evs, err := expandObject(o, s.ref(o.path, calendarID), start, end)
 		if err != nil {
 			s.p.log.WarnContext(ctx, "skipping invalid event", "path", o.path, "error", err)
 		}
@@ -96,11 +96,11 @@ func parseTiming(c *ical.Component) (timing, error) {
 }
 
 // baseEvent fills the fields shared by all occurrences of a component.
-func baseEvent(o calObject, calendarID string, c *ical.Component) domain.Event {
+func baseEvent(o calObject, ref objRef, c *ical.Component) domain.Event {
 	return domain.Event{
-		ID:          encodeID(o.path),
-		Key:         encodeID(o.path),
-		CalendarID:  calendarID,
+		ID:          ref.id,
+		Key:         ref.id,
+		CalendarID:  ref.calendarID,
 		UID:         text(c.Props, ical.PropUID),
 		ETag:        o.etag,
 		Title:       text(c.Props, ical.PropSummary),
@@ -149,7 +149,7 @@ func overlaps(ev domain.Event, from, to time.Time) bool {
 
 // expandObject returns all occurrences of the events in o overlapping
 // [from, to).
-func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.Event, error) {
+func expandObject(o calObject, ref objRef, from, to time.Time) ([]domain.Event, error) {
 	var master *ical.Component
 	var orphans []*ical.Component
 	for _, c := range o.cal.Children {
@@ -173,7 +173,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 			if err != nil {
 				return out, err
 			}
-			ev := at(baseEvent(o, calendarID, c), tm, tm.start.t)
+			ev := at(baseEvent(o, ref, c), tm, tm.start.t)
 			ev.HasAttendees = attendees
 			if rid, err := parseDateProp(c.Props.Get(ical.PropRecurrenceID)); err == nil {
 				t := rid.t.UTC()
@@ -190,7 +190,7 @@ func expandObject(o calObject, calendarID string, from, to time.Time) ([]domain.
 	if err != nil {
 		return nil, err
 	}
-	base := baseEvent(o, calendarID, master)
+	base := baseEvent(o, ref, master)
 	// Judged on the whole resource, once, for each of its events (FR-17).
 	base.HasAttendees = hasAttendees(o.cal, ical.CompEvent)
 	if !isRecurring(master) {
@@ -439,7 +439,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	if s.err != nil {
 		return domain.Event{}, s.err
 	}
-	calPath, err := decodeCalendarID(s.homePath, calendarID)
+	calPath, err := s.p.ids.decodeCalendarID(s.homePath, calendarID)
 	if err != nil {
 		return domain.Event{}, err
 	}
@@ -464,7 +464,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	if err != nil {
 		return domain.Event{}, err
 	}
-	return eventAt(o, calendarID, ev, nil)
+	return eventAt(o, s.ref(o.path, calendarID), ev, nil)
 }
 
 // UpdateEvent implements domain.CalendarService. Unknown properties and
@@ -477,7 +477,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if s.err != nil {
 		return domain.Event{}, nil, s.err
 	}
-	objPath, calPath, err := decodeObjectID(s.homePath, eventID)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, eventID)
 	if err != nil {
 		return domain.Event{}, nil, err
 	}
@@ -526,7 +526,7 @@ func (s *service) UpdateEvent(ctx context.Context, eventID, etag string, in doma
 	if wasRecurring {
 		snap = s.eventSnapshot(eventID, raw, o.etag, attendees)
 	}
-	ev, err := editedEvent(o, encodeID(calPath), master, instance, moved, in)
+	ev, err := editedEvent(o, s.ref(objPath, s.p.ids.encode(calPath)), master, instance, moved, in)
 	if err != nil {
 		return domain.Event{}, nil, err
 	}
@@ -560,13 +560,13 @@ func checkShown(cal *ical.Calendar, master *ical.Component, instanceStart *time.
 // series, the event ListEvents shows at moved, else eventAt's event at
 // instance, with First and HasAttendees as expandObject sets them, so the
 // answer tells the client what the list does.
-func editedEvent(o calObject, calendarID string, master *ical.Component, instance, moved *time.Time, in domain.EventInput) (domain.Event, error) {
+func editedEvent(o calObject, ref objRef, master *ical.Component, instance, moved *time.Time, in domain.EventInput) (domain.Event, error) {
 	if moved != nil {
-		if ev, ok := shownAt(o, calendarID, *moved, in.Start, in.End); ok {
+		if ev, ok := shownAt(o, ref, *moved, in.Start, in.End); ok {
 			return ev, nil
 		}
 	}
-	ev, err := eventAt(o, calendarID, master, instance)
+	ev, err := eventAt(o, ref, master, instance)
 	if err != nil {
 		return domain.Event{}, err
 	}
@@ -982,8 +982,8 @@ func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.Even
 
 // shownAt returns the event of o with the recurrence ID rid as ListEvents
 // shows it in [start, end], if it is there (FR-17).
-func shownAt(o calObject, calendarID string, rid, start, end time.Time) (domain.Event, bool) {
-	evs, _ := expandObject(o, calendarID, start, end.Add(time.Second))
+func shownAt(o calObject, ref objRef, rid, start, end time.Time) (domain.Event, bool) {
+	evs, _ := expandObject(o, ref, start, end.Add(time.Second))
 	for i := range evs {
 		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
 			return evs[i], true
@@ -1002,7 +1002,7 @@ func (s *service) deleteByID(ctx context.Context, id, etag string) error {
 	if s.err != nil {
 		return s.err
 	}
-	objPath, calPath, err := decodeObjectID(s.homePath, id)
+	objPath, calPath, err := s.p.ids.decodeObjectID(s.homePath, id)
 	if err != nil {
 		return err
 	}
@@ -1124,7 +1124,7 @@ func shiftDatePropBy(p *ical.Prop, shift func(dateValue) time.Time) {
 
 // eventAt converts component c of o into an Event. For recurring events it
 // returns the occurrence at occ (or at DTSTART if occ is nil).
-func eventAt(o calObject, calendarID string, c *ical.Component, occ *time.Time) (domain.Event, error) {
+func eventAt(o calObject, ref objRef, c *ical.Component, occ *time.Time) (domain.Event, error) {
 	tm, err := parseTiming(c)
 	if err != nil {
 		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
@@ -1133,7 +1133,7 @@ func eventAt(o calObject, calendarID string, c *ical.Component, occ *time.Time) 
 	if occ != nil {
 		start = *occ
 	}
-	ev := at(baseEvent(o, calendarID, c), tm, start)
+	ev := at(baseEvent(o, ref, c), tm, start)
 	if isRecurring(c) {
 		ev = asOccurrence(ev, ev.Start)
 	}

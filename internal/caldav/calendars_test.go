@@ -19,10 +19,10 @@ func TestListCalendars(t *testing.T) {
 	got, err := e.svc.ListCalendars(t.Context())
 	mustNoErr(t, err)
 	want := []domain.Calendar{
-		{ID: e.cals["holidays"], Name: "Holidays", Color: defaultColor(e.paths["holidays"]), ReadOnly: true, SupportsEvents: true},
-		{ID: e.cals["personal"], Name: "Personal", Color: "#3b82f6", SupportsEvents: true},
-		{ID: e.cals["tasks"], Name: "Tasks", Color: "#f97316", SupportsTodos: true},
-		{ID: e.cals["work"], Name: "Work", Description: "Job stuff", Color: defaultColor(e.paths["work"]), SupportsEvents: true, SupportsTodos: true},
+		{ID: e.cals["holidays"], StableID: e.stableID("holidays"), Name: "Holidays", Color: defaultColor(e.paths["holidays"]), ReadOnly: true, SupportsEvents: true},
+		{ID: e.cals["personal"], StableID: e.stableID("personal"), Name: "Personal", Color: "#3b82f6", SupportsEvents: true},
+		{ID: e.cals["tasks"], StableID: e.stableID("tasks"), Name: "Tasks", Color: "#f97316", SupportsTodos: true},
+		{ID: e.cals["work"], StableID: e.stableID("work"), Name: "Work", Description: "Job stuff", Color: defaultColor(e.paths["work"]), SupportsEvents: true, SupportsTodos: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ListCalendars =\n%+v\nwant\n%+v", got, want)
@@ -30,7 +30,7 @@ func TestListCalendars(t *testing.T) {
 }
 
 // calendarListing serves a fixed home-set PROPFIND response.
-func calendarListing(t *testing.T, body string) domain.CalendarService {
+func calendarListing(t *testing.T, body string) *env {
 	t.Helper()
 	e := newEnv(t, caldavtest.Options{})
 	e.mock.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
@@ -41,7 +41,7 @@ func calendarListing(t *testing.T, body string) domain.CalendarService {
 		}
 		return false
 	})
-	return e.svc
+	return e
 }
 
 func TestListCalendarsServerVariants(t *testing.T) {
@@ -66,11 +66,13 @@ func TestListCalendarsServerVariants(t *testing.T) {
  <d:response>
   <d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 </d:multistatus>`
-	svc := calendarListing(t, body)
-	got, err := svc.ListCalendars(t.Context())
+	e := calendarListing(t, body)
+	got, err := e.svc.ListCalendars(t.Context())
 	mustNoErr(t, err)
 	want := []domain.Calendar{{
-		ID: encodeID("/user/calendars/nocomps/"), Name: "nocomps", Color: "#aabbcc",
+		ID:       e.p.ids.encode("/user/calendars/nocomps/"),
+		StableID: stableCalendarID(e.svc.(*service).identity(), "/user/calendars/nocomps/"),
+		Name:     "nocomps", Color: "#aabbcc",
 		SupportsEvents: true, SupportsTodos: true,
 	}}
 	if !reflect.DeepEqual(got, want) {
@@ -100,7 +102,7 @@ func TestXMLEntitiesNotExpanded(t *testing.T) {
 			_, err := parseMultistatus([]byte(body))
 			mustErr(t, err, domain.ErrUpstream)
 
-			cals, err := calendarListing(t, body).ListCalendars(t.Context())
+			cals, err := calendarListing(t, body).svc.ListCalendars(t.Context())
 			if err == nil {
 				for _, c := range cals {
 					if strings.Contains(c.Name, "root:") || strings.Contains(c.Name, "AAAA") {

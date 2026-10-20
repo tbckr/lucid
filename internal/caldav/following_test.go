@@ -303,7 +303,7 @@ func shownIn(t *testing.T, cals ...*ical.Calendar) []string {
 	t.Helper()
 	var out []string
 	for _, cal := range cals {
-		evs, err := expandObject(calObject{path: "/cal/x.ics", cal: cal}, "c",
+		evs, err := expandObject(calObject{path: "/cal/x.ics", cal: cal}, objRef{id: "id", calendarID: "c"},
 			date(2025, 1, 1, 0, 0), date(2026, 1, 1, 0, 0))
 		mustNoErr(t, err)
 		for i := range evs {
@@ -445,7 +445,7 @@ func TestSplitAcrossDST(t *testing.T) {
 	if got, want := rruleString(mainComponent(s, ical.CompEvent)), "FREQ=WEEKLY;UNTIL=20250407T065959Z"; got != want {
 		t.Errorf("S: RRULE:%s; want RRULE:%s", got, want)
 	}
-	evs, err := expandObject(calObject{path: "/cal/x.ics", cal: s}, "c", date(2025, 1, 1, 0, 0), date(2026, 1, 1, 0, 0))
+	evs, err := expandObject(calObject{path: "/cal/x.ics", cal: s}, objRef{id: "id", calendarID: "c"}, date(2025, 1, 1, 0, 0), date(2026, 1, 1, 0, 0))
 	mustNoErr(t, err)
 	sortEvents(evs)
 	var last time.Time
@@ -1056,7 +1056,7 @@ type followingEnd struct {
 func deleteFollowing(t *testing.T, e *env, lines []string, rid time.Time) followingEnd {
 	t.Helper()
 	id := e.put(t, "work", "series.ics", lines...)
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	etag := storedETag(t, e, objPath)
 	_, err = e.svc.ListEvents(t.Context(), e.cals["work"], date(2025, 3, 1, 0, 0), date(2025, 5, 1, 0, 0))
@@ -1207,7 +1207,7 @@ func TestDeleteFollowing(t *testing.T) {
 // mustDecode returns the path of the resource id.
 func mustDecode(t *testing.T, e *env, id string) string {
 	t.Helper()
-	objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+	objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 	mustNoErr(t, err)
 	return objPath
 }
@@ -1524,7 +1524,7 @@ func newSeriesIn(t *testing.T, e *env, id string) (nid, data string) {
 		t.Fatalf("resources besides the series = %q; want the new series", others)
 	}
 	data, _ = e.mock.Object(others[0])
-	return encodeID(others[0]), data
+	return e.p.ids.encode(others[0]), data
 }
 
 // shownAs writes ev as listedEvents does: its start, end and title.

@@ -12,9 +12,14 @@
 package caldav
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"crypto/hkdf"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -54,7 +59,14 @@ type Options struct {
 	// Resolver performs DNS SRV lookups during discovery (RFC 6764).
 	// Default net.DefaultResolver.
 	Resolver SRVResolver
+	// Key is the 32-byte secret the keys for API IDs are derived from. nil
+	// generates a random key: IDs are valid until Lucid restarts, and
+	// nothing else needs it (NFR-20).
+	Key []byte
 }
+
+// keySize is the required length of Options.Key.
+const keySize = 32
 
 // SRVResolver looks up DNS SRV records. *net.Resolver implements it.
 type SRVResolver interface {
@@ -62,10 +74,11 @@ type SRVResolver interface {
 }
 
 // Provider implements domain.Provider. It owns the state shared by all
-// accounts: HTTP client, object cache and metrics.
+// accounts: HTTP client, ID keys, object cache and metrics.
 type Provider struct {
-	opts    Options
+	opts    Options // opts.Key holds the key in use, generated or not
 	log     *slog.Logger
+	ids     *idCodec
 	cache   *cache.LRU[string, *calEntry]
 	metrics metrics
 	now     func() time.Time
@@ -87,6 +100,26 @@ func NewProvider(opts Options) (*Provider, error) {
 	if opts.Resolver == nil {
 		opts.Resolver = net.DefaultResolver
 	}
+	if opts.Key == nil {
+		opts.Key = make([]byte, keySize)
+		_, _ = rand.Read(opts.Key) // never fails since Go 1.24 (it crashes instead)
+	}
+	if len(opts.Key) != keySize {
+		return nil, fmt.Errorf("caldav: key must be %d bytes", keySize)
+	}
+	opts.Key = bytes.Clone(opts.Key)
+	encKey, err := deriveKey(opts.Key, "lucid/v1 id-enc")
+	if err != nil {
+		return nil, err
+	}
+	macKey, err := deriveKey(opts.Key, "lucid/v1 id-mac")
+	if err != nil {
+		return nil, err
+	}
+	ids, err := newIDCodec(encKey, macKey)
+	if err != nil {
+		return nil, err
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
@@ -94,6 +127,7 @@ func NewProvider(opts Options) (*Provider, error) {
 	return &Provider{
 		opts:  opts,
 		log:   log,
+		ids:   ids,
 		cache: cache.New[string, *calEntry](opts.CacheSize),
 		metrics: metrics{
 			hits: registerCounter(opts.Registerer, prometheus.CounterOpts{
@@ -111,6 +145,16 @@ func NewProvider(opts Options) (*Provider, error) {
 		},
 		now: time.Now,
 	}, nil
+}
+
+// deriveKey derives the 32-byte key for the purpose info from the provider
+// key (HKDF-SHA256, RFC 5869), so that each use gets a key of its own.
+func deriveKey(key []byte, info string) ([]byte, error) {
+	k, err := hkdf.Key(sha256.New, key, nil, info, keySize)
+	if err != nil {
+		return nil, fmt.Errorf("caldav: %w", err)
+	}
+	return k, nil
 }
 
 // registerCounter creates a counter and registers it. If an identical

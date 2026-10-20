@@ -301,7 +301,7 @@ func TestRestoreSplit(t *testing.T) {
 		id, _, nPath, snap := split(t, e)
 		// The second event of N, March 31, 10:00 in Berlin summer time.
 		ev := shownEvent(t, e, "work", date(2025, 3, 31, 8, 0))
-		if ev.ID != encodeID(nPath) {
+		if ev.ID != e.p.ids.encode(nPath) {
 			t.Fatalf("event = %+v; want one of the new series", ev)
 		}
 		_, _, err := e.svc.UpdateOccurrence(t.Context(), ev.ID, ev.ETag, *ev.RecurrenceID, occurrenceInputOf(ev, time.Hour))
@@ -342,7 +342,7 @@ func TestRestoreSplit(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id, _, nPath, snap := split(t, e)
-		snap.Created = []domain.CreatedRef{{ID: encodeID("/elsewhere/new.ics"), ETag: snap.Created[0].ETag}}
+		snap.Created = []domain.CreatedRef{{ID: e.p.ids.encode("/elsewhere/new.ics"), ETag: snap.Created[0].ETag}}
 		refused(t, e, id, nPath, snap, domain.ErrNotFound)
 	})
 
@@ -350,7 +350,7 @@ func TestRestoreSplit(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id, seeded, nPath, snap := split(t, e)
-		mustNoErr(t, e.svc.DeleteEvent(t.Context(), encodeID(nPath), storedETag(t, e, nPath)))
+		mustNoErr(t, e.svc.DeleteEvent(t.Context(), e.p.ids.encode(nPath), storedETag(t, e, nPath)))
 		e.mock.ResetCounts()
 
 		res, err := e.svc.RestoreEvent(t.Context(), snap)
@@ -482,7 +482,7 @@ func TestRestoreEventFailures(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})
 		id, _, snap := change(t, e)
-		snap.ID = encodeID(e.paths["holidays"] + "series.ics")
+		snap.ID = e.p.ids.encode(e.paths["holidays"] + "series.ics")
 		refused(t, e, id, snap, domain.ErrReadOnly, 0)
 	})
 }
@@ -613,7 +613,7 @@ func TestEventWritesWithoutSnapshot(t *testing.T) {
 				id := e.put(t, "work", "series.ics", seed.lines...)
 				seeded := storedObject(t, e, id)
 				ev := shownEvent(t, e, "work", seed.rid)
-				objPath, _, err := decodeObjectID(e.mock.HomePath(), id)
+				objPath, _, err := e.p.ids.decodeObjectID(e.mock.HomePath(), id)
 				mustNoErr(t, err)
 				answerWithoutETag(e.mock, objPath)
 
