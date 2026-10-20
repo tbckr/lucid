@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -971,6 +972,10 @@ func TestProblemUnparsableObjectReplayed(t *testing.T) {
 			if first := r.problems(); len(first) != 1 || first[0].Reason != pr.Reason || first[0].Skeleton != pr.Skeleton || first[0].Path != pr.Path {
 				t.Errorf("problem of the first session = %+v; want what the other got: %+v", first, pr)
 			}
+			// The problem is logged once by the process, not once by each session.
+			if lines := r.problemLines(t); len(lines) != 1 {
+				t.Errorf("problem log lines = %d; want the one of the read that filled the cache", len(lines))
+			}
 			noCanary(t, "log", r.logs.String())
 		})
 	}
@@ -1180,5 +1185,174 @@ func TestProblemUnreadableObjectsAreCapped(t *testing.T) {
 	mustNoErr(t, err)
 	if got := len(r.problems()); got != maxUnreadable {
 		t.Errorf("problems = %d; want the %d the cache keeps", got, maxUnreadable)
+	}
+}
+
+// putBrokenEvents stores n events with a rule Lucid cannot evaluate in the
+// calendar slug, each a problem of its own.
+func (r *problemRun) putBrokenEvents(t *testing.T, slug string, n int) {
+	t.Helper()
+	for i := range n {
+		r.putCanaryEvent(t, slug, fmt.Sprintf("broken-%d.ics", i), "RRULE:FREQ=ZZ")
+	}
+}
+
+// A problem of an object comes back on every read of its calendar, and a
+// calendar can have more of them than a buffer holds: each is logged once by
+// the process (FR-36).
+func TestProblemRecurringLoggedOnce(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	const n = 30 // more than the buffer holds
+	r.putBrokenEvents(t, "personal", n)
+
+	for _, revalidate := range []bool{false, false, true, false} {
+		ctx := scopedCtx(t.Context(), r.buf, "req-x")
+		if revalidate {
+			ctx = domain.WithRevalidation(ctx)
+		}
+		_, err := r.svc.ListEvents(ctx, r.calendarID(t, r.svc, "Personal"), date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+		mustNoErr(t, err)
+	}
+
+	paths := map[string]bool{}
+	for _, m := range r.problemLines(t) {
+		path, _ := m["path"].(string)
+		if m["kind"] != "invalid_object" || paths[path] {
+			t.Errorf("problem line %v; want an invalid_object, once for each path", m)
+		}
+		paths[path] = true
+	}
+	if len(paths) != n {
+		t.Errorf("logged problems = %d; want %d, each once", len(paths), n)
+	}
+	if got := len(r.problems()); got != diag.SessionLimits.Problems {
+		t.Errorf("problems in the buffer = %d; want the limit, %d", got, diag.SessionLimits.Problems)
+	}
+	noCanary(t, "log", r.logs.String())
+}
+
+// With no buffer to tell a repeat, a read still logs a problem of an object once.
+func TestProblemRecurringWithoutScopeLoggedOnce(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.ctx = t.Context()
+	r.putBrokenEvents(t, "personal", 1)
+
+	for range 3 {
+		_, err := r.listEvents(t, "personal")
+		mustNoErr(t, err)
+	}
+
+	if lines := r.problemLines(t); len(lines) != 1 {
+		t.Errorf("problem log lines = %d; want one for the three reads", len(lines))
+	}
+}
+
+// What a server refused is gone from the report the moment it is pushed out, so
+// the reads that bring the problems of the calendar back must not do it: more
+// of them than the buffer holds, and a refused write the user has just seen
+// (FR-36).
+func TestProblemOneOffSurvivesReads(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.putBrokenEvents(t, "personal", 2*diag.SessionLimits.Problems)
+	_, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	r.answerPut(http.StatusForbidden, "application/xml; charset=utf-8", sabreError)
+	_, err = r.svc.CreateEvent(r.ctx, r.calendarID(t, r.svc, "Personal"), domain.EventInput{
+		Title: canary, Start: date(2025, 3, 2, 10, 0), End: date(2025, 3, 2, 11, 0),
+	})
+	mustErr(t, err, domain.ErrReadOnly)
+
+	for range 3 {
+		_, err = r.listEvents(t, "personal")
+		mustNoErr(t, err)
+	}
+
+	kinds := map[diag.ProblemKind]int{}
+	for _, pr := range r.problems() {
+		kinds[pr.Kind]++
+	}
+	if kinds[diag.ProblemErrorResponse] != 1 || kinds[diag.ProblemRejectedWrite] != 1 ||
+		len(r.problems()) != diag.SessionLimits.Problems {
+		t.Errorf("problems by kind = %v; want the refused write kept, among %d in all", kinds, diag.SessionLimits.Problems)
+	}
+}
+
+func TestRecentSet(t *testing.T) {
+	t.Parallel()
+	t.Run("a key is new once", func(t *testing.T) {
+		t.Parallel()
+		s := newRecentSet(3)
+		for _, key := range []string{"a", "b", "c"} {
+			if !s.add(key) {
+				t.Errorf("add(%q) = false; want new", key)
+			}
+		}
+		for _, key := range []string{"a", "b", "c"} {
+			if s.add(key) {
+				t.Errorf("add(%q) again = true; want known", key)
+			}
+		}
+	})
+	t.Run("the oldest is forgotten at the limit", func(t *testing.T) {
+		t.Parallel()
+		s := newRecentSet(3)
+		for _, key := range []string{"a", "b", "c", "d"} {
+			s.add(key)
+		}
+		// d took the place of a; b, c and d are known.
+		for _, key := range []string{"b", "c", "d"} {
+			if s.add(key) {
+				t.Errorf("add(%q) = true; want known", key)
+			}
+		}
+		if !s.add("a") {
+			t.Error("add(a) = false; want it forgotten")
+		}
+		// a took the place of b, the oldest then.
+		if !s.add("b") || s.add("d") {
+			t.Error("b known or d forgotten; want b forgotten and d known")
+		}
+		if got := len(s.set); got != 3 {
+			t.Errorf("set holds %d keys; want 3", got)
+		}
+	})
+	t.Run("a limit below one is one", func(t *testing.T) {
+		t.Parallel()
+		s := newRecentSet(0)
+		if !s.add("a") || s.add("a") || !s.add("b") || !s.add("a") {
+			t.Error("a set of one key did not behave as one")
+		}
+	})
+	t.Run("concurrent adds tell each key new once", func(t *testing.T) {
+		t.Parallel()
+		const keys = 200
+		s := newRecentSet(1000)
+		var news atomic.Int64
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				for i := range 4 * keys {
+					if s.add(strconv.Itoa(i % keys)) {
+						news.Add(1)
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if got := news.Load(); got != keys {
+			t.Errorf("new keys = %d; want %d", got, keys)
+		}
+	})
+}
+
+// The set of a provider holds as many recurring problems as it says.
+func TestProviderRemembersLoggedProblems(t *testing.T) {
+	t.Parallel()
+	p := newProvider(t, http.DefaultClient)
+	if got := cap(p.logged.order); got != maxLoggedProblems || maxLoggedProblems != 1024 {
+		t.Errorf("provider remembers %d problems; want 1024", got)
 	}
 }

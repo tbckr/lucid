@@ -2,6 +2,8 @@ package diag
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -572,6 +574,136 @@ func TestBufferProblemDedupe(t *testing.T) {
 			t.Error("AddProblem on a nil buffer = repeat, want new")
 		}
 	})
+}
+
+func TestProblemKindRederivable(t *testing.T) {
+	t.Parallel()
+	for kind, want := range map[ProblemKind]bool{
+		ProblemUnparsableObject: true,
+		ProblemInvalidObject:    true,
+		ProblemInvalidXML:       false,
+		ProblemErrorResponse:    false,
+		ProblemRejectedWrite:    false,
+		"":                      false,
+	} {
+		if got := kind.Rederivable(); got != want {
+			t.Errorf("%q.Rederivable() = %v, want %v", kind, got, want)
+		}
+	}
+}
+
+// problemOf is a problem of the kind with a path of its own.
+func problemOf(kind ProblemKind, path string) Problem {
+	return Problem{Kind: kind, Path: path, Reason: "r"}
+}
+
+func kindsAndPaths(ps []Problem) []string {
+	out := make([]string, len(ps))
+	for i := range ps {
+		out[i] = string(ps[i].Kind)[:1] + ":" + ps[i].Path
+	}
+	return out
+}
+
+// A problem Lucid meets again whenever it reads the object comes back by
+// itself, so over the limit it goes before one-off problems, which would be
+// gone for good (FR-36).
+func TestBufferEvictsRederivableFirst(t *testing.T) {
+	t.Parallel()
+	t.Run("the oldest re-derivable goes", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 3})
+		b.AddProblem(problemOf(ProblemRejectedWrite, "w"))
+		b.AddProblem(problemOf(ProblemUnparsableObject, "a"))
+		b.AddProblem(problemOf(ProblemInvalidObject, "b"))
+		b.AddProblem(problemOf(ProblemUnparsableObject, "c"))
+		if got, want := kindsAndPaths(b.Snapshot().Problems), []string{"r:w", "i:b", "u:c"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+	t.Run("without one, the oldest one-off goes", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 2})
+		for i, kind := range []ProblemKind{ProblemRejectedWrite, ProblemErrorResponse, ProblemInvalidXML} {
+			b.AddProblem(problemOf(kind, strconv.Itoa(i)))
+		}
+		if got, want := problemPaths(b.Snapshot().Problems), []string{"1", "2"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+	t.Run("a new re-derivable problem does not push a one-off out", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 2})
+		b.AddProblem(problemOf(ProblemRejectedWrite, "w1"))
+		b.AddProblem(problemOf(ProblemErrorResponse, "w2"))
+		if !b.AddProblem(problemOf(ProblemUnparsableObject, "r")) {
+			t.Error("AddProblem of a new problem = false, want true")
+		}
+		if got, want := problemPaths(b.Snapshot().Problems), []string{"w1", "w2"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+	t.Run("shrinking the limits", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 10})
+		for _, p := range []Problem{
+			problemOf(ProblemRejectedWrite, "w"), problemOf(ProblemInvalidObject, "r1"),
+			problemOf(ProblemInvalidObject, "r2"), problemOf(ProblemInvalidObject, "r3"),
+		} {
+			b.AddProblem(p)
+		}
+		b.SetLimits(Limits{Problems: 2})
+		if got, want := problemPaths(b.Snapshot().Problems), []string{"w", "r3"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+	t.Run("what survives a forced logout", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 10})
+		for i := range 5 {
+			b.AddProblem(problemOf(ProblemUnparsableObject, fmt.Sprintf("r%d", i)))
+		}
+		b.AddProblem(problemOf(ProblemRejectedWrite, "w"))
+		if got, want := problemPaths(b.WithoutObjects().Snapshot().Problems), []string{"r1", "r2", "r3", "r4", "w"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+}
+
+// Lucid replays the problems of the objects it reads on every read. With more
+// of them than the ring holds, a one-off problem the user has just seen must
+// still be there after any number of reads (FR-36).
+func TestBufferOneOffSurvivesReplays(t *testing.T) {
+	t.Parallel()
+	for name, limits := range map[string]Limits{"session": SessionLimits, "anonymous": AnonymousLimits} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := NewBuffer(limits)
+			recurring := make([]Problem, limits.Problems)
+			for i := range recurring {
+				recurring[i] = problemOf(ProblemInvalidObject, fmt.Sprintf("r%d", i))
+				recurring[i].RequestID = "first"
+			}
+			for _, p := range recurring {
+				b.AddProblem(p)
+			}
+			b.AddProblem(problemOf(ProblemRejectedWrite, "w"))
+
+			for round := range 50 {
+				for _, p := range recurring {
+					p.RequestID = fmt.Sprintf("round-%d", round)
+					b.AddProblem(p)
+				}
+				got := b.Snapshot().Problems
+				if len(got) != limits.Problems {
+					t.Fatalf("round %d: %d problems, want %d", round, len(got), limits.Problems)
+				}
+				if !slices.ContainsFunc(got, func(p Problem) bool { return p.Kind == ProblemRejectedWrite && p.Path == "w" }) {
+					t.Fatalf("round %d: the rejected write is gone: %v", round, kindsAndPaths(got))
+				}
+			}
+		})
+	}
 }
 
 func TestBufferNil(t *testing.T) {

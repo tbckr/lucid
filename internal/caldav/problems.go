@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/emersion/go-ical"
 
@@ -18,16 +19,56 @@ import (
 	"github.com/tbckr/lucid/internal/domain"
 )
 
+// maxLoggedProblems bounds how many recurring problems a Provider remembers
+// having logged (see problem).
+const maxLoggedProblems = 1024
+
+// recentSet is a set of the strings it was most recently given, at most limit of
+// them: past that the oldest is forgotten. It is safe for concurrent use.
+type recentSet struct {
+	mu    sync.Mutex
+	set   map[string]struct{}
+	order []string // the strings in the order they came; once full, a ring
+	next  int      // where the next string goes once order is full
+}
+
+func newRecentSet(limit int) *recentSet {
+	limit = max(limit, 1)
+	return &recentSet{set: make(map[string]struct{}, limit), order: make([]string, 0, limit)}
+}
+
+// add adds key and reports whether it was new: not in the set already.
+func (s *recentSet) add(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.set[key]; ok {
+		return false
+	}
+	if len(s.order) < cap(s.order) {
+		s.order = append(s.order, key)
+	} else {
+		delete(s.set, s.order[s.next])
+		s.order[s.next] = key
+		s.next = (s.next + 1) % len(s.order)
+	}
+	s.set[key] = struct{}{}
+	return true
+}
+
 // problem adds pr to the diagnostics buffer of the request, if ctx has a scope,
 // and logs it at warn (FR-36). A problem is what a CalDAV server sent that
 // Lucid cannot read or evaluate, or the answer to a write it refused: pr carries
 // the skeleton of the document, never the document, a pseudonymised path and a
 // reason that is fixed wording, so neither the log nor the buffer gets calendar
-// contents (NFR-36). The buffer keeps a problem once, and the log follows it: a
-// problem the buffer already holds is not logged again, as Lucid meets the same
-// object on every read. Without a buffer every problem is logged. The object ID
-// is the one thing that is no pseudonym (it encodes the real path, encrypted),
-// so it stays out of the log.
+// contents (NFR-36). The object ID is the one thing that is no pseudonym (it
+// encodes the real path, encrypted), so it stays out of the log.
+//
+// What is logged depends on the kind. A one-off problem, an answer of the server
+// or a refused write, is logged when the buffer does not hold it yet, always
+// without a buffer. A problem of an object (diag.ProblemKind.Rederivable)
+// comes back on every read of its calendar, in every session, so it is logged
+// once by the process, by its kind, path and reason, whatever the buffer says;
+// the line carries the request ID of the first read that met it.
 func (t *transport) problem(ctx context.Context, pr diag.Problem) {
 	if pr.At.IsZero() {
 		pr.At = t.p.now()
@@ -36,6 +77,9 @@ func (t *transport) problem(ctx context.Context, pr diag.Problem) {
 	if scope, ok := diag.ScopeFrom(ctx); ok {
 		pr.RequestID = scope.RequestID
 		fresh = scope.Buffer.AddProblem(pr)
+	}
+	if pr.Kind.Rederivable() {
+		fresh = t.p.logged.add(string(pr.Kind) + "\x00" + pr.Path + "\x00" + pr.Reason)
 	}
 	if !fresh {
 		return

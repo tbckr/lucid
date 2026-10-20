@@ -83,7 +83,10 @@ type Provider struct {
 	ids  *idCodec
 	// pseudo replaces the names in paths in everything that is logged or
 	// kept for diagnostics (NFR-36).
-	pseudo  *diag.Pseudonymizer
+	pseudo *diag.Pseudonymizer
+	// logged are the recurring problems already logged, so each is once
+	// (see transport.problem).
+	logged  *recentSet
 	cache   *cache.LRU[string, *calEntry]
 	metrics metrics
 	now     func() time.Time
@@ -138,6 +141,7 @@ func NewProvider(opts Options) (*Provider, error) {
 		log:    log,
 		ids:    ids,
 		pseudo: diag.NewPseudonymizer(pseudoKey),
+		logged: newRecentSet(maxLoggedProblems),
 		cache:  cache.New[string, *calEntry](opts.CacheSize),
 		metrics: metrics{
 			hits: registerCounter(opts.Registerer, prometheus.CounterOpts{
