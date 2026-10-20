@@ -24,12 +24,18 @@ on:
       - LICENSE
       - compose.yaml
   workflow_dispatch:
+  # release.yml runs this workflow on every release tag, where paths-ignore
+  # does not apply: Nix users install releases from their tags and the stable
+  # branch.
+  workflow_call:
 
 permissions:
   contents: read
 
+# A fixed prefix, not github.workflow: in a run called by release.yml,
+# github.workflow names the caller, and sharing its group would deadlock.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: nix-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

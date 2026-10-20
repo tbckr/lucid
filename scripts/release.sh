@@ -2,13 +2,14 @@
 # Tags HEAD of main and pushes the tag, which starts .github/workflows/release.yml
 # (NFR-14). The workflow tests, builds, signs and publishes. Immutable releases
 # cannot change once published: a broken release gets a new version, not a
-# moved tag.
+# moved tag. The stable branch, which Nix users follow, moves to a release
+# only once the workflow has published it.
 #
 # Usage: scripts/release.sh <kind> [version]
 #   stable [VERSION]  a release, e.g. 1.2.0 or v1.2.0
 #   pre [VERSION]     a pre-release, e.g. 1.2.0-rc.1: marked as pre-release on
-#                     GitHub, and only the exact image tag is pushed (not latest,
-#                     MAJOR or MAJOR.MINOR)
+#                     GitHub, only the exact image tag is pushed (not latest,
+#                     MAJOR or MAJOR.MINOR), and the stable branch stays
 #   Without VERSION, the commits since the last release determine it.
 #
 # A computed version starts from the latest release reachable from HEAD.
@@ -140,3 +141,6 @@ if ! git push --quiet origin "refs/tags/$tag"; then
   die "push failed; removed the local tag $tag"
 fi
 echo "Pushed $tag. Follow the release: https://github.com/tbckr/lucid/actions/workflows/release.yml"
+if [[ "$kind" == stable ]]; then
+  echo "Once it is published, the workflow moves the stable branch to $tag."
+fi
