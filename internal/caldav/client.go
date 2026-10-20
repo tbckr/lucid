@@ -511,25 +511,37 @@ func str(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
+// errUnexpectedRoot is what parseMultistatus says of a document whose root
+// element is not the multistatus: the decoder's own message names that element.
+var errUnexpectedRoot = errors.New("unexpected root element")
+
 // parseMultistatus decodes the multistatus body of resp. encoding/xml never
 // resolves external entities or DTDs; in strict mode unknown entities are an
-// error. A body that does not decode is recorded as a problem with the skeleton
-// of what the server sent (FR-36); the error says why in fixed wording only,
-// as the decoder's can carry the text of the document (NFR-36).
+// error. A body that is XML (by its Content-Type) and does not decode is
+// recorded as a problem with the skeleton of what the server sent (FR-36); one
+// that is not is the answer of something that does not speak CalDAV, and no
+// problem of a CalDAV server. The error says why in fixed wording only, as the
+// decoder's can carry the text of the document (NFR-36).
 func (t *transport) parseMultistatus(ctx context.Context, resp *response) (*multistatus, error) {
 	var ms multistatus
 	dec := xml.NewDecoder(bytes.NewReader(resp.body))
 	dec.Strict = true
 	if err := dec.Decode(&ms); err != nil {
-		pr := diag.Problem{
-			Kind:     diag.ProblemInvalidXML,
-			Reason:   diag.Reason(err),
-			Skeleton: diag.XMLSkeleton(resp.body, t.p.pseudo, t.names),
+		var root xml.UnmarshalError // the decoder names the elements it did not expect
+		if errors.As(err, &root) {
+			err = errUnexpectedRoot
 		}
-		if resp.url != nil {
-			pr.Path = t.pseudoPath(resp.url.Path)
+		if isXMLType(resp.header.Get("Content-Type")) {
+			pr := diag.Problem{
+				Kind:     diag.ProblemInvalidXML,
+				Reason:   diag.Reason(err),
+				Skeleton: diag.XMLSkeleton(resp.body, t.p.pseudo, t.names),
+			}
+			if resp.url != nil {
+				pr.Path = t.pseudoPath(resp.url.Path)
+			}
+			t.problem(ctx, pr)
 		}
-		t.problem(ctx, pr)
 		return nil, invalidData("invalid multistatus response", err)
 	}
 	return &ms, nil

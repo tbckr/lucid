@@ -97,8 +97,12 @@ type calEntry struct {
 	ctag      string
 	syncToken string
 	objects   []calObject
-	listed    int          // objects the listing returned, readable or not (FR-36)
-	checked   atomic.Int64 // unix nanoseconds of the last validation
+	listed    int // objects the listing returned, readable or not (FR-36)
+	// unreadable are the problems of the objects that did not parse and so are
+	// not in objects: the cache outlives the sessions, and a session served
+	// from it would otherwise never hear of them (FR-36).
+	unreadable []objectIssue
+	checked    atomic.Int64 // unix nanoseconds of the last validation
 }
 
 // identity returns the account the service is bound to: the origin of its
@@ -127,7 +131,7 @@ func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObjec
 	entry, cached := s.p.cache.Get(key)
 	if cached && !domain.Revalidation(ctx) && now.Sub(time.Unix(0, entry.checked.Load())) < s.p.opts.CacheFreshness {
 		s.p.metrics.hits.Inc()
-		s.noteEntry(ctx, calPath, entry)
+		s.noteEntry(ctx, calPath, entry, false)
 		return entry.objects, nil
 	}
 
@@ -139,20 +143,20 @@ func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObjec
 	if cached && ((ctag != "" && ctag == entry.ctag) || (ctag == "" && token != "" && token == entry.syncToken)) {
 		entry.checked.Store(now.UnixNano())
 		s.p.metrics.hits.Inc()
-		s.noteEntry(ctx, calPath, entry)
+		s.noteEntry(ctx, calPath, entry, false)
 		return entry.objects, nil
 	}
 
 	s.p.metrics.misses.Inc()
-	objs, listed, err := s.query(ctx, calPath, comp)
+	objs, listed, unreadable, err := s.query(ctx, calPath, comp)
 	if err != nil {
 		s.p.metrics.errors.Inc()
 		return nil, err
 	}
-	e := &calEntry{ctag: ctag, syncToken: token, objects: objs, listed: listed}
+	e := &calEntry{ctag: ctag, syncToken: token, objects: objs, listed: listed, unreadable: unreadable}
 	e.checked.Store(now.UnixNano())
 	s.p.cache.Add(key, e)
-	s.noteEntry(ctx, calPath, e)
+	s.noteEntry(ctx, calPath, e, true)
 	return objs, nil
 }
 
@@ -160,12 +164,21 @@ func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObjec
 // every path that serves it: the cache belongs to the provider and outlives the
 // sessions, so a calendar another session read is served without a request
 // that would tell (FR-36). Objects is the largest listing of events or tasks,
-// as events and tasks are listed apart.
-func (s *service) noteEntry(ctx context.Context, calPath string, e *calEntry) {
+// as events and tasks are listed apart. The problems of the objects that did
+// not parse are replayed into the buffer of the request, which keeps each once:
+// the request that fetched the entry (fetched) logs them even without a
+// buffer, one served from the cache only has a buffer to replay them into.
+func (s *service) noteEntry(ctx context.Context, calPath string, e *calEntry, fetched bool) {
 	s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) {
 		n.CTag, n.SyncToken = e.ctag != "", e.syncToken != ""
 		n.Objects = max(n.Objects, e.listed)
 	})
+	if scope, ok := diag.ScopeFrom(ctx); !fetched && (!ok || scope.Buffer == nil) {
+		return
+	}
+	for _, is := range e.unreadable {
+		s.t.problem(ctx, s.problemOf(is))
+	}
 }
 
 // collectionTags returns the CTag and sync-token of a calendar ("" if the
@@ -187,9 +200,15 @@ func (s *service) collectionTags(ctx context.Context, calPath string) (ctag, tok
 	return ctag, token, nil
 }
 
+// maxUnreadable caps the problems of unreadable objects that a cache entry
+// keeps: a buffer holds no more (diag.SessionLimits), and a server decides how
+// many objects of a calendar do not parse.
+const maxUnreadable = 20
+
 // query fetches all objects of the component type via calendar-query. It also
-// returns how many objects the server listed, the unreadable ones included.
-func (s *service) query(ctx context.Context, calPath, comp string) (objs []calObject, listed int, err error) {
+// returns how many objects the server listed, the unreadable ones included, and
+// the problems of those (FR-36).
+func (s *service) query(ctx context.Context, calPath, comp string) (objs []calObject, listed int, unreadable []objectIssue, err error) {
 	body := `<?xml version="1.0" encoding="utf-8"?>` +
 		`<c:calendar-query xmlns:d="DAV:" xmlns:c="` + nsCalDAV + `">` +
 		`<d:prop><d:getetag/><c:calendar-data/></d:prop>` +
@@ -203,11 +222,11 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 		headers: map[string]string{"Depth": "1"},
 	})
 	if err != nil {
-		return nil, 0, mapError(err)
+		return nil, 0, nil, mapError(err)
 	}
 	ms, err := s.t.parseMultistatus(ctx, resp)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	objs = make([]calObject, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
@@ -226,13 +245,19 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 		}
 		cal, err := ical.NewDecoder(strings.NewReader(data)).Decode()
 		if err != nil {
-			// The object stays out of the listing; the problem says why (FR-36).
-			s.objectProblem(ctx, diag.ProblemUnparsableObject, u.Path, []byte(data), err)
+			// The object stays out of the listing; the problem says why, and
+			// the entry keeps it for the sessions that read it from the cache.
+			if len(unreadable) < maxUnreadable {
+				unreadable = append(unreadable, objectIssue{
+					kind: diag.ProblemUnparsableObject, path: u.Path,
+					reason: problemReason(err), skeleton: diag.ICalSkeleton([]byte(data)),
+				})
+			}
 			continue
 		}
 		objs = append(objs, calObject{path: u.Path, etag: str(pr.ETag), cal: cal})
 	}
-	return objs, listed, nil
+	return objs, listed, unreadable, nil
 }
 
 // --- writes ---

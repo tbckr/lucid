@@ -472,6 +472,108 @@ func TestTrimDropsReferences(t *testing.T) {
 	}
 }
 
+func TestBufferProblemDedupe(t *testing.T) {
+	t.Parallel()
+	at := func(h int) time.Time { return time.Date(2026, 10, 20, h, 0, 0, 0, time.UTC) }
+	base := Problem{At: at(1), RequestID: "req-1", Kind: ProblemInvalidObject, Path: "p", ObjectID: "o", Reason: "r", Skeleton: Skeleton{Text: "s"}}
+
+	t.Run("a repeat is not new and takes the place of the newest", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 3})
+		if !b.AddProblem(base) {
+			t.Error("AddProblem of a new problem = false, want true")
+		}
+		other := base
+		other.Path = "other"
+		b.AddProblem(other)
+
+		again := base
+		again.At, again.RequestID = at(2), "req-2"
+		if b.AddProblem(again) {
+			t.Error("AddProblem of a repeat = true, want false")
+		}
+
+		got := b.Snapshot().Problems
+		if len(got) != 2 || got[0].Path != "other" || got[1].Path != "p" {
+			t.Fatalf("problems = %+v, want other, then the repeat as the newest", got)
+		}
+		if !got[1].At.Equal(at(2)) || got[1].RequestID != "req-2" {
+			t.Errorf("repeat = %+v, want the new time and request ID", got[1])
+		}
+	})
+	t.Run("a repeat pushes nothing out", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 2})
+		for _, path := range []string{"a", "b"} {
+			p := base
+			p.Path = path
+			b.AddProblem(p)
+		}
+		a := base
+		a.Path = "a"
+		b.AddProblem(a)
+		if got, want := problemPaths(b.Snapshot().Problems), []string{"b", "a"}; !equalStrings(got, want) {
+			t.Errorf("problems = %v, want %v", got, want)
+		}
+	})
+	t.Run("kind, path, reason and skeleton tell problems apart", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 10})
+		b.AddProblem(base)
+		for name, edit := range map[string]func(*Problem){
+			"kind":     func(p *Problem) { p.Kind = ProblemUnparsableObject },
+			"path":     func(p *Problem) { p.Path = "q" },
+			"reason":   func(p *Problem) { p.Reason = "other" },
+			"skeleton": func(p *Problem) { p.Skeleton.Text = "t" },
+		} {
+			p := base
+			edit(&p)
+			if !b.AddProblem(p) {
+				t.Errorf("a problem with another %s = repeat, want new", name)
+			}
+		}
+		if got := len(b.Snapshot().Problems); got != 5 {
+			t.Errorf("problems = %d, want 5", got)
+		}
+	})
+	t.Run("the object and the time are no part of the identity", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 10})
+		b.AddProblem(base)
+		p := base
+		p.ObjectID, p.At, p.RequestID = "o2", at(5), "req-9"
+		if b.AddProblem(p) {
+			t.Error("AddProblem with another object ID, time and request = new, want repeat")
+		}
+	})
+	t.Run("the cut values count", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{Problems: 10})
+		prefix := strings.Repeat("x", MaxFieldValue)
+		b.AddProblem(Problem{Path: prefix + "a"})
+		if b.AddProblem(Problem{Path: prefix + "b"}) {
+			t.Error("two paths equal after the cut = new, want repeat")
+		}
+		lines := strings.Repeat("xxxxxxxxx\n", 500)
+		b.AddProblem(Problem{Skeleton: Skeleton{Text: lines}})
+		if b.AddProblem(Problem{Skeleton: Skeleton{Text: lines + "more"}}) {
+			t.Error("two skeletons equal after the cut = new, want repeat")
+		}
+	})
+	t.Run("nothing is kept, everything is new", func(t *testing.T) {
+		t.Parallel()
+		b := NewBuffer(Limits{})
+		first, second := b.AddProblem(base), b.AddProblem(base)
+		if !first || !second {
+			t.Errorf("AddProblem twice on a buffer that keeps nothing = %v, %v, want new both times", first, second)
+		}
+		var nilBuffer *Buffer
+		if !nilBuffer.AddProblem(base) {
+			t.Error("AddProblem on a nil buffer = repeat, want new")
+		}
+	})
+}
+
 func TestBufferNil(t *testing.T) {
 	t.Parallel()
 	var b *Buffer

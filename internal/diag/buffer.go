@@ -130,8 +130,8 @@ type Snapshot struct {
 //
 // A nil *Buffer is a buffer that keeps nothing, so code that records into the
 // Buffer of a Scope need not check for one: AddExchange, AddProblem,
-// NoteCalendar and SetLimits do nothing, Snapshot is empty, and WithoutObjects
-// returns a new, empty Buffer that works.
+// NoteCalendar and SetLimits do nothing (AddProblem reports a new problem),
+// Snapshot is empty, and WithoutObjects returns a new, empty Buffer that works.
 type Buffer struct {
 	mu        sync.Mutex
 	limits    Limits
@@ -166,12 +166,18 @@ func (b *Buffer) AddExchange(e Exchange) {
 	b.exchanges = trim(append(b.exchanges, e), b.limits.Exchanges)
 }
 
-// AddProblem appends p, with its strings cut to MaxFieldValue bytes, its
-// skeleton to MaxSkeleton and At in UTC, and drops the oldest problem if there
-// are more than the limit.
-func (b *Buffer) AddProblem(p Problem) {
+// AddProblem adds p, with its strings cut to MaxFieldValue bytes, its skeleton
+// to MaxSkeleton and At in UTC, as the newest problem, and drops the oldest if
+// there are more than the limit. A problem the Buffer already holds, one with
+// the same Kind, Path, Reason and Skeleton.Text once cut, is kept once: the
+// repeat replaces it, with the new At and RequestID, as the newest, and pushes
+// nothing out. Lucid reads a calendar again and again, and the same object
+// would otherwise fill the Buffer. AddProblem reports whether p was new: true
+// too where nothing is kept (a limit of zero or a nil Buffer), as every
+// problem is new there.
+func (b *Buffer) AddProblem(p Problem) bool {
 	if b == nil {
-		return
+		return true
 	}
 	p.At = p.At.UTC()
 	p.RequestID = Cap(p.RequestID, MaxFieldValue)
@@ -181,7 +187,15 @@ func (b *Buffer) AddProblem(p Problem) {
 	p.Skeleton = capSkeleton(p.Skeleton)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	same := func(q Problem) bool {
+		return q.Kind == p.Kind && q.Path == p.Path && q.Reason == p.Reason && q.Skeleton.Text == p.Skeleton.Text
+	}
+	if i := slices.IndexFunc(b.problems, same); i >= 0 {
+		b.problems = append(slices.Delete(b.problems, i, i+1), p)
+		return false
+	}
 	b.problems = trim(append(b.problems, p), b.limits.Problems)
+	return true
 }
 
 // NoteCalendar calls update on the note of the calendar at path, which is

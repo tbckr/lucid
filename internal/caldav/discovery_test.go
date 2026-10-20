@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -192,7 +193,7 @@ func TestConnect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := NewProvider(Options{HTTPClient: tt.client, Resolver: tt.resolver})
+			p, err := NewProvider(Options{HTTPClient: tt.client, Resolver: tt.resolver, Logger: slog.New(slog.DiscardHandler)})
 			mustNoErr(t, err)
 			if tt.resolver == nil {
 				p.opts.Resolver = fakeResolver{}

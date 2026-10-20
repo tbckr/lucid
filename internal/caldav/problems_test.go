@@ -53,18 +53,21 @@ func noCanary(t *testing.T, what, s string) {
 // its account, with the context and the buffer that a request carries.
 type problemRun struct {
 	*traceEnv
-	svc domain.CalendarService
-	buf *diag.Buffer
-	ctx context.Context
+	acct domain.Account
+	svc  domain.CalendarService
+	buf  *diag.Buffer
+	ctx  context.Context
 }
 
 func newProblemRun(t *testing.T) *problemRun {
 	t.Helper()
 	e := newTraceEnv(t, caldavtest.Options{})
 	buf := diag.NewBuffer(diag.SessionLimits)
+	acct := e.connect(t.Context(), t)
 	return &problemRun{
 		traceEnv: e,
-		svc:      e.p.Service(e.connect(t.Context(), t)),
+		acct:     acct,
+		svc:      e.p.Service(acct),
 		buf:      buf,
 		ctx:      scopedCtx(t.Context(), buf, "req-1"),
 	}
@@ -449,7 +452,9 @@ func TestProblemErrorResponseRules(t *testing.T) {
 	}
 }
 
-// Of the answers to a PUT, every error status but 412 is a refusal to record.
+// Of the answers to a PUT, every error status but 401, 404 and 412 is a
+// refusal to record: those are a failed login, an object that is gone and a
+// lost race, as for error_response.
 func TestProblemRejectedWriteStatuses(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -459,9 +464,9 @@ func TestProblemRejectedWriteStatuses(t *testing.T) {
 		{http.StatusCreated, false},
 		{http.StatusNoContent, false},
 		{http.StatusBadRequest, true},
-		{http.StatusUnauthorized, true},
+		{http.StatusUnauthorized, false},
 		{http.StatusForbidden, true},
-		{http.StatusNotFound, true},
+		{http.StatusNotFound, false},
 		{http.StatusConflict, true},
 		{http.StatusPreconditionFailed, false},
 		{http.StatusUnsupportedMediaType, true},
@@ -738,20 +743,80 @@ func TestEncodeForSkeleton(t *testing.T) {
 		data := encodeForSkeleton(cal)
 
 		sk := diag.ICalSkeleton(data)
-		for _, want := range []string{"BEGIN:VCALENDAR", "BEGIN:VEVENT", "RRULE:FREQ=WEEKLY", "END:VCALENDAR"} {
+		for _, want := range []string{"BEGIN:VCALENDAR", "BEGIN:VEVENT", "RRULE:FREQ=WEEKLY", "END:VEVENT", "END:VCALENDAR"} {
 			if !strings.Contains(sk.Text, want) {
 				t.Errorf("skeleton lacks %q:\n%s", want, sk.Text)
 			}
 		}
 		noCanary(t, "skeleton", sk.Text)
 	})
-	t.Run("an object that does not encode", func(t *testing.T) {
+	t.Run("nothing", func(t *testing.T) {
 		t.Parallel()
-		// go-ical refuses a VCALENDAR with no children.
-		if data := encodeForSkeleton(ical.NewCalendar()); data != nil {
-			t.Errorf("encodeForSkeleton = %q; want nil", data)
+		if data := encodeForSkeleton(nil); data != nil {
+			t.Errorf("encodeForSkeleton(nil) = %q; want nil", data)
 		}
 	})
+
+	// Objects go-ical's encoder refuses, as they do not conform to RFC 5545,
+	// are the ones whose problem is worth a skeleton.
+	event := func(props ...[2]string) *ical.Component {
+		c := ical.NewComponent(ical.CompEvent)
+		for _, p := range props {
+			c.Props.Add(&ical.Prop{Name: p[0], Value: p[1], Params: ical.Params{}})
+		}
+		return c
+	}
+	calendar := func(children ...*ical.Component) *ical.Calendar {
+		cal := ical.NewCalendar()
+		cal.Children = children
+		return cal
+	}
+	quoted := event([2]string{"UID", "a"}, [2]string{"DTSTAMP", "20250301T000000Z"})
+	quoted.Props.Add(&ical.Prop{Name: "ATTENDEE", Value: "mailto:" + canary + "@example.test", Params: ical.Params{
+		"CN":             {`Bob "` + canary + `" Builder`},
+		"DELEGATED-FROM": {"mailto:" + canary + "@example.test", "x;y,z"},
+	}})
+	nested := event([2]string{"UID", "a"}, [2]string{"DTSTAMP", "20250301T000000Z"})
+	nested.Children = []*ical.Component{event()}
+	versioned := calendar(event([2]string{"UID", "a"}, [2]string{"DTSTAMP", "20250301T000000Z"}))
+	versioned.Props.SetText(ical.PropVersion, "2.0")
+	versioned.Props.SetText(ical.PropProductID, "-//a//EN")
+	versioned.Props.Add(ical.NewProp(ical.PropProductID))
+	tests := []struct {
+		name string
+		cal  *ical.Calendar
+		want []string
+	}{
+		{"no VERSION or PRODID", calendar(event([2]string{"UID", "a"}, [2]string{"DTSTAMP", "20250301T000000Z"})), []string{"BEGIN:VEVENT"}},
+		{"no UID or DTSTAMP", calendar(event([2]string{"SUMMARY", canary})), []string{"BEGIN:VEVENT", "SUMMARY:"}},
+		{"two UIDs", calendar(event([2]string{"UID", "a"}, [2]string{"UID", "b"}, [2]string{"DTSTAMP", "20250301T000000Z"})), []string{"BEGIN:VEVENT", "UID:"}},
+		{"two RRULEs", calendar(event([2]string{"RRULE", "FREQ=DAILY"}, [2]string{"RRULE", "FREQ=WEEKLY"})), []string{"RRULE:FREQ=DAILY", "RRULE:FREQ=WEEKLY"}},
+		{"two SUMMARYs and DESCRIPTIONs", calendar(event([2]string{"SUMMARY", canary}, [2]string{"SUMMARY", canary}, [2]string{"DESCRIPTION", canary}, [2]string{"DESCRIPTION", canary})), []string{"SUMMARY:", "DESCRIPTION:"}},
+		{"DTEND and DURATION", calendar(event([2]string{"DTEND", "20250301T000000Z"}, [2]string{"DURATION", "PT1H"})), []string{"DTEND:", "DURATION:"}},
+		{"a child that is no VALARM", calendar(nested), []string{"BEGIN:VEVENT"}},
+		{"a quote in a parameter", calendar(quoted), []string{"ATTENDEE;CN=", "DELEGATED-FROM="}},
+		{"two PRODIDs", versioned, []string{"PRODID:", "VERSION:"}},
+		{"no components", calendar(), []string{"BEGIN:VCALENDAR", "END:VCALENDAR"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			data := encodeForSkeleton(tt.cal)
+
+			sk := diag.ICalSkeleton(data)
+			for _, want := range append([]string{"BEGIN:VCALENDAR", "END:VCALENDAR"}, tt.want...) {
+				if !strings.Contains(sk.Text, want) {
+					t.Errorf("skeleton lacks %q:\n%s", want, sk.Text)
+				}
+			}
+			noCanary(t, "skeleton", sk.Text)
+			// The same object, the same skeleton: a repeat of a problem is told by it.
+			if again := encodeForSkeleton(tt.cal); !bytes.Equal(data, again) {
+				t.Errorf("encoded twice differently:\n%s\n%s", data, again)
+			}
+		})
+	}
 }
 
 func TestReasons(t *testing.T) {
@@ -823,5 +888,297 @@ func TestIsXMLType(t *testing.T) {
 		if got := isXMLType(ctype); got != want {
 			t.Errorf("isXMLType(%q) = %v; want %v", ctype, got, want)
 		}
+	}
+}
+
+// Reading a calendar again does not record its problems again: the objects come
+// from the cache and are expanded on every request, and one bad series would
+// fill the buffer (FR-36).
+func TestProblemRecordedOncePerBuffer(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.putCanaryEvent(t, "personal", canary+"-obj.ics", "RRULE:FREQ=ZZ")
+	_, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	first := r.problems()
+	calID := r.calendarID(t, r.svc, "Personal")
+
+	for _, ctx := range []context.Context{
+		scopedCtx(t.Context(), r.buf, "req-2"),
+		domain.WithRevalidation(scopedCtx(t.Context(), r.buf, "req-3")),
+	} {
+		_, err = r.svc.ListEvents(ctx, calID, date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+		mustNoErr(t, err)
+	}
+
+	got := r.problems()
+	if len(got) != 1 || got[0].Kind != diag.ProblemInvalidObject || got[0].Path != first[0].Path || got[0].ObjectID != first[0].ObjectID {
+		t.Fatalf("problems = %+v; want the one problem of before", got)
+	}
+	if got[0].RequestID != "req-3" || got[0].At.Before(first[0].At) {
+		t.Errorf("problem = %+v; want it refreshed by the last request", got[0])
+	}
+	if lines := r.problemLines(t); len(lines) != 1 {
+		t.Errorf("problem log lines = %d; want the one of the first time", len(lines))
+	}
+}
+
+// The cache belongs to the provider and outlives the sessions: an object that
+// did not parse is dropped from it, so a session served from the cache would
+// never hear of it unless the cache remembers the problem (FR-36).
+func TestProblemUnparsableObjectReplayed(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name  string
+		scope func(context.Context) context.Context
+	}{
+		{"fresh entry", func(ctx context.Context) context.Context { return ctx }},
+		{"entry checked and unchanged", domain.WithRevalidation},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newProblemRun(t)
+			r.answerReport("personal",
+				reportObject{"good.ics", canaryEvent("good")},
+				reportObject{canary + "-broken.ics", brokenObject})
+			_, err := r.listEvents(t, "personal")
+			mustNoErr(t, err)
+			if n := r.mock.Count("REPORT"); n != 1 {
+				t.Fatalf("REPORTs = %d; want the one that filled the cache", n)
+			}
+
+			// Another session of the account, with a buffer of its own.
+			other := diag.NewBuffer(diag.SessionLimits)
+			svc := r.p.Service(r.acct)
+			evs, err := svc.ListEvents(tt.scope(scopedCtx(t.Context(), other, "req-2")),
+				r.calendarID(t, svc, "Personal"), date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+
+			mustNoErr(t, err)
+			if n := r.mock.Count("REPORT"); n != 1 || len(evs) != 1 {
+				t.Fatalf("REPORTs, events = %d, %d; want 1 and 1: served from the cache", n, len(evs))
+			}
+			got := other.Snapshot().Problems
+			if len(got) != 1 {
+				t.Fatalf("problems of the other session = %+v; want one", got)
+			}
+			pr := got[0]
+			if pr.Kind != diag.ProblemUnparsableObject || pr.RequestID != "req-2" || !objectPseudonym.MatchString(pr.Path) {
+				t.Errorf("problem = %+v; want unparsable_object of req-2 with a pseudonymised path", pr)
+			}
+			if id, ok := r.p.ids.open(pr.ObjectID); !ok || id != r.calPath("personal")+canary+"-broken.ics" {
+				t.Errorf("ObjectID decodes to %q, %v; want the broken object", id, ok)
+			}
+			if first := r.problems(); len(first) != 1 || first[0].Reason != pr.Reason || first[0].Skeleton != pr.Skeleton || first[0].Path != pr.Path {
+				t.Errorf("problem of the first session = %+v; want what the other got: %+v", first, pr)
+			}
+			noCanary(t, "log", r.logs.String())
+		})
+	}
+}
+
+// Without a buffer a request has nothing to replay into: a warm cache must not
+// log the same warning on every read.
+func TestProblemReplayNeedsABuffer(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.ctx = t.Context()
+	r.answerReport("personal", reportObject{canary + "-broken.ics", brokenObject})
+
+	for range 3 {
+		_, err := r.listEvents(t, "personal")
+		mustNoErr(t, err)
+	}
+
+	if n := r.mock.Count("REPORT"); n != 1 {
+		t.Fatalf("REPORTs = %d; want 1", n)
+	}
+	if lines := r.problemLines(t); len(lines) != 1 {
+		t.Errorf("problem log lines = %d; want the one of the read that filled the cache", len(lines))
+	}
+}
+
+// A task whose rule Lucid cannot evaluate is skipped from the occurrences, as
+// an event with such a rule is a problem: the same for tasks as for events.
+func TestProblemUnsupportedTodoRule(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		lines      []string
+		wantReason string
+	}{
+		{"unknown frequency", []string{"DTSTART:20250310T090000Z", "RRULE:FREQ=ZZ"}, "RRULE"},
+		{"unparsable rule", []string{"DTSTART:20250310T090000Z", "RRULE:" + canary}, "RRULE"},
+		{"RDATE", []string{"DTSTART:20250310T090000Z", "RDATE:20250312T090000Z"}, "RDATE"},
+		{"no anchor", []string{"RRULE:FREQ=DAILY"}, "without DTSTART or DUE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newProblemRun(t)
+			objPath, err := r.mock.PutObject(r.calPath("tasks"), canary+"-todo.ics", ics(append([]string{
+				"BEGIN:VTODO", "UID:" + canary, "DTSTAMP:20250301T000000Z", "SUMMARY:" + canary + " title",
+			}, append(tt.lines, "END:VTODO")...)...))
+			mustNoErr(t, err)
+
+			occs, err := r.svc.ListTodoOccurrences(r.ctx, r.calendarID(t, r.svc, "Tasks"), date(2025, 6, 1, 0, 0), date(2025, 6, 8, 0, 0))
+
+			mustNoErr(t, err)
+			if len(occs) != 0 {
+				t.Errorf("occurrences = %+v; want the task skipped", occs)
+			}
+			got := r.problems()
+			if len(got) != 1 || got[0].Kind != diag.ProblemInvalidObject {
+				t.Fatalf("problems = %+v; want one invalid_object", got)
+			}
+			pr := got[0]
+			if id, ok := r.p.ids.open(pr.ObjectID); !ok || id != objPath {
+				t.Errorf("ObjectID decodes to %q, %v; want %q", id, ok, objPath)
+			}
+			if pr.Reason == "" || !strings.Contains(pr.Reason, tt.wantReason) || !strings.Contains(pr.Skeleton.Text, "BEGIN:VTODO") {
+				t.Errorf("Reason, Skeleton = %q, %q; want a reason with %q and the shape of the task", pr.Reason, pr.Skeleton.Text, tt.wantReason)
+			}
+			noCanary(t, "Reason", pr.Reason)
+			noCanary(t, "Skeleton", pr.Skeleton.Text)
+			noCanary(t, "log", r.logs.String())
+		})
+	}
+}
+
+// What is not XML is not a failed multistatus but the answer of something else,
+// a web server that does not speak CalDAV: no problem, no warning (FR-36).
+func TestProblemInvalidXMLNeedsXML(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		status     int
+		ctype      string // "" sends none
+		body       string
+		wantReason string // "" for no problem
+	}{
+		{"broken XML", http.StatusMultiStatus, "application/xml", "<d:multistatus xmlns:d=\"DAV:\"><d:response></d:multistatus>", "XML syntax error"},
+		{"broken text/xml", http.StatusMultiStatus, "text/xml; charset=utf-8", "<d:multistatus", "XML syntax error"},
+		{"another root element", http.StatusOK, "application/xml", "<html><body>" + canary + "</body></html>", "unexpected root element"},
+		{"an HTML page", http.StatusOK, "text/html; charset=utf-8", "<html><body>" + canary + "</body></html>", ""},
+		{"plain text", http.StatusOK, "text/plain", "hello " + canary, ""},
+		{"no content type", http.StatusOK, "", "<d:multistatus", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := newProblemRun(t)
+			r.hook(func(w http.ResponseWriter, req *http.Request) bool {
+				if req.Method != "PROPFIND" || req.URL.Path != r.mock.HomePath() {
+					return false
+				}
+				if tt.ctype != "" {
+					w.Header().Set("Content-Type", tt.ctype)
+				} else {
+					w.Header()["Content-Type"] = nil // no sniffing either
+				}
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+				return true
+			})
+
+			_, err := r.svc.ListCalendars(r.ctx)
+
+			mustErr(t, err, domain.ErrUpstream)
+			noCanary(t, "error", err.Error())
+			got := r.problems()
+			if tt.wantReason == "" {
+				if len(got) != 0 {
+					t.Errorf("problems = %+v; want none", got)
+				}
+				for _, m := range logLines(t, r.logs) {
+					if m["level"] == "WARN" {
+						t.Errorf("warning %v; want none", m)
+					}
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Kind != diag.ProblemInvalidXML || !strings.Contains(got[0].Reason, tt.wantReason) {
+				t.Fatalf("problems = %+v; want one invalid_xml with %q", got, tt.wantReason)
+			}
+			noCanary(t, "log", r.logs.String())
+		})
+	}
+}
+
+func TestDiscoveryOfAWebsiteRecordsNoProblem(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.hook(func(w http.ResponseWriter, req *http.Request) bool {
+		if req.Method != "PROPFIND" {
+			return false
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<html><body>Welcome to "+canary+"</body></html>")
+		return true
+	})
+	buf := diag.NewBuffer(diag.AnonymousLimits)
+
+	_, err := r.p.Connect(scopedCtx(t.Context(), buf, "req-9"),
+		domain.Credentials{ServerURL: r.ts.URL, Username: traceUser, Password: tracePass})
+
+	mustErr(t, err, domain.ErrDiscovery)
+	if got := buf.Snapshot().Problems; len(got) != 0 {
+		t.Errorf("problems = %+v; want none", got)
+	}
+	if got := len(buf.Snapshot().Exchanges); got == 0 {
+		t.Errorf("exchanges = %d; want the trace of the attempts", got)
+	}
+	for _, m := range logLines(t, r.logs) {
+		if m["level"] == "WARN" {
+			t.Errorf("warning %v; want none", m)
+		}
+	}
+}
+
+// An error body to a DELETE is the server's error answer, but no write of Lucid's
+// own payload was refused: error_response, not rejected_write (FR-36).
+func TestProblemDeleteErrorIsNoRejectedWrite(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.putCanaryEvent(t, "personal", canary+"-obj.ics")
+	evs, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	r.hook(func(w http.ResponseWriter, req *http.Request) bool {
+		if req.Method != http.MethodDelete {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, sabreError)
+		return true
+	})
+
+	err = r.svc.DeleteEvent(r.ctx, evs[0].ID, evs[0].ETag)
+
+	mustErr(t, err, domain.ErrReadOnly)
+	got := r.problems()
+	if len(got) != 1 || got[0].Kind != diag.ProblemErrorResponse || !strings.Contains(got[0].Skeleton.Text, `Sabre\DAV\Exception\Forbidden`) {
+		t.Fatalf("problems = %+v; want one error_response with the exception class", got)
+	}
+	noCanary(t, "log", r.logs.String())
+}
+
+// A server decides how many objects of a calendar do not parse: the cache keeps
+// the problems of no more than a buffer holds.
+func TestProblemUnreadableObjectsAreCapped(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.buf = diag.NewBuffer(diag.Limits{Problems: 100})
+	r.ctx = scopedCtx(t.Context(), r.buf, "req-1")
+	var objs []reportObject
+	for i := range 2 * maxUnreadable {
+		objs = append(objs, reportObject{fmt.Sprintf("broken-%d.ics", i), brokenObject})
+	}
+	r.answerReport("personal", objs...)
+
+	_, err := r.listEvents(t, "personal")
+
+	mustNoErr(t, err)
+	if got := len(r.problems()); got != maxUnreadable {
+		t.Errorf("problems = %d; want the %d the cache keeps", got, maxUnreadable)
 	}
 }

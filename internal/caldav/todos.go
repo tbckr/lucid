@@ -120,11 +120,18 @@ func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, st
 		// Only open, readable recurring series with a rule Lucid can
 		// evaluate: todoFromObject already resolves that via setSeries (FR-17).
 		t := todoFromObject(o, s.ref(o.path, calendarID), c)
-		if !t.Recurring || t.RuleUnsupported || t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
+		series := newTodoSeries(o.cal, c)
+		if !t.Recurring || series == nil {
 			continue
 		}
-		series := newTodoSeries(o.cal, c)
-		if series == nil {
+		if t.RuleUnsupported {
+			// Skipped like an event with a rule that cannot be evaluated, and
+			// a problem like it (FR-36).
+			_, _, err := series.current()
+			s.objectProblem(ctx, diag.ProblemInvalidObject, o.path, encodeForSkeleton(o.cal), err)
+			continue
+		}
+		if t.Status == domain.TodoCompleted || t.Status == domain.TodoCancelled {
 			continue
 		}
 		got, err := seriesOccurrences(series, t.ID, calendarID, t.Title, start, end)
