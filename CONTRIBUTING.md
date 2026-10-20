@@ -174,7 +174,8 @@ security fixes. `just outdated` lists what to review on every upgrade:
 
 - the Go release in `go.mod`: only the two newest Go releases get fixes, and
   `latest-deps.yml` fails once ours drops out,
-- the nixpkgs branch in `flake.nix` (supported for about seven months),
+- the nixpkgs branch in `flake.nix` (supported for about seven months), and
+  with it the Home Manager branch in `nix/tests/home-manager/flake.nix`,
 - Node.js in CI and `web/package.json`,
 - the distroless base image in the `Dockerfile`,
 - golangci-lint in `ci.yml` (pinned by hand),

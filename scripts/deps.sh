@@ -111,6 +111,8 @@ outdated() {
   echo "gremlins $(sed -nE 's/^gremlins_version=(v[0-9.]+)$/\1/p' scripts/mutation.sh) in scripts/mutation.sh," \
     "latest $(go list -m -f '{{.Version}}' github.com/go-gremlins/gremlins@latest)"
   echo "nixpkgs $(sed -nE 's|.*github:NixOS/nixpkgs/([^"]+)".*|\1|p' flake.nix) in flake.nix"
+  echo "Home Manager $(sed -nE 's|.*github:nix-community/home-manager/([^"]+)".*|\1|p' nix/tests/home-manager/flake.nix)" \
+    "in nix/tests/home-manager/flake.nix, to match nixpkgs"
   echo "Node.js $(sed -nE 's/^ *NODE_VERSION: "?([0-9]+)"?.*/\1/p' .github/workflows/ci.yml) in CI," \
     "$(sed -nE 's/^ *"node": "([^"]+)".*/\1/p' web/package.json) in web/package.json"
   echo "Base image $(sed -nE 's/^FROM (.+)/\1/p' Dockerfile)"
