@@ -3,7 +3,8 @@ import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/lib/api/client'
+import i18next from '@/i18n'
+import { api, ApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
 import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
 import { currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
@@ -15,6 +16,7 @@ import { defaultSettings, useSettings } from '@/stores/settings'
 import {
   MOVE_EVENT_KEY,
   queryKeys,
+  reportMutationError,
   useCalendarTasks,
   useDeleteEvent,
   useDeleteFollowing,
@@ -3873,5 +3875,30 @@ describe('useDeleteTodos', () => {
     expect(requested()).toEqual(['DELETE /api/v1/todos/a', 'DELETE /api/v1/todos/b'])
     expect(ids()).toEqual(['b', 'c', 'o'])
     expect(success).toHaveBeenCalledWith('Task deleted')
+  })
+})
+
+describe('reportMutationError', () => {
+  const t = i18next.getFixedT('en')
+  const qc = new QueryClient()
+
+  it('adds the reference of a server error to its toast', () => {
+    const error = vi.spyOn(toast, 'error')
+    reportMutationError(new ApiError(502, 'upstream_error', 'down', null, '0123456789abcdef'), t, qc, ['x'])
+    expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.", {
+      description: 'Reference: 01234567',
+    })
+  })
+
+  it('shows a plain toast for an error without one', () => {
+    const error = vi.spyOn(toast, 'error')
+    reportMutationError(new ApiError(502, 'upstream_error', 'down'), t, qc, ['x'])
+    expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.")
+  })
+
+  it('shows no reference with the warning of a conflict', () => {
+    const warning = vi.spyOn(toast, 'warning')
+    reportMutationError(new ApiError(409, 'conflict', '', null, '0123456789abcdef'), t, qc, ['x'])
+    expect(warning).toHaveBeenCalledWith('This item was changed elsewhere. Lucid reloaded the latest version.')
   })
 })

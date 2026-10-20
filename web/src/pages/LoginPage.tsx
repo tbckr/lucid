@@ -15,7 +15,7 @@ import { queryKeys } from '@/hooks/queries'
 import { usePrefs } from '@/hooks/usePrefs'
 import { endpoints } from '@/lib/api/endpoints'
 import { dayKey, monthGrid } from '@/lib/dates'
-import { apiErrorMessage } from '@/lib/errors'
+import { apiErrorMessage, errorReference } from '@/lib/errors'
 import { weekdayNames, type FormatPrefs } from '@/lib/format'
 import { loginSchema, type LoginValues } from '@/lib/loginForm'
 import { safeRedirect } from '@/lib/redirect'
@@ -25,6 +25,8 @@ import { useSettings } from '@/stores/settings'
 
 interface LoginState {
   error: string | null
+  /** The short reference of a server error (FR-36), to quote to the operator. */
+  reference: string | null
 }
 
 export function LoginPage() {
@@ -49,12 +51,12 @@ export function LoginPage() {
       updateSettings({ lastServerUrl: values.serverUrl.trim() })
       qc.setQueryData(queryKeys.session, session)
       navigate(safeRedirect(search.get('redirect')) ?? '/', { replace: true })
-      return { error: null }
+      return { error: null, reference: null }
     } catch (err) {
       resetField('password')
-      return { error: apiErrorMessage(t, err) }
+      return { error: apiErrorMessage(t, err), reference: errorReference(err) }
     }
-  }, { error: null })
+  }, { error: null, reference: null })
 
   const onSubmit = handleSubmit((values) => {
     startTransition(() => {
@@ -88,7 +90,12 @@ export function LoginPage() {
                 className="flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/8 px-3.5 py-3 text-sm text-destructive"
               >
                 <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>{state.error}</span>
+                <div className="grid gap-1">
+                  <p>{state.error}</p>
+                  {state.reference !== null && (
+                    <p className="text-xs">{t('diagnostics.reference', { ref: state.reference })}</p>
+                  )}
+                </div>
               </div>
             )}
 

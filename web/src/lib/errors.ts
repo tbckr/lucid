@@ -1,5 +1,34 @@
 import { type TFunction } from 'i18next'
-import { isApiError } from './api/client'
+import { isApiError, type ApiErrorCode } from './api/client'
+
+/** The reference is this many characters of the request ID: short enough to read out, long enough to find in a log. */
+const REFERENCE_LENGTH = 8
+
+/** Errors of a server or its upstream, where a user and an operator need the same log line. */
+const REFERENCED_CODES: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
+  'upstream_error',
+  'internal',
+  'bad_response',
+  'discovery_failed',
+  'invalid_credentials',
+  'unsupported_component',
+])
+
+/**
+ * Short reference for an error that points to a server or upstream problem:
+ * the first characters of the request ID, which is on every server log line of
+ * the request (FR-36). Null for other errors and for one without an ID.
+ */
+export function errorReference(err: unknown): string | null {
+  if (!isApiError(err) || err.requestId === null || !REFERENCED_CODES.has(err.code)) return null
+  return err.requestId.slice(0, REFERENCE_LENGTH)
+}
+
+/** "Reference: 3f9a1c2b" for a toast's description; undefined if the error has no reference. */
+export function referenceDescription(t: TFunction, err: unknown): string | undefined {
+  const ref = errorReference(err)
+  return ref === null ? undefined : t('diagnostics.reference', { ref })
+}
 
 /** Localized, actionable message for an API error. */
 export function apiErrorMessage(t: TFunction, err: unknown): string {

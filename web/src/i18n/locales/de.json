@@ -536,5 +536,8 @@
     "startDueType": "Gib beiden Daten eine Uhrzeit oder keinem.",
     "startAfterDue": "Der Beginn kann nicht nach der Fälligkeit liegen.",
     "repeatNeedsDate": "Eine wiederkehrende Aufgabe braucht ein Datum."
+  },
+  "diagnostics": {
+    "reference": "Referenz: {{ref}}"
   }
 }

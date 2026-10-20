@@ -48,13 +48,22 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode
   /** Seconds from the Retry-After header (429). */
   readonly retryAfter: number | null
+  /** The X-Request-Id of the response, which is also on the server's log lines of the request; null without a response. */
+  readonly requestId: string | null
 
-  constructor(status: number, code: ApiErrorCode, message: string, retryAfter: number | null = null) {
+  constructor(
+    status: number,
+    code: ApiErrorCode,
+    message: string,
+    retryAfter: number | null = null,
+    requestId: string | null = null,
+  ) {
     super(message || code)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.retryAfter = retryAfter
+    this.requestId = requestId
   }
 }
 
@@ -95,9 +104,16 @@ function parseRetryAfter(value: string | null): number | null {
   return Math.max(0, Math.ceil((date - Date.now()) / 1000))
 }
 
+/** The X-Request-Id of a response, null if it has none (a reverse proxy's error page, say). */
+function requestIdOf(res: Response): string | null {
+  const id = res.headers.get('X-Request-Id')
+  return id === null || id === '' ? null : id
+}
+
 /** Convert a non-2xx response into an ApiError following the documented error shape. */
 export async function parseErrorResponse(res: Response): Promise<ApiError> {
   const retryAfter = parseRetryAfter(res.headers.get('Retry-After'))
+  const requestId = requestIdOf(res)
   let body: unknown = null
   try {
     body = await res.json()
@@ -108,9 +124,9 @@ export async function parseErrorResponse(res: Response): Promise<ApiError> {
   if (parsed.success) {
     const { code, message } = parsed.data.error
     const known: ApiErrorCode = KNOWN_CODES.has(code) ? (code as ApiErrorCode) : codeForStatus(res.status)
-    return new ApiError(res.status, known, message, retryAfter)
+    return new ApiError(res.status, known, message, retryAfter, requestId)
   }
-  return new ApiError(res.status, codeForStatus(res.status), res.statusText, retryAfter)
+  return new ApiError(res.status, codeForStatus(res.status), res.statusText, retryAfter, requestId)
 }
 
 export interface RequestOptions<T> {
@@ -215,11 +231,11 @@ export class ApiClient {
     try {
       json = await res.json()
     } catch {
-      throw new ApiError(res.status, 'bad_response', 'response is not valid JSON')
+      throw new ApiError(res.status, 'bad_response', 'response is not valid JSON', null, requestIdOf(res))
     }
     const parsed = opts.schema.safeParse(json)
     if (!parsed.success) {
-      throw new ApiError(res.status, 'bad_response', parsed.error.message)
+      throw new ApiError(res.status, 'bad_response', parsed.error.message, null, requestIdOf(res))
     }
     return parsed.data
   }

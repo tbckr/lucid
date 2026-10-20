@@ -33,7 +33,7 @@ import {
 } from '@/lib/api/schemas'
 import { anchorOf, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
 import { eventColors, FALLBACK_COLOR } from '@/lib/color'
-import { apiErrorMessage } from '@/lib/errors'
+import { apiErrorMessage, referenceDescription } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
@@ -319,7 +319,10 @@ export function reportMutationError(err: unknown, t: TFn, qc: QueryClient, inval
     void qc.invalidateQueries({ queryKey: invalidate })
     return
   }
-  toast.error(apiErrorMessage(t, err))
+  // A server error comes with its reference (FR-36).
+  const description = referenceDescription(t, err)
+  if (description === undefined) toast.error(apiErrorMessage(t, err))
+  else toast.error(apiErrorMessage(t, err), { description })
 }
 
 /* ------------------------------------------------------------------------ */

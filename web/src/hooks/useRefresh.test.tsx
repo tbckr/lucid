@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/lib/api/client'
 import { isReported, markReported } from '@/lib/refresh'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -146,6 +147,59 @@ describe('useRefresh', () => {
   })
 })
 
+/** The description of the live toast `id`, sonner's own state. */
+function descriptionOf(id: string): unknown {
+  return toast.getToasts().find((x) => x.id === id)?.description
+}
+
+/** A new error each time: a refresh marks the errors it told about, and these tests share the module. */
+const serverError = () => new ApiError(502, 'upstream_error', 'down', null, '0123456789abcdef')
+
+describe('useRefresh toast reference', () => {
+  /** A refresh of one loaded query whose reload fails with `failure`. */
+  async function failedRefresh(failure: Error) {
+    const { queryClient, wrapper } = setup()
+    const key = ['events', 'c1', 's', 'e']
+    queryClient.setQueryData(key, { events: [] })
+    const { result } = renderHook(
+      () => {
+        useQuery({ queryKey: key, queryFn: () => Promise.reject(failure), staleTime: Number.POSITIVE_INFINITY })
+        return useRefresh()
+      },
+      { wrapper },
+    )
+    act(() => {
+      result.current.refresh()
+    })
+    await waitFor(() => {
+      expect(toast.getToasts().some((x) => x.id === 'refresh')).toBe(true)
+    })
+  }
+
+  it('shows the reference of the error that failed it', async () => {
+    await failedRefresh(serverError())
+    expect(descriptionOf('refresh')).toBe('Reference: 01234567')
+  })
+
+  it('shows none for an error without one', async () => {
+    await failedRefresh(new Error('502'))
+    expect(descriptionOf('refresh')).toBeUndefined()
+  })
+
+  it('drops the reference of an earlier refresh toast it replaces', async () => {
+    toast.error('Couldn\'t refresh. Showing what was loaded at 14:32.', { id: 'refresh', description: 'Reference: 01234567' })
+    vi.useFakeTimers()
+    const { queryClient, wrapper } = setup()
+    vi.spyOn(queryClient, 'invalidateQueries').mockRejectedValue(new Error('boom'))
+    const { result } = renderHook(() => useRefresh(), { wrapper })
+    act(() => {
+      result.current.refresh()
+    })
+    await act(() => vi.advanceTimersByTimeAsync(600))
+    expect(descriptionOf('refresh')).toBeUndefined()
+  })
+})
+
 describe('useLoadErrorToast', () => {
   const render = (error: unknown, refreshing: boolean) =>
     renderHook((p: { error: unknown; refreshing: boolean }) => {
@@ -156,6 +210,15 @@ describe('useLoadErrorToast', () => {
     const error = vi.spyOn(toast, 'error')
     render(new Error('502'), false)
     expect(error).toHaveBeenCalledWith('Some events failed.', { id: 'events-load' })
+  })
+
+  it('shows the reference of a server error, and drops it when the next error has none', () => {
+    const { rerender } = render(serverError(), false)
+    expect(descriptionOf('events-load')).toBe('Reference: 01234567')
+
+    // Sonner merges a live toast with the new one of its id: the description must be set again.
+    rerender({ error: new Error('502'), refreshing: false })
+    expect(descriptionOf('events-load')).toBeUndefined()
   })
 
   it('holds back while a refresh runs, and stays quiet about what the refresh told', () => {

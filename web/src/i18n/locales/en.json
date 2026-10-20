@@ -539,5 +539,8 @@
     "startDueType": "Give both dates a time, or neither.",
     "startAfterDue": "The start can't be after the due date.",
     "repeatNeedsDate": "A repeating task needs a date."
+  },
+  "diagnostics": {
+    "reference": "Reference: {{ref}}"
   }
 }

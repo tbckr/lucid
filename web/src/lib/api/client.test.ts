@@ -143,6 +143,25 @@ describe('ApiClient', () => {
     expect(reach).toHaveBeenLastCalledWith(true)
   })
 
+  it('network errors have no request ID', async () => {
+    const { fetch } = mockFetch(new TypeError('Failed to fetch'))
+    const client = new ApiClient('/api/v1', fetch)
+    const err: unknown = await client.request('/calendars').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).requestId).toBeNull()
+  })
+
+  it('keeps the request ID of a response that violates the contract', async () => {
+    const id = { 'X-Request-Id': '0123456789abcdef' }
+    const { fetch } = mockFetch(jsonResponse(200, { id: 1 }, id), new Response('<html>', { status: 200, headers: id }))
+    const client = new ApiClient('/api/v1', fetch)
+    const schema = z.object({ id: z.string() })
+    for (const path of ['/a', '/b']) {
+      const err: unknown = await client.request(path, { schema }).catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'bad_response', requestId: '0123456789abcdef' })
+    }
+  })
+
   it('rethrows aborts unchanged', async () => {
     const abort = new DOMException('aborted', 'AbortError')
     const { fetch } = mockFetch(abort)
@@ -214,6 +233,22 @@ describe('parseErrorResponse', () => {
   ])('keeps the code of a %i %s', async (status, code) => {
     const err = await parseErrorResponse(jsonResponse(status, { error: { code, message: 'm' } }))
     expect(err.code).toBe(code)
+  })
+
+  it('reads the request ID of an error', async () => {
+    const id = { 'X-Request-Id': '0123456789abcdef' }
+    const json = await parseErrorResponse(jsonResponse(502, { error: { code: 'upstream_error', message: 'down' } }, id))
+    expect(json.requestId).toBe('0123456789abcdef')
+    // A response without a JSON body (a reverse proxy in between) can carry one too.
+    const plain = await parseErrorResponse(new Response('<html>oops</html>', { status: 502, headers: id }))
+    expect(plain.requestId).toBe('0123456789abcdef')
+  })
+
+  it('has no request ID when the response carries none', async () => {
+    const err = await parseErrorResponse(jsonResponse(502, { error: { code: 'upstream_error', message: 'down' } }))
+    expect(err.requestId).toBeNull()
+    const empty = await parseErrorResponse(jsonResponse(502, undefined, { 'X-Request-Id': '' }))
+    expect(empty.requestId).toBeNull()
   })
 
   it('maps unknown codes by status', async () => {

@@ -54,6 +54,61 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Password')).toHaveValue('')
   })
 
+  it('shows the reference of a failed login', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/session')) return Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' }))
+      return Promise.resolve(
+        jsonResponse(502, { error: { code: 'discovery_failed', message: 'no' } }, { 'X-Request-Id': '0123456789abcdef' }),
+      )
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    await fill(user, 'example.com', 'tim', 'pw')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('No calendar service was found at this address.')
+    expect(alert).toHaveTextContent('Reference: 01234567')
+  })
+
+  it('shows no reference for an error that is not a server problem', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/session')) return Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' }))
+      return Promise.resolve(
+        jsonResponse(429, { error: { code: 'rate_limited', message: 'no' } }, { 'X-Request-Id': '0123456789abcdef' }),
+      )
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    await fill(user, 'example.com', 'tim', 'pw')
+    expect(await screen.findByRole('alert')).not.toHaveTextContent('Reference')
+  })
+
+  it('shows the reference of a rejected login, and drops it with the next error', async () => {
+    let status = 401
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/session')) return Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' }))
+      return Promise.resolve(
+        status === 401
+          ? jsonResponse(401, { error: { code: 'invalid_credentials', message: 'no' } }, { 'X-Request-Id': 'fedcba9876543210' })
+          : jsonResponse(429, { error: { code: 'rate_limited', message: 'no' } }),
+      )
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    await fill(user, 'example.com', 'tim', 'wrong')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Reference: fedcba98')
+
+    status = 429
+    await user.type(screen.getByLabelText('Password'), 'again')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Too many attempts')
+    })
+    expect(screen.getByRole('alert')).not.toHaveTextContent('Reference')
+  })
+
   it('logs in with the CSRF token and follows a safe redirect only', async () => {
     window.history.replaceState(null, '', '/login?redirect=%2F%2Fevil.example')
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
