@@ -71,7 +71,8 @@ and Lucid keeps the comfort you're used to from Google Calendar.
   target).
 - **Easy to run:** download it and double-click on your own computer, or run
   a single static binary, a distroless container or a NixOS module on a
-  server, with JSON logs, Prometheus metrics and health endpoints.
+  server, with JSON logs, Prometheus metrics and health endpoints. NixOS and
+  Home Manager modules cover both.
 
 ## Screenshots
 
@@ -180,8 +181,9 @@ terminal, for example `LUCID_LOCAL_PORT=4000 ./lucid` on Linux and macOS, or
 > proxy (Caddy, Traefik, nginx, ...) or let it serve HTTPS itself via
 > `LUCID_TLS_CERT` / `LUCID_TLS_KEY`.
 
-Setting `LUCID_ADDR` makes Lucid a server (the container image, `compose.yaml`
-and the NixOS module set it for you); without it, Lucid runs in local mode.
+Setting `LUCID_ADDR` makes Lucid a server (the container image and
+`compose.yaml` set it for you, the Nix modules with `mode = "server"`); without
+it, Lucid runs in local mode.
 
 #### Docker Compose (recommended)
 
@@ -239,12 +241,20 @@ Health endpoints: `GET /healthz` (liveness), `GET /readyz` (readiness).
 
 </details>
 
+### With Nix
+
+The repository is a Nix flake with the package, an overlay, a NixOS module
+and a Home Manager module. Both modules have the same options under
+`services.lucid`, one for each variable in [Configuration](#configuration),
+and run Lucid in local mode unless you set `mode = "server"`. Setting an
+option of the other mode is an error when the configuration is evaluated. To
+try Lucid without installing it: `nix run github:tbckr/lucid` (local mode).
+
 <details>
 <summary><strong>NixOS</strong></summary>
 
-The repository is a Nix flake with the package, an overlay and a NixOS module.
 `services.lucid` runs Lucid as a hardened systemd service with a dynamic user,
-listening on `127.0.0.1:8080` for your reverse proxy:
+started at boot:
 
 ```nix
 {
@@ -257,22 +267,99 @@ listening on `127.0.0.1:8080` for your reverse proxy:
         system = "x86_64-linux";
         modules = [
           lucid.nixosModules.default
-          {
-            services.lucid = {
-              enable = true;
-              settings.LUCID_TRUST_PROXY_HEADERS = true;
-            };
-          }
+          { services.lucid.enable = true; }
         ];
       };
     };
 }
 ```
 
-`settings` takes any variable from [Configuration](#configuration) that is valid
-in server mode (Mode "Server" or "Both").
-To try Lucid without installing it: `nix run github:tbckr/lucid` (this starts
-local mode).
+**On your own computer** (local mode, the default), Lucid listens on
+`127.0.0.1:3456` (`port` changes it). Open <http://127.0.0.1:3456/> or the
+"Lucid" entry in your app menu. One instance serves every user of the
+computer, each with their own CalDAV account.
+
+**On a server behind a reverse proxy**, any proxy works; Lucid only needs to
+know that one is in front of it:
+
+```nix
+services.lucid = {
+  enable = true;
+  mode = "server"; # listens on 127.0.0.1:8080
+  trustProxyHeaders = true;
+};
+
+# nginx (with security.acme set up) ...
+services.nginx.virtualHosts."calendar.example.com" = {
+  forceSSL = true;
+  enableACME = true;
+  locations."/".proxyPass = "http://127.0.0.1:8080";
+};
+
+# ... or Caddy
+services.caddy.virtualHosts."calendar.example.com".extraConfig = ''
+  reverse_proxy 127.0.0.1:8080
+'';
+```
+
+**On a server with its own TLS**, the certificate and key can come from any
+source (ACME, agenix, sops-nix, plain files). systemd reads them and hands
+them to Lucid as credentials, so the service needs no access to the files,
+and they never enter the Nix store:
+
+```nix
+services.lucid = {
+  enable = true;
+  mode = "server";
+  address = "0.0.0.0";
+  port = 443;
+  openFirewall = true;
+  tls.certFile = "/var/lib/acme/calendar.example.com/fullchain.pem";
+  tls.keyFile = "/var/lib/acme/calendar.example.com/key.pem";
+};
+# If security.acme manages the certificate: restart Lucid on renewal.
+security.acme.certs."calendar.example.com".reloadServices = [ "lucid.service" ];
+```
+
+Lucid reads the certificate only when it starts, so a renewal restarts it, and
+everyone logs in again (sessions live in memory). A port below 1024 gives the
+service `CAP_NET_BIND_SERVICE` and turns off `PrivateUsers`; everything else
+stays as restricted as with a higher port.
+
+</details>
+
+<details>
+<summary><strong>Home Manager (Linux and macOS)</strong></summary>
+
+For computers without NixOS or without root: `lucid.homeModules.default` runs
+Lucid under your own user, as a systemd user service on Linux and a launchd
+agent on macOS, started when you log in:
+
+```nix
+home-manager.lib.homeManagerConfiguration {
+  # pkgs = ...;
+  modules = [
+    lucid.homeModules.default
+    { services.lucid.enable = true; }
+  ];
+}
+```
+
+With Home Manager as a NixOS or nix-darwin module, add it with
+`home-manager.sharedModules = [ lucid.homeModules.default ];`. The options are
+those of the NixOS module, without `openFirewall`.
+
+- In local mode, open <http://127.0.0.1:3456/>; on Linux there is also a
+  "Lucid" entry in the app menu. Two users of one computer need different
+  `port`s.
+- Logs: `journalctl --user -u lucid` on Linux, `~/Library/Logs/lucid.log` on
+  macOS.
+- A user service on Linux starts at login. To start it at boot, for example
+  for server mode, run `loginctl enable-linger <user>` once.
+- A Linux user service cannot listen on a port below 1024; use a reverse proxy
+  or a higher port.
+- On macOS, Lucid reads `tls.certFile` and `tls.keyFile` itself, so your user
+  must be able to read them. On Linux systemd hands them over.
 
 </details>
 
