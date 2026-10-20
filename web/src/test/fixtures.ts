@@ -66,9 +66,11 @@ export function occurrence(p: Partial<TodoOccurrence> = {}): TodoOccurrence {
   }
 }
 
+/** `stableId` follows `id` (as `stable-<id>`), so a test that mixes the two up fails. */
 export function calendar(p: Partial<Calendar> = {}): Calendar {
   return {
     id: 'c1',
+    stableId: `stable-${p.id ?? 'c1'}`,
     name: 'Personal',
     description: '',
     color: '#3b82f6',

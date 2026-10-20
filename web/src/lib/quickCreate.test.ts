@@ -205,10 +205,11 @@ describe('chooseCalendar', () => {
     ['the first visible writable event calendar', 'event', { visible: all, taskList: '' }, 'c1'],
     ['a visible one over a hidden one', 'event', { visible: [work, tasks], taskList: '' }, 'c2'],
     ['a hidden one when none is visible', 'event', { visible: [], taskList: '' }, 'c1'],
-    ['the task list of the sidebar', 'task', { visible: all, taskList: 'c3' }, 'c3'],
-    ['the first writable list when the sidebar list is read-only', 'task', { visible: all, taskList: 'c4' }, 'c2'],
-    ['the current calendar when it takes the kind', 'task', { visible: all, taskList: 'c3', current: 'c2' }, 'c2'],
-    ['the default when the current one does not', 'task', { visible: all, taskList: 'c3', current: 'c1' }, 'c3'],
+    ['the task list of the sidebar', 'task', { visible: all, taskList: 'stable-c3' }, 'c3'],
+    ['the first writable list when the sidebar list is read-only', 'task', { visible: all, taskList: 'stable-c4' }, 'c2'],
+    ['the current calendar when it takes the kind', 'task', { visible: all, taskList: 'stable-c3', current: 'c2' }, 'c2'],
+    ['the default when the current one does not', 'task', { visible: all, taskList: 'stable-c3', current: 'c1' }, 'c3'],
+    ['the first writable list for a task list holding a calendar ID, not a stable ID', 'task', { visible: [], taskList: 'c3' }, 'c2'],
   ] as const)('picks %s', (_, kind, o, id) => {
     expect(chooseCalendar(kind, { all, ...o })?.id).toBe(id)
   })

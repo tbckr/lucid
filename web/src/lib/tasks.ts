@@ -59,9 +59,9 @@ export function compareTodos(a: Todo, b: Todo): number {
   return a.title.localeCompare(b.title)
 }
 
-/** The task list shown in the sidebar: the saved one, or the first if it is gone (FR-12). */
-export function selectTaskList<T extends { calendar: Pick<Calendar, 'id'> }>(lists: T[], id: string): T | undefined {
-  return lists.find((l) => l.calendar.id === id) ?? lists[0]
+/** The task list shown in the sidebar: the one with the saved stable ID, or the first if it is gone (FR-12). */
+export function selectTaskList<T extends { calendar: Pick<Calendar, 'stableId'> }>(lists: T[], stableId: string): T | undefined {
+  return lists.find((l) => l.calendar.stableId === stableId) ?? lists[0]
 }
 
 export function isOverdue(todo: Pick<Todo, 'due' | 'dueAllDay' | 'status'>, now: Date): boolean {

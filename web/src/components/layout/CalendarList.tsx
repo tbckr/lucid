@@ -40,7 +40,7 @@ export function CalendarList() {
       )}
       <ul className="grid gap-px">
         {calendars.map((c) => {
-          const visible = !hidden.includes(c.id)
+          const visible = !hidden.includes(c.stableId)
           return (
             <li key={c.id}>
               <label className="group grid cursor-pointer grid-cols-[1.125rem_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1.5 text-sm hover:bg-muted has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring">
@@ -49,7 +49,7 @@ export function CalendarList() {
                   className="peer sr-only"
                   checked={visible}
                   onChange={() => {
-                    toggle(c.id)
+                    toggle(c.stableId)
                   }}
                   data-testid={`calendar-toggle-${c.id}`}
                 />

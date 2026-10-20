@@ -92,7 +92,7 @@ describe('TasksPanel', () => {
     await user.click(await screen.findByRole('option', { name: /Work/ }))
     expect(await screen.findByRole('checkbox', { name: 'Completed: File taxes' })).toBeInTheDocument()
     expect(taskTitles()).toEqual(['Completed: File taxes'])
-    expect(useSettings.getState().taskList).toBe('b')
+    expect(useSettings.getState().taskList).toBe('stable-b')
   })
 
   it('counts only open tasks in the dropdown', async () => {
@@ -106,7 +106,7 @@ describe('TasksPanel', () => {
   })
 
   it('restores the saved list', async () => {
-    useSettings.setState({ taskList: 'b' })
+    useSettings.setState({ taskList: 'stable-b' })
     serve([personal, work])
     renderWithProviders(<TasksPanel onClose={() => undefined} />)
     expect(await screen.findByRole('checkbox', { name: 'Completed: File taxes' })).toBeInTheDocument()
@@ -115,7 +115,7 @@ describe('TasksPanel', () => {
 
   it('adds a new task to the selected list', async () => {
     api.setCsrfToken('tok')
-    useSettings.setState({ taskList: 'b' })
+    useSettings.setState({ taskList: 'stable-b' })
     const fetch = serve([personal, work])
     const user = userEvent.setup()
     renderWithProviders(<TasksPanel onClose={() => undefined} />)
@@ -130,7 +130,7 @@ describe('TasksPanel', () => {
   })
 
   it('offers no input for a read-only list', async () => {
-    useSettings.setState({ taskList: 'b' })
+    useSettings.setState({ taskList: 'stable-b' })
     serve([personal, calendar({ id: 'b', name: 'Work', readOnly: true })])
     renderWithProviders(<TasksPanel onClose={() => undefined} />)
     await screen.findByRole('checkbox', { name: 'Completed: File taxes' })
@@ -145,7 +145,7 @@ describe('TasksPanel', () => {
   })
 
   it('names the chosen list when there are several', async () => {
-    useSettings.setState({ taskList: 'b' })
+    useSettings.setState({ taskList: 'stable-b' })
     serve([personal, work])
     renderWithProviders(<TasksPanel onClose={() => undefined} />)
     expect(await screen.findByRole('heading', { level: 2, name: 'Work' })).toBeInTheDocument()

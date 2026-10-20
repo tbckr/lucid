@@ -20,7 +20,10 @@ export const sessionSchema = z.object({
 export type Session = z.infer<typeof sessionSchema>
 
 export const calendarSchema = z.object({
+  // Changes when Lucid restarts: for requests and query keys, never persisted.
   id: z.string().min(1),
+  // Stays the same across restarts: what the persisted settings refer to (hidden calendars, task list).
+  stableId: z.string().min(1),
   name: z.string(),
   description: z.string().optional().default(''),
   // The backend normalizes to #rrggbb; be lenient with #rgb / #rrggbbaa anyway.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiEvent, occurrence } from '@/test/fixtures'
+import { apiEvent, calendar, occurrence } from '@/test/fixtures'
 import {
   calendarSchema,
   deletedOccurrenceSchema,
@@ -61,6 +61,7 @@ describe('schemas', () => {
   it('normalises calendar colors', () => {
     const c = calendarSchema.parse({
       id: 'a',
+      stableId: 'sa',
       name: 'A',
       color: 'red',
       readOnly: false,
@@ -69,9 +70,16 @@ describe('schemas', () => {
     })
     expect(c.color).toBe('#4a45d6')
     expect(c.description).toBe('')
-    const base = { id: 'a', name: 'A', readOnly: false, supportsEvents: true, supportsTodos: false }
+    const base = { id: 'a', stableId: 'sa', name: 'A', readOnly: false, supportsEvents: true, supportsTodos: false }
     expect(calendarSchema.parse({ ...base, color: '#3B82F6FF' }).color).toBe('#3b82f6')
     expect(calendarSchema.parse({ ...base, color: 'abc' }).color).toBe('#aabbcc')
+  })
+
+  it('requires the stable ID of a calendar, the key settings follow across restarts', () => {
+    const { stableId: _s, ...unkeyed } = calendar()
+    expect(calendarSchema.safeParse(unkeyed).success).toBe(false)
+    expect(calendarSchema.safeParse({ ...unkeyed, stableId: '' }).success).toBe(false)
+    expect(calendarSchema.parse(calendar({ stableId: 'LnPSpWilT2g0Vp-af-NYtX' })).stableId).toBe('LnPSpWilT2g0Vp-af-NYtX')
   })
 
   it('parses todos with null checklist and unknown status', () => {

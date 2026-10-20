@@ -17,10 +17,30 @@ describe('CalendarList', () => {
 
     await user.click(screen.getByText('Work'))
     expect(toggle).not.toBeChecked()
-    expect(useSettings.getState().hiddenCalendars).toEqual(['work'])
+    expect(useSettings.getState().hiddenCalendars).toEqual(['stable-work'])
     await user.click(screen.getByText('Work'))
     expect(toggle).toBeChecked()
     expect(useSettings.getState().hiddenCalendars).toEqual([])
+  })
+
+  it('keeps a calendar hidden across a restart', async () => {
+    useSettings.setState({ hiddenCalendars: [] })
+    const fetch = vi.spyOn(globalThis, 'fetch')
+    fetch.mockResolvedValue(jsonResponse(200, { calendars: [calendar({ id: 'before', stableId: 'work-key', name: 'Work' })] }))
+    const user = userEvent.setup()
+    const first = renderWithProviders(<CalendarList />)
+    await user.click(await screen.findByText('Work'))
+    expect(screen.getByRole('checkbox', { name: 'Work' })).not.toBeChecked()
+    expect(useSettings.getState().hiddenCalendars).toEqual(['work-key'])
+    first.unmount()
+
+    // After a restart the server hands out new IDs, the stable ID stays.
+    fetch.mockResolvedValue(jsonResponse(200, { calendars: [calendar({ id: 'after', stableId: 'work-key', name: 'Work' })] }))
+    renderWithProviders(<CalendarList />)
+    const toggle = await screen.findByRole('checkbox', { name: 'Work' })
+    expect(toggle.getAttribute('data-testid')).toBe('calendar-toggle-after')
+    expect(toggle).not.toBeChecked()
+    expect(useSettings.getState().hiddenCalendars).toEqual(['work-key'])
   })
 
   it('marks calendars that only hold tasks', async () => {

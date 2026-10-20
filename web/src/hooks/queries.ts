@@ -89,7 +89,7 @@ export function useVisibleCalendars(): { all: Calendar[]; visible: Calendar[]; b
   const hidden = useSettings((s) => s.hiddenCalendars)
   return useMemo(() => {
     const byId = new Map(data.map((c) => [c.id, c]))
-    return { all: data, visible: data.filter((c) => !hidden.includes(c.id)), byId }
+    return { all: data, visible: data.filter((c) => !hidden.includes(c.stableId)), byId }
   }, [data, hidden])
 }
 

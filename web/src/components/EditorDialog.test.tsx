@@ -87,7 +87,7 @@ describe('EditorDialog', () => {
   })
 
   it("takes the sidebar's list for the task rather than the event's calendar", async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     await open({ mode: 'create', draft }, [work, home, tasks])
     expect(screen.getByRole('combobox', { name: 'Calendar' })).toHaveTextContent('Work')
@@ -96,7 +96,7 @@ describe('EditorDialog', () => {
   })
 
   it('keeps a chosen calendar that takes tasks', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     await open({ mode: 'create', draft }, [work, home, tasks])
     await user.click(screen.getByRole('combobox', { name: 'Calendar' }))
@@ -106,7 +106,7 @@ describe('EditorDialog', () => {
   })
 
   it('creates the task in its list after the switch', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     const { fetch } = await open({ mode: 'create', draft })
     await user.type(titleField(), 'Call')

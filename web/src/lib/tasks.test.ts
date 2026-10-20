@@ -291,11 +291,11 @@ describe('ruleChanged', () => {
 describe('selectTaskList', () => {
   const groups = [{ calendar: calendar({ id: 'a' }) }, { calendar: calendar({ id: 'b' }) }]
 
-  it('returns the list with the saved ID', () => {
-    expect(selectTaskList(groups, 'b')?.calendar.id).toBe('b')
+  it('returns the list with the saved stable ID', () => {
+    expect(selectTaskList(groups, 'stable-b')?.calendar.id).toBe('b')
   })
 
-  it.each(['', 'gone'])('falls back to the first list for %j', (id) => {
+  it.each(['', 'gone', 'b'])('falls back to the first list for %j', (id) => {
     expect(selectTaskList(groups, id)?.calendar.id).toBe('a')
   })
 

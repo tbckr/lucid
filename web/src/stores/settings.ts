@@ -14,20 +14,21 @@ export interface SettingsState {
   weekStart: WeekStartSetting
   defaultView: ViewKind
   theme: ThemeSetting
-  /** Calendar IDs hidden in the sidebar (FR-05). */
+  /** Stable IDs (`Calendar.stableId`, which survive a restart of Lucid) of the calendars hidden in the sidebar (FR-05). */
   hiddenCalendars: string[]
   /** Fold the completed group of the task panel away (FR-12). */
   hideCompletedTasks: boolean
   /** Hide completed and cancelled tasks in the calendar views, independent of the task panel (FR-16). */
   hideCompletedInCalendar: boolean
-  /** Calendar ID of the list shown in the task panel; the first list if empty or gone (FR-12). */
+  /** Stable ID of the list shown in the task panel; the first list if empty or gone (FR-12). */
   taskList: string
   tasksOpen: boolean
   /** Last server URL used for login (convenience, not a secret). */
   lastServerUrl: string
 
   update: (patch: Partial<Omit<SettingsState, 'update' | 'toggleCalendar'>>) => void
-  toggleCalendar: (id: string) => void
+  /** Hide the calendar with this stable ID, or show it again. */
+  toggleCalendar: (stableId: string) => void
 }
 
 export const defaultSettings = {
@@ -51,11 +52,11 @@ export const useSettings = create<SettingsState>()(
       update: (patch) => {
         set(patch)
       },
-      toggleCalendar: (id) => {
+      toggleCalendar: (stableId) => {
         set((s) => ({
-          hiddenCalendars: s.hiddenCalendars.includes(id)
-            ? s.hiddenCalendars.filter((c) => c !== id)
-            : [...s.hiddenCalendars, id],
+          hiddenCalendars: s.hiddenCalendars.includes(stableId)
+            ? s.hiddenCalendars.filter((c) => c !== stableId)
+            : [...s.hiddenCalendars, stableId],
         }))
       },
     }),

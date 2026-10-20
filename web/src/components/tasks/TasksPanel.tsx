@@ -80,10 +80,10 @@ export function TasksPanel({ onClose }: { onClose: () => void }) {
               <h2 className="sr-only">{list.calendar.name}</h2>
               <TaskListSelect
                 lists={lists}
-                value={list.calendar.id}
+                value={list.calendar.stableId}
                 name={list.calendar.name}
-                onChange={(id) => {
-                  update({ taskList: id })
+                onChange={(stableId) => {
+                  update({ taskList: stableId })
                 }}
               />
             </>
@@ -239,7 +239,7 @@ function GroupHeading({
   )
 }
 
-/** The list's name, which picks the list shown in the panel; each entry counts its open tasks. */
+/** The list's name, which picks the list shown in the panel by its stable ID; each entry counts its open tasks. */
 function TaskListSelect({
   lists,
   value,
@@ -249,7 +249,7 @@ function TaskListSelect({
   lists: TodosResult['groups']
   value: string
   name: string
-  onChange: (id: string) => void
+  onChange: (stableId: string) => void
 }) {
   const { t } = useTranslation()
   return (
@@ -264,7 +264,7 @@ function TaskListSelect({
         {lists.map(({ calendar, todos }) => {
           const open = todos.filter((x) => !isDone(x)).length
           return (
-            <SelectItem key={calendar.id} value={calendar.id} className="*:[span]:last:flex-1">
+            <SelectItem key={calendar.id} value={calendar.stableId} className="*:[span]:last:flex-1">
               <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: calendar.color }} aria-hidden />
               <span className="truncate">{calendar.name}</span>
               <span className="tabular ml-auto text-muted-foreground" aria-hidden>

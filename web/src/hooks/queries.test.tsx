@@ -107,7 +107,7 @@ describe('useTodos', () => {
       const id = url.includes('/calendars/a/') ? 'a' : 'b'
       return Promise.resolve(jsonResponse(200, { todos: [todo({ id: `t-${id}`, calendarId: id })], corrupted: [] }))
     })
-    useSettings.getState().toggleCalendar('b')
+    useSettings.getState().toggleCalendar('stable-b')
 
     const { result } = renderHook(() => useTodos(), { wrapper })
 
@@ -128,7 +128,7 @@ describe('useCalendarTasks', () => {
       const due = '2026-09-25T08:00:00Z'
       return Promise.resolve(jsonResponse(200, { todos: [todo({ id: `t-${id}`, calendarId: id, due })], corrupted: [] }))
     })
-    useSettings.getState().toggleCalendar('b')
+    useSettings.getState().toggleCalendar('stable-b')
     const range = { start: new Date(2026, 8, 20), end: new Date(2026, 8, 27) }
 
     const { result } = renderHook(() => useCalendarTasks(range), { wrapper })

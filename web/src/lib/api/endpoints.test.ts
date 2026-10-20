@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { apiEvent, bodyOf, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
+import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import i18n from '@/i18n'
 import { apiErrorMessage } from '../errors'
 import { ApiClient, isApiError, type ApiErrorCode } from './client'
@@ -35,6 +35,12 @@ describe('endpoints', () => {
   it('lists calendars (null → empty)', async () => {
     const { api } = setup(jsonResponse(200, { calendars: null }))
     expect(await api.listCalendars()).toEqual([])
+  })
+
+  it('fails the calendars envelope when a calendar has no stable ID', async () => {
+    const { stableId: _s, ...unkeyed } = calendar()
+    const { api } = setup(jsonResponse(200, { calendars: [calendar({ id: 'a' }), unkeyed] }))
+    await expect(api.listCalendars()).rejects.toMatchObject({ code: 'bad_response' })
   })
 
   it('lists events with an encoded range and isolates corrupted items', async () => {

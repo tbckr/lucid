@@ -140,9 +140,10 @@ export function writableFor(kind: CreateKind, calendars: readonly Calendar[]): C
 }
 
 /**
- * The calendar a new entry goes to: the current one if it takes the kind, for
- * tasks the list shown in the sidebar, else the first visible, else the first
- * writable calendar. Null if none takes the kind.
+ * The calendar a new entry goes to: the current one (by ID) if it takes the
+ * kind, for tasks the list shown in the sidebar (`taskList`, a stable ID), else
+ * the first visible, else the first writable calendar. Null if none takes the
+ * kind.
  */
 export function chooseCalendar(
   kind: CreateKind,
@@ -152,7 +153,7 @@ export function chooseCalendar(
   const byId = (id: string | undefined) => (id ? writable.find((c) => c.id === id) : undefined)
   return (
     byId(o.current) ??
-    (kind === 'task' ? byId(o.taskList) : undefined) ??
+    (kind === 'task' ? writable.find((c) => c.stableId === o.taskList) : undefined) ??
     writableFor(kind, o.visible)[0] ??
     writable[0] ??
     null

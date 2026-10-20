@@ -142,7 +142,7 @@ describe('CreatePopover', () => {
   })
 
   it('switches to a task due at the clicked time, keeping the title', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     const { fetch, dialog } = await openPopover()
     await user.keyboard('Call')
@@ -169,7 +169,7 @@ describe('CreatePopover', () => {
   })
 
   it('keeps a calendar that takes both kinds', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     const { dialog } = await openPopover()
     await user.click(within(dialog).getByRole('combobox', { name: 'Calendar' }))
@@ -258,7 +258,7 @@ describe('CreatePopover', () => {
   })
 
   it('writes the preview the views draw', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     const { dialog } = await openPopover()
     await user.keyboard('Rev')
@@ -368,7 +368,7 @@ describe('CreatePopover', () => {
     expect(useUi.getState().create).toBeNull()
   })
   it('keeps a time set after a click in a month cell when switching to a task', async () => {
-    useSettings.setState({ taskList: 'c3' })
+    useSettings.setState({ taskList: 'stable-c3' })
     const user = userEvent.setup()
     const month: CreateOrigin = {
       start: new Date(2026, 8, 30, 9),
