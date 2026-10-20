@@ -293,7 +293,11 @@ services.lucid = {
 services.nginx.virtualHosts."calendar.example.com" = {
   forceSSL = true;
   enableACME = true;
-  locations."/".proxyPass = "http://127.0.0.1:8080";
+  locations."/" = {
+    proxyPass = "http://127.0.0.1:8080";
+    # Sends X-Forwarded-For; without it all clients share one rate limit.
+    recommendedProxySettings = true;
+  };
 };
 
 # ... or Caddy
@@ -317,7 +321,12 @@ services.lucid = {
   tls.certFile = "/var/lib/acme/calendar.example.com/fullchain.pem";
   tls.keyFile = "/var/lib/acme/calendar.example.com/key.pem";
 };
-# If security.acme manages the certificate: restart Lucid on renewal.
+# If security.acme manages the certificate: start Lucid once the files
+# exist, and restart it on renewal.
+systemd.services.lucid = {
+  wants = [ "acme-calendar.example.com.service" ];
+  after = [ "acme-calendar.example.com.service" ];
+};
 security.acme.certs."calendar.example.com".reloadServices = [ "lucid.service" ];
 ```
 
@@ -358,8 +367,8 @@ those of the NixOS module, without `openFirewall`.
   for server mode, run `loginctl enable-linger <user>` once.
 - A Linux user service cannot listen on a port below 1024; use a reverse proxy
   or a higher port.
-- On macOS, Lucid reads `tls.certFile` and `tls.keyFile` itself, so your user
-  must be able to read them. On Linux systemd hands them over.
+- Your user must be able to read `tls.certFile` and `tls.keyFile`: on Linux
+  your own systemd user manager reads them, on macOS Lucid does.
 
 </details>
 

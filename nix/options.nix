@@ -91,9 +91,10 @@ in
         default = null;
         example = "/var/lib/acme/calendar.example.com/key.pem";
         description = ''
-          Private key for {option}`tls.certFile` (`LUCID_TLS_KEY`). Passed in
-          with systemd credentials where available, so the service needs no
-          read access to the original file. Never in the Nix store.
+          Private key for {option}`tls.certFile` (`LUCID_TLS_KEY`). Never in
+          the Nix store. The NixOS service gets both files as systemd
+          credentials, so its dynamic user needs no read access to them; with
+          Home Manager, your user must be able to read them.
         '';
       };
     };
