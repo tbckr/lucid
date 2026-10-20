@@ -63,19 +63,16 @@ func (c *capped) skeleton() Skeleton {
 // and hyphens, at least one. A line whose name is not even that, "Bob Smith: x",
 // is no content line.
 func isToken(s string) bool {
-	return s != "" && tokenLen(s) == len(s)
-}
-
-// tokenLen is the length of the run of letters, digits and hyphens that s
-// starts with.
-func tokenLen(s string) int {
+	if s == "" {
+		return false
+	}
 	for i := range len(s) {
 		c := s[i]
 		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
-			return i
+			return false
 		}
 	}
-	return len(s)
+	return true
 }
 
 // oneLine keeps a string that is shown as it is from breaking the line

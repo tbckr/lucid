@@ -54,12 +54,13 @@ var (
 //
 // An element or attribute name is shown only if its namespace was declared in
 // the document, and not inside a text-only element (textOnly) or after text in
-// the same element (mixed content); otherwise it is "…". An attribute without a prefix has the namespace of its element. A
-// namespace gets a fixed prefix: d (DAV:), c (CalDAV), cs (calendarserver.org),
-// a (apple.com/ns/ical), s (sabredav.org/ns); any other is x1, x2 and so on,
-// listed in front as "# x1=<namespace>", for the lines shown only. Attribute
-// values are masked, except name on c:comp, if it is a component name.
-// Comments, processing instructions and namespace declarations are left out.
+// the same element (mixed content); otherwise it is "…". An attribute without
+// a prefix has the namespace of its element. A namespace gets a fixed prefix:
+// d (DAV:), c (CalDAV), cs (calendarserver.org), a (apple.com/ns/ical),
+// s (sabredav.org/ns); any other is x1, x2 and so on, listed in front as
+// "# x1=<namespace>", for the lines shown only. Attribute values are masked,
+// except name on c:comp, if it is a component name. Comments, processing
+// instructions and namespace declarations are left out.
 //
 // A document that cannot be decoded gives its elements up to the break and a
 // final line "<!-- parse error: <Reason> -->". The text is cut on a line

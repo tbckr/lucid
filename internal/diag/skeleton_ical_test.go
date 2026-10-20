@@ -163,9 +163,10 @@ func TestICalSkeletonVTimezoneIsKeptWhole(t *testing.T) {
 
 func TestICalSkeletonVTimezoneScope(t *testing.T) {
 	t.Parallel()
-	// A zone line is kept whole, but only a line that belongs in a time zone: an
-	// unterminated VTIMEZONE must not let what follows through verbatim, and
-	// neither must a component nested in it that is not part of a time zone.
+	// A zone line is kept whole, but only while the zone is well-formed: the
+	// first line in it that is not a time zone's turns that off for the rest of
+	// the document, so an unterminated VTIMEZONE does not carry what follows
+	// through verbatim.
 	got := icalText(t, crlf(
 		"BEGIN:VCALENDAR",
 		"BEGIN:VTIMEZONE",
@@ -192,7 +193,7 @@ func TestICalSkeletonVTimezoneScope(t *testing.T) {
 		"SUMMARY:…",
 		"END:VEVENT",
 		"BEGIN:STANDARD",
-		"TZNAME:CET",
+		"TZNAME:…", // a time zone line, but the zone was not well-formed
 		"END:STANDARD",
 		"SUMMARY:…",
 		"X-NOTE:…",
@@ -200,6 +201,116 @@ func TestICalSkeletonVTimezoneScope(t *testing.T) {
 	}, "\n")
 	if got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestICalSkeletonVTimezoneFailsClosed: inside a time zone the first line that
+// is not exactly a time zone's turns the verbatim lines off for good. The
+// triggers are the ways a parser reads a line differently from the exact one:
+// whatever it is, what follows must be masked.
+func TestICalSkeletonVTimezoneFailsClosed(t *testing.T) {
+	t.Parallel()
+	zone := []string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin"}
+	event := []string{
+		"DTSTART:20240315T093000",
+		"RRULE:FREQ=WEEKLY;UNTIL=20241231T000000Z",
+		"TZNAME:zz-canary",
+	}
+	maskedEvent := []string{
+		"DTSTART:00000000T000000",
+		"RRULE:FREQ=WEEKLY;UNTIL=00000000T000000Z",
+		"TZNAME:…",
+	}
+	triggers := map[string][]string{
+		"blank line, then an indented BEGIN": {"", " BEGIN:VEVENT"},
+		"blank line":                         {""},
+		"trailing blank on the END":          {"END:VTIMEZONE "},
+		"END with other case":                {"end:VTIMEZONE"},
+		"END of another component":           {"END:VEVENT"},
+		"END of the wrong one of the zone":   {"BEGIN:STANDARD", "END:DAYLIGHT"},
+		"END with a parameter":               {"END;X=1:VTIMEZONE"},
+		"BEGIN of another component":         {"BEGIN:VEVENT"},
+		"BEGIN with a trailing blank":        {"BEGIN:STANDARD "},
+		"BEGIN with a parameter":             {"BEGIN;X=1:STANDARD"},
+		"BEGIN with other case":              {"Begin:STANDARD"},
+		"a zone in the zone":                 {"BEGIN:VTIMEZONE"},
+		"STANDARD in STANDARD":               {"BEGIN:STANDARD", "BEGIN:STANDARD"},
+		"unknown name":                       {"X-NOTE:zz-canary"},
+		"a known name that is no zone's":     {"COMMENT:zz-canary"},
+		"zone property with other case":      {"tzname:CET"},
+		"name with a trailing blank":         {"TZNAME :CET"},
+		"no colon":                           {"zz-canary"},
+		"unterminated quote":                 {`TZNAME;X="zz:CET`},
+		"BEGIN and END without a colon":      {"BEGIN STANDARD"},
+		"component of a vendor":              {"BEGIN:X-VENDOR"},
+	}
+	for name, trigger := range triggers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			src := append(append(append([]string(nil), zone...), trigger...), event...)
+			got := strings.Split(icalText(t, crlf(src...)), "\n")
+			// The zone lines before the odd one are kept, whatever is after is not.
+			if got[0] != zone[0] || got[1] != zone[1] {
+				t.Fatalf("zone lines are not kept: %q", got)
+			}
+			if tail := got[len(got)-len(maskedEvent):]; strings.Join(tail, "\n") != strings.Join(maskedEvent, "\n") {
+				t.Errorf("the lines after the odd one are\n%s\nwant\n%s", strings.Join(tail, "\n"), strings.Join(maskedEvent, "\n"))
+			}
+			if strings.Contains(strings.Join(got, "\n"), "zz-canary") {
+				t.Errorf("skeleton leaks the canary:\n%s", strings.Join(got, "\n"))
+			}
+		})
+	}
+
+	// A fold is no line of its own: the unfolded zone line is the one that counts.
+	got := icalText(t, crlf("BEGIN:VTIMEZONE", "TZID:Europe/Berlin", " ", "TZNAME:CET", "\tOFFSET", "END:VTIMEZONE"))
+	if want := "BEGIN:VTIMEZONE\nTZID:Europe/Berlin\nTZNAME:CETOFFSET\nEND:VTIMEZONE"; got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+
+	// Off is off for the rest of the document: a later zone that is perfectly
+	// well-formed is masked too.
+	got = icalText(t, crlf("BEGIN:VTIMEZONE", "COMMENT:x", "END:VTIMEZONE", "BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "END:VTIMEZONE"))
+	if want := "BEGIN:VTIMEZONE\nCOMMENT:…\nEND:VTIMEZONE\nBEGIN:VTIMEZONE\nTZID:…\nEND:VTIMEZONE"; got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestICalSkeletonWellFormedZoneThenEvent: the zone is kept whole, and the event
+// that follows it is masked as always.
+func TestICalSkeletonWellFormedZoneThenEvent(t *testing.T) {
+	t.Parallel()
+	zone := []string{
+		"BEGIN:VTIMEZONE",
+		"TZID:Europe/Berlin",
+		"LAST-MODIFIED:20050809T050000Z",
+		"TZURL:http://tzurl.org/zoneinfo/Europe/Berlin",
+		"X-LIC-LOCATION:Europe/Berlin",
+		"BEGIN:DAYLIGHT",
+		"TZOFFSETFROM:+0100",
+		"TZOFFSETTO:+0200",
+		"TZNAME;LANGUAGE=en:CEST",
+		"DTSTART:19700329T020000",
+		"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+		"END:DAYLIGHT",
+		"BEGIN:STANDARD",
+		"TZOFFSETFROM:+0200",
+		"TZOFFSETTO:+0100",
+		"TZNAME:CET",
+		"DTSTART:19701025T030000",
+		"RDATE:19701025T030000,19711031T030000",
+		"END:STANDARD",
+		"END:VTIMEZONE",
+	}
+	wantZone := append([]string(nil), zone...)
+	wantZone[8] = "TZNAME;LANGUAGE=…:CEST" // a parameter is a parameter
+	// A blank line outside a zone is no odd line.
+	src := append(append([]string{"BEGIN:VCALENDAR", ""}, zone...), "BEGIN:VEVENT", "", "DTSTART;TZID=Europe/Berlin:20240315T093000",
+		"RRULE:FREQ=WEEKLY;UNTIL=20241231T000000Z", "TZNAME:zz-canary", "LAST-MODIFIED:20240101T000000Z", "END:VEVENT", "END:VCALENDAR")
+	want := append(append([]string{"BEGIN:VCALENDAR"}, wantZone...), "BEGIN:VEVENT", "DTSTART;TZID=Europe/Berlin:00000000T000000",
+		"RRULE:FREQ=WEEKLY;UNTIL=00000000T000000Z", "TZNAME:…", "LAST-MODIFIED:00000000T000000Z", "END:VEVENT", "END:VCALENDAR")
+	if got := icalText(t, crlf(src...)); got != strings.Join(want, "\n") {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
 	}
 }
 

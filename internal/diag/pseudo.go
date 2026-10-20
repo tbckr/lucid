@@ -47,12 +47,11 @@ func NewPseudonymizer(key []byte) *Pseudonymizer {
 //  3. Otherwise only the username is replaced, see RedactUser, and every
 //     segment that ends in ".ics" is an object name and becomes "obj-<h>.ics".
 //
-// Of the home and the principal the one whose run starts first applies, the home
-// if both start at the same segment: what is below the one that starts first
-// is below it, even if the other turns up in it. What comes before the home or
-// principal is treated like rule 3. <h> is the
-// first 8 hex characters of HMAC-SHA256(key, percent-decoded segment). A
-// trailing slash is preserved.
+// Of the home and the principal the one whose run starts first applies, the
+// home if both start at the same segment: what is below the one that starts
+// first is below it, even if the other turns up in it. What comes before the
+// home or principal is treated like rule 3. <h> is the first 8 hex characters
+// of HMAC-SHA256(key, percent-decoded segment). A trailing slash is preserved.
 func (p *Pseudonymizer) Path(n Names, path string) string {
 	segs := strings.Split(path, "/")
 	homeAt, homeRest, homeOK := below(segs, n.Home)

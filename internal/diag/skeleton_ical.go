@@ -24,16 +24,11 @@ var dateProps = map[string]bool{
 
 // zoneProps are the properties of a time zone, whose lines stay as they are
 // inside a VTIMEZONE: its rules are what time zone bugs hinge on and are not
-// personal. Any other line inside one is masked like anywhere else, so an
-// unterminated VTIMEZONE does not carry the rest of the document through.
+// personal. They stay only while the zone is well-formed, see zoneScope.
 var zoneProps = map[string]bool{
 	"TZID": true, "LAST-MODIFIED": true, "TZURL": true, "X-LIC-LOCATION": true,
 	"TZNAME": true, "TZOFFSETFROM": true, "TZOFFSETTO": true, "DTSTART": true, "RRULE": true, "RDATE": true,
 }
-
-// zoneComponents may sit inside a VTIMEZONE; a line in anything else does not
-// count as a line of the zone.
-var zoneComponents = map[string]bool{"VTIMEZONE": true, "STANDARD": true, "DAYLIGHT": true}
 
 // fixed matches s, whole and in any case, against an alternation of fixed
 // words or a pattern.
@@ -124,11 +119,13 @@ var rruleParts = map[string]*regexp.Regexp{
 //     0, T, Z, ",", "/" and the signs and separators of the formats stay;
 //   - RRULE and EXRULE, whose keys and enumerated values are kept, UNTIL
 //     masked like a date;
-//   - the time zone properties inside a VTIMEZONE, as they are.
+//   - the time zone properties inside a VTIMEZONE, as they are, for as long as
+//     nothing in the zone is out of the ordinary (zoneScope).
 //
 // Parameter values are masked, except TZID and the enumerations VALUE,
-// RELATED, RANGE, FBTYPE, ENCODING, PARTSTAT, ROLE, CUTYPE and RSVP. The text
-// is cut on a line boundary at MaxSkeleton bytes.
+// RELATED, RANGE, FBTYPE, ENCODING, PARTSTAT, ROLE, CUTYPE and RSVP; on a line
+// whose name is masked every parameter is, names and values. The text is cut on
+// a line boundary at MaxSkeleton bytes.
 func ICalSkeleton(data []byte) Skeleton {
 	var out capped
 	for line := range icalLines(data) {
@@ -171,45 +168,43 @@ func icalLines(data []byte) iter.Seq[string] {
 			if !flush() {
 				return
 			}
-			if len(line) > 0 { // a blank line only ends the one before
+			if len(line) > 0 {
 				cur = append(cur[:0], line...)
 				open = true
+			} else { // a blank line is no line, but it ends the one before
+				state.zone.odd()
 			}
 		}
 		flush()
 	}
 }
 
-// icalState is what the lines before one tell about it: the components it sits
-// in; "" for one whose name is not shown.
+// icalState is what the lines before one tell about it.
 type icalState struct {
-	stack []string
+	zone zoneScope
 }
 
 // render returns the skeleton line of an unfolded content line.
 func (s *icalState) render(line string) string {
 	colon := indexOutsideQuotes(line, ':')
 	if colon < 0 {
-		s.leaveScope(line)
+		s.zone.odd()
 		return malformedLine
 	}
 	head := splitOutsideQuotes(line[:colon], ';')
 	name, params, value := head[0], head[1:], line[colon+1:]
 	if !isToken(name) {
-		s.leaveScope(line)
+		s.zone.odd()
 		return malformedLine
 	}
-	// The structure is followed in any case, what is shown is by the name.
-	if begin := strings.EqualFold(name, "BEGIN"); begin || strings.EqualFold(name, "END") {
-		s.track(begin, value)
-	}
+	zoneLine := s.zone.line(name, params, value)
 
 	switch {
 	case name == "BEGIN" || name == "END":
 		if value != "" && !knownName(value) {
 			value = mask
 		}
-	case zoneProps[name] && s.inZone():
+	case zoneLine:
 		// The value stays as sent, the parameters as anywhere.
 	default:
 		value = propertyValue(name, params, value)
@@ -221,47 +216,52 @@ func (s *icalState) render(line string) string {
 	return composeLine(name, params, value, !known)
 }
 
-// track records a BEGIN or an END, in any case. A BEGIN of a component that is
-// not a known name leaves "" on the stack: what is inside is not a time zone.
-// An END closes the innermost component of its name, and what is open inside
-// that one.
-func (s *icalState) track(begin bool, value string) {
+// zoneScope decides which lines are those of a time zone, whose values stay as
+// sent, and it fails closed: a line is one only while every line since the
+// zone's BEGIN has been exactly what a time zone is made of, a property of
+// zoneProps in exact uppercase or the exact BEGIN and END of VTIMEZONE and, in
+// it, STANDARD and DAYLIGHT, nothing around them. The first line in a zone
+// that is anything else (a blank or indented line, an unknown name, another
+// case, a trailing blank, no colon, another component) turns it off for the rest
+// of the document. A document that is not well-formed does not carry its
+// events' dates, rules and names through as a time zone's, however the
+// malformation is made.
+type zoneScope struct {
+	open []string // BEGINs of the zone and the components in it, innermost last
+	off  bool     // a line was out of the ordinary: no line is a zone line any more
+}
+
+// odd is for a line that is no content line at all: a blank line, or one that
+// cannot be taken apart.
+func (z *zoneScope) odd() {
+	if len(z.open) > 0 {
+		z.off = true
+	}
+}
+
+// line is for a content line, and reports whether it is a property of the zone
+// whose value stays as sent. A BEGIN or an END is shown as such in any case.
+func (z *zoneScope) line(name string, params []string, value string) bool {
+	if z.off {
+		return false
+	}
+	exact := name == "BEGIN" && len(params) == 0
+	if len(z.open) == 0 { // only a plain BEGIN:VTIMEZONE enters a zone
+		if exact && value == "VTIMEZONE" {
+			z.open = append(z.open, value)
+		}
+		return false
+	}
+	top := z.open[len(z.open)-1]
 	switch {
-	case begin && knownName(value):
-		s.stack = append(s.stack, value)
-	case begin:
-		s.stack = append(s.stack, "")
-	case value != "":
-		for i := len(s.stack) - 1; i >= 0; i-- {
-			if strings.EqualFold(s.stack[i], value) {
-				s.stack = s.stack[:i]
-				return
-			}
-		}
-	}
-}
-
-// leaveScope is for a line that cannot be classified. If it starts with BEGIN
-// or END, in any case ("BEGIN VEVENT"), it may open or close a component, and
-// nothing after it is a time zone until the components around it close:
-// verbatim lines must not reach past a line this does not understand.
-func (s *icalState) leaveScope(line string) {
-	word := line[:tokenLen(line)]
-	if strings.EqualFold(word, "BEGIN") || strings.EqualFold(word, "END") {
-		s.stack = append(s.stack, "")
-	}
-}
-
-// inZone reports whether the line sits in a VTIMEZONE, with nothing but zone
-// components between it and the VTIMEZONE.
-func (s *icalState) inZone() bool {
-	for i := len(s.stack) - 1; i >= 0; i-- {
-		if !zoneComponents[s.stack[i]] {
-			return false
-		}
-		if s.stack[i] == "VTIMEZONE" {
-			return true
-		}
+	case exact && (value == "STANDARD" || value == "DAYLIGHT") && top == "VTIMEZONE":
+		z.open = append(z.open, value)
+	case name == "END" && len(params) == 0 && value == top:
+		z.open = z.open[:len(z.open)-1]
+	case zoneProps[name]:
+		return true
+	default:
+		z.off = true
 	}
 	return false
 }
