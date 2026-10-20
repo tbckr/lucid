@@ -26,6 +26,7 @@ COPY --chmod=0555 ${TARGETPLATFORM}/lucid /usr/local/bin/lucid
 
 USER 65532:65532
 
+# Setting LUCID_ADDR selects server mode; without it Lucid would run in local mode on 127.0.0.1 inside the container.
 ENV LUCID_ADDR=":8080"
 EXPOSE 8080
 

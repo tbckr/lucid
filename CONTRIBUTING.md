@@ -94,8 +94,8 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
 - Dependency injection via small interfaces; no global state.
 - Wrap errors with `%w`, compare with `errors.Is`/`errors.As`.
 - Pass `context.Context` as the first parameter through every I/O path.
-- Structured JSON logging with `log/slog`, snake_case keys. Never log
-  credentials, session keys or tokens.
+- Structured logging with `log/slog`, snake_case keys: JSON in server mode,
+  text in local mode (NFR-23). Never log credentials, session keys or tokens.
 - Code must pass `golangci-lint run` with the repository configuration
   (`.golangci.yml`) and be formatted with `gofumpt`/`goimports`
   (`just fmt`). `//nolint` requires a specific linter and an explanation.

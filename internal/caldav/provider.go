@@ -41,7 +41,8 @@ type Options struct {
 	// HTTPClient is used for all outgoing requests. It must be SSRF-safe
 	// (see internal/safehttp). Required.
 	HTTPClient *http.Client
-	// CacheSize is the maximum number of cached calendars (LRU). Default 256.
+	// CacheSize is the maximum number of cache entries (LRU), one per user,
+	// calendar and component (events or tasks). Default 256.
 	CacheSize int
 	// CacheFreshness is how long a cached calendar is served without
 	// re-checking its CTag. Default 10s.

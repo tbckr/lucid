@@ -51,9 +51,10 @@ In scope, for example:
 
 Out of scope:
 
-- server deployments without TLS, or with `LUCID_PRIVATE_NETWORKS` set to
-  anything but `none` or `LUCID_TRUST_PROXY_HEADERS=true` in an unprotected
-  setup (these are documented as unsafe),
+- server deployments that are documented as unsafe: without TLS, with
+  `LUCID_PRIVATE_NETWORKS=all`, or with `LUCID_TRUST_PROXY_HEADERS=true` in an
+  unprotected setup. A list of CIDRs and addresses in `LUCID_PRIVATE_NETWORKS`
+  stays in scope: reaching an address outside the list is an SSRF bypass,
 - local mode on a computer shared with untrusted local users (it is meant for
   your own computer),
 - logouts on restart (documented known limitation),

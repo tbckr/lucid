@@ -136,8 +136,15 @@ of how CalDAV clients handle repeating tasks.
 You need nothing but a CalDAV account: no server, no TLS, no configuration.
 
 1. Download the archive for your system from the
-   [releases page](https://github.com/tbckr/lucid/releases) (`.zip` for
-   Windows, `.tar.gz` for Linux and macOS) and extract it.
+   [releases page](https://github.com/tbckr/lucid/releases) and extract it.
+   Its name ends in your system and processor, like
+   `lucid_X.Y.Z_darwin_arm64.tar.gz`:
+   - **Windows:** `windows_amd64.zip` for most PCs, `windows_arm64.zip` for ARM
+     devices such as Snapdragon laptops.
+   - **macOS** (called `darwin`): `darwin_arm64.tar.gz` for Apple silicon (M1
+     and later), `darwin_amd64.tar.gz` for Intel Macs.
+   - **Linux:** `linux_amd64.tar.gz` for most PCs, `linux_arm64.tar.gz` for ARM
+     machines such as a Raspberry Pi 4 or 5 with a 64-bit OS.
 2. Double-click `lucid` (`lucid.exe` on Windows).
 3. A window opens and your browser shows Lucid at <http://127.0.0.1:3456/>.
    Log in with your CalDAV server's address (a bare domain is enough), your
@@ -222,7 +229,7 @@ Download the archive for your platform from the
 [Verifying releases](SECURITY.md#verifying-releases)) and run:
 
 ```sh
-LUCID_ADDR=:8080 ./lucid
+LUCID_ADDR=127.0.0.1:8080 ./lucid
 ./lucid --version
 ```
 
@@ -262,7 +269,8 @@ listening on `127.0.0.1:8080` for your reverse proxy:
 }
 ```
 
-`settings` takes any server-mode variable from [Configuration](#configuration).
+`settings` takes any variable from [Configuration](#configuration) that is valid
+in server mode (Mode "Server" or "Both").
 To try Lucid without installing it: `nix run github:tbckr/lucid` (this starts
 local mode).
 
@@ -278,7 +286,8 @@ Lucid runs in **local mode** when `LUCID_ADDR` is unset and in **server mode**
 when it is set. The Mode column says which mode a variable belongs to. A
 variable set for the other mode (even to its default value), or one of the
 variables of earlier versions that no longer exist, stops Lucid at startup with
-a message that names the variable and what to do instead.
+a message that names the variable. For a variable of the other mode it says
+which mode that is, for a removed one what replaces it or why it is gone.
 
 <details>
 <summary><strong>All environment variables</strong></summary>
@@ -291,7 +300,7 @@ a message that names the variable and what to do instead.
 | `LUCID_METRICS_ADDR` | Server | (unset) | Address of a separate listener that serves `/metrics`. Unset: no `/metrics` at all |
 | `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | Server | (unset) | Paths of the certificate and key files, both or neither. Serves HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
 | `LUCID_TRUST_PROXY_HEADERS` | Server | `false` | Use `X-Forwarded-For` for the client IP (only behind a trusted proxy) |
-| `LUCID_PRIVATE_NETWORKS` | Both | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those |
+| `LUCID_PRIVATE_NETWORKS` | Both | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those. `all` and `none` are case-insensitive and cannot be mixed with addresses |
 | `LUCID_SESSION_TTL` | Both | `12h` | Absolute session lifetime |
 | `LUCID_SESSION_IDLE_TIMEOUT` | Both | `2h` | Idle timeout, at most `LUCID_SESSION_TTL` |
 | `LUCID_RATE_LIMIT_RPS` | Both | `20` | Token bucket refill per client IP (API) |

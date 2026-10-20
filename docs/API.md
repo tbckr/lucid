@@ -1008,7 +1008,8 @@ Lucid runs in **local mode** when `LUCID_ADDR` is unset and in **server mode**
 when it is set. The Mode column says which mode a variable belongs to. A
 variable set for the other mode (even to its default value), or one of the
 variables of earlier versions that no longer exist, stops Lucid at startup with
-a message that names the variable and what to do instead.
+a message that names the variable. For a variable of the other mode it says
+which mode that is, for a removed one what replaces it or why it is gone.
 
 | Variable                          | Mode   | Default                    | Description |
 |-----------------------------------|--------|----------------------------|-------------|
@@ -1018,7 +1019,7 @@ a message that names the variable and what to do instead.
 | `LUCID_METRICS_ADDR`              | Server | (unset)                    | Address of a separate listener that serves `/metrics`. Unset: no `/metrics` at all |
 | `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | Server | (unset)                    | Paths of the certificate and key files, both or neither. Serves HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
 | `LUCID_TRUST_PROXY_HEADERS`       | Server | `false`                    | Use `X-Forwarded-For` for the client IP (only behind a trusted proxy) |
-| `LUCID_PRIVATE_NETWORKS`          | Both   | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those |
+| `LUCID_PRIVATE_NETWORKS`          | Both   | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those. `all` and `none` are case-insensitive and cannot be mixed with addresses |
 | `LUCID_SESSION_TTL`               | Both   | `12h`                      | Absolute session lifetime |
 | `LUCID_SESSION_IDLE_TIMEOUT`      | Both   | `2h`                       | Idle timeout, at most `LUCID_SESSION_TTL` |
 | `LUCID_RATE_LIMIT_RPS`            | Both   | `20`                       | Token bucket refill per client IP (API) |
