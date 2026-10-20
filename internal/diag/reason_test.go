@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,11 +32,30 @@ func TestReason(t *testing.T) {
 			errors.New("ical: error parsing recurrence: undefined frequency: ZZCANARY"),
 			"ical: error parsing recurrence: undefined frequency",
 		},
+		{"unknown capitals", errors.New("undefined frequency: ZZCANARY"), "undefined frequency"},
 		{
-			"capitals drop the segment",
+			"iCalendar names are kept",
 			errors.New(`ical: invalid VEVENT STATUS: "zz-canary"`),
-			"ical",
+			`ical: invalid VEVENT STATUS: "…"`,
 		},
+		{"hyphenated name", errors.New("ical: unexpected DATE-TIME here"), "ical: unexpected DATE-TIME here"},
+		{"name with a suffix", errors.New("ical: unexpected DATE-canary here"), "ical"},
+		{"name glued to letters", errors.New("ical: VEVENTzz or zzVEVENT"), "ical"},
+		{"name followed by a digit", errors.New("ical: VEVENT5"), "ical"},
+		{"lowercase name", errors.New("ical: vevent"), "ical: vevent"},
+		{"xml line", errors.New("XML syntax error on line 5: unexpected EOF"), "XML syntax error on line 5: unexpected EOF"},
+		{"xml column", errors.New("XML syntax error on column 12: unexpected EOF"), "XML syntax error on column 12: unexpected EOF"},
+		{"eof", errors.New("unexpected EOF"), "unexpected EOF"},
+		{"utf-8", errors.New("XML syntax error on line 2: invalid UTF-8"), "XML syntax error on line 2: invalid UTF-8"},
+		{"utf-8 with a suffix", errors.New("invalid UTF-8x or UTF-9"), "…"},
+		{"digits after a name", errors.New("invalid UTF-9"), "…"},
+		{"first segment unknown", errors.New("ZZCANARY failed: unexpected EOF"), "…"},
+		{"digits drop the segment", errors.New("timeout after 30s"), "…"},
+		{"digits after a longer word", errors.New("xml: baseline 5"), "xml"},
+		{"digits after lines", errors.New("xml: lines 5"), "xml"},
+		{"digits after line and a word", errors.New("xml: line 5 and 6"), "xml"},
+		{"digits glued to letters", errors.New("xml: line 5zz"), "xml"},
+		{"line without digits", errors.New("xml: on line"), "xml: on line"},
 		{"quoted value", errors.New(`bad value "zz-canary"`), `bad value "…"`},
 		{"escaped quote", errors.New(`bad value "a\"b" here`), `bad value "…" here`},
 		{"several", errors.New(`got "x" want "y"`), `got "…" want "…"`},
@@ -53,8 +73,8 @@ func TestReason(t *testing.T) {
 		},
 		{"stray quote ends the wording", errors.New(`ical: bad " here: secret`), "ical"},
 		{"lowercase wording", errors.New("context deadline exceeded"), "context deadline exceeded"},
-		{"digits drop the segment", errors.New("timeout after 30s"), ""},
 		{"hyphen drops the segment", errors.New("json: after top-level value"), "json"},
+		{"nothing kept", errors.New("strconv.Atoi: parsing"), "…"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,11 +86,34 @@ func TestReason(t *testing.T) {
 	}
 }
 
+func TestReasonKeepsEveryName(t *testing.T) {
+	t.Parallel()
+	// Typed out again rather than taken from fixedNames, to catch a typo in it.
+	names := strings.Fields(`EOF XML UTF UTF-8
+		VCALENDAR VEVENT VTODO VJOURNAL VFREEBUSY VTIMEZONE VALARM STANDARD DAYLIGHT
+		CALSCALE METHOD PRODID VERSION ATTACH CATEGORIES CLASS COMMENT DESCRIPTION GEO LOCATION PERCENT-COMPLETE
+		PRIORITY RESOURCES STATUS SUMMARY COMPLETED DTEND DUE DTSTART DURATION FREEBUSY TRANSP TZID TZNAME
+		TZOFFSETFROM TZOFFSETTO TZURL ATTENDEE CONTACT ORGANIZER RECURRENCE-ID RELATED-TO URL UID EXDATE RDATE RRULE
+		ACTION REPEAT TRIGGER CREATED DTSTAMP LAST-MODIFIED SEQUENCE REQUEST-STATUS BEGIN END
+		ALTREP CN CUTYPE DELEGATED-FROM DELEGATED-TO DIR ENCODING FMTTYPE FBTYPE LANGUAGE MEMBER PARTSTAT RANGE
+		RELATED RELTYPE ROLE RSVP SENT-BY VALUE
+		BINARY BOOLEAN CAL-ADDRESS DATE DATE-TIME FLOAT INTEGER PERIOD RECUR TEXT TIME URI UTC-OFFSET`)
+	for _, name := range names {
+		msg := "bad " + name + " here"
+		if got := Reason(errors.New(msg)); got != msg {
+			t.Errorf("Reason(%q) = %q, want it unchanged", msg, got)
+		}
+	}
+	if len(names) != len(fixedNames) {
+		t.Errorf("fixedNames has %d names, the vocabulary has %d", len(fixedNames), len(names))
+	}
+}
+
 func TestReasonJSONStrayQuote(t *testing.T) {
 	t.Parallel()
 	err := errors.New(`invalid character '"' after top-level value (field "secret")`)
-	if got := Reason(err); strings.Contains(got, "secret") {
-		t.Errorf("Reason(%v) = %q leaks the field name", err, got)
+	if got := Reason(err); got != "…" {
+		t.Errorf("Reason(%v) = %q, want …", err, got)
 	}
 }
 
@@ -178,6 +221,19 @@ func parserErrors(canary string) map[string]error {
 	} {
 		_, err := rrule.StrToRRule(rule)
 		add(name, err)
+	}
+	for name, doc := range map[string]string{
+		"xml mismatched tag": "<a><" + canary + "></a>",
+		"xml closing tag":    "<a></" + canary + ">",
+		"xml attribute":      "<a " + canary + ">",
+		"xml entity":         "<a>&" + canary + ";</a>",
+		"xml unclosed":       "<a>" + canary,
+		"xml number":         "<a><n>" + canary + "</n></a>",
+	} {
+		var v struct {
+			N int `xml:"n"`
+		}
+		add(name, xml.Unmarshal([]byte(doc), &v))
 	}
 	_, err = rrule.StrToRRuleSet(canary)
 	add("rrule set", err)
