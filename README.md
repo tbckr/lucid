@@ -158,7 +158,9 @@ Close the window to stop Lucid. Closing the browser tab does not stop it.
   and click "Open Anyway" next to the message about `lucid`.
 - **Windows:** SmartScreen warns about the same. Click "More info", then "Run
   anyway".
-- **Linux:** run `./lucid` in a terminal. Ctrl+C stops it.
+- **Linux:** run `./lucid` in a terminal. Ctrl+C stops it. With the deb, rpm
+  or Arch package ([On a server](#on-a-server)), start "Lucid" from the app
+  menu instead; it opens a terminal window, and closing it stops Lucid.
 
 This mode is meant for your own computer. Lucid listens on `127.0.0.1` only, so
 no other device can reach it, and it serves plain HTTP because the traffic never
@@ -238,6 +240,66 @@ LUCID_ADDR=127.0.0.1:8080 ./lucid
 Health endpoints: `GET /healthz` (liveness), `GET /readyz` (readiness).
 `lucid healthcheck` probes the local instance and exits non-zero on failure
 (used by the container `HEALTHCHECK`, since distroless has no shell or curl).
+
+</details>
+
+<details>
+<summary><strong>Debian, Ubuntu, Fedora, Arch (package)</strong></summary>
+
+Each release has Linux packages for amd64 and arm64: a `.deb`, an `.rpm` and
+an Arch `.pkg.tar.zst`. They install Lucid with a hardened systemd service for
+server mode, which they do not enable, and an app-menu entry for local mode.
+They need systemd 247 or later: Debian 12, Ubuntu 22.04, RHEL 9 and its
+clones, Fedora, Arch, or newer. There is no package repository; to update,
+install the next release's package the same way.
+
+Download the package from the
+[releases page](https://github.com/tbckr/lucid/releases), verify it against
+`checksums.txt` (see [Verifying releases](SECURITY.md#verifying-releases)) and
+install it:
+
+```sh
+sudo apt install ./lucid_X.Y.Z_linux_amd64.deb                 # Debian, Ubuntu
+sudo dnf install --nogpgcheck ./lucid_X.Y.Z_linux_amd64.rpm    # Fedora, RHEL
+sudo pacman -U ./lucid_X.Y.Z_linux_amd64.pkg.tar.zst           # Arch
+```
+
+The packages carry no signature of their own; the signed `checksums.txt`
+covers them. Fedora 45 and later refuse unsigned packages without
+`--nogpgcheck`, so verify the package before you install it.
+
+Then configure and start the service:
+
+```sh
+sudoedit /etc/lucid/lucid.env   # LUCID_* settings, see Configuration
+sudo systemctl enable --now lucid
+journalctl -u lucid             # logs
+```
+
+`/etc/lucid/lucid.env` runs server mode on `127.0.0.1:8080` behind a reverse
+proxy on the same machine, like `compose.yaml`; updates keep your changes.
+
+To let Lucid serve TLS itself, pass the certificate and key in a drop-in
+(`sudo systemctl edit lucid`), since the service runs as a dynamic user that
+cannot read them:
+
+```ini
+[Service]
+LoadCredential=tls-cert:/etc/ssl/lucid/cert.pem
+LoadCredential=tls-key:/etc/ssl/lucid/key.pem
+Environment=LUCID_TLS_CERT=%d/tls-cert LUCID_TLS_KEY=%d/tls-key
+```
+
+Then set `LUCID_ADDR` in `/etc/lucid/lucid.env` to the public address (for
+example `:8443`) and remove `LUCID_TRUST_PROXY_HEADERS`. A port below 1024
+needs one more drop-in; a reverse proxy remains the simpler choice:
+
+```ini
+[Service]
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+PrivateUsers=no
+```
 
 </details>
 

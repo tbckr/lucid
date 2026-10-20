@@ -89,11 +89,13 @@ Pushing a tag `vX.Y.Z` runs [GoReleaser](https://goreleaser.com/) in GitHub
 Actions, which publishes:
 
 - archives for Linux, macOS and Windows (amd64/arm64) with SPDX SBOMs,
+- deb, rpm and Arch packages for Linux (amd64/arm64), which hold the binary of
+  the matching Linux archive and carry no signature of their own,
 - `checksums.txt` signed with [cosign](https://github.com/sigstore/cosign)
   (keyless, GitHub OIDC) — bundle `checksums.txt.sigstore.json`,
 - multi-arch images `ghcr.io/tbckr/lucid:X.Y.Z` (plus `X.Y`, `X`, `latest`),
   signed with cosign and carrying an SBOM attestation,
-- GitHub build-provenance attestations for archives and images.
+- GitHub build-provenance attestations for archives, packages and images.
 
 The release is published only once all of this exists. Releases are
 immutable: after publication, neither the tag nor the assets can change.
@@ -103,7 +105,7 @@ VERSION=1.2.3   # without the leading "v"
 IDENTITY='^https://github\.com/tbckr/lucid/\.github/workflows/release\.yml@refs/tags/v'
 ISSUER=https://token.actions.githubusercontent.com
 
-# 1. Verify the signed checksum file, then the archive against it
+# 1. Verify the signed checksum file, then the archive or package against it
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
   --certificate-identity-regexp "$IDENTITY" \
