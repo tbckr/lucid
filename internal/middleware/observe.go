@@ -75,7 +75,7 @@ func Observe(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Hand
 			}
 
 			logger.LogAttrs(r.Context(), slog.LevelDebug, "http request",
-				slog.String("request_id", RequestID(r.Context())),
+				slog.String(RequestIDAttr, RequestID(r.Context())),
 				slog.String("client_ip", ClientIP(r.Context())),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
@@ -146,7 +146,7 @@ func handlePanic(logger *slog.Logger, rec *recorder, r *http.Request, v any) {
 		panic(v)
 	}
 	logger.LogAttrs(r.Context(), slog.LevelError, "panic serving request",
-		slog.String("request_id", RequestID(r.Context())),
+		slog.String(RequestIDAttr, RequestID(r.Context())),
 		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),
 		slog.Any("panic", v),

@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -30,6 +31,7 @@ import (
 	"time"
 
 	"github.com/tbckr/lucid/internal/config"
+	"github.com/tbckr/lucid/internal/middleware"
 )
 
 type syncBuffer struct {
@@ -90,6 +92,91 @@ func TestRunVersionAndFlags(t *testing.T) {
 				t.Errorf("output %q does not contain %q", out.String(), tt.want)
 			}
 		})
+	}
+}
+
+// requestContext returns a context as the middleware chain builds it for a
+// request, and the request ID in it.
+func requestContext(t *testing.T) (context.Context, string) {
+	t.Helper()
+	var seen *http.Request
+	h := middleware.RequestContext(false)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { seen = r }))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	if seen == nil || middleware.RequestID(seen.Context()) == "" {
+		t.Fatal("RequestContext stored no request ID")
+	}
+	return seen.Context(), middleware.RequestID(seen.Context())
+}
+
+// TestNewLoggerRequestID guards NFR-23: the process logger puts the request ID
+// on every line logged with a request's context, in both modes and also
+// through the component loggers derived with With (the CalDAV provider logs
+// that way, without an explicit request_id).
+func TestNewLoggerRequestID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		local  bool
+		derive bool
+		want   func(line, id string) bool
+	}{
+		{"server mode", false, false, func(line, id string) bool {
+			var entry map[string]any
+			return json.Unmarshal([]byte(line), &entry) == nil && entry["request_id"] == id
+		}},
+		{"server mode, derived logger", false, true, func(line, id string) bool {
+			var entry map[string]any
+			return json.Unmarshal([]byte(line), &entry) == nil && entry["request_id"] == id && entry["component"] == "caldav"
+		}},
+		{"local mode", true, false, func(line, id string) bool {
+			return !strings.HasPrefix(line, "{") && strings.Contains(line, " request_id="+id)
+		}},
+		{"local mode, derived logger", true, true, func(line, id string) bool {
+			return !strings.HasPrefix(line, "{") && strings.Contains(line, " request_id="+id) && strings.Contains(line, " component=caldav")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var out bytes.Buffer
+			logger := newLogger(&config.Config{Local: tt.local}, &out)
+			if tt.derive {
+				logger = logger.With("component", "caldav")
+			}
+			ctx, id := requestContext(t)
+
+			logger.WarnContext(ctx, "upstream problem")
+
+			line := strings.TrimSpace(out.String())
+			if strings.Contains(line, "\n") || !tt.want(line, id) {
+				t.Errorf("log output = %q, want one line with request_id %s", out.String(), id)
+			}
+		})
+	}
+}
+
+func TestNewLoggerWithoutRequestContext(t *testing.T) {
+	t.Parallel()
+	for _, local := range []bool{false, true} {
+		var out bytes.Buffer
+		newLogger(&config.Config{Local: local}, &out).InfoContext(t.Context(), "starting lucid")
+		if out.Len() == 0 || strings.Contains(out.String(), "request_id") {
+			t.Errorf("local=%v: log output = %q, want a line without request_id", local, out.String())
+		}
+	}
+}
+
+func TestNewLoggerLevel(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	logger := newLogger(&config.Config{LogLevel: slog.LevelWarn}, &out)
+	logger.InfoContext(t.Context(), "hidden")
+	if out.Len() != 0 {
+		t.Errorf("info line written at level warn: %q", out.String())
+	}
+	logger.WarnContext(t.Context(), "shown")
+	if out.Len() == 0 {
+		t.Error("warn line not written at level warn")
 	}
 }
 

@@ -70,11 +70,11 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		middleware.WriteError(w, http.StatusUnprocessableEntity, codeDiscoveryFailed, "no CalDAV service found at this address")
 	case errors.Is(err, domain.ErrUpstream), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "upstream error",
-			slog.String("request_id", middleware.RequestID(r.Context())), slog.String("error", err.Error()))
+			slog.String(middleware.RequestIDAttr, middleware.RequestID(r.Context())), slog.String("error", err.Error()))
 		middleware.WriteError(w, http.StatusBadGateway, codeUpstreamError, "the CalDAV server failed or is unreachable")
 	default:
 		s.logger.LogAttrs(r.Context(), slog.LevelError, "internal error",
-			slog.String("request_id", middleware.RequestID(r.Context())), slog.String("error", err.Error()))
+			slog.String(middleware.RequestIDAttr, middleware.RequestID(r.Context())), slog.String("error", err.Error()))
 		middleware.WriteError(w, http.StatusInternalServerError, codeInternal, "internal server error")
 	}
 }

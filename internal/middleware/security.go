@@ -62,7 +62,7 @@ func (s *Security) Log(r *http.Request, event string, attrs ...slog.Attr) {
 	}
 	base := []slog.Attr{
 		slog.String("security_event", event),
-		slog.String("request_id", RequestID(r.Context())),
+		slog.String(RequestIDAttr, RequestID(r.Context())),
 		slog.String("client_ip", ClientIP(r.Context())),
 		slog.String("method", r.Method),
 		slog.String("path", r.URL.Path),

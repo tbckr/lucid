@@ -248,29 +248,32 @@ func TestObserveLogsAtDebug(t *testing.T) {
 	mux.HandleFunc("GET /items/{id}", okHandler)
 	mux.HandleFunc("GET /healthz", okHandler)
 
-	for _, path := range []string{"/items/1", "/healthz"} {
-		t.Run("info hides "+path, func(t *testing.T) {
+	for _, tt := range []struct{ path, route string }{
+		{"/items/1", "GET /items/{id}"},
+		{"/healthz", "GET /healthz"},
+	} {
+		t.Run("info hides "+tt.path, func(t *testing.T) {
 			t.Parallel()
 			buf := &syncBuffer{}
 			logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			h := Chain(mux, RequestContext(false), Observe(logger, nil))
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
 			if got := buf.String(); got != "" {
 				t.Errorf("logger at info wrote %q, want nothing", got)
 			}
 		})
-		t.Run("debug shows "+path, func(t *testing.T) {
+		t.Run("debug shows "+tt.path, func(t *testing.T) {
 			t.Parallel()
 			logger, buf := testLogger(t)
 			h := Chain(mux, RequestContext(false), Observe(logger, nil))
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, http.NoBody))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
 
 			lines := buf.lines(t)
 			if len(lines) != 1 {
 				t.Fatalf("got %d log lines, want 1", len(lines))
 			}
-			if lines[0]["msg"] != "http request" || lines[0]["level"] != "DEBUG" || lines[0]["route"] == "" {
-				t.Errorf("log line = %v, want one DEBUG http request with a route", lines[0])
+			if lines[0]["msg"] != "http request" || lines[0]["level"] != "DEBUG" || lines[0]["route"] != tt.route {
+				t.Errorf("log line = %v, want one DEBUG http request for route %q", lines[0], tt.route)
 			}
 		})
 	}

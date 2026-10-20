@@ -144,14 +144,22 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
-	handlerOpts := &slog.HandlerOptions{Level: cfg.LogLevel}
-	var handler slog.Handler = slog.NewJSONHandler(stdout, handlerOpts)
-	if cfg.Local {
-		handler = slog.NewTextHandler(stdout, handlerOpts)
-	}
-	logger := slog.New(middleware.NewContextHandler(handler)) // request_id on every line (NFR-23)
+	logger := newLogger(&cfg, stdout)
 	slog.SetDefault(logger)
 	return serve(ctx, &cfg, logger, build, stdout, openURL)
+}
+
+// newLogger builds the logger of the process: JSON in server mode, text in
+// local mode (NFR-23, FR-35), at cfg.LogLevel, writing to w. Every line logged
+// with a request's context carries that request's ID (NFR-23); that includes
+// the lines of the loggers derived with With.
+func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
+	var handler slog.Handler = slog.NewJSONHandler(w, opts)
+	if cfg.Local {
+		handler = slog.NewTextHandler(w, opts)
+	}
+	return slog.New(middleware.NewContextHandler(handler))
 }
 
 // serve wires all components and runs the servers until ctx is canceled.

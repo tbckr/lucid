@@ -36,7 +36,7 @@ func (s *Server) service(w http.ResponseWriter, r *http.Request) (domain.Calenda
 		case errors.Is(err, session.ErrNotFound), errors.Is(err, session.ErrNotAuthenticated):
 		default:
 			s.logger.LogAttrs(r.Context(), slog.LevelError, "loading session account",
-				slog.String("request_id", middleware.RequestID(r.Context())), slog.String("error", err.Error()))
+				slog.String(middleware.RequestIDAttr, middleware.RequestID(r.Context())), slog.String("error", err.Error()))
 		}
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
 		return nil, false
