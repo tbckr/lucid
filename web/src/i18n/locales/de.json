@@ -538,6 +538,72 @@
     "repeatNeedsDate": "Eine wiederkehrende Aufgabe braucht ein Datum."
   },
   "diagnostics": {
-    "reference": "Referenz: {{ref}}"
+    "reference": "Referenz: {{ref}}",
+    "open": "Problem melden",
+    "addItem": "Zum Problembericht hinzufügen",
+    "title": "Problem melden",
+    "description": "Lucid stellt eine Datei für ein Issue auf GitHub zusammen. Sie wird nur heruntergeladen, Lucid verschickt nichts selbst.",
+    "summary": {
+      "heading": "Im Bericht",
+      "lucid": "Lucid",
+      "lucidValue": "{{version}}, {{mode}}",
+      "modeServer": "Servermodus",
+      "modeLocal": "lokaler Modus",
+      "server": "Server",
+      "serverValue": "{{product}} auf {{host}}",
+      "serverUnknown": "{{host}}, Produkt unbekannt",
+      "requests": "Anfragen",
+      "requestsValue_one": "{{count}} aktuelle, ohne Inhalte",
+      "requestsValue_other": "{{count}} aktuelle, ohne Inhalte",
+      "problems": "Probleme",
+      "problemsValue_one": "{{count}}, nur als Aufbau",
+      "problemsValue_other": "{{count}}, nur als Aufbau",
+      "corrupted": "Beschädigte Einträge",
+      "corruptedValue_one": "{{count}}, nur Feldnamen",
+      "corruptedValue_other": "{{count}}, nur Feldnamen"
+    },
+    "items": {
+      "heading": "Einträge",
+      "hint": "Lucid fügt von jedem Eintrag den Aufbau hinzu, ohne Titel oder andere Daten. Den Inhalt nur, wenn du ihn hinzufügst.",
+      "empty": "Um einen Termin oder eine Aufgabe hinzuzufügen, öffne ihn und wähle Zum Problembericht hinzufügen.",
+      "signedOut": "Melde dich an, um Termine oder Aufgaben hinzuzufügen.",
+      "event": "Termin in {{calendar}}",
+      "task": "Aufgabe in {{calendar}}",
+      "remove": "{{label}} aus dem Bericht entfernen"
+    },
+    "problem": {
+      "unparsable_object": "Ein Eintrag, den Lucid nicht lesen konnte",
+      "invalid_object": "Ein Eintrag, den Lucid nicht anzeigen konnte",
+      "rejected_write": "Eine Änderung, die dein Server abgelehnt hat",
+      "error_response": "Eine Fehlerantwort deines Servers",
+      "invalid_xml": "Eine Antwort, die Lucid nicht lesen konnte"
+    },
+    "content": {
+      "show": "Inhalt anzeigen",
+      "loading": "Inhalt wird geladen …",
+      "failed": "Lucid konnte diesen Inhalt nicht laden.",
+      "include": "Diesen Inhalt zum Bericht hinzufügen",
+      "includeHint": "Er kann Namen, Orte, Notizen und E-Mail-Adressen enthalten.",
+      "added": "Inhalt zum Bericht hinzugefügt",
+      "removed": "Inhalt aus dem Bericht entfernt"
+    },
+    "file": {
+      "region": "Die Datei, die heruntergeladen wird",
+      "lines_one": "{{count}} Zeile",
+      "lines_other": "{{count}} Zeilen",
+      "show_one": "Ganze Datei anzeigen ({{count}} Zeile)",
+      "show_other": "Ganze Datei anzeigen ({{count}} Zeilen)"
+    },
+    "notice": {
+      "public": "Issues auf GitHub sind öffentlich.",
+      "security": "Sicherheitsprobleme vertraulich melden."
+    },
+    "openIssue": "Issue-Formular öffnen",
+    "newTab": "(öffnet in einem neuen Tab)",
+    "download": "Bericht herunterladen",
+    "downloaded": "Bericht heruntergeladen",
+    "loading": "Bericht wird zusammengestellt …",
+    "failed": "Lucid konnte den Bericht nicht zusammenstellen.",
+    "corruptedAction": "{{label}}. Problem melden"
   }
 }

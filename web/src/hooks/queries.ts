@@ -6,9 +6,10 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type QueryCache,
   type QueryClient,
 } from '@tanstack/react-query'
-import { createElement, useMemo } from 'react'
+import { createElement, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
@@ -33,7 +34,7 @@ import {
 } from '@/lib/api/schemas'
 import { anchorOf, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
 import { eventColors, FALLBACK_COLOR } from '@/lib/color'
-import { apiErrorMessage, referenceDescription } from '@/lib/errors'
+import { apiErrorMessage, referenceDescription, reportAction } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
@@ -47,6 +48,7 @@ import {
 } from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
 import { useSettings } from '@/stores/settings'
+import { useUi } from '@/stores/ui'
 
 export const queryKeys = {
   session: ['session'] as const,
@@ -306,6 +308,56 @@ export function useCalendarTasks(range: DateRange): CalendarTasksResult {
   )
 }
 
+/** At most this many placeholders go into the problem report (FR-36): the only list in it that nothing else bounds. */
+const MAX_REPORT_CORRUPTED = 50
+
+/** One placeholder per calendar and damage: its field paths and codes, in any order. */
+function corruptedSignature(item: CorruptedItem): string {
+  return JSON.stringify([item.calendarId, item.issues.map((i) => JSON.stringify([i.path, i.code])).sort()])
+}
+
+function corruptedOf(data: unknown): CorruptedItem[] | undefined {
+  if (typeof data !== 'object' || data === null || !('corrupted' in data)) return undefined
+  return Array.isArray(data.corrupted) ? (data.corrupted as CorruptedItem[]) : undefined
+}
+
+/** The last answer of `useCorruptedItems` per cache, so the hook returns the same list while the lists stay the same. */
+const corruptedSnapshots = new WeakMap<QueryCache, { lists: CorruptedItem[][]; items: CorruptedItem[] }>()
+
+function corruptedSnapshot(cache: QueryCache): CorruptedItem[] {
+  const lists: CorruptedItem[][] = []
+  for (const q of cache.findAll()) {
+    if (q.queryKey[0] !== queryKeys.eventsAll[0] && q.queryKey[0] !== queryKeys.todosAll[0]) continue
+    const list = corruptedOf(q.state.data)
+    if (list) lists.push(list)
+  }
+  const last = corruptedSnapshots.get(cache)
+  if (last?.lists.length === lists.length && last.lists.every((l, i) => l === lists[i])) return last.items
+  const seen = new Set<string>()
+  const items: CorruptedItem[] = []
+  for (const item of lists.flat()) {
+    const signature = corruptedSignature(item)
+    if (seen.has(signature)) continue
+    seen.add(signature)
+    items.push(item)
+    if (items.length === MAX_REPORT_CORRUPTED) break
+  }
+  corruptedSnapshots.set(cache, { lists, items })
+  return items
+}
+
+/**
+ * The placeholders of the items the browser could not read (FR-19), from every event, task and occurrence list in
+ * the query cache, for the problem report (FR-36): the same damage in the same calendar once, in several ranges or
+ * items alike, and at most 50.
+ */
+export function useCorruptedItems(): CorruptedItem[] {
+  const cache = useQueryClient().getQueryCache()
+  const subscribe = useCallback((onChange: () => void) => cache.subscribe(onChange), [cache])
+  const snapshot = useCallback(() => corruptedSnapshot(cache), [cache])
+  return useSyncExternalStore(subscribe, snapshot, snapshot)
+}
+
 /* ------------------------------------------------------------------------ */
 /* Error feedback                                                           */
 /* ------------------------------------------------------------------------ */
@@ -319,10 +371,14 @@ export function reportMutationError(err: unknown, t: TFn, qc: QueryClient, inval
     void qc.invalidateQueries({ queryKey: invalidate })
     return
   }
-  // A server error comes with its reference (FR-36).
+  // A server error comes with its reference, and a way to report it (FR-36).
   const description = referenceDescription(t, err)
   if (description === undefined) toast.error(apiErrorMessage(t, err))
-  else toast.error(apiErrorMessage(t, err), { description })
+  else toast.error(apiErrorMessage(t, err), { description, action: reportAction(t, err, openReport) })
+}
+
+function openReport(): void {
+  useUi.getState().openReport()
 }
 
 /* ------------------------------------------------------------------------ */

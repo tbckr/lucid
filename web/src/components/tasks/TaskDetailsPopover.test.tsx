@@ -48,6 +48,7 @@ describe('TaskDetailsPopover', () => {
   afterEach(() => {
     useUi.getState().openDetail(null)
     useUi.getState().openTaskEditor(null)
+    useUi.setState({ report: { open: false, candidates: [] } })
     vi.restoreAllMocks()
   })
 
@@ -124,15 +125,29 @@ describe('TaskDetailsPopover', () => {
     })
   })
 
-  it('offers only closing for a task in a read-only list', async () => {
+  it('offers only closing and reporting for a task in a read-only list', async () => {
     const { dialog } = await openDetails({ calendarId: 'c2' })
     expect(within(dialog).getByText('Read-only')).toBeInTheDocument()
     expect(within(dialog).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeDisabled()
     expect(within(dialog).queryByRole('button', { name: 'Edit task' })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: 'Delete task' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Add to problem report' })).toBeInTheDocument()
     await waitFor(() => {
       expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus()
     })
+  })
+
+  it('adds the task to the problem report, as the details of an event do (FR-36)', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openDetails({ id: 't7' })
+    const buttons = within(dialog).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)
+    expect(buttons.slice(-3)).toEqual(['Delete task', 'Add to problem report', 'Edit task'])
+    await user.click(within(dialog).getByRole('button', { name: 'Add to problem report' }))
+    expect(useUi.getState().report).toEqual({
+      open: true,
+      candidates: [{ objectId: 't7', kind: 'todo', label: 'Pay rent', calendarId: 'c1' }],
+    })
+    expect(useUi.getState().detail).toBeNull()
   })
 
   it('asks before deleting the task', async () => {

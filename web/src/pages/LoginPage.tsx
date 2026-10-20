@@ -22,6 +22,7 @@ import { safeRedirect } from '@/lib/redirect'
 import { navigate, useLocation } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
+import { useUi } from '@/stores/ui'
 
 interface LoginState {
   error: string | null
@@ -36,6 +37,7 @@ export function LoginPage() {
   const { search } = useLocation()
   const lastServerUrl = useSettings((s) => s.lastServerUrl)
   const updateSettings = useSettings((s) => s.update)
+  const openReport = useUi((s) => s.openReport)
   const id = useId()
 
   const form = useForm<LoginValues>({
@@ -92,8 +94,20 @@ export function LoginPage() {
                 <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
                 <div className="grid gap-1">
                   <p>{state.error}</p>
+                  {/* FR-36: a login that fails on the server's side can be reported from here, with what led to it. */}
                   {state.reference !== null && (
-                    <p className="text-xs">{t('diagnostics.reference', { ref: state.reference })}</p>
+                    <>
+                      <p className="text-xs">{t('diagnostics.reference', { ref: state.reference })}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          openReport()
+                        }}
+                        className="justify-self-start rounded-sm text-xs font-medium underline decoration-destructive/40 underline-offset-2 hover:decoration-destructive"
+                      >
+                        {t('diagnostics.open')}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

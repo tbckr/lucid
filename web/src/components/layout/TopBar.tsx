@@ -2,6 +2,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   KeyboardIcon,
+  LifeBuoyIcon,
   ListTodoIcon,
   LogOutIcon,
   MenuIcon,
@@ -69,6 +70,7 @@ export function TopBar({
   const { t } = useTranslation()
   const initial = (username ?? '?').slice(0, 1).toUpperCase()
   const reachable = useUi((s) => s.backendReachable)
+  const openReport = useUi((s) => s.openReport)
 
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-1 px-2 py-2 sm:h-16 sm:flex-nowrap sm:gap-2 sm:px-3 sm:py-0">
@@ -179,6 +181,15 @@ export function TopBar({
             <DropdownMenuItem onSelect={onShortcuts}>
               <KeyboardIcon aria-hidden />
               {t('shortcuts.title')}
+            </DropdownMenuItem>
+            {/* FR-36: always at hand, as many problems show no error at all. */}
+            <DropdownMenuItem
+              onSelect={() => {
+                openReport()
+              }}
+            >
+              <LifeBuoyIcon aria-hidden />
+              {t('diagnostics.open')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={onLogout}>
               <LogOutIcon aria-hidden />

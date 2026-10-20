@@ -541,6 +541,72 @@
     "repeatNeedsDate": "A repeating task needs a date."
   },
   "diagnostics": {
-    "reference": "Reference: {{ref}}"
+    "reference": "Reference: {{ref}}",
+    "open": "Report a problem",
+    "addItem": "Add to problem report",
+    "title": "Report a problem",
+    "description": "Lucid puts together a file for an issue on GitHub. It is only downloaded; Lucid sends nothing itself.",
+    "summary": {
+      "heading": "In the report",
+      "lucid": "Lucid",
+      "lucidValue": "{{version}}, {{mode}}",
+      "modeServer": "server mode",
+      "modeLocal": "local mode",
+      "server": "Server",
+      "serverValue": "{{product}} at {{host}}",
+      "serverUnknown": "{{host}}, product unknown",
+      "requests": "Requests",
+      "requestsValue_one": "{{count}} recent one, without contents",
+      "requestsValue_other": "{{count}} recent ones, without contents",
+      "problems": "Problems",
+      "problemsValue_one": "{{count}}, as structure only",
+      "problemsValue_other": "{{count}}, as structure only",
+      "corrupted": "Damaged items",
+      "corruptedValue_one": "{{count}}, field names only",
+      "corruptedValue_other": "{{count}}, field names only"
+    },
+    "items": {
+      "heading": "Items",
+      "hint": "Lucid adds each item's structure, without titles or other data. Its content goes in only if you add it.",
+      "empty": "To add an event or task, open it and choose Add to problem report.",
+      "signedOut": "Sign in to add events or tasks.",
+      "event": "Event in {{calendar}}",
+      "task": "Task in {{calendar}}",
+      "remove": "Remove {{label}} from the report"
+    },
+    "problem": {
+      "unparsable_object": "An item Lucid couldn't read",
+      "invalid_object": "An item Lucid couldn't show",
+      "rejected_write": "A change your server refused",
+      "error_response": "An error answer from your server",
+      "invalid_xml": "An answer Lucid couldn't read"
+    },
+    "content": {
+      "show": "Show content",
+      "loading": "Loading content …",
+      "failed": "Lucid couldn't load this content.",
+      "include": "Add this content to the report",
+      "includeHint": "It can contain names, places, notes and email addresses.",
+      "added": "Content added to the report",
+      "removed": "Content removed from the report"
+    },
+    "file": {
+      "region": "The file that will be downloaded",
+      "lines_one": "{{count}} line",
+      "lines_other": "{{count}} lines",
+      "show_one": "Show the whole file ({{count}} line)",
+      "show_other": "Show the whole file ({{count}} lines)"
+    },
+    "notice": {
+      "public": "Issues on GitHub are public.",
+      "security": "Report security problems privately."
+    },
+    "openIssue": "Open issue form",
+    "newTab": "(opens in a new tab)",
+    "download": "Download report",
+    "downloaded": "Report downloaded",
+    "loading": "Putting the report together …",
+    "failed": "Lucid couldn't put the report together.",
+    "corruptedAction": "{{label}}. Report a problem"
   }
 }

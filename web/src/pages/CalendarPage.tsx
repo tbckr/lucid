@@ -124,6 +124,8 @@ export function CalendarPage() {
       // The session is gone either way; continue to the login page.
     }
     qc.clear()
+    // The items added to the problem report carry titles of this account (FR-36).
+    useUi.getState().clearReport()
     try {
       qc.setQueryData(queryKeys.session, await endpoints.getSession())
     } catch {

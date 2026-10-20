@@ -73,6 +73,17 @@
     0 24px 48px -12px hsl(var(--shadow-color) / 0.12);
 }
 
+/* FR-36: content the user just added to the problem report washes in from 16 % to the 8 % it keeps. */
+@theme {
+  --animate-consent-wash: consent-wash 600ms ease-out;
+
+  @keyframes consent-wash {
+    from {
+      background-color: color-mix(in oklab, var(--primary) 16%, transparent);
+    }
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

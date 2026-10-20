@@ -41,6 +41,17 @@ export interface DetailState {
   anchor: HTMLElement
 }
 
+/**
+ * An event or task the user added to the problem report (FR-36). The report gets its object's ID and kind; the
+ * `label` (its title) and the calendar's name and color are shown in the dialog only, never written to the report.
+ */
+export interface ReportCandidate {
+  objectId: string
+  kind: 'event' | 'todo'
+  label: string
+  calendarId: string
+}
+
 interface UiState {
   view: ViewKind
   date: Date
@@ -60,6 +71,11 @@ interface UiState {
   shortcutsOpen: boolean
   /** Backend reachable (updated by API client + /healthz polling). */
   backendReachable: boolean
+  /**
+   * The problem report dialog (FR-36) and the items added to it. They stay until removed, downloaded or signed out,
+   * so several can be added one after the other; what the dialog showed of them is its own state.
+   */
+  report: { open: boolean; candidates: ReportCandidate[] }
 
   setView: (view: ViewKind) => void
   setDate: (date: Date) => void
@@ -74,6 +90,13 @@ interface UiState {
   setSettingsOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
   setBackendReachable: (reachable: boolean) => void
+  /** Opens the problem report, adding `candidate` unless it is in it already (by object ID). */
+  openReport: (candidate?: ReportCandidate) => void
+  /** Closes the problem report; the added items stay. */
+  closeReport: () => void
+  removeReportCandidate: (objectId: string) => void
+  /** Forgets the added items: after a download and on sign-out. */
+  clearReport: () => void
 }
 
 const noCreate = { create: null, createWhen: null, createPreview: null }
@@ -93,6 +116,7 @@ export const useUi = create<UiState>()((set) => ({
   settingsOpen: false,
   shortcutsOpen: false,
   backendReachable: true,
+  report: { open: false, candidates: [] },
 
   setView: (view) => {
     set({ view, detail: null, ...noCreate })
@@ -136,9 +160,26 @@ export const useUi = create<UiState>()((set) => ({
   setBackendReachable: (backendReachable) => {
     set({ backendReachable })
   },
+  // A modal dialog: the popovers it may be opened from close, as for the editors.
+  openReport: (candidate) => {
+    set((s) => {
+      const { candidates } = s.report
+      const added = candidate && !candidates.some((c) => c.objectId === candidate.objectId)
+      return { report: { open: true, candidates: added ? [...candidates, candidate] : candidates }, detail: null, ...noCreate }
+    })
+  },
+  closeReport: () => {
+    set((s) => ({ report: { ...s.report, open: false } }))
+  },
+  removeReportCandidate: (objectId) => {
+    set((s) => ({ report: { ...s.report, candidates: s.report.candidates.filter((c) => c.objectId !== objectId) } }))
+  },
+  clearReport: () => {
+    set((s) => ({ report: { ...s.report, candidates: [] } }))
+  },
 }))
 
 /** True while any modal surface is open (global shortcuts are suspended). */
 export function isModalOpen(s: UiState): boolean {
-  return s.editor !== null || s.taskEditor !== null || s.settingsOpen || s.shortcutsOpen
+  return s.editor !== null || s.taskEditor !== null || s.settingsOpen || s.shortcutsOpen || s.report.open
 }

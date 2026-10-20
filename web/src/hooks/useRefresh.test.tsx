@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { type ReactNode } from 'react'
-import { toast, type ToastT } from 'sonner'
+import { type MouseEvent, type ReactNode } from 'react'
+import { toast, type Action, type ToastT } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api/client'
 import { isReported, markReported } from '@/lib/refresh'
@@ -13,7 +13,7 @@ import { useLoadErrorToast, useRefresh } from './useRefresh'
 afterEach(() => {
   vi.useRealTimers()
   useSettings.setState(defaultSettings)
-  useUi.setState({ backendReachable: true })
+  useUi.setState({ backendReachable: true, report: { open: false, candidates: [] } })
   toast.dismiss()
 })
 
@@ -153,6 +153,12 @@ function descriptionOf(id: string): unknown {
   return shown?.description
 }
 
+/** The action of the live toast `id`, sonner's own state. */
+function actionOf(id: string): Action | undefined {
+  const shown = toast.getToasts().find((x): x is ToastT => x.id === id && !('dismiss' in x))
+  return shown?.action as Action | undefined
+}
+
 /** A new error each time: a refresh marks the errors it told about, and these tests share the module. */
 const serverError = () => new ApiError(502, 'upstream_error', 'down', null, '0123456789abcdef')
 
@@ -177,14 +183,21 @@ describe('useRefresh toast reference', () => {
     })
   }
 
-  it('shows the reference of the error that failed it', async () => {
+  it('shows the reference of the error that failed it, with an action that opens the report (FR-36)', async () => {
     await failedRefresh(serverError())
     expect(descriptionOf('refresh')).toBe('Reference: 01234567')
+    const action = actionOf('refresh')
+    expect(action?.label).toBe('Report a problem')
+    act(() => {
+      action?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    expect(useUi.getState().report.open).toBe(true)
   })
 
   it('shows none for an error without one', async () => {
     await failedRefresh(new Error('502'))
     expect(descriptionOf('refresh')).toBeUndefined()
+    expect(actionOf('refresh')).toBeUndefined()
   })
 
   it('drops the reference of an earlier refresh toast it replaces', async () => {
@@ -198,6 +211,7 @@ describe('useRefresh toast reference', () => {
     })
     await act(() => vi.advanceTimersByTimeAsync(600))
     expect(descriptionOf('refresh')).toBeUndefined()
+    expect(actionOf('refresh')).toBeUndefined()
   })
 })
 
@@ -216,10 +230,20 @@ describe('useLoadErrorToast', () => {
   it('shows the reference of a server error, and drops it when the next error has none', () => {
     const { rerender } = render(serverError(), false)
     expect(descriptionOf('events-load')).toBe('Reference: 01234567')
+    expect(actionOf('events-load')?.label).toBe('Report a problem')
 
-    // Sonner merges a live toast with the new one of its id: the description must be set again.
+    // Sonner merges a live toast with the new one of its id: the description and action must be set again.
     rerender({ error: new Error('502'), refreshing: false })
     expect(descriptionOf('events-load')).toBeUndefined()
+    expect(actionOf('events-load')).toBeUndefined()
+  })
+
+  it('opens the problem report from the action of a load toast (FR-36)', () => {
+    render(serverError(), false)
+    act(() => {
+      actionOf('events-load')?.onClick({} as MouseEvent<HTMLButtonElement>)
+    })
+    expect(useUi.getState().report.open).toBe(true)
   })
 
   it('holds back while a refresh runs, and stays quiet about what the refresh told', () => {

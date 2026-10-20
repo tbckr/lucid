@@ -1,9 +1,10 @@
-import { PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
+import { LifeBuoyIcon, PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { Button } from '@/components/ui/button'
 import { PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { splitLinks } from '@/lib/links'
 import { detailPlacement, lastKnownBox, type Box } from '@/lib/placement'
 import { type Scope, type ScopeItem } from '@/lib/scope'
@@ -127,7 +128,29 @@ export function Linked({ text }: { text: string }) {
   )
 }
 
-/** Delete and edit; deleting asks in place first, a series asking which of its events or repeats (FR-17). */
+/**
+ * "Add to problem report" (FR-36), the same for events and tasks: an icon button between delete and edit, or
+ * alone at the end of the footer of an item that can't be changed.
+ */
+export function DetailReport({ onReport }: { onReport: () => void }) {
+  const { t } = useTranslation()
+  const label = t('diagnostics.addItem')
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button size="icon-sm" variant="ghost" aria-label={label} onClick={onReport} className="text-muted-foreground">
+          <LifeBuoyIcon aria-hidden />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
+ * Delete, add to the problem report and edit; deleting asks in place first, a series asking which of its events or
+ * repeats (FR-17).
+ */
 export function DetailActions({
   editRef,
   editLabel,
@@ -135,6 +158,7 @@ export function DetailActions({
   confirm,
   onEdit,
   onDelete,
+  onReport,
   deleteScope,
   onScopeOpenChange,
 }: {
@@ -145,6 +169,8 @@ export function DetailActions({
   confirm: string
   onEdit: () => void
   onDelete: () => void
+  /** Adds the item to the problem report (FR-36). */
+  onReport: () => void
   /**
    * The question which events or repeats of a series to delete (FR-17): the `question` itself, the
    * options it offers (`eventScopeItems`, `taskScopeItems`), the series' calendar color, why an
@@ -236,10 +262,13 @@ export function DetailActions({
         <Trash2Icon aria-hidden />
         {deleteLabel}
       </Button>
-      <Button ref={editRef} size="sm" variant="outline" onClick={onEdit}>
-        <PencilIcon aria-hidden />
-        {editLabel}
-      </Button>
+      <div className="flex items-center gap-1">
+        <DetailReport onReport={onReport} />
+        <Button ref={editRef} size="sm" variant="outline" onClick={onEdit}>
+          <PencilIcon aria-hidden />
+          {editLabel}
+        </Button>
+      </div>
     </div>
   )
 }

@@ -1,7 +1,8 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
+import { useUi } from '@/stores/ui'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { LoginPage } from './LoginPage'
@@ -9,6 +10,7 @@ import { LoginPage } from './LoginPage'
 afterEach(() => {
   api.setCsrfToken(null)
   window.history.replaceState(null, '', '/')
+  useUi.setState({ report: { open: false, candidates: [] } })
 })
 
 async function fill(user: ReturnType<typeof userEvent.setup>, server: string, name: string, pass: string) {
@@ -70,6 +72,23 @@ describe('LoginPage', () => {
     expect(alert).toHaveTextContent('Reference: 01234567')
   })
 
+  it('opens the problem report from the alert of an error with a reference (FR-36)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/session')) return Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' }))
+      return Promise.resolve(
+        jsonResponse(502, { error: { code: 'discovery_failed', message: 'no' } }, { 'X-Request-Id': '0123456789abcdef' }),
+      )
+    })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    expect(screen.queryByRole('button', { name: 'Report a problem' })).toBeNull()
+    await fill(user, 'example.com', 'tim', 'pw')
+    const alert = await screen.findByRole('alert')
+    await user.click(within(alert).getByRole('button', { name: 'Report a problem' }))
+    expect(useUi.getState().report.open).toBe(true)
+  })
+
   it('shows no reference for an error that is not a server problem', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = urlOf(input)
@@ -81,7 +100,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderWithProviders(<LoginPage />)
     await fill(user, 'example.com', 'tim', 'pw')
-    expect(await screen.findByRole('alert')).not.toHaveTextContent('Reference')
+    const alert = await screen.findByRole('alert')
+    expect(alert).not.toHaveTextContent('Reference')
+    expect(within(alert).queryByRole('button', { name: 'Report a problem' })).toBeNull()
   })
 
   it('shows the reference of a rejected login, and drops it with the next error', async () => {

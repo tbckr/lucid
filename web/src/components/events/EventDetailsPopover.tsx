@@ -11,7 +11,7 @@ import { browserTimeZone } from '@/lib/locale'
 import { describeRRule } from '@/lib/rrule'
 import { eventScopeItems, eventScopeMissing, scopeOptions, type Scope } from '@/lib/scope'
 import { useUi } from '@/stores/ui'
-import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from './DetailParts'
+import { DetailActions, DetailClose, DetailContent, DetailReport, DetailRow, Linked } from './DetailParts'
 import { RepeatGlyph } from './EventItems'
 
 /** Popover with the details of the selected event (read, edit, delete; FR-09). */
@@ -48,6 +48,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const colorsOf = useCalendarColors()
   const openDetail = useUi((s) => s.openDetail)
   const openEditor = useUi((s) => s.openEditor)
+  const openReport = useUi((s) => s.openReport)
   // A delete of a series waits for its other writes, and takes the ETag they got (FR-17).
   const series = event.recurring ? event.id : undefined
   const del = useDeleteEvent(series)
@@ -83,6 +84,10 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
         break
     }
     openDetail(null)
+  }
+  // FR-36: the report gets the event's resource, which every event of a series shares; the title only labels it there.
+  const report = () => {
+    openReport({ objectId: event.id, kind: 'event', label: title, calendarId: event.calendarId })
   }
 
   return (
@@ -159,7 +164,11 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
           </div>
         )}
 
-        {!readOnly && (
+        {readOnly ? (
+          <div className="flex justify-end">
+            <DetailReport onReport={report} />
+          </div>
+        ) : (
           <DetailActions
             editRef={editRef}
             editLabel={t('event.edit')}
@@ -172,6 +181,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
               del.mutate(event)
               openDetail(null)
             }}
+            onReport={report}
             deleteScope={
               deleteOptions.length > 1
                 ? {

@@ -9,7 +9,7 @@ import { TopBar } from './TopBar'
 
 afterEach(() => {
   useSettings.setState(defaultSettings)
-  useUi.setState({ backendReachable: true })
+  useUi.setState({ backendReachable: true, report: { open: false, candidates: [] } })
 })
 
 /** Puts the calendar list on screen, as loaded by the seed. */
@@ -68,5 +68,15 @@ describe('TopBar', () => {
     renderTopBar()
     await user.click(screen.getByRole('button', { name: /account/i }))
     expect(await screen.findByRole('menuitem', { name: /^Refresh/ })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('opens the problem report from the account menu, between the shortcuts and signing out (FR-36)', async () => {
+    const user = userEvent.setup()
+    renderTopBar()
+    await user.click(screen.getByRole('button', { name: /account/i }))
+    const items = (await screen.findAllByRole('menuitem')).map((item) => item.textContent)
+    expect(items.slice(-3)).toEqual(['Keyboard shortcuts', 'Report a problem', 'Sign out'])
+    await user.click(screen.getByRole('menuitem', { name: 'Report a problem' }))
+    expect(useUi.getState().report.open).toBe(true)
   })
 })

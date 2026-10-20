@@ -2,6 +2,7 @@ import { QueryClientProvider, useQueryClient, type QueryClient } from '@tanstack
 import { RefreshCwIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ReportDialog } from '@/components/diagnostics/ReportDialog'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Logo } from '@/components/Logo'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ import { apiErrorMessage } from '@/lib/errors'
 import { loginPathFor, safeRedirect } from '@/lib/redirect'
 import { navigate, useLocation } from '@/lib/router'
 import { useSettings } from '@/stores/settings'
+import { useUi } from '@/stores/ui'
 
 // Split the two screens: first-time visitors only download the login page.
 const CalendarPage = lazy(() => import('@/pages/CalendarPage').then((m) => ({ default: m.CalendarPage })))
@@ -26,6 +28,8 @@ export function App({ queryClient }: { queryClient: QueryClient }) {
       <TooltipProvider>
         <AppErrorBoundary>
           <Root />
+          {/* On both screens: the login screen reports a failed login, and a forced logout keeps it open (FR-36). */}
+          <ReportDialog />
         </AppErrorBoundary>
         <ThemedToaster />
       </TooltipProvider>
@@ -63,6 +67,8 @@ function Root() {
         const current = window.location.pathname + window.location.search
         qc.removeQueries({ predicate: (q) => q.queryKey[0] !== queryKeys.session[0] })
         void qc.invalidateQueries({ queryKey: queryKeys.session })
+        // The items added to the problem report carry titles of the account that is gone (FR-36).
+        useUi.getState().clearReport()
         if (window.location.pathname !== '/login') navigate(loginPathFor(current), { replace: true })
       }),
     [qc],

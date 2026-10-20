@@ -1,7 +1,14 @@
 import { AlignLeftIcon, CheckIcon, FlagIcon, ListChecksIcon, LockIcon, RepeatIcon } from 'lucide-react'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { DetailActions, DetailClose, DetailContent, DetailRow, Linked } from '@/components/events/DetailParts'
+import {
+  DetailActions,
+  DetailClose,
+  DetailContent,
+  DetailReport,
+  DetailRow,
+  Linked,
+} from '@/components/events/DetailParts'
 import { RecurringMark } from '@/components/events/EventItems'
 import { Popover } from '@/components/ui/popover'
 import {
@@ -51,6 +58,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const colors = useCalendarColors()(task.calendarId)
   const openDetail = useUi((s) => s.openDetail)
   const openTaskEditor = useUi((s) => s.openTaskEditor)
+  const openReport = useUi((s) => s.openReport)
   const closeRef = useRef<HTMLButtonElement>(null)
   const editRef = useRef<HTMLButtonElement>(null)
   // Holds how to cancel the delete scope question while it is open, for the Escape handler below.
@@ -118,6 +126,10 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
         break
     }
     openDetail(null)
+  }
+  // FR-36: as for an event, the task's resource, which all repeats of a series share; the title only labels it there.
+  const report = () => {
+    openReport({ objectId: todo.id, kind: 'todo', label: title, calendarId: todo.calendarId })
   }
 
   return (
@@ -252,7 +264,11 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
           </div>
         )}
 
-        {!readOnly && (
+        {readOnly ? (
+          <div className="flex justify-end">
+            <DetailReport onReport={report} />
+          </div>
+        ) : (
           <DetailActions
             editRef={editRef}
             editLabel={t('tasks.edit')}
@@ -266,6 +282,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
               del.mutate({ todo })
               openDetail(null)
             }}
+            onReport={report}
             deleteScope={
               repeat && deleteOptions.length > 1
                 ? {

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import i18next from '@/i18n'
 import { ApiError, type ApiErrorCode } from './api/client'
-import { errorReference, referenceDescription } from './errors'
+import { errorReference, referenceDescription, reportAction } from './errors'
 
 const ID = '0123456789abcdef'
 
@@ -66,5 +66,21 @@ describe('referenceDescription', () => {
 
   it('is undefined without a reference', () => {
     expect(referenceDescription(i18next.getFixedT('en'), new ApiError(409, 'conflict', '', null, ID))).toBeUndefined()
+  })
+})
+
+describe('reportAction', () => {
+  it('opens the problem report from an error with a reference (FR-36)', () => {
+    const onReport = vi.fn()
+    const action = reportAction(i18next.getFixedT('de'), new ApiError(502, 'upstream_error', '', null, ID), onReport)
+    expect(action?.label).toBe('Problem melden')
+    action?.onClick()
+    expect(onReport).toHaveBeenCalledTimes(1)
+  })
+
+  it('is undefined without a reference', () => {
+    const t = i18next.getFixedT('en')
+    expect(reportAction(t, new ApiError(409, 'conflict', '', null, ID), vi.fn())).toBeUndefined()
+    expect(reportAction(t, new ApiError(502, 'upstream_error', ''), vi.fn())).toBeUndefined()
   })
 })

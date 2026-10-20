@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { api } from '@/lib/api/client'
-import { referenceDescription } from '@/lib/errors'
+import { errorReference, referenceDescription, reportAction } from '@/lib/errors'
 import { formatLoadedAt } from '@/lib/format'
 import { isReported, markReported, refreshAll } from '@/lib/refresh'
 import { useUi } from '@/stores/ui'
@@ -66,13 +66,18 @@ export function useRefresh(): { state: RefreshState; refresh: () => void } {
           shownAt === null
             ? t('refresh.failed')
             : t('refresh.failedShowing', { time: formatLoadedAt(new Date(shownAt), prefs, new Date()) })
-        // Sonner merges this into a refresh toast still shown: the description is set whatever it was.
-        const description = errors.map((e) => referenceDescription(t, e)).find((d) => d !== undefined)
-        toast.error(message, { id: 'refresh', description })
+        // A server error that failed it gives its reference and a way to report it (FR-36). Sonner merges this into
+        // a refresh toast still shown: the description and the action are set whatever they were.
+        const referenced = errors.find((e) => errorReference(e) !== null)
+        toast.error(message, {
+          id: 'refresh',
+          description: referenceDescription(t, referenced),
+          action: reportAction(t, referenced, openReport),
+        })
         setState('idle')
       })
       .catch(() => {
-        toast.error(t('refresh.failed'), { id: 'refresh', description: undefined })
+        toast.error(t('refresh.failed'), { id: 'refresh', description: undefined, action: undefined })
         setState('idle')
       })
       .finally(() => {
@@ -90,10 +95,16 @@ export function useRefresh(): { state: RefreshState; refresh: () => void } {
  */
 export function useLoadErrorToast(error: unknown, id: string, message: string, refreshing: boolean): void {
   const { t } = useTranslation()
-  // A server error shows its reference (FR-36). The description is always passed: sonner merges a new
-  // toast into a live one of its id, which would keep the old reference.
+  // A server error shows its reference and a way to report it (FR-36). Both are always passed: sonner merges a
+  // new toast into a live one of its id, which would keep the old ones.
   const description = referenceDescription(t, error)
   useEffect(() => {
-    if (error && !refreshing && !isReported(error)) toast.error(message, { id, description })
-  }, [error, id, message, description, refreshing])
+    if (error && !refreshing && !isReported(error)) {
+      toast.error(message, { id, description, action: reportAction(t, error, openReport) })
+    }
+  }, [error, id, message, description, refreshing, t])
+}
+
+function openReport(): void {
+  useUi.getState().openReport()
 }

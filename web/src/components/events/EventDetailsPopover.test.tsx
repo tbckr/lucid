@@ -35,6 +35,7 @@ async function openDetails(p: Partial<ApiEvent>) {
 describe('EventDetailsPopover', () => {
   afterEach(() => {
     useUi.getState().openDetail(null)
+    useUi.setState({ report: { open: false, candidates: [] } })
     vi.restoreAllMocks()
   })
 
@@ -91,11 +92,12 @@ describe('EventDetailsPopover', () => {
     expect(zone !== null).toBe(shown)
   })
 
-  it('offers only closing for an event in a read-only calendar', async () => {
+  it('offers only closing and reporting for an event in a read-only calendar', async () => {
     const { dialog } = await openDetails({ calendarId: 'c2' })
     expect(within(dialog).getByText('Read-only')).toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: 'Edit event' })).toBeNull()
     expect(within(dialog).queryByRole('button', { name: 'Delete event' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Add to problem report' })).toBeInTheDocument()
     await waitFor(() => {
       expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus()
     })
@@ -247,6 +249,20 @@ describe('EventDetailsPopover', () => {
     expect(screen.getByRole('dialog', { name: 'Quarterly review' })).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Delete event' })).toHaveFocus()
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('adds the event to the problem report, between delete and edit (FR-36)', async () => {
+    const user = userEvent.setup()
+    // An event of a series: the report gets the series' resource, which every event of it shares.
+    const { dialog } = await openDetails({ id: 'e7', recurring: true, rrule: 'FREQ=DAILY', recurrenceId: '2026-03-13T08:00:00Z' })
+    const buttons = within(dialog).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)
+    expect(buttons.slice(-3)).toEqual(['Delete event', 'Add to problem report', 'Edit event'])
+    await user.click(within(dialog).getByRole('button', { name: 'Add to problem report' }))
+    expect(useUi.getState().report).toEqual({
+      open: true,
+      candidates: [{ objectId: 'e7', kind: 'event', label: 'Quarterly review', calendarId: 'c1' }],
+    })
+    expect(useUi.getState().detail).toBeNull()
   })
 
   it('opens the editor for the event', async () => {

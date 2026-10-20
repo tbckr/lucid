@@ -6,18 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18next from '@/i18n'
 import { api, ApiError } from '@/lib/api/client'
 import { endpoints, type EventList, type TodoList } from '@/lib/api/endpoints'
-import { type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
+import { type CorruptedItem, type RestoredTodo, type Todo, type UpdatedTodo } from '@/lib/api/schemas'
 import { currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
 import { toCalEvent, type CalEvent } from '@/lib/events'
 import { taskGlyphSlots } from '@/lib/scope'
 import { todoToInput } from '@/lib/tasks'
 import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
+import { useUi } from '@/stores/ui'
 import {
   MOVE_EVENT_KEY,
   queryKeys,
   reportMutationError,
   useCalendarTasks,
+  useCorruptedItems,
   useDeleteEvent,
   useDeleteFollowing,
   useDeleteOccurrence,
@@ -3882,12 +3884,20 @@ describe('reportMutationError', () => {
   const t = i18next.getFixedT('en')
   const qc = new QueryClient()
 
-  it('adds the reference of a server error to its toast', () => {
+  afterEach(() => {
+    useUi.setState({ report: { open: false, candidates: [] } })
+  })
+
+  it('adds the reference of a server error to its toast, with an action that opens the report (FR-36)', () => {
     const error = vi.spyOn(toast, 'error')
     reportMutationError(new ApiError(502, 'upstream_error', 'down', null, '0123456789abcdef'), t, qc, ['x'])
     expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.", {
       description: 'Reference: 01234567',
+      action: { label: 'Report a problem', onClick: expect.any(Function) as unknown },
     })
+    const action = (error.mock.calls[0]![1] as { action: Action }).action
+    action.onClick({} as MouseEvent<HTMLButtonElement>)
+    expect(useUi.getState().report.open).toBe(true)
   })
 
   it('shows a plain toast for an error without one', () => {
@@ -3896,9 +3906,71 @@ describe('reportMutationError', () => {
     expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.")
   })
 
-  it('shows no reference with the warning of a conflict', () => {
+  it('shows no reference and no action with the warning of a conflict', () => {
     const warning = vi.spyOn(toast, 'warning')
     reportMutationError(new ApiError(409, 'conflict', '', null, '0123456789abcdef'), t, qc, ['x'])
     expect(warning).toHaveBeenCalledWith('This item was changed elsewhere. Lucid reloaded the latest version.')
+  })
+})
+
+describe('useCorruptedItems', () => {
+  function broken(key: string, calendarId: string, issues: { path: string; code: string }[]): CorruptedItem {
+    return { kind: 'corrupted', key, calendarId, start: null, reason: 'r', issues }
+  }
+
+  function setup() {
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useCorruptedItems(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    })
+    return { queryClient, result }
+  }
+
+  it('collects the placeholders of the event, task and occurrence lists, once per calendar and damage', () => {
+    const { queryClient, result } = setup()
+    const end = [{ path: 'end', code: 'custom' }]
+    const title = [
+      { path: 'title', code: 'invalid_type' },
+      { path: 'priority', code: 'too_big' },
+    ]
+    act(() => {
+      queryClient.setQueryData(queryKeys.calendars, [calendar()])
+      queryClient.setQueryData(queryKeys.events('c1', 'a', 'b'), { events: [], corrupted: [broken('e1', 'c1', end)] })
+      // The same placeholder in the list of another range.
+      queryClient.setQueryData(queryKeys.events('c1', 'b', 'c'), { events: [], corrupted: [broken('e1', 'c1', end)] })
+      // The same damage in another calendar is another entry.
+      queryClient.setQueryData(queryKeys.events('c2', 'a', 'b'), { events: [], corrupted: [broken('e2', 'c2', end)] })
+      queryClient.setQueryData(queryKeys.todos('c1'), { todos: [], corrupted: [broken('t1', 'c1', title)] })
+      // The same fields of another item of the calendar, in another order: the same damage.
+      queryClient.setQueryData(queryKeys.todoOccurrences('c1', 'a', 'b'), {
+        occurrences: [],
+        corrupted: [broken('o1', 'c1', [...title].reverse())],
+      })
+    })
+    expect(result.current.map((item) => item.key)).toEqual(['e1', 'e2', 't1'])
+  })
+
+  it('keeps at most 50 for the report', () => {
+    const { queryClient, result } = setup()
+    const many = Array.from({ length: 60 }, (_, i) => broken(`e${i}`, 'c1', [{ path: `field${i}`, code: 'custom' }]))
+    act(() => {
+      queryClient.setQueryData(queryKeys.events('c1', 'a', 'b'), { events: [], corrupted: many })
+    })
+    expect(result.current).toHaveLength(50)
+    expect(result.current[49]?.key).toBe('e49')
+  })
+
+  it('stays the same list while the placeholders do', () => {
+    const { queryClient, result } = setup()
+    act(() => {
+      queryClient.setQueryData(queryKeys.events('c1', 'a', 'b'), { events: [], corrupted: [broken('e1', 'c1', [])] })
+    })
+    const first = result.current
+    act(() => {
+      queryClient.setQueryData(queryKeys.calendars, [calendar()])
+    })
+    expect(result.current).toBe(first)
   })
 })
