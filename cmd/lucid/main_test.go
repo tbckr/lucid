@@ -21,9 +21,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -606,6 +608,27 @@ func TestRunLocalPortInUse(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
+	}
+}
+
+func TestShutdownSignals(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		ignored func(os.Signal) bool
+		want    []os.Signal
+	}{
+		{"SIGHUP is handled", func(os.Signal) bool { return false }, []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}},
+		// nohup starts Lucid with SIGHUP ignored; Notify would undo that.
+		{"SIGHUP stays ignored under nohup", func(sig os.Signal) bool { return sig == syscall.SIGHUP }, []os.Signal{os.Interrupt, syscall.SIGTERM}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shutdownSignals(tt.ignored); !slices.Equal(got, tt.want) {
+				t.Errorf("shutdownSignals() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

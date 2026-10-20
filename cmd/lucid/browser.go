@@ -26,6 +26,8 @@ func openBrowser(ctx context.Context, url string) error {
 	name, args := browserCommand(runtime.GOOS, url)
 	// The command is fixed per OS and the URL is Lucid's own loopback URL.
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Closing the Lucid window stops Lucid, not the browser (FR-35).
+	cmd.SysProcAttr = detachedProcAttr()
 	if err := cmd.Start(); err != nil {
 		return err
 	}

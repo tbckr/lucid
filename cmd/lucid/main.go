@@ -81,9 +81,7 @@ const (
 )
 
 func main() {
-	// SIGHUP: closing the macOS Terminal window sends it, and in local mode
-	// that window is how the user stops Lucid.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals(signal.Ignored)...)
 	err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, openBrowser)
 	stop()
 	if err != nil {
@@ -94,6 +92,19 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+// shutdownSignals returns the signals that stop Lucid. SIGHUP is among them
+// because closing the macOS Terminal window sends it, and in local mode that
+// window is how the user stops Lucid (FR-35). It is left out if the process
+// started with it ignored: Notify would install a handler and so undo
+// `nohup lucid &`, which then would stop when the terminal closes.
+func shutdownSignals(ignored func(os.Signal) bool) []os.Signal {
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !ignored(syscall.SIGHUP) {
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	return sigs
 }
 
 // run is the testable entry point. Logs go to stdout: JSON in server mode, text
