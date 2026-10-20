@@ -243,9 +243,9 @@ func TestXMLSkeletonHref(t *testing.T) {
 		{"home", "/dav/calendars/alice/", "{home}/"},
 		{"object", "/dav/calendars/alice/cal/obj.ics", p.Path(xmlTestNames, "/dav/calendars/alice/cal/obj.ics")},
 		{"principal", "/dav/principals/users/alice/", "{principal}/"},
-		{"object outside both", "/other/zz-canary.ics", "/other/obj-" + p.hash("zz-canary.ics") + ".ics"},
+		{"object outside both", "/other/zz-canary.ics", "/seg-" + p.hash("other") + "/obj-" + p.hash("zz-canary.ics") + ".ics"},
 		{"behind a prefix", "/nextcloud/dav/calendars/alice/c/o.ics", "/nextcloud/" + p.Path(xmlTestNames, "/dav/calendars/alice/c/o.ics")},
-		{"user name outside", "/other/alice/x", "/other/{user}/x"},
+		{"user name outside", "/other/alice/x", "/seg-" + p.hash("other") + "/{user}/seg-" + p.hash("x")},
 		{"escaped", "/dav/calendars/alice/zz%20canary/", p.Path(xmlTestNames, "/dav/calendars/alice/zz%20canary/")},
 		{"whitespace around", " \n /dav/calendars/alice/c/ \n ", p.Path(xmlTestNames, "/dav/calendars/alice/c/")},
 		{

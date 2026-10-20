@@ -97,6 +97,7 @@ type calEntry struct {
 	ctag      string
 	syncToken string
 	objects   []calObject
+	listed    int          // objects the listing returned, readable or not (FR-36)
 	checked   atomic.Int64 // unix nanoseconds of the last validation
 }
 
@@ -126,6 +127,7 @@ func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObjec
 	entry, cached := s.p.cache.Get(key)
 	if cached && !domain.Revalidation(ctx) && now.Sub(time.Unix(0, entry.checked.Load())) < s.p.opts.CacheFreshness {
 		s.p.metrics.hits.Inc()
+		s.noteEntry(ctx, calPath, entry)
 		return entry.objects, nil
 	}
 
@@ -137,19 +139,33 @@ func (s *service) objects(ctx context.Context, calPath, comp string) ([]calObjec
 	if cached && ((ctag != "" && ctag == entry.ctag) || (ctag == "" && token != "" && token == entry.syncToken)) {
 		entry.checked.Store(now.UnixNano())
 		s.p.metrics.hits.Inc()
+		s.noteEntry(ctx, calPath, entry)
 		return entry.objects, nil
 	}
 
 	s.p.metrics.misses.Inc()
-	objs, err := s.query(ctx, calPath, comp)
+	objs, listed, err := s.query(ctx, calPath, comp)
 	if err != nil {
 		s.p.metrics.errors.Inc()
 		return nil, err
 	}
-	e := &calEntry{ctag: ctag, syncToken: token, objects: objs}
+	e := &calEntry{ctag: ctag, syncToken: token, objects: objs, listed: listed}
 	e.checked.Store(now.UnixNano())
 	s.p.cache.Add(key, e)
+	s.noteEntry(ctx, calPath, e)
 	return objs, nil
+}
+
+// noteEntry notes what the cache entry e knows of the calendar at calPath, on
+// every path that serves it: the cache belongs to the provider and outlives the
+// sessions, so a calendar another session read is served without a request
+// that would tell (FR-36). Objects is the largest listing of events or tasks,
+// as events and tasks are listed apart.
+func (s *service) noteEntry(ctx context.Context, calPath string, e *calEntry) {
+	s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) {
+		n.CTag, n.SyncToken = e.ctag != "", e.syncToken != ""
+		n.Objects = max(n.Objects, e.listed)
+	})
 }
 
 // collectionTags returns the CTag and sync-token of a calendar ("" if the
@@ -171,8 +187,9 @@ func (s *service) collectionTags(ctx context.Context, calPath string) (ctag, tok
 	return ctag, token, nil
 }
 
-// query fetches all objects of the component type via calendar-query.
-func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject, error) {
+// query fetches all objects of the component type via calendar-query. It also
+// returns how many objects the server listed, the unreadable ones included.
+func (s *service) query(ctx context.Context, calPath, comp string) (objs []calObject, listed int, err error) {
 	body := `<?xml version="1.0" encoding="utf-8"?>` +
 		`<c:calendar-query xmlns:d="DAV:" xmlns:c="` + nsCalDAV + `">` +
 		`<d:prop><d:getetag/><c:calendar-data/></d:prop>` +
@@ -186,13 +203,13 @@ func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject,
 		headers: map[string]string{"Depth": "1"},
 	})
 	if err != nil {
-		return nil, mapError(err)
+		return nil, 0, mapError(err)
 	}
 	ms, err := parseMultistatus(resp.body)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	objs := make([]calObject, 0, len(ms.Responses))
+	objs = make([]calObject, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
 		if len(r.Hrefs) == 0 || (r.Status != "" && !statusOK(r.Status)) {
 			continue
@@ -201,6 +218,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject,
 		if err != nil || !strings.HasPrefix(u.Path, calPath) || len(u.Path) == len(calPath) {
 			continue
 		}
+		listed++
 		pr := r.ok()
 		data := str(pr.CalendarData)
 		if data == "" {
@@ -213,10 +231,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject,
 		}
 		objs = append(objs, calObject{path: u.Path, etag: str(pr.ETag), cal: cal})
 	}
-	// Events and tasks are queried apart, so the latest count alone could be
-	// that of the smaller kind: keep the largest.
-	s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) { n.Objects = max(n.Objects, len(objs)) })
-	return objs, nil
+	return objs, listed, nil
 }
 
 // --- writes ---

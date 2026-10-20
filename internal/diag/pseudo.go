@@ -13,6 +13,22 @@ import (
 // 8 hex characters that tell two names apart in a log without identifying them.
 const hashBytes = 4
 
+// structuralNames are the path segments that stay as they are outside the home
+// and the principal: the names that CalDAV servers and the usual paths to them
+// are built from, which say what kind of server it is and nothing about the
+// user (FR-36). They are matched whole, percent-decoded and in exactly this
+// case ("SOGo" is how SOGo spells it). A user can name a calendar like one of
+// them, and then that name shows: the price of keeping the discovery paths
+// readable.
+var structuralNames = map[string]bool{
+	".well-known": true, "caldav": true, "carddav": true, "dav": true,
+	"remote.php": true, "dav.php": true, "caldav.php": true, "cal.php": true, "index.php": true,
+	"principals": true, "principal": true, "users": true, "user": true,
+	"calendars": true, "calendar": true,
+	"SOGo": true, "so": true, "radicale": true, "baikal": true, "nextcloud": true, "owncloud": true,
+	"apps": true, "api": true, "public": true, "home": true, "html": true, "v1": true, "v2": true,
+}
+
 // Names are the account-bound names whose position in a path the
 // Pseudonymizer knows. Principal and Home are URL paths (Home ends in "/").
 // They stay empty while unknown, for example before discovery has run.
@@ -44,8 +60,12 @@ func NewPseudonymizer(key []byte) *Pseudonymizer {
 //     "obj-<h>" (an ".ics" suffix stays) and deeper ones as "seg-<h>".
 //  2. Names.Principal, found the same way: "{principal}/", then every segment as
 //     "seg-<h>".
-//  3. Otherwise only the username is replaced, see RedactUser, and every
-//     segment that ends in ".ics" is an object name and becomes "obj-<h>.ics".
+//  3. Otherwise a segment that is the username is replaced, see RedactUser,
+//     and one that is a structural name (structuralNames) stays: the structure
+//     of the server is what makes a discovery path readable. A segment that
+//     ends in ".ics" is an object name and becomes "obj-<h>.ics", and every
+//     other one is a name somebody chose, a calendar the user pasted the URL
+//     of, and becomes "seg-<h>".
 //
 // Of the home and the principal the one whose run starts first applies, the
 // home if both start at the same segment: what is below the one that starts
@@ -113,13 +133,19 @@ func (p *Pseudonymizer) lead(n Names, segs []string) string {
 	return ""
 }
 
-// outside is what the rules leave to segments that are neither the home nor
-// below it: the username and the names of objects are replaced.
+// outside is what rule 3 does to segments that are neither the home nor below
+// it: the username is replaced, the structural names stay, and every other
+// name, objects included, is hashed. Empty segments stay empty.
 func (p *Pseudonymizer) outside(n Names, segs []string) string {
 	redactUser(n.Username, segs)
 	for i, seg := range segs {
-		if dec := decode(seg); segs[i] != "{user}" && hasICSSuffix(dec) {
+		dec := decode(seg)
+		switch {
+		case seg == "" || seg == "{user}" || structuralNames[dec]:
+		case hasICSSuffix(dec):
 			segs[i] = "obj-" + p.hash(dec) + ".ics"
+		default:
+			segs[i] = "seg-" + p.hash(dec)
 		}
 	}
 	return strings.Join(segs, "/")

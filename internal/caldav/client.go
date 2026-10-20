@@ -26,11 +26,12 @@ const maxBodySize = 32 << 20
 // maxRedirects bounds the number of redirects followed per request.
 const maxRedirects = 5
 
-// errBodyTooLarge and errTooManyRedirects say why a request failed, for
-// errorClass. They are wrapped together with domain.ErrUpstream.
+// errBodyTooLarge, errTooManyRedirects and errInvalidLocation say why a request
+// failed, for errorClass. They are wrapped together with domain.ErrUpstream.
 var (
 	errBodyTooLarge     = errors.New("response body exceeds the size limit")
 	errTooManyRedirects = errors.New("too many redirects")
+	errInvalidLocation  = errors.New("invalid redirect location")
 )
 
 // XML namespaces used in requests and responses.
@@ -42,8 +43,8 @@ const (
 )
 
 // statusError is a non-success HTTP status returned by the server. URL is
-// pseudonymised (transport.pseudoURL): the error text ends up in logs and
-// responses (NFR-36).
+// pseudonymised (transport.pseudoURL): the error text reaches the logs, which
+// must not carry the names of calendars (NFR-36).
 type statusError struct {
 	Method string
 	URL    string
@@ -143,40 +144,69 @@ type response struct {
 	url    *url.URL // final URL after redirects
 }
 
+// classRedirect is the Exchange.Error of the hop where a chain of redirects
+// stops: the redirect was refused, had no usable target, or was one too many.
+const classRedirect = "redirect"
+
 // do sends req, following redirects, and returns the response. Non-2xx
-// statuses are returned as *statusError together with the response.
+// statuses are returned as *statusError together with the response. Every hop
+// is recorded as an exchange (FR-36).
 func (t *transport) do(ctx context.Context, req request) (*response, error) {
 	u := req.url
-	for range maxRedirects + 1 {
-		resp, err := t.roundTrip(ctx, req, u)
+	for hop := 0; ; hop++ {
+		hr, err := t.newHTTPRequest(ctx, req, u)
 		if err != nil {
 			return nil, err
 		}
+		resp, ex, err := t.roundTrip(hr, u)
+		if err != nil {
+			t.record(ctx, ex)
+			return nil, err
+		}
 		if !isRedirect(resp.code) {
+			t.record(ctx, ex)
 			if resp.code < 200 || resp.code > 299 {
 				return resp, &statusError{Method: req.method, URL: t.pseudoURL(u), Code: resp.code}
 			}
 			return resp, nil
 		}
+		// The chain stops at this hop unless it can be followed.
 		loc := resp.header.Get("Location")
 		if loc == "" {
+			ex.Error = classRedirect
+			t.record(ctx, ex)
 			return resp, &statusError{Method: req.method, URL: t.pseudoURL(u), Code: resp.code}
 		}
-		next, err := u.Parse(loc)
+		next, err := redirectTarget(req, u, loc, hop)
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid redirect location: %w", domain.ErrUpstream, err)
-		}
-		if err := checkRedirect(req.url, u, next, req.crossOrigin); err != nil {
+			ex.Error = classRedirect
+			t.record(ctx, ex)
 			return nil, err
 		}
+		t.record(ctx, ex)
 		u = next
 	}
-	return nil, fmt.Errorf("%w: %w", domain.ErrUpstream, errTooManyRedirects)
 }
 
-// roundTrip sends req to u without following a redirect. It records the
-// exchange, whatever came of it (FR-36).
-func (t *transport) roundTrip(ctx context.Context, req request, u *url.URL) (*response, error) {
+// redirectTarget is where the redirect to loc, the hop-th one, from u leads, if
+// it may be followed. The errors do not carry loc: it is the server's, and
+// may hold the names of the user's calendars (NFR-36).
+func redirectTarget(req request, u *url.URL, loc string, hop int) (*url.URL, error) {
+	next, err := u.Parse(loc)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", domain.ErrUpstream, errInvalidLocation)
+	}
+	if err := checkRedirect(req.url, u, next, req.crossOrigin); err != nil {
+		return nil, err
+	}
+	if hop >= maxRedirects {
+		return nil, fmt.Errorf("%w: %w", domain.ErrUpstream, errTooManyRedirects)
+	}
+	return next, nil
+}
+
+// newHTTPRequest builds the request that sends req to u.
+func (t *transport) newHTTPRequest(ctx context.Context, req request, u *url.URL) (*http.Request, error) {
 	var body io.Reader
 	if req.body != nil {
 		body = bytes.NewReader(req.body)
@@ -192,31 +222,35 @@ func (t *transport) roundTrip(ctx context.Context, req request, u *url.URL) (*re
 	for k, v := range req.headers {
 		hr.Header.Set(k, v)
 	}
+	return hr, nil
+}
+
+// roundTrip sends hr, a request to u, without following a redirect. It returns
+// the exchange it was, which the caller records (FR-36), and which says by its
+// Error that the request failed.
+func (t *transport) roundTrip(hr *http.Request, u *url.URL) (*response, diag.Exchange, error) {
 	ex := diag.Exchange{
 		At:     t.p.now(),
-		Method: req.method,
+		Method: hr.Method,
 		Host:   u.Host,
 		Path:   t.p.pseudo.Path(t.names, u.EscapedPath()),
 	}
 	start := time.Now()
-	resp, err := t.send(hr, &ex)
+	resp, err := t.send(hr, u, &ex)
 	ex.DurationMS = time.Since(start).Milliseconds()
 	if err != nil {
 		ex.Error = errorClass(err)
-	}
-	t.record(ctx, ex)
-	if err != nil {
-		return nil, mapError(err)
+		return nil, ex, mapError(err)
 	}
 	resp.url = u
-	return resp, nil
+	return resp, ex, nil
 }
 
 // send performs hr and reads the whole response, noting in ex what came back.
-func (t *transport) send(hr *http.Request, ex *diag.Exchange) (*response, error) {
+func (t *transport) send(hr *http.Request, u *url.URL, ex *diag.Exchange) (*response, error) {
 	resp, err := t.client.Do(hr)
 	if err != nil {
-		return nil, err
+		return nil, t.scrub(err, u)
 	}
 	defer resp.Body.Close()
 	ex.Status = resp.StatusCode
@@ -234,10 +268,27 @@ func (t *transport) send(hr *http.Request, ex *diag.Exchange) (*response, error)
 	return &response{code: resp.StatusCode, header: resp.Header, body: data}, nil
 }
 
+// scrub takes the names out of the error of http.Client.Do, a *url.Error that
+// carries the URL of the request, which has the real path in it, and, when the
+// server sent a Location the client could not parse, that value (NFR-36).
+// What the error wraps stays, for errors.Is and errors.As.
+func (t *transport) scrub(err error, u *url.URL) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	inner := ue.Err
+	if strings.HasPrefix(inner.Error(), "failed to parse Location header") { // net/http, before CheckRedirect
+		inner = errInvalidLocation
+	}
+	return &url.Error{Op: ue.Op, URL: t.pseudoURL(u), Err: inner}
+}
+
 // record logs an exchange at debug and adds it to the diagnostics buffer of
 // the request, if ctx has a scope (FR-36). The path of ex is pseudonymised and
 // its error a fixed class, so neither carries calendar contents (NFR-36); the
-// log never gets request or response bodies or credentials.
+// log never gets request or response bodies or credentials. The headers are the
+// server's, so they are cut as the buffer cuts them.
 func (t *transport) record(ctx context.Context, ex diag.Exchange) {
 	t.p.log.DebugContext(ctx, "caldav exchange",
 		"method", ex.Method,
@@ -246,9 +297,9 @@ func (t *transport) record(ctx context.Context, ex diag.Exchange) {
 		"status", ex.Status,
 		"duration_ms", ex.DurationMS,
 		"bytes", ex.Bytes,
-		"content_type", clipHeader(ex.ContentType),
-		"server", clipHeader(ex.Server),
-		"dav", clipHeader(ex.DAV),
+		"content_type", diag.Cap(ex.ContentType, diag.MaxHeaderValue),
+		"server", diag.Cap(ex.Server, diag.MaxHeaderValue),
+		"dav", diag.Cap(ex.DAV, diag.MaxHeaderValue),
 		"error", ex.Error,
 	)
 	if scope, ok := diag.ScopeFrom(ctx); ok {
@@ -257,19 +308,14 @@ func (t *transport) record(ctx context.Context, ex diag.Exchange) {
 	}
 }
 
-// clipHeader cuts a response header value to what the diagnostics keep: the
-// server decides how long it is.
-func clipHeader(v string) string {
-	return v[:min(len(v), diag.MaxHeaderValue)]
-}
-
 // errorClass reduces the error of a failed request to a fixed word, which
-// says what kind of failure it was without the text of the error: that carries
-// the URL and what the server said (NFR-36). It tells where a connection
-// breaks: "dns" (the name did not resolve), "connect" (no connection, or it
-// broke), "tls" (the certificate or the handshake), "timeout", "canceled" (the
-// caller gave up), "ssrf_blocked" (the address is not allowed, NFR-24),
-// "body_too_large", "redirect" (too many of them) and "other".
+// says what kind of failure it was without the text of the error: that can
+// carry the URL and what the server said (NFR-36). The classes are "dns" (the
+// name did not resolve), "connect" (no connection, or it ended before the
+// answer was complete: a reset, an EOF), "tls" (the certificate or the
+// handshake), "timeout", "canceled" (the caller gave up), "ssrf_blocked" (the
+// address is not allowed, NFR-24), "body_too_large", "redirect" (too many
+// redirects, or one the client could not parse) and "other".
 func errorClass(err error) string {
 	var (
 		dnsErr   *net.DNSError
@@ -280,14 +326,16 @@ func errorClass(err error) string {
 		hostname x509.HostnameError
 		invalid  x509.CertificateInvalidError
 		recHdr   tls.RecordHeaderError
+		alert    tls.AlertError
+		ech      *tls.ECHRejectionError
 	)
 	switch {
 	case errors.Is(err, domain.ErrForbiddenTarget):
 		return "ssrf_blocked"
 	case errors.Is(err, errBodyTooLarge):
 		return "body_too_large"
-	case errors.Is(err, errTooManyRedirects):
-		return "redirect"
+	case errors.Is(err, errTooManyRedirects), errors.Is(err, errInvalidLocation):
+		return classRedirect
 	case errors.Is(err, context.Canceled):
 		return "canceled"
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
@@ -295,11 +343,11 @@ func errorClass(err error) string {
 	case errors.As(err, &dnsErr):
 		return "dns"
 	case errors.As(err, &verify), errors.As(err, &unknown), errors.As(err, &hostname),
-		errors.As(err, &invalid), errors.As(err, &recHdr):
+		errors.As(err, &invalid), errors.As(err, &recHdr), errors.As(err, &alert), errors.As(err, &ech):
 		return "tls"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
-	case errors.As(err, &opErr):
+	case errors.As(err, &opErr), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
 		return "connect"
 	}
 	return "other"

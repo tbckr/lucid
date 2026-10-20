@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -108,6 +110,16 @@ func (e *traceEnv) calendarID(t *testing.T, svc domain.CalendarService, name str
 	return ""
 }
 
+// putEvent stores a small event as name in the calendar slug.
+func (e *traceEnv) putEvent(t *testing.T, slug, name string) {
+	t.Helper()
+	if _, err := e.mock.PutObject(e.mock.HomePath()+slug+"/", name, ics(
+		"BEGIN:VEVENT", "UID:"+name, "DTSTAMP:20250301T000000Z", "DTSTART:20250302T100000Z", "DTEND:20250302T110000Z",
+		"SUMMARY:A", "END:VEVENT")); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+}
+
 // names are the names the pseudonymiser knows for the test account.
 func (e *traceEnv) names() diag.Names {
 	return diag.Names{Username: traceUser, Principal: e.mock.PrincipalPath(), Home: e.mock.HomePath()}
@@ -183,14 +195,30 @@ func TestTraceKeepsNothingWithoutScope(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{})
 	svc := e.p.Service(e.connect(t.Context(), t))
+	e.logs.Reset() // the lines of Connect
+	// A buffer that no request carries: nothing may reach it.
+	other := diag.NewBuffer(diag.SessionLimits)
+
 	// No scope at all, and a scope without a buffer: both must just work.
 	for _, ctx := range []context.Context{
 		t.Context(),
 		diag.WithScope(t.Context(), diag.Scope{RequestID: "req-2"}),
 	} {
-		if _, err := svc.ListCalendars(ctx); err != nil {
+		cals, err := svc.ListCalendars(ctx)
+		if err != nil {
 			t.Fatalf("ListCalendars: %v", err)
 		}
+		if len(cals) != 4 {
+			t.Errorf("calendars = %d; want the 4 of the account", len(cals))
+		}
+	}
+
+	if snap := other.Snapshot(); len(snap.Exchanges) != 0 || len(snap.Calendars) != 0 {
+		t.Errorf("a buffer outside the scope got %+v", snap)
+	}
+	// The log does not depend on a scope: one exchange line for each request.
+	if n := len(logLines(t, e.logs)); n != 2 {
+		t.Errorf("log lines = %d; want 2, one per request", n)
 	}
 }
 
@@ -283,8 +311,72 @@ func TestTraceRedirectLoop(t *testing.T) {
 
 	mustErr(t, err, domain.ErrUpstream)
 	mustErr(t, err, errTooManyRedirects)
-	if n := len(buf.Snapshot().Exchanges); n != maxRedirects+1 {
-		t.Errorf("exchanges = %d; want one per hop, %d", n, maxRedirects+1)
+	got := buf.Snapshot().Exchanges
+	if len(got) != maxRedirects+1 {
+		t.Fatalf("exchanges = %d; want one per hop, %d", len(got), maxRedirects+1)
+	}
+	// Only the hop where the chain stops says so.
+	for i, ex := range got {
+		want := ""
+		if i == len(got)-1 {
+			want = "redirect"
+		}
+		if ex.Status != http.StatusFound || ex.Error != want {
+			t.Errorf("hop %d = %+v; want status 302, Error %q", i, ex, want)
+		}
+	}
+	// The log has the same.
+	lines := logLines(t, e.logs)
+	if last := lines[len(lines)-1]; last["error"] != "redirect" {
+		t.Errorf("last exchange line = %v; want error redirect", last)
+	}
+}
+
+func TestTraceRedirectRefused(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		location   string // "-" sends none
+		status     int
+		wantStatus int
+	}{
+		{"another host", "http://other.example.test/x", http.StatusMovedPermanently, http.StatusMovedPermanently},
+		{"unsupported scheme", "ftp://example.test/x", http.StatusFound, http.StatusFound},
+		// net/http fails a Location it cannot parse itself, before there is a response to hand back.
+		{"unparsable location", "%zz", http.StatusFound, 0},
+		{"no location", "-", http.StatusFound, http.StatusFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newTraceEnv(t, caldavtest.Options{})
+			svc := e.p.Service(e.connect(t.Context(), t))
+			e.hook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method == "PROPFIND" && r.URL.Path == e.mock.HomePath() {
+					if tt.location != "-" {
+						w.Header().Set("Location", tt.location)
+					}
+					w.WriteHeader(tt.status)
+					return true
+				}
+				return false
+			})
+			buf := diag.NewBuffer(diag.SessionLimits)
+
+			_, err := svc.ListCalendars(scopedCtx(t.Context(), buf, "req-1"))
+
+			mustErr(t, err, domain.ErrUpstream)
+			got := buf.Snapshot().Exchanges
+			if len(got) != 1 || got[0].Status != tt.wantStatus || got[0].Error != "redirect" {
+				t.Errorf("exchanges = %+v; want the one hop, with status %d and Error redirect", got, tt.wantStatus)
+			}
+			// Neither the target nor what could not be parsed is in the error text.
+			for _, leak := range []string{"other.example.test", "ftp:", "%zz"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Errorf("error %q contains %q", err, leak)
+				}
+			}
+		})
 	}
 }
 
@@ -298,6 +390,10 @@ func TestTraceTransportFailure(t *testing.T) {
 	_, err := svc.ListCalendars(scopedCtx(t.Context(), buf, "req-1"))
 
 	mustErr(t, err, domain.ErrUpstream)
+	// The error of net/http carries the URL: here it is the pseudonymised one.
+	if msg := err.Error(); strings.Contains(msg, traceUser) || strings.Contains(msg, "calendars") || !strings.Contains(msg, "{home}/") {
+		t.Errorf("error %q; want the URL of the request pseudonymised", msg)
+	}
 	got := buf.Snapshot().Exchanges
 	if len(got) != 1 {
 		t.Fatalf("exchanges = %+v; want one", got)
@@ -362,8 +458,8 @@ func TestTraceBodyReadError(t *testing.T) {
 
 	mustErr(t, err, domain.ErrUpstream)
 	got := buf.Snapshot().Exchanges
-	if len(got) != 1 || got[0].Status != http.StatusMultiStatus || got[0].Error != "other" || got[0].Bytes != int64(len("<partial")) {
-		t.Errorf("exchanges = %+v; want one 207 with Error other and the bytes that arrived", got)
+	if len(got) != 1 || got[0].Status != http.StatusMultiStatus || got[0].Error != "connect" || got[0].Bytes != int64(len("<partial")) {
+		t.Errorf("exchanges = %+v; want one 207 with Error connect and the bytes that arrived", got)
 	}
 }
 
@@ -371,7 +467,8 @@ func TestTraceClipsLongHeaders(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{})
 	svc := e.p.Service(e.connect(t.Context(), t))
-	long := strings.Repeat("s", 10*diag.MaxHeaderValue)
+	// 3-byte runes: 256 bytes end inside one, so the cut has to back up.
+	long := strings.Repeat("€", 10*diag.MaxHeaderValue)
 	e.hook(func(w http.ResponseWriter, _ *http.Request) bool {
 		w.Header().Set("Server", long)
 		return false
@@ -386,8 +483,8 @@ func TestTraceClipsLongHeaders(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("log lines = %v; want one", lines)
 	}
-	if got := lines[0]["server"]; got != strings.Repeat("s", diag.MaxHeaderValue) {
-		t.Errorf("server = %.20q...; want %d bytes", got, diag.MaxHeaderValue)
+	if got, want := lines[0]["server"], strings.Repeat("€", diag.MaxHeaderValue/3); got != want {
+		t.Errorf("server = %.20q... (%d bytes); want %d bytes, whole runes", got, len(got.(string)), len(want))
 	}
 }
 
@@ -488,23 +585,26 @@ func TestDiscoveryLogsNoErrorText(t *testing.T) {
 		t.Fatalf("NewProvider: %v", err)
 	}
 
+	// What a user pastes is the URL of a calendar, with its name in it.
 	_, err = p.Connect(t.Context(), domain.Credentials{
-		ServerURL: "https://dav.example.test/" + traceUser + "/calendars/", Username: traceUser, Password: tracePass,
+		ServerURL: "https://dav.example.test/remote.php/dav/calendars/" + traceUser + "/zz-therapy/", Username: traceUser, Password: tracePass,
 	})
 
 	mustErr(t, err, domain.ErrUpstream)
 	out := logs.String()
-	for _, leak := range []string{traceUser, tracePass, "no such host", "_caldavs"} {
+	for _, leak := range []string{traceUser, tracePass, "zz-therapy", "no such host", "_caldavs"} {
 		if strings.Contains(out, leak) {
 			t.Errorf("log contains %q:\n%s", leak, out)
 		}
 	}
+	pastedURL := regexp.MustCompile(`^https://dav\.example\.test/remote\.php/dav/calendars/\{user\}/seg-[0-9a-f]{8}/$`)
 	var candidates, lookups int
 	for _, m := range logLines(t, &logs) {
 		switch m["msg"] {
 		case "caldav discovery candidate failed":
 			candidates++
-			if (m["url"] != "https://dav.example.test/{user}/calendars/" && m["url"] != "https://dav.example.test/.well-known/caldav") || m["error"] != "dns" {
+			candidate, _ := m["url"].(string)
+			if (!pastedURL.MatchString(candidate) && candidate != "https://dav.example.test/.well-known/caldav") || m["error"] != "dns" {
 				t.Errorf("candidate line = %v; want a pseudonymised url and error dns", m)
 			}
 		case "caldav SRV lookup failed":
@@ -543,6 +643,35 @@ func TestDiscoveryLogsStatusOfCandidate(t *testing.T) {
 	t.Errorf("no candidate line in:\n%s", e.logs.String())
 }
 
+func TestDiscoveryPastedCalendarURL(t *testing.T) {
+	t.Parallel()
+	e := newTraceEnv(t, caldavtest.Options{})
+	buf := diag.NewBuffer(diag.SessionLimits)
+
+	// The URL of a calendar, as a user copies it from the browser: the server
+	// does not know it, discovery goes on to /.well-known/caldav.
+	_, err := e.p.Connect(scopedCtx(t.Context(), buf, "req-1"), domain.Credentials{
+		ServerURL: e.ts.URL + "/dav/calendars/" + traceUser + "/zz-therapy/", Username: traceUser, Password: tracePass,
+	})
+
+	mustNoErr(t, err)
+	exchanges := buf.Snapshot().Exchanges
+	if len(exchanges) < 2 {
+		t.Fatalf("exchanges = %+v; want the pasted URL and then .well-known", exchanges)
+	}
+	if want := regexp.MustCompile(`^/dav/calendars/\{user\}/seg-[0-9a-f]{8}/$`); !want.MatchString(exchanges[0].Path) {
+		t.Errorf("first exchange path = %q; want /dav/calendars/{user}/seg-<h>/", exchanges[0].Path)
+	}
+	for _, ex := range exchanges {
+		if strings.Contains(ex.Path, "therapy") || strings.Contains(ex.Path, traceUser) {
+			t.Errorf("exchange %+v carries a name", ex)
+		}
+	}
+	if out := e.logs.String(); strings.Contains(out, "therapy") || strings.Contains(out, traceUser) {
+		t.Errorf("log carries a name:\n%s", out)
+	}
+}
+
 func TestStatusErrorPseudonymised(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{})
@@ -577,11 +706,11 @@ func TestStatusErrorKeepsOriginOnly(t *testing.T) {
 	t.Parallel()
 	p := newProvider(t, http.DefaultClient)
 	tr := p.newTransport("user", "pass", diag.Names{})
-	u := mustParseURL(t, "https://bob:secret@dav.example.test/some/path?token=abc#frag")
+	u := mustParseURL(t, "https://bob:secret@dav.example.test/remote.php/dav/?token=abc#frag")
 
 	got := tr.pseudoURL(u)
 
-	if got != "https://dav.example.test/some/path" {
+	if got != "https://dav.example.test/remote.php/dav/" {
 		t.Errorf("pseudoURL = %q", got)
 	}
 }
@@ -601,6 +730,10 @@ func TestErrorClass(t *testing.T) {
 		{"hostname mismatch", x509.HostnameError{Host: "x.test"}, "tls"},
 		{"expired certificate", x509.CertificateInvalidError{Reason: x509.Expired}, "tls"},
 		{"not a TLS server", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "tls"},
+		{"tls alert", fmt.Errorf("Get x: %w", tls.AlertError(40)), "tls"},
+		{"ech rejected", &tls.ECHRejectionError{}, "tls"},
+		{"connection closed in a body", fmt.Errorf("%w: %w", domain.ErrUpstream, io.ErrUnexpectedEOF), "connect"},
+		{"connection closed before an answer", fmt.Errorf("Get x: %w", io.EOF), "connect"},
 		{"context deadline", context.DeadlineExceeded, "timeout"},
 		{"os deadline", os.ErrDeadlineExceeded, "timeout"},
 		{"wrapped deadline", fmt.Errorf("%w: %w", domain.ErrUpstream, context.DeadlineExceeded), "timeout"},
@@ -633,12 +766,7 @@ func (timeoutError) Temporary() bool { return false }
 func TestCalendarNotes(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{})
-	personal := e.mock.HomePath() + "personal/"
-	if _, err := e.mock.PutObject(personal, "a.ics", ics(
-		"BEGIN:VEVENT", "UID:a", "DTSTAMP:20250301T000000Z", "DTSTART:20250302T100000Z", "DTEND:20250302T110000Z",
-		"SUMMARY:A", "END:VEVENT")); err != nil {
-		t.Fatalf("PutObject: %v", err)
-	}
+	e.putEvent(t, "personal", "a.ics")
 	svc := e.p.Service(e.connect(t.Context(), t))
 	buf := diag.NewBuffer(diag.SessionLimits)
 	ctx := scopedCtx(t.Context(), buf, "req-1")
@@ -698,14 +826,8 @@ func TestCalendarNotes(t *testing.T) {
 func TestCalendarNotesKeepLargestObjectCount(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{})
-	work := e.mock.HomePath() + "work/"
-	for _, name := range []string{"a.ics", "b.ics"} {
-		if _, err := e.mock.PutObject(work, name, ics(
-			"BEGIN:VEVENT", "UID:"+name, "DTSTAMP:20250301T000000Z", "DTSTART:20250302T100000Z", "DTEND:20250302T110000Z",
-			"SUMMARY:A", "END:VEVENT")); err != nil {
-			t.Fatalf("PutObject: %v", err)
-		}
-	}
+	e.putEvent(t, "work", "a.ics")
+	e.putEvent(t, "work", "b.ics")
 	svc := e.p.Service(e.connect(t.Context(), t))
 	id := e.calendarID(t, svc, "Work")
 	buf := diag.NewBuffer(diag.SessionLimits)
@@ -725,9 +847,103 @@ func TestCalendarNotesKeepLargestObjectCount(t *testing.T) {
 	}
 }
 
+func TestCalendarNotesFromTheCache(t *testing.T) {
+	t.Parallel()
+	window := func(ctx context.Context, svc domain.CalendarService, id string) error {
+		_, err := svc.ListEvents(ctx, id, date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+		return err
+	}
+	tests := []struct {
+		name string
+		ctx  func(context.Context) context.Context
+	}{
+		// Within CacheFreshness: the entry is served without asking the server.
+		{"fresh entry", func(ctx context.Context) context.Context { return ctx }},
+		// Revalidation asks for the CTag, finds it unchanged and serves the entry.
+		{"entry with an unchanged CTag", domain.WithRevalidation},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newTraceEnv(t, caldavtest.Options{})
+			e.putEvent(t, "personal", "a.ics")
+			e.putEvent(t, "personal", "b.ics")
+			acct := e.connect(t.Context(), t)
+			id := e.calendarID(t, e.p.Service(acct), "Personal")
+			// The cache belongs to the provider and outlives the sessions: this
+			// one fills it...
+			if err := window(scopedCtx(t.Context(), diag.NewBuffer(diag.SessionLimits), "req-1"), e.p.Service(acct), id); err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+			reports := e.mock.Count("REPORT")
+
+			// ...and another one only reads from it.
+			buf := diag.NewBuffer(diag.SessionLimits)
+			if err := window(tt.ctx(scopedCtx(t.Context(), buf, "req-2")), e.p.Service(acct), id); err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+
+			if n := e.mock.Count("REPORT"); n != reports {
+				t.Fatalf("REPORTs = %d, was %d; the second read was meant to come from the cache", n, reports)
+			}
+			notes := buf.Snapshot().Calendars
+			if len(notes) != 1 {
+				t.Fatalf("notes = %+v; want one, of the calendar that was read", notes)
+			}
+			if n := notes[0]; !n.CTag || !n.SyncToken || n.Objects != 2 {
+				t.Errorf("note = %+v; want CTag, SyncToken and 2 objects from the cached entry", n)
+			}
+		})
+	}
+}
+
+func TestCalendarNotesCountUnreadableObjects(t *testing.T) {
+	t.Parallel()
+	e := newTraceEnv(t, caldavtest.Options{})
+	svc := e.p.Service(e.connect(t.Context(), t))
+	id := e.calendarID(t, svc, "Personal")
+	personal := e.mock.HomePath() + "personal/"
+	object := func(name, status, data string) string {
+		return `<d:response><d:href>` + personal + name + `</d:href>` + status +
+			`<d:propstat><d:prop><d:getetag>"1"</d:getetag><c:calendar-data>` + data + `</c:calendar-data></d:prop>` +
+			`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`
+	}
+	valid := strings.Join([]string{
+		"BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//t//EN", "BEGIN:VEVENT", "UID:a", "DTSTAMP:20250301T000000Z",
+		"DTSTART:20250302T100000Z", "DTEND:20250302T110000Z", "SUMMARY:A", "END:VEVENT", "END:VCALENDAR", "",
+	}, "\r\n")
+	e.hook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "REPORT" {
+			return false
+		}
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(`<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">` +
+			object("a.ics", "", valid) +
+			object("garbage.ics", "", "this is not iCalendar") +
+			object("empty.ics", "", "") +
+			// Not objects of this calendar's listing: removed, and elsewhere.
+			object("gone.ics", "<d:status>HTTP/1.1 404 Not Found</d:status>", valid) +
+			`<d:response><d:href>` + e.mock.HomePath() + `work/x.ics</d:href></d:response>` +
+			`</d:multistatus>`))
+		return true
+	})
+	buf := diag.NewBuffer(diag.SessionLimits)
+
+	events, err := svc.ListEvents(scopedCtx(t.Context(), buf, "req-1"), id, date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+
+	mustNoErr(t, err)
+	if len(events) != 1 {
+		t.Fatalf("events = %d; want the one readable event", len(events))
+	}
+	if notes := buf.Snapshot().Calendars; len(notes) != 1 || notes[0].Objects != 3 {
+		t.Errorf("notes = %+v; want one with 3 objects, the unreadable ones included", notes)
+	}
+}
+
 func TestCalendarNotesWithoutCTag(t *testing.T) {
 	t.Parallel()
 	e := newTraceEnv(t, caldavtest.Options{DisableCTag: true, DisableSyncToken: true})
+	e.putEvent(t, "personal", "a.ics")
 	svc := e.p.Service(e.connect(t.Context(), t))
 	id := e.calendarID(t, svc, "Personal")
 	buf := diag.NewBuffer(diag.SessionLimits)
@@ -736,10 +952,12 @@ func TestCalendarNotesWithoutCTag(t *testing.T) {
 		t.Fatalf("ListEvents: %v", err)
 	}
 
-	for _, n := range buf.Snapshot().Calendars {
-		if n.CTag || n.SyncToken {
-			t.Errorf("note = %+v; want neither CTag nor SyncToken for a server that has none", n)
-		}
+	notes := buf.Snapshot().Calendars
+	if len(notes) != 1 {
+		t.Fatalf("notes = %+v; want one, of the calendar that was read", notes)
+	}
+	if n := notes[0]; n.CTag || n.SyncToken || n.Objects != 1 {
+		t.Errorf("note = %+v; want neither CTag nor SyncToken for a server that has none, and 1 object", n)
 	}
 }
 

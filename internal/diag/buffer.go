@@ -73,7 +73,10 @@ type Problem struct {
 
 // CalendarNote is what Lucid found out about one calendar: its capabilities
 // and how many objects it holds, never its name or contents (FR-36). Path is
-// pseudonymised, and the Buffer cuts it to MaxFieldValue bytes.
+// pseudonymised, and the Buffer cuts it to MaxFieldValue bytes. Objects is the
+// largest number of objects one listing of events or tasks returned, unreadable
+// ones included: events and tasks are listed apart, so neither count alone is
+// the number of objects.
 type CalendarNote struct {
 	Path      string `json:"path"`
 	ReadOnly  bool   `json:"readOnly"`
@@ -149,14 +152,14 @@ func (b *Buffer) AddExchange(e Exchange) {
 		return
 	}
 	e.At = e.At.UTC()
-	e.RequestID = capString(e.RequestID, MaxFieldValue)
-	e.Method = capString(e.Method, MaxFieldValue)
-	e.Host = capString(e.Host, MaxFieldValue)
-	e.Path = capString(e.Path, MaxFieldValue)
-	e.Error = capString(e.Error, MaxFieldValue)
-	e.ContentType = capString(e.ContentType, MaxHeaderValue)
-	e.Server = capString(e.Server, MaxHeaderValue)
-	e.DAV = capString(e.DAV, MaxHeaderValue)
+	e.RequestID = Cap(e.RequestID, MaxFieldValue)
+	e.Method = Cap(e.Method, MaxFieldValue)
+	e.Host = Cap(e.Host, MaxFieldValue)
+	e.Path = Cap(e.Path, MaxFieldValue)
+	e.Error = Cap(e.Error, MaxFieldValue)
+	e.ContentType = Cap(e.ContentType, MaxHeaderValue)
+	e.Server = Cap(e.Server, MaxHeaderValue)
+	e.DAV = Cap(e.DAV, MaxHeaderValue)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.exchanges = trim(append(b.exchanges, e), b.limits.Exchanges)
@@ -170,10 +173,10 @@ func (b *Buffer) AddProblem(p Problem) {
 		return
 	}
 	p.At = p.At.UTC()
-	p.RequestID = capString(p.RequestID, MaxFieldValue)
-	p.Path = capString(p.Path, MaxFieldValue)
-	p.ObjectID = capString(p.ObjectID, MaxFieldValue)
-	p.Reason = capString(p.Reason, MaxFieldValue)
+	p.RequestID = Cap(p.RequestID, MaxFieldValue)
+	p.Path = Cap(p.Path, MaxFieldValue)
+	p.ObjectID = Cap(p.ObjectID, MaxFieldValue)
+	p.Reason = Cap(p.Reason, MaxFieldValue)
 	p.Skeleton = capSkeleton(p.Skeleton)
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -191,7 +194,7 @@ func (b *Buffer) NoteCalendar(path string, update func(*CalendarNote)) {
 	if b == nil || update == nil {
 		return
 	}
-	path = capString(path, MaxFieldValue)
+	path = Cap(path, MaxFieldValue)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	note, known := b.calendars[path]
@@ -275,11 +278,12 @@ func trim[T any](s []T, limit int) []T {
 	return s[:n]
 }
 
-// capString cuts v to limit bytes, not in the middle of a rune: a cut that
+// Cap cuts v to limit bytes, not in the middle of a rune: a cut that
 // lands inside one backs up to its first byte, at most utf8.UTFMax-1 bytes. So
 // the result is as valid as v was, and a value that is not UTF-8 at all is cut
-// within three bytes of limit rather than to nothing.
-func capString(v string, limit int) string {
+// within three bytes of limit rather than to nothing. It is what the Buffer
+// cuts its strings with, for callers that log the same values.
+func Cap(v string, limit int) string {
 	if len(v) <= limit {
 		return v
 	}
@@ -304,7 +308,7 @@ func capSkeleton(s Skeleton) Skeleton {
 	if i := strings.LastIndexByte(s.Text[:MaxSkeleton+1], '\n'); i > 0 {
 		s.Text = s.Text[:i]
 	} else {
-		s.Text = capString(s.Text, MaxSkeleton)
+		s.Text = Cap(s.Text, MaxSkeleton)
 	}
 	return s
 }

@@ -426,7 +426,7 @@ func TestBufferKeepsTimesInUTC(t *testing.T) {
 	}
 }
 
-func TestCapString(t *testing.T) {
+func TestCap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
@@ -448,8 +448,8 @@ func TestCapString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := capString(tt.in, tt.limit); got != tt.want {
-				t.Errorf("capString(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
+			if got := Cap(tt.in, tt.limit); got != tt.want {
+				t.Errorf("Cap(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
 			}
 		})
 	}

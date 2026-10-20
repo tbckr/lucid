@@ -112,16 +112,16 @@ func TestPathPrefixIsWholeSegments(t *testing.T) {
 
 	// A Principal without its trailing slash must not match a longer name.
 	n := Names{Principal: "/dav/user"}
-	if got := p.Path(n, "/dav/username/x"); got != "/dav/username/x" {
-		t.Errorf("sibling of the principal = %q, want it unchanged", got)
+	if got, want := p.Path(n, "/dav/username/x"), "/dav/seg-"+p.hash("username")+"/seg-"+p.hash("x"); got != want {
+		t.Errorf("sibling of the principal = %q, want %q: no principal, just names to hash", got, want)
 	}
 	if got := p.Path(n, "/dav/user/x"); !strings.HasPrefix(got, "{principal}/seg-") {
 		t.Errorf("below the principal = %q, want {principal}/seg-<h>", got)
 	}
 	// The home without its slash is not below the home.
 	n = Names{Home: "/dav/calendars/alice/"}
-	if got := p.Path(n, "/dav/calendars/alice"); got != "/dav/calendars/alice" {
-		t.Errorf("home without slash = %q, want it unchanged", got)
+	if got, want := p.Path(n, "/dav/calendars/alice"), "/dav/calendars/seg-"+p.hash("alice"); got != want {
+		t.Errorf("home without slash = %q, want %q: no home, just a name to hash", got, want)
 	}
 }
 
@@ -139,15 +139,15 @@ func TestPathUsernameForms(t *testing.T) {
 		{"email other case", "alice@example.com", "/dav/ALICE%40Example.COM/", "/dav/{user}/"},
 		{"local part", "alice@example.com", "/dav/alice/", "/dav/{user}/"},
 		{"non-ascii", "jörg", "/dav/j%C3%B6rg/", "/dav/{user}/"},
-		{"in a name that is no object", "alice", "/dav/alice/cal.txt", "/dav/{user}/cal.txt"},
+		{"in a name that is no object", "alice", "/dav/alice/cal.txt", "/dav/{user}/seg-" + p.hash("cal.txt")},
 		{"caldav kept", "cal", "/caldav/", "/caldav/"},
 		{"calendars kept", "cal", "/calendars/", "/calendars/"},
 		{"well-known kept", "cal", "/.well-known/caldav", "/.well-known/caldav"},
-		{"substring kept", "alice", "/dav/alice-two/xalice/", "/dav/alice-two/xalice/"},
-		{"no username", "", "/dav//x/", "/dav//x/"},
-		{"email without local part", "@example.com", "/dav//x/", "/dav//x/"},
-		{"other segments as sent", "alice", "/Cal%20One/alice/", "/Cal%20One/{user}/"},
-		{"invalid escape as sent", "alice", "/dav/%zz/alice/", "/dav/%zz/{user}/"},
+		{"substring hashed", "alice", "/dav/alice-two/xalice/", "/dav/seg-" + p.hash("alice-two") + "/seg-" + p.hash("xalice") + "/"},
+		{"no username", "", "/dav//x/", "/dav//seg-" + p.hash("x") + "/"},
+		{"email without local part", "@example.com", "/dav//x/", "/dav//seg-" + p.hash("x") + "/"},
+		{"other segments hashed", "alice", "/Cal%20One/alice/", "/seg-" + p.hash("Cal One") + "/{user}/"},
+		{"invalid escape hashed as sent", "alice", "/dav/%zz/alice/", "/dav/seg-" + p.hash("%zz") + "/{user}/"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,7 +202,7 @@ func TestURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw, want string
 	}{
-		{"port and user path", "http://127.0.0.1:5232/alice/x", "http://127.0.0.1:5232/{user}/x"},
+		{"port and user path", "http://127.0.0.1:5232/alice/x", "http://127.0.0.1:5232/{user}/seg-" + p.hash("x")},
 		{"no path", "https://dav.example.com", "https://dav.example.com"},
 		{"root", "https://dav.example.com/", "https://dav.example.com/"},
 	} {
@@ -257,7 +257,7 @@ func TestPathHomeBehindAPrefix(t *testing.T) {
 
 	for _, tc := range []struct{ name, path, want string }{
 		{"the home itself", "/nextcloud/remote.php/dav/calendars/alice/", "/nextcloud/{home}/"},
-		{"two prefix segments", "/a/b/remote.php/dav/calendars/alice/", "/a/b/{home}/"},
+		{"two prefix segments", "/a/b/remote.php/dav/calendars/alice/", "/seg-" + p.hash("a") + "/seg-" + p.hash("b") + "/{home}/"},
 		{"escaped", "/nextcloud/remote.php/dav/calendars/ali%63e/", "/nextcloud/{home}/"},
 		{"without the leading slash", "nextcloud/remote.php/dav/calendars/alice/", "nextcloud/{home}/"},
 		{"username in the prefix", "/alice/remote.php/dav/calendars/alice/", "/{user}/{home}/"},
@@ -320,17 +320,17 @@ func TestPathObjectNamesOutsideTheHome(t *testing.T) {
 	t.Parallel()
 	p := NewPseudonymizer(testKey)
 	n := Names{Username: "alice", Home: "/dav/calendars/alice/"}
-	ics := regexp.MustCompile(`^/other/\{user\}/obj-[0-9a-f]{8}\.ics$`)
+	ics := regexp.MustCompile(`^/seg-[0-9a-f]{8}/\{user\}/obj-[0-9a-f]{8}\.ics$`)
 
 	for _, path := range []string{"/other/alice/zz-canary.ics", "/other/alice/zz-canary.ICS"} {
 		got := p.Path(n, path)
 		if !ics.MatchString(got) || strings.Contains(strings.ToLower(got), "canary") {
-			t.Errorf("Path(%q) = %q, want /other/{user}/obj-<h>.ics", path, got)
+			t.Errorf("Path(%q) = %q, want /seg-<h>/{user}/obj-<h>.ics", path, got)
 		}
 	}
-	// Whatever else is there stays, as it is outside both.
-	if got := p.Path(n, "/other/zz-canary/"); got != "/other/zz-canary/" {
-		t.Errorf("Path = %q, want it unchanged", got)
+	// Whatever else is there is a name somebody chose, as it is outside both.
+	if got, want := p.Path(n, "/other/zz-canary/"), "/seg-"+p.hash("other")+"/seg-"+p.hash("zz-canary")+"/"; got != want {
+		t.Errorf("Path = %q, want %q", got, want)
 	}
 	// An object has the same placeholder wherever it is.
 	inside := p.Path(n, "/dav/calendars/alice/c/zz.ics")
@@ -386,5 +386,72 @@ func TestPathTheRunThatStartsFirstWins(t *testing.T) {
 	n = Names{Principal: "/p/alice/", Home: "/cal/"}
 	if got := p.Path(n, "/nextcloud/p/alice/x/cal/y/"); !strings.HasPrefix(got, "/nextcloud/{principal}/seg-") {
 		t.Errorf("Path = %q, want /nextcloud/{principal}/...", got)
+	}
+}
+
+func TestPathTypedCalendarURL(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	// Before discovery only the username is known: a user who pastes the URL of a
+	// calendar gets the calendar's name in the path, and it must not show.
+	n := Names{Username: "alice"}
+
+	got := p.Path(n, "/remote.php/dav/calendars/alice/therapy/")
+	want := "/remote.php/dav/calendars/{user}/seg-" + p.hash("therapy") + "/"
+	if got != want {
+		t.Errorf("Path = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "therapy") {
+		t.Errorf("Path = %q leaks the calendar name", got)
+	}
+	// The discovery paths are the structure of the server, and stay.
+	for _, path := range []string{"/.well-known/caldav", "/", "/dav/", "/SOGo/dav/"} {
+		if got := p.Path(n, path); got != path {
+			t.Errorf("Path(%q) = %q, want it unchanged", path, got)
+		}
+	}
+}
+
+func TestPathStructuralNames(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+
+	// The list is part of what a report promises: changing it is a decision.
+	want := []string{
+		".well-known", "caldav", "carddav", "dav", "remote.php", "dav.php", "caldav.php", "cal.php", "index.php",
+		"principals", "principal", "users", "user", "calendars", "calendar",
+		"SOGo", "so", "radicale", "baikal", "nextcloud", "owncloud", "apps", "api", "public", "home", "html", "v1", "v2",
+	}
+	if len(structuralNames) != len(want) {
+		t.Errorf("structuralNames has %d names, want %d", len(structuralNames), len(want))
+	}
+	// Every name of the list stays, as sent and only as a whole segment.
+	for _, name := range want {
+		if !structuralNames[name] {
+			t.Errorf("structuralNames lacks %q", name)
+		}
+		if got := p.Path(Names{}, "/"+name+"/"); got != "/"+name+"/" {
+			t.Errorf("Path(/%s/) = %q, want it unchanged", name, got)
+		}
+		if got := p.Path(Names{}, "/"+name+"x/"); strings.Contains(got, name) {
+			t.Errorf("Path(/%sx/) = %q, want the longer name hashed", name, got)
+		}
+		upper := strings.ToUpper(name)
+		if upper == name {
+			continue
+		}
+		if got := p.Path(Names{}, "/"+upper+"/"); strings.Contains(got, upper) {
+			t.Errorf("Path(/%s/) = %q, want another case hashed", upper, got)
+		}
+	}
+	// What is not in the list is a name somebody chose.
+	for _, name := range []string{"therapy", "personal", "work", "alice", "zz-canary"} {
+		if got := p.Path(Names{}, "/"+name+"/"); got != "/seg-"+p.hash(name)+"/" {
+			t.Errorf("Path(/%s/) = %q, want it hashed", name, got)
+		}
+	}
+	// Names that stay are matched percent-decoded, and the segment is kept as sent.
+	if got := p.Path(Names{}, "/remote%2Ephp/"); got != "/remote%2Ephp/" {
+		t.Errorf("Path(escaped remote.php) = %q, want it unchanged", got)
 	}
 }
