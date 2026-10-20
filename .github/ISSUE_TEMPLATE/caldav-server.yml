@@ -9,16 +9,22 @@ body:
         everything you attach.
 
         The best way to report a problem is the file from Lucid's **Report a
-        problem** dialog (account menu, or the link in an error message). It
+        problem** dialog (account menu, or the action in an error message). It
         holds no titles, names or other calendar contents unless you add an
         object's content yourself. If you run Lucid for others, you can paste
         the `caldav exchange` and `caldav problem` log lines of
         `LUCID_LOG_LEVEL=debug` instead: they hold no calendar contents either.
-        Read what you attach before you submit it.
+
+        Read what you attach before you submit it. The file names your CalDAV
+        server's host and the endpoint Lucid found, and holds the paths of your
+        principal and calendar home with only your login name replaced, so an
+        ID in them (a Nextcloud user ID, an opaque account ID) stays readable.
+        Check these and mask a private host name or an ID you would rather not
+        publish.
 
         Never paste passwords or session cookies. Leave out the `security event`
-        lines (they carry user names) and the `http request` lines; both carry
-        IP addresses.
+        lines (a login line carries the user name that was entered) and the
+        `http request` lines; both carry IP addresses.
 
         **Security vulnerabilities do not belong here.** Report them privately
         through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
@@ -61,4 +67,4 @@ body:
     id: report
     attributes:
       label: Problem report or log lines
-      description: Drop the report file here, or paste log lines from `LUCID_LOG_LEVEL=debug`. Leave this empty if you have neither.
+      description: Drop the report file here. If GitHub refuses the `.json` file, rename it to `.txt` or paste its content. Or paste log lines from `LUCID_LOG_LEVEL=debug`. Leave this empty if you have neither.

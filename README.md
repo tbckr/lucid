@@ -509,13 +509,16 @@ that without sharing your calendar.
 Choose **Report a problem** in the account menu. The same dialog opens from an
 error message that shows a reference such as `Reference: 3f9a1c2b` (also on the
 login screen), from the placeholder of an item Lucid could not read, and from
-**Add to problem report** in the details of any event or task, because the
-likeliest bugs, a wrong time or a missing repeat, leave no error behind.
+the life-buoy button **Add to problem report** in the details of any event or
+task, because the likeliest bugs, a wrong time or a missing repeat, leave no
+error behind.
 
 The dialog shows the file exactly as it is downloaded. By default it holds:
 
 - the Lucid version, its mode and the operating system,
-- the product and host of your CalDAV server and the endpoint Lucid found,
+- the product and host of your CalDAV server, the endpoint Lucid found, and
+  the paths of your principal and calendar home, with only your login name
+  replaced by `{user}`,
 - what each calendar supports and how many items it holds, never its name,
 - your recent CalDAV calls (up to 100, 30 before you sign in): method, path,
   status, duration and a few response headers, without any request or response
@@ -526,8 +529,13 @@ The dialog shows the file exactly as it is downloaded. By default it holds:
   in them),
 - the field names that failed in items Lucid could not read.
 
-User and calendar names in paths are replaced by placeholders, and no title,
-description, place or attendee is in it. For an event or task you add, the file
+In the CalDAV calls, user and calendar names in paths are replaced by
+placeholders, and no title, description, place or attendee is in the file. The
+host, the endpoint and the paths of your principal and calendar home are shown
+as your server has them, apart from your login name, so another ID in them (a
+user ID that differs from your login, an opaque account ID) stays readable.
+Read them in the dialog and mask a private host name or an ID you would rather
+not publish before you post the file. For an event or task you add, the file
 holds its structure. Its **content** is added only if you choose **Show
 content**, read it, and tick the box **Add this content to the report**, which
 starts unticked, for that one item. Closing the dialog forgets what was shown
@@ -536,7 +544,8 @@ and ticked.
 Lucid sends nothing itself: the report is a file you download. **Open issue
 form** opens the [issue form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml)
 in a new tab, with Lucid's version and mode and your server product filled
-in, and you attach the file there. Issues on GitHub are public, so read the
+in, and you attach the file there (if GitHub refuses the `.json` file, rename
+it to `.txt` or paste its content). Issues on GitHub are public, so read the
 file first. Report security problems privately, see [SECURITY.md](SECURITY.md).
 Lucid keeps the calls and problems in memory only, for as long as your
 session lasts.
@@ -554,15 +563,24 @@ document Lucid could not read.
 
 - **Find a user's request.** Every response has an `X-Request-Id`, and every
   line logged while serving the request has it as `request_id`. The reference
-  a user sees in an error message is its first 8 characters.
+  a user sees in an error message is its first 8 characters, so searching the
+  log for it (for example `grep 3f9a1c2b`) finds the request. One exception:
+  a `caldav problem` line for an item Lucid cannot read or show is written
+  only once per Lucid process, with the request ID of the first read that met
+  it, so a reference may not lead to it. The `path` of such a line is the one
+  in the report's `problems`, until Lucid restarts.
 - **Paths are pseudonymised.** The user name is `{user}`, the calendar home and
   principal are `{home}` and `{principal}`, and the names below the home
-  become placeholders such as `cal-1a2b3c4d/` and `obj-5e6f7a8b.ics`, derived
-  with a key that exists only in RAM: the same name has the same placeholder
-  until Lucid restarts, and none can be turned back into a name. API IDs in
-  URLs are encrypted with a key that exists only in RAM, so your reverse
-  proxy's log shows no names either, and the IDs change on restart. The host of
-  the CalDAV server stays, so you can tell servers apart.
+  become placeholders such as `cal-1a2b3c4d/`, `obj-5e6f7a8b.ics` and
+  `seg-<h>` for any other name. They are derived with a key that exists only in
+  RAM: the same name has the same placeholder until Lucid restarts, and none
+  can be turned back into a name. API IDs in URLs are encrypted with a key
+  that exists only in RAM, so your reverse proxy's log shows no names either,
+  and the IDs change on restart. The host of the CalDAV server stays, so you
+  can tell servers apart. So do structural names outside the home and
+  principal, such as `remote.php`, `dav`, `principals` and `calendars` (a name
+  somebody chose that is one of these words stays as well), so that a
+  discovery path remains readable.
 - **Share the CalDAV lines, not all of them.** The `caldav exchange` and
   `caldav problem` lines can go into a public issue. `security event` lines
   record a login with the user name and server URL entered, for abuse

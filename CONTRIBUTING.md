@@ -294,11 +294,15 @@ content; the aim is to reproduce the problem from its shape alone:
    `requestId` ties an exchange or problem to the log lines of the request.
 2. **Build the server side.** Reproduce the sequence of `exchanges` with a
    `caldavtest` server: `SetHook` answers a method and a path shape with the
-   status and the headers of the report, and `PutObject` stores the objects.
-   Paths are placeholders (`{home}`, `{principal}`, `{user}`, `cal-<h>/`,
-   `obj-<h>.ics`): choose any names, they only have to keep their shape.
-   A response that needs a body can also be a file in
-   `internal/caldav/testdata`, next to the existing fixtures.
+   status and the headers of the report, and `PutObject` stores objects it
+   can parse. It parses and re-encodes what it stores and refuses the rest, so
+   an `unparsable_object` problem needs a `SetHook` that answers the `REPORT`
+   of the calendar with the raw body (`answerReport` in
+   `internal/caldav/problems_test.go` is an example). Paths are placeholders
+   (`{home}`, `{principal}`, `{user}`, `cal-<h>/`, `obj-<h>.ics`): choose any
+   names, they only have to keep their shape. A larger body can live in a file
+   under `internal/caldav/testdata` that the test reads with `os.ReadFile`, as
+   `seriesshift_test.go` does with `series-shift.json`.
 3. **Build the data from the skeletons.** A skeleton keeps the structure,
    the names of properties and parameters, `TZID`, `RRULE` and `VTIMEZONE`
    rules, `PRODID` and the enumerated values, and masks the rest: `…` stands
@@ -309,7 +313,10 @@ content; the aim is to reproduce the problem from its shape alone:
    reporter for the rest or for the object's content.
 4. **Write the failing test, then fix it.** The test goes into
    `internal/caldav` (or `internal/httpapi` for a problem in the API) like any
-   other, and the fixed bug keeps it as its regression test.
+   other, and the fixed bug keeps it as its regression test. A report that
+   ends in a `client.corrupted` placeholder (an item the browser's Zod schema
+   rejected) may need a test in the frontend instead or as well, under
+   `web/src/lib`, for example `web/src/lib/api/schemas.test.ts`.
 
 Even when a report holds an object's content, do not commit it as it is: it
 is the reporter's data and may name other people. Reduce it to the smallest
