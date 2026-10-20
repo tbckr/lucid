@@ -356,25 +356,6 @@ func TestHealthAndReadiness(t *testing.T) {
 	decode(t, h.do(t, nil, req{method: http.MethodGet, path: "/healthz"}), http.StatusOK, nil)
 }
 
-func TestMetricsEndpoint(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t, func(o *Options) {
-		o.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte("metrics"))
-		})
-	})
-	w := h.do(t, nil, req{method: http.MethodGet, path: "/metrics"})
-	if w.Code != http.StatusOK || w.Body.String() != "metrics" {
-		t.Errorf("metrics: %d %q", w.Code, w.Body)
-	}
-	// Without a handler, /metrics falls through to the SPA.
-	h = newHarness(t, nil)
-	w = h.do(t, nil, req{method: http.MethodGet, path: "/metrics"})
-	if !strings.Contains(w.Body.String(), "<html") {
-		t.Errorf("metrics served without handler: %q", w.Body)
-	}
-}
-
 func TestPanicRecovered(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)

@@ -1,5 +1,5 @@
 // Package httpapi implements the REST API of docs/API.md, the operational
-// endpoints (/healthz, /readyz, /metrics) and the embedded SPA, and wires
+// endpoints (/healthz, /readyz) and the embedded SPA, and wires
 // them into the security middleware chain.
 package httpapi
 
@@ -51,8 +51,6 @@ type Options struct {
 	Security *middleware.Security
 	// Metrics records HTTP metrics. Optional.
 	Metrics *middleware.Metrics
-	// MetricsHandler is served at GET /metrics when non-nil.
-	MetricsHandler http.Handler
 	// Assets is the built SPA (web.Dist()). nil or without index.html
 	// serves a placeholder page.
 	Assets fs.FS
@@ -137,9 +135,6 @@ func New(opts Options) (*Server, error) {
 		middleware.WriteJSON(w, http.StatusOK, status{"ok"})
 	})
 	mux.HandleFunc("GET /readyz", s.handleReady)
-	if opts.MetricsHandler != nil {
-		mux.Handle("GET /metrics", opts.MetricsHandler)
-	}
 	mux.Handle("/", newSPA(opts.Assets))
 
 	mws := []func(http.Handler) http.Handler{

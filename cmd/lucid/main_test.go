@@ -245,10 +245,10 @@ func TestRunServes(t *testing.T) {
 	if sess.Version == "" || sess.Version != started.Version {
 		t.Errorf("session version = %q, startup log version = %q", sess.Version, started.Version)
 	}
-	if code, body := get(t, client, base+"/metrics"); code != http.StatusOK ||
-		!strings.Contains(body, "lucid_http_requests_total") || !strings.Contains(body, "go_goroutines") ||
-		!strings.Contains(body, "lucid_build_info") {
-		t.Errorf("metrics: %d", code)
+	// Without LUCID_METRICS_ADDR there are no metrics: /metrics falls through
+	// to the SPA (NFR-08).
+	if _, body := get(t, client, base+"/metrics"); strings.Contains(body, "go_goroutines") {
+		t.Error("metrics exposed on main listener")
 	}
 	if code, _ := get(t, client, base+"/"); code != http.StatusOK {
 		t.Errorf("spa: %d", code)
@@ -314,7 +314,9 @@ func TestRunSeparateMetricsAndTLS(t *testing.T) {
 	if code, body := get(t, client, "https://"+addrs[0]+"/metrics"); code == http.StatusOK && strings.Contains(body, "go_goroutines") {
 		t.Error("metrics exposed on main listener")
 	}
-	if code, body := get(t, client, "http://"+addrs[1]+"/metrics"); code != http.StatusOK || !strings.Contains(body, "go_goroutines") {
+	if code, body := get(t, client, "http://"+addrs[1]+"/metrics"); code != http.StatusOK ||
+		!strings.Contains(body, "lucid_http_requests_total") || !strings.Contains(body, "go_goroutines") ||
+		!strings.Contains(body, "lucid_build_info") {
 		t.Errorf("metrics listener: %d", code)
 	}
 	healthEnv := envFunc(map[string]string{

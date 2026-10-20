@@ -180,7 +180,6 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	loginLimiter := middleware.NewLimiter(middleware.LimiterOptions{
 		Name: "login", Rate: float64(cfg.LoginRateLimitPerMin) / 60, Burst: cfg.LoginRateLimitPerMin,
 	})
-	metricsHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg})
 
 	opts := httpapi.Options{
 		Provider:          provider,
@@ -195,9 +194,6 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		Local:             cfg.Local,
 		TrustProxyHeaders: cfg.TrustProxyHeaders,
 		Version:           build.version,
-	}
-	if cfg.MetricsAddr == "" {
-		opts.MetricsHandler = metricsHandler
 	}
 	api, err := httpapi.New(opts)
 	if err != nil {
@@ -214,9 +210,13 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 
 	servers := []*http.Server{newServer(cfg, api, logger)}
 	listeners := []string{cfg.Addr}
+	// NFR-08: /metrics is never part of the main listener, which is exposed
+	// to users (and, in server mode, to the internet). It is served only on
+	// the separate LUCID_METRICS_ADDR listener, so without it there are no
+	// metrics.
 	if cfg.MetricsAddr != "" {
 		mux := http.NewServeMux()
-		mux.Handle("GET /metrics", metricsHandler)
+		mux.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
 		servers = append(servers, newServer(cfg, mux, logger))
 		listeners = append(listeners, cfg.MetricsAddr)
 	}

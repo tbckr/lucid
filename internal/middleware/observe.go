@@ -69,7 +69,7 @@ func Observe(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Hand
 
 			level := slog.LevelInfo
 			switch r.URL.Path {
-			case "/healthz", "/readyz", "/metrics":
+			case "/healthz", "/readyz":
 				level = slog.LevelDebug // probes would drown the log
 			}
 			logger.LogAttrs(r.Context(), level, "http request",
