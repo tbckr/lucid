@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -33,7 +34,7 @@ func (p *Provider) Connect(ctx context.Context, creds domain.Credentials) (domai
 	if creds.Username == "" {
 		return domain.Account{}, &domain.ValidationError{Msg: "username is required"}
 	}
-	t := newTransport(p.opts.HTTPClient, creds.Username, creds.Password)
+	t := p.newTransport(creds.Username, creds.Password, diag.Names{Username: creds.Username})
 
 	d := discovery{p: p, t: t}
 	for _, cand := range staticCandidates(base) {
@@ -109,7 +110,7 @@ func (d *discovery) try(ctx context.Context, cand *url.URL) (found, bool) {
 		[]xml.Name{propCurrentUserPrincipal, propResourceType}, true)
 	if err != nil {
 		d.record(err, resp != nil)
-		d.p.log.DebugContext(ctx, "caldav discovery candidate failed", "url", redactURL(cand), "error", err)
+		d.logFailure(ctx, "caldav discovery candidate failed", d.t.pseudoURL(cand), err)
 		return found{}, false
 	}
 	d.reached = true
@@ -125,6 +126,18 @@ func (d *discovery) try(ctx context.Context, cand *url.URL) (found, bool) {
 		return found{endpoint: resp.url, principal: principal}, true
 	}
 	return found{}, false
+}
+
+// logFailure logs at debug that a candidate failed: its status, or else the
+// class of its error, but never the text of the error, which carries the URL
+// the server sent or the one that was asked for (NFR-36). The exchanges
+// themselves are recorded by the transport.
+func (d *discovery) logFailure(ctx context.Context, msg, candidate string, err error) {
+	if code := statusCode(err); code != 0 {
+		d.p.log.DebugContext(ctx, msg, "url", candidate, "status", code)
+		return
+	}
+	d.p.log.DebugContext(ctx, msg, "url", candidate, "error", errorClass(err))
 }
 
 func (d *discovery) record(err error, reached bool) {
@@ -156,6 +169,9 @@ func (d *discovery) failure() error {
 
 // finish resolves the calendar home set of the principal.
 func (d *discovery) finish(ctx context.Context, creds domain.Credentials, f found) (domain.Account, error) {
+	// From here on the principal is known, so it shows as {principal} in the
+	// exchanges with it (FR-36).
+	d.t.names.Principal = f.principal.EscapedPath()
 	ms, resp, err := d.t.propfind(ctx, f.principal, "0", []xml.Name{propCalendarHomeSet}, false)
 	if err != nil {
 		if c := statusCode(err); c == 404 || (c >= 400 && c < 500 && c != 401 && c != 403) {
@@ -195,7 +211,7 @@ func (d *discovery) srvCandidates(ctx context.Context, host string) []*url.URL {
 	for _, svc := range []struct{ service, scheme string }{{"caldavs", "https"}, {"caldav", "http"}} {
 		_, addrs, err := d.p.opts.Resolver.LookupSRV(ctx, svc.service, "tcp", host)
 		if err != nil {
-			d.p.log.DebugContext(ctx, "caldav SRV lookup failed", "service", svc.service, "host", host, "error", err)
+			d.p.log.DebugContext(ctx, "caldav SRV lookup failed", "service", svc.service, "host", host, "error", errorClass(err))
 			continue
 		}
 		n := 0

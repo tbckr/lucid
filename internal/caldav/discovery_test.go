@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -297,7 +298,7 @@ func TestRedirectPolicy(t *testing.T) {
 	}))
 	t.Cleanup(redirector.Close)
 
-	tr := newTransport(http.DefaultClient, "user", "pass")
+	tr := newProvider(t, http.DefaultClient).newTransport("user", "pass", diag.Names{})
 	tests := []struct {
 		name      string
 		path      string

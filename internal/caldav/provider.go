@@ -32,6 +32,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/tbckr/lucid/internal/cache"
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -59,9 +60,10 @@ type Options struct {
 	// Resolver performs DNS SRV lookups during discovery (RFC 6764).
 	// Default net.DefaultResolver.
 	Resolver SRVResolver
-	// Key is the 32-byte secret the keys for API IDs are derived from. nil
-	// generates a random key: IDs are valid until Lucid restarts, and
-	// nothing else needs it (NFR-20).
+	// Key is the 32-byte secret the keys for API IDs and the pseudonyms in
+	// logs and diagnostics are derived from. nil generates a random key: IDs
+	// are valid until Lucid restarts, pseudonyms change with it, and
+	// nothing else needs it (NFR-20, NFR-36).
 	Key []byte
 }
 
@@ -76,9 +78,12 @@ type SRVResolver interface {
 // Provider implements domain.Provider. It owns the state shared by all
 // accounts: HTTP client, ID keys, object cache and metrics.
 type Provider struct {
-	opts    Options // opts.Key holds the key in use, generated or not
-	log     *slog.Logger
-	ids     *idCodec
+	opts Options // opts.Key holds the key in use, generated or not
+	log  *slog.Logger
+	ids  *idCodec
+	// pseudo replaces the names in paths in everything that is logged or
+	// kept for diagnostics (NFR-36).
+	pseudo  *diag.Pseudonymizer
 	cache   *cache.LRU[string, *calEntry]
 	metrics metrics
 	now     func() time.Time
@@ -120,15 +125,20 @@ func NewProvider(opts Options) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	pseudoKey, err := deriveKey(opts.Key, "lucid/v1 pseudonym")
+	if err != nil {
+		return nil, err
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Provider{
-		opts:  opts,
-		log:   log,
-		ids:   ids,
-		cache: cache.New[string, *calEntry](opts.CacheSize),
+		opts:   opts,
+		log:    log,
+		ids:    ids,
+		pseudo: diag.NewPseudonymizer(pseudoKey),
+		cache:  cache.New[string, *calEntry](opts.CacheSize),
 		metrics: metrics{
 			hits: registerCounter(opts.Registerer, prometheus.CounterOpts{
 				Name: "lucid_caldav_cache_hits_total",

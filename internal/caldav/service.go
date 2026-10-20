@@ -15,6 +15,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -40,7 +41,8 @@ var _ domain.CalendarService = (*service)(nil)
 // Service implements domain.Provider. It is cheap: all shared state lives in
 // the Provider.
 func (p *Provider) Service(acct domain.Account) domain.CalendarService {
-	s := &service{p: p, acct: acct, t: newTransport(p.opts.HTTPClient, acct.Username, acct.Password)}
+	names := diag.Names{Username: acct.Username, Principal: escapedPath(acct.PrincipalURL)}
+	s := &service{p: p, acct: acct, t: p.newTransport(acct.Username, acct.Password, names)}
 	home, err := url.Parse(acct.CalendarHomeURL)
 	if err != nil || (home.Scheme != "http" && home.Scheme != "https") || home.Host == "" {
 		s.err = fmt.Errorf("%w: invalid calendar home URL in account", domain.ErrUpstream)
@@ -52,7 +54,26 @@ func (p *Provider) Service(acct domain.Account) domain.CalendarService {
 	}
 	home.RawPath = ""
 	s.home, s.homePath = home, home.Path
+	s.t.names.Home = home.EscapedPath()
 	return s
+}
+
+// escapedPath returns the path of the URL raw as it is sent, "" if raw is not
+// a URL.
+func escapedPath(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.EscapedPath()
+}
+
+// noteCalendar updates what the diagnostics buffer of ctx, if it has one, notes
+// about the calendar at calPath (FR-36).
+func (s *service) noteCalendar(ctx context.Context, calPath string, update func(*diag.CalendarNote)) {
+	if scope, ok := diag.ScopeFrom(ctx); ok && scope.Buffer != nil {
+		scope.Buffer.NoteCalendar(s.t.pseudoPath(calPath), update)
+	}
 }
 
 // urlFor returns the absolute URL of a path on the calendar home's origin.
@@ -145,7 +166,9 @@ func (s *service) collectionTags(ctx context.Context, calPath string) (ctag, tok
 	if pr.ResourceType != nil && !pr.ResourceType.has(nsCalDAV, "calendar") {
 		return "", "", fmt.Errorf("%w: not a calendar", domain.ErrNotFound)
 	}
-	return str(pr.CTag), str(pr.SyncToken), nil
+	ctag, token = str(pr.CTag), str(pr.SyncToken)
+	s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) { n.CTag, n.SyncToken = ctag != "", token != "" })
+	return ctag, token, nil
 }
 
 // query fetches all objects of the component type via calendar-query.
@@ -190,6 +213,9 @@ func (s *service) query(ctx context.Context, calPath, comp string) ([]calObject,
 		}
 		objs = append(objs, calObject{path: u.Path, etag: str(pr.ETag), cal: cal})
 	}
+	// Events and tasks are queried apart, so the latest count alone could be
+	// that of the smaller kind: keep the largest.
+	s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) { n.Objects = max(n.Objects, len(objs)) })
 	return objs, nil
 }
 

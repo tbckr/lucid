@@ -3,6 +3,8 @@ package caldav
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,8 +12,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -21,6 +26,13 @@ const maxBodySize = 32 << 20
 // maxRedirects bounds the number of redirects followed per request.
 const maxRedirects = 5
 
+// errBodyTooLarge and errTooManyRedirects say why a request failed, for
+// errorClass. They are wrapped together with domain.ErrUpstream.
+var (
+	errBodyTooLarge     = errors.New("response body exceeds the size limit")
+	errTooManyRedirects = errors.New("too many redirects")
+)
+
 // XML namespaces used in requests and responses.
 const (
 	nsDAV    = "DAV:"
@@ -29,7 +41,9 @@ const (
 	nsApple  = "http://apple.com/ns/ical/"
 )
 
-// statusError is a non-success HTTP status returned by the server.
+// statusError is a non-success HTTP status returned by the server. URL is
+// pseudonymised (transport.pseudoURL): the error text ends up in logs and
+// responses (NFR-36).
 type statusError struct {
 	Method string
 	URL    string
@@ -82,17 +96,31 @@ func mapError(err error) error {
 
 // transport performs authenticated WebDAV requests.
 type transport struct {
+	p        *Provider
 	client   *http.Client // redirects are handled by transport itself
 	username string
 	password string
+	// names are what the pseudonymiser needs to know the account's own names
+	// in a path. Discovery adds the principal once it has found it.
+	names diag.Names
 }
 
-func newTransport(c *http.Client, username, password string) *transport {
-	nc := *c
+func (p *Provider) newTransport(username, password string, names diag.Names) *transport {
+	nc := *p.opts.HTTPClient
 	// Follow redirects manually so that the method and body are preserved and
 	// credentials are only forwarded where allowed.
 	nc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &transport{client: &nc, username: username, password: password}
+	return &transport{p: p, client: &nc, username: username, password: password, names: names}
+}
+
+// pseudoPath pseudonymises the URL path path, as in url.URL.Path (NFR-36).
+func (t *transport) pseudoPath(path string) string {
+	return t.p.pseudo.Path(t.names, (&url.URL{Path: path}).EscapedPath())
+}
+
+// pseudoURL pseudonymises u: its origin, then its path (NFR-36).
+func (t *transport) pseudoURL(u *url.URL) string {
+	return t.p.pseudo.URL(t.names, u)
 }
 
 // request describes an outgoing request.
@@ -126,13 +154,13 @@ func (t *transport) do(ctx context.Context, req request) (*response, error) {
 		}
 		if !isRedirect(resp.code) {
 			if resp.code < 200 || resp.code > 299 {
-				return resp, &statusError{Method: req.method, URL: redactURL(u), Code: resp.code}
+				return resp, &statusError{Method: req.method, URL: t.pseudoURL(u), Code: resp.code}
 			}
 			return resp, nil
 		}
 		loc := resp.header.Get("Location")
 		if loc == "" {
-			return resp, &statusError{Method: req.method, URL: redactURL(u), Code: resp.code}
+			return resp, &statusError{Method: req.method, URL: t.pseudoURL(u), Code: resp.code}
 		}
 		next, err := u.Parse(loc)
 		if err != nil {
@@ -143,9 +171,11 @@ func (t *transport) do(ctx context.Context, req request) (*response, error) {
 		}
 		u = next
 	}
-	return nil, fmt.Errorf("%w: too many redirects", domain.ErrUpstream)
+	return nil, fmt.Errorf("%w: %w", domain.ErrUpstream, errTooManyRedirects)
 }
 
+// roundTrip sends req to u without following a redirect. It records the
+// exchange, whatever came of it (FR-36).
 func (t *transport) roundTrip(ctx context.Context, req request, u *url.URL) (*response, error) {
 	var body io.Reader
 	if req.body != nil {
@@ -162,19 +192,117 @@ func (t *transport) roundTrip(ctx context.Context, req request, u *url.URL) (*re
 	for k, v := range req.headers {
 		hr.Header.Set(k, v)
 	}
+	ex := diag.Exchange{
+		At:     t.p.now(),
+		Method: req.method,
+		Host:   u.Host,
+		Path:   t.p.pseudo.Path(t.names, u.EscapedPath()),
+	}
+	start := time.Now()
+	resp, err := t.send(hr, &ex)
+	ex.DurationMS = time.Since(start).Milliseconds()
+	if err != nil {
+		ex.Error = errorClass(err)
+	}
+	t.record(ctx, ex)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	resp.url = u
+	return resp, nil
+}
+
+// send performs hr and reads the whole response, noting in ex what came back.
+func (t *transport) send(hr *http.Request, ex *diag.Exchange) (*response, error) {
 	resp, err := t.client.Do(hr)
 	if err != nil {
-		return nil, mapError(err)
+		return nil, err
 	}
 	defer resp.Body.Close()
+	ex.Status = resp.StatusCode
+	ex.ContentType = resp.Header.Get("Content-Type")
+	ex.Server = resp.Header.Get("Server")
+	ex.DAV = resp.Header.Get("DAV")
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
+	ex.Bytes = int64(len(data))
 	if err != nil {
-		return nil, mapError(err)
+		return nil, err
 	}
 	if len(data) > maxBodySize {
-		return nil, fmt.Errorf("%w: response body exceeds %d bytes", domain.ErrUpstream, maxBodySize)
+		return nil, fmt.Errorf("%w: %w (limit %d bytes)", domain.ErrUpstream, errBodyTooLarge, maxBodySize)
 	}
-	return &response{code: resp.StatusCode, header: resp.Header, body: data, url: u}, nil
+	return &response{code: resp.StatusCode, header: resp.Header, body: data}, nil
+}
+
+// record logs an exchange at debug and adds it to the diagnostics buffer of
+// the request, if ctx has a scope (FR-36). The path of ex is pseudonymised and
+// its error a fixed class, so neither carries calendar contents (NFR-36); the
+// log never gets request or response bodies or credentials.
+func (t *transport) record(ctx context.Context, ex diag.Exchange) {
+	t.p.log.DebugContext(ctx, "caldav exchange",
+		"method", ex.Method,
+		"host", ex.Host,
+		"path", ex.Path,
+		"status", ex.Status,
+		"duration_ms", ex.DurationMS,
+		"bytes", ex.Bytes,
+		"content_type", clipHeader(ex.ContentType),
+		"server", clipHeader(ex.Server),
+		"dav", clipHeader(ex.DAV),
+		"error", ex.Error,
+	)
+	if scope, ok := diag.ScopeFrom(ctx); ok {
+		ex.RequestID = scope.RequestID
+		scope.Buffer.AddExchange(ex)
+	}
+}
+
+// clipHeader cuts a response header value to what the diagnostics keep: the
+// server decides how long it is.
+func clipHeader(v string) string {
+	return v[:min(len(v), diag.MaxHeaderValue)]
+}
+
+// errorClass reduces the error of a failed request to a fixed word, which
+// says what kind of failure it was without the text of the error: that carries
+// the URL and what the server said (NFR-36). It tells where a connection
+// breaks: "dns" (the name did not resolve), "connect" (no connection, or it
+// broke), "tls" (the certificate or the handshake), "timeout", "canceled" (the
+// caller gave up), "ssrf_blocked" (the address is not allowed, NFR-24),
+// "body_too_large", "redirect" (too many of them) and "other".
+func errorClass(err error) string {
+	var (
+		dnsErr   *net.DNSError
+		netErr   net.Error
+		opErr    *net.OpError
+		verify   *tls.CertificateVerificationError
+		unknown  x509.UnknownAuthorityError
+		hostname x509.HostnameError
+		invalid  x509.CertificateInvalidError
+		recHdr   tls.RecordHeaderError
+	)
+	switch {
+	case errors.Is(err, domain.ErrForbiddenTarget):
+		return "ssrf_blocked"
+	case errors.Is(err, errBodyTooLarge):
+		return "body_too_large"
+	case errors.Is(err, errTooManyRedirects):
+		return "redirect"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &dnsErr):
+		return "dns"
+	case errors.As(err, &verify), errors.As(err, &unknown), errors.As(err, &hostname),
+		errors.As(err, &invalid), errors.As(err, &recHdr):
+		return "tls"
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	case errors.As(err, &opErr):
+		return "connect"
+	}
+	return "other"
 }
 
 // checkRedirect decides whether a redirect from cur to next may be followed.
@@ -211,14 +339,6 @@ func isRedirect(code int) bool {
 		return true
 	}
 	return false
-}
-
-// redactURL drops user info and query from u for error messages.
-func redactURL(u *url.URL) string {
-	c := *u
-	c.User = nil
-	c.RawQuery = ""
-	return c.String()
 }
 
 // --- XML ---

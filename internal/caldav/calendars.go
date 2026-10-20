@@ -11,6 +11,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -75,6 +76,10 @@ func (s *service) ListCalendars(ctx context.Context) ([]domain.Calendar, error) 
 		}
 		c.SupportsEvents = supportsComp(pr.SupportedComponents, ical.CompEvent)
 		c.SupportsTodos = supportsComp(pr.SupportedComponents, ical.CompToDo)
+		// Also for a calendar that is left out below: that is why it is missing.
+		s.noteCalendar(ctx, calPath, func(n *diag.CalendarNote) {
+			n.ReadOnly, n.Events, n.Todos = c.ReadOnly, c.SupportsEvents, c.SupportsTodos
+		})
 		if !c.SupportsEvents && !c.SupportsTodos {
 			continue
 		}
