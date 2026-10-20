@@ -205,7 +205,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 	if err != nil {
 		return nil, 0, mapError(err)
 	}
-	ms, err := parseMultistatus(resp.body)
+	ms, err := s.t.parseMultistatus(ctx, resp)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -226,7 +226,8 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 		}
 		cal, err := ical.NewDecoder(strings.NewReader(data)).Decode()
 		if err != nil {
-			s.p.log.WarnContext(ctx, "skipping unparsable calendar object", "path", u.Path, "error", err)
+			// The object stays out of the listing; the problem says why (FR-36).
+			s.objectProblem(ctx, diag.ProblemUnparsableObject, u.Path, []byte(data), err)
 			continue
 		}
 		objs = append(objs, calObject{path: u.Path, etag: str(pr.ETag), cal: cal})
@@ -286,7 +287,8 @@ func (s *service) getObject(ctx context.Context, objPath string) (cal *ical.Cale
 	}
 	cal, err = ical.NewDecoder(bytes.NewReader(resp.body)).Decode()
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
+		s.objectProblem(ctx, diag.ProblemUnparsableObject, objPath, resp.body, err)
+		return nil, "", nil, invalidData("invalid iCalendar data", err)
 	}
 	return cal, resp.header.Get("ETag"), resp.body, nil
 }
@@ -321,6 +323,9 @@ func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifM
 		headers: headers,
 	})
 	if err != nil {
+		if isRejectedWrite(err) {
+			s.rejectedWrite(ctx, objPath, data, err, create)
+		}
 		return "", mapWriteError(err)
 	}
 	if etag := resp.header.Get("ETag"); etag != "" && !strings.HasPrefix(etag, "W/") {
@@ -332,7 +337,8 @@ func (s *service) putBytes(ctx context.Context, objPath string, data []byte, ifM
 	if err != nil {
 		// The PUT itself already succeeded: a failure here only leaves the
 		// new ETag unknown, not the write undone (A-01).
-		s.p.log.WarnContext(ctx, "could not read back the etag of a write", "path", objPath, "error", err)
+		s.p.log.WarnContext(ctx, "could not read back the etag of a write",
+			"path", s.t.pseudoPath(objPath), "error", failureReason(err))
 		return "", nil
 	}
 	if strings.HasPrefix(etag, "W/") {

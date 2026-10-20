@@ -12,6 +12,7 @@ import (
 	"github.com/emersion/go-ical"
 	"github.com/teambition/rrule-go"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -44,7 +45,8 @@ func (s *service) ListEvents(ctx context.Context, calendarID string, start, end 
 	for _, o := range objs {
 		evs, err := expandObject(o, s.ref(o.path, calendarID), start, end)
 		if err != nil {
-			s.p.log.WarnContext(ctx, "skipping invalid event", "path", o.path, "error", err)
+			// The event stays out of the listing, or is shown as far as it can be.
+			s.objectProblem(ctx, diag.ProblemInvalidObject, o.path, encodeForSkeleton(o.cal), err)
 		}
 		events = append(events, evs...)
 	}
@@ -1127,7 +1129,7 @@ func shiftDatePropBy(p *ical.Prop, shift func(dateValue) time.Time) {
 func eventAt(o calObject, ref objRef, c *ical.Component, occ *time.Time) (domain.Event, error) {
 	tm, err := parseTiming(c)
 	if err != nil {
-		return domain.Event{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
+		return domain.Event{}, invalidData("invalid event", err)
 	}
 	start := tm.start.t
 	if occ != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/emersion/go-ical"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -128,7 +129,7 @@ func (s *service) ListTodoOccurrences(ctx context.Context, calendarID string, st
 		}
 		got, err := seriesOccurrences(series, t.ID, calendarID, t.Title, start, end)
 		if err != nil {
-			s.p.log.WarnContext(ctx, "skipping unevaluable recurring todo", "path", o.path, "error", err)
+			s.objectProblem(ctx, diag.ProblemInvalidObject, o.path, encodeForSkeleton(o.cal), err)
 		}
 		occs = append(occs, got...)
 	}

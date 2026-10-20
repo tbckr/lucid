@@ -37,13 +37,15 @@ func (s *service) removeEntries(ctx context.Context, calPath string, entries []c
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
 	defer cancel()
 	for _, o := range entries {
-		// Paths and errors only, never calendar content.
+		// Pseudonymised paths and the reasons of errors only, never calendar
+		// content (NFR-36).
 		if o.etag == "" {
-			s.p.log.WarnContext(ctx, "keeping an entry a change created whose etag is unknown", "path", o.path)
+			s.p.log.WarnContext(ctx, "keeping an entry a change created whose etag is unknown", "path", s.t.pseudoPath(o.path))
 			continue
 		}
 		if err := s.deleteObject(dctx, o.path, o.etag); err != nil {
-			s.p.log.WarnContext(ctx, "could not remove an entry a change created", "path", o.path, "error", err)
+			s.p.log.WarnContext(ctx, "could not remove an entry a change created",
+				"path", s.t.pseudoPath(o.path), "error", failureReason(err))
 		}
 	}
 }
@@ -107,9 +109,10 @@ func (s *service) removeIfStored(ctx context.Context, calPath, path string) {
 	case errors.Is(err, domain.ErrNotFound):
 		return // not stored
 	case err != nil:
-		// Paths and errors only, never calendar content.
+		// Pseudonymised paths and the reasons of errors only, never calendar
+		// content (NFR-36).
 		s.p.log.WarnContext(ctx, "keeping a resource a change created whose etag cannot be read",
-			"path", path, "error", err)
+			"path", s.t.pseudoPath(path), "error", failureReason(err))
 		return
 	case strings.HasPrefix(etag, "W/"):
 		etag = "" // If-Match compares strongly: as unknown
@@ -155,9 +158,10 @@ func (s *service) settleWrite(ctx context.Context, objPath, etag string, err err
 	current, verr := s.objectETag(vctx, objPath)
 	switch {
 	case verr != nil || current == "":
-		// Paths and errors only, never calendar content.
+		// Pseudonymised paths and the reasons of errors only, never calendar
+		// content (NFR-36).
 		s.p.log.WarnContext(ctx, "keeping what a change wrote before a write that could not be verified",
-			"path", objPath, "error", err, "verification_error", verr)
+			"path", s.t.pseudoPath(objPath), "error", failureReason(err), "verification_error", failureReason(verr))
 		return fmt.Errorf("%w: %w", err, errWriteUnverified)
 	case current == etag:
 		return err
@@ -200,9 +204,10 @@ func (s *service) settleRestore(ctx context.Context, objPath, comp string, resto
 	if verr == nil && sameChangeProps(cal, restored, comp) {
 		return nil
 	}
-	// Paths and errors only, never calendar content.
+	// Pseudonymised paths and the reasons of errors only, never calendar
+	// content (NFR-36).
 	s.p.log.WarnContext(ctx, "keeping what a change created: the restore could not be confirmed",
-		"path", objPath, "error", err, "verification_error", verr)
+		"path", s.t.pseudoPath(objPath), "error", failureReason(err), "verification_error", failureReason(verr))
 	return fmt.Errorf("%w: %w", err, errWriteUnverified)
 }
 
@@ -289,7 +294,7 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 	// reported; the change parsed the same data when it read it.
 	cal, err := ical.NewDecoder(bytes.NewReader(snap.Data)).Decode()
 	if err != nil {
-		return calObject{}, nil, "", false, fmt.Errorf("%w: invalid iCalendar data: %w", domain.ErrUpstream, err)
+		return calObject{}, nil, "", false, invalidData("invalid iCalendar data", err)
 	}
 	c = mainComponent(cal, comp)
 	if c == nil {
@@ -374,8 +379,8 @@ func (s *service) removeCreatedRef(ctx context.Context, ref domain.CreatedRef) b
 	switch {
 	case err != nil:
 	case ref.ETag == "":
-		// Paths only, never calendar content.
-		s.p.log.WarnContext(ctx, "keeping a resource a change created on undo: its etag is unknown", "path", objPath)
+		// Pseudonymised paths only, never calendar content (NFR-36).
+		s.p.log.WarnContext(ctx, "keeping a resource a change created on undo: its etag is unknown", "path", s.t.pseudoPath(objPath))
 		return false
 	default:
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), copyRemovalTimeout)
@@ -385,7 +390,9 @@ func (s *service) removeCreatedRef(ctx context.Context, ref domain.CreatedRef) b
 	if err == nil || errors.Is(err, domain.ErrNotFound) {
 		return true
 	}
-	// Paths and errors only, never calendar content.
-	s.p.log.WarnContext(ctx, "keeping a resource a change created on undo", "path", objPath, "error", err)
+	// Pseudonymised paths and the reasons of errors only, never calendar
+	// content (NFR-36).
+	s.p.log.WarnContext(ctx, "keeping a resource a change created on undo",
+		"path", s.t.pseudoPath(objPath), "error", failureReason(err))
 	return false
 }

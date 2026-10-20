@@ -104,6 +104,11 @@ func (e *env) put(t *testing.T, slug, name string, lines ...string) string {
 	return e.p.ids.encode(p)
 }
 
+// pseudoPath is the path p as the logs and the diagnostics show it (NFR-36).
+func (e *env) pseudoPath(p string) string {
+	return e.svc.(*service).t.pseudoPath(p)
+}
+
 // stableID is the StableID ListCalendars gives the calendar slug.
 func (e *env) stableID(slug string) string {
 	return stableCalendarID(e.svc.(*service).identity(), e.paths[slug])

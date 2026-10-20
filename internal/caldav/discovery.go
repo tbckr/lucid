@@ -129,15 +129,15 @@ func (d *discovery) try(ctx context.Context, cand *url.URL) (found, bool) {
 }
 
 // logFailure logs at debug that a candidate failed: its status, or else the
-// class of its error, but never the text of the error, which carries the URL
-// the server sent or the one that was asked for (NFR-36). The exchanges
-// themselves are recorded by the transport.
+// class of its error (failureReason), but never the text of the error, which
+// carries the URL the server sent or the one that was asked for (NFR-36). The
+// exchanges themselves are recorded by the transport.
 func (d *discovery) logFailure(ctx context.Context, msg, candidate string, err error) {
 	if code := statusCode(err); code != 0 {
 		d.p.log.DebugContext(ctx, msg, "url", candidate, "status", code)
 		return
 	}
-	d.p.log.DebugContext(ctx, msg, "url", candidate, "error", errorClass(err))
+	d.p.log.DebugContext(ctx, msg, "url", candidate, "error", failureReason(err))
 }
 
 func (d *discovery) record(err error, reached bool) {

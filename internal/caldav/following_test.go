@@ -2326,7 +2326,7 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 				t.Errorf("S = %q; want it unchanged: %q", now, seeded)
 			}
 			if tc.wantLog != "" {
-				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.paths["work"]}, []string{"Standup"})
+				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.pseudoPath(e.paths["work"])}, []string{"Standup"})
 			}
 		})
 	}
@@ -2380,7 +2380,7 @@ func TestUpdateFollowingWriteFailures(t *testing.T) {
 				t.Errorf("S = %q; want it unchanged: %q", now, seeded)
 			}
 			if tc.wantLog != "" {
-				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.paths["work"]}, []string{"Standup"})
+				checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.pseudoPath(e.paths["work"])}, []string{"Standup"})
 			}
 		})
 	}

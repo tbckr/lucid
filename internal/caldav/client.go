@@ -166,6 +166,7 @@ func (t *transport) do(ctx context.Context, req request) (*response, error) {
 		if !isRedirect(resp.code) {
 			t.record(ctx, ex)
 			if resp.code < 200 || resp.code > 299 {
+				t.errorResponse(ctx, u, resp)
 				return resp, &statusError{Method: req.method, URL: t.pseudoURL(u), Code: resp.code}
 			}
 			return resp, nil
@@ -510,14 +511,26 @@ func str(p *string) string {
 	return strings.TrimSpace(*p)
 }
 
-// parseMultistatus decodes a multistatus body. encoding/xml never resolves
-// external entities or DTDs; in strict mode unknown entities are an error.
-func parseMultistatus(body []byte) (*multistatus, error) {
+// parseMultistatus decodes the multistatus body of resp. encoding/xml never
+// resolves external entities or DTDs; in strict mode unknown entities are an
+// error. A body that does not decode is recorded as a problem with the skeleton
+// of what the server sent (FR-36); the error says why in fixed wording only,
+// as the decoder's can carry the text of the document (NFR-36).
+func (t *transport) parseMultistatus(ctx context.Context, resp *response) (*multistatus, error) {
 	var ms multistatus
-	dec := xml.NewDecoder(bytes.NewReader(body))
+	dec := xml.NewDecoder(bytes.NewReader(resp.body))
 	dec.Strict = true
 	if err := dec.Decode(&ms); err != nil {
-		return nil, fmt.Errorf("%w: invalid multistatus response: %w", domain.ErrUpstream, err)
+		pr := diag.Problem{
+			Kind:     diag.ProblemInvalidXML,
+			Reason:   diag.Reason(err),
+			Skeleton: diag.XMLSkeleton(resp.body, t.p.pseudo, t.names),
+		}
+		if resp.url != nil {
+			pr.Path = t.pseudoPath(resp.url.Path)
+		}
+		t.problem(ctx, pr)
+		return nil, invalidData("invalid multistatus response", err)
 	}
 	return &ms, nil
 }
@@ -536,7 +549,7 @@ func (t *transport) propfind(ctx context.Context, u *url.URL, depth string, name
 	if err != nil {
 		return nil, resp, err
 	}
-	ms, err := parseMultistatus(resp.body)
+	ms, err := t.parseMultistatus(ctx, resp)
 	if err != nil {
 		return nil, resp, err
 	}

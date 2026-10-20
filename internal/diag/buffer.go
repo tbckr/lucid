@@ -55,7 +55,8 @@ const (
 
 // Problem is something that went wrong, with its reason and the skeleton of
 // the document involved (FR-36). Path is pseudonymised, Reason comes from
-// Reason, Skeleton from ICalSkeleton or XMLSkeleton, so none of it carries
+// Reason, or is the HTTP status of an answer the server refused with ("HTTP
+// 403"), Skeleton from ICalSkeleton or XMLSkeleton, so none of it carries
 // content (NFR-36). The Buffer cuts Path, ObjectID and Reason to MaxFieldValue
 // bytes and Skeleton.Text to MaxSkeleton, and keeps At in UTC.
 type Problem struct {

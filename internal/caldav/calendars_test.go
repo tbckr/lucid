@@ -99,10 +99,11 @@ func TestXMLEntitiesNotExpanded(t *testing.T) {
 	for name, body := range payloads {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, err := parseMultistatus([]byte(body))
+			e := calendarListing(t, body)
+			_, err := e.svc.(*service).t.parseMultistatus(t.Context(), &response{body: []byte(body)})
 			mustErr(t, err, domain.ErrUpstream)
 
-			cals, err := calendarListing(t, body).svc.ListCalendars(t.Context())
+			cals, err := e.svc.ListCalendars(t.Context())
 			if err == nil {
 				for _, c := range cals {
 					if strings.Contains(c.Name, "root:") || strings.Contains(c.Name, "AAAA") {

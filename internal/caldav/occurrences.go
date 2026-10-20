@@ -144,7 +144,7 @@ func (s *service) loadSeries(ctx context.Context, eventID, etag string, recurren
 	}
 	tm, err := parseTiming(master)
 	if err != nil {
-		return loadedSeries{}, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
+		return loadedSeries{}, invalidData("invalid event", err)
 	}
 
 	// Step 2: the recurrenceID must be an instance of the rule, or already
@@ -228,7 +228,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 		}
 	}
 	if err != nil {
-		return domain.Event{}, nil, fmt.Errorf("%w: %w", domain.ErrUpstream, err)
+		return domain.Event{}, nil, invalidData("invalid event", err)
 	}
 	return domain.Event{}, nil, fmt.Errorf("%w: occurrence not found after update", domain.ErrUpstream)
 }

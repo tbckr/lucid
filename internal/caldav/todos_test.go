@@ -1683,7 +1683,7 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 			copyPath = paths[1]
 		}
 		checkStored(t, "log", logs.String(),
-			[]string{"could not remove an entry a change created", "path=" + copyPath, "error="}, []string{"Series"})
+			[]string{"could not remove an entry a change created", "path=" + e.pseudoPath(copyPath), "error="}, []string{"Series"})
 	})
 
 	// The client may go away between the two PUTs (a closed tab): the copy
@@ -5018,7 +5018,7 @@ func TestCompensateOnlyWhenWriteRefused(t *testing.T) {
 					t.Errorf("DELETE count = %d; want %d", n, tc.wantDeletes)
 				}
 				if tc.wantLog != "" {
-					checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + objPath}, []string{"Series"})
+					checkStored(t, "log", logs.String(), []string{tc.wantLog, "path=" + e.pseudoPath(objPath)}, []string{"Series"})
 				}
 			})
 		}
@@ -5221,7 +5221,7 @@ func TestRefusedWriteKeepsCopyWithUnknownETag(t *testing.T) {
 		copyPath = paths[1]
 	}
 	checkStored(t, "log", logs.String(),
-		[]string{"keeping an entry a change created whose etag is unknown", "path=" + copyPath}, []string{"Series"})
+		[]string{"keeping an entry a change created whose etag is unknown", "path=" + e.pseudoPath(copyPath)}, []string{"Series"})
 }
 
 // A copy whose ETag is unknown after its create, as the read back failed,
@@ -5269,7 +5269,7 @@ func TestRefusedWriteRemovesCopyWithETagReadAgain(t *testing.T) {
 			}
 			if tc.wantDeletes == 0 {
 				checkStored(t, "log", logs.String(),
-					[]string{"keeping a resource a change created whose etag cannot be read", "path=" + e.paths["tasks"]},
+					[]string{"keeping a resource a change created whose etag cannot be read", "path=" + e.pseudoPath(e.paths["tasks"])},
 					[]string{"Series"})
 			}
 		})
