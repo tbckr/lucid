@@ -273,41 +273,185 @@ func TestBufferCalendarNotesCap(t *testing.T) {
 	}
 }
 
-func TestBufferFieldCaps(t *testing.T) {
+func TestBufferHeaderCaps(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 100<<10)
-	even := strings.Repeat("é", 1000)      // runes start at even offsets: a cut at 256 is on a boundary
-	odd := "a" + strings.Repeat("é", 1000) // runes start at odd offsets: a cut at 256 splits one
-
 	b := NewBuffer(AnonymousLimits)
-	b.AddExchange(Exchange{DAV: long, Server: long, ContentType: long, Path: long[:1000], Error: "e"})
-	b.AddExchange(Exchange{DAV: even, Server: odd, ContentType: "text/xml; charset=utf-8"})
+	b.AddExchange(Exchange{DAV: long, Server: long, ContentType: long})
+	b.AddExchange(Exchange{
+		DAV:         strings.Repeat("é", 1000),       // runes start at even offsets: the cut at 256 is on one
+		Server:      "a" + strings.Repeat("é", 1000), // runes start at odd offsets: the cut at 256 splits one
+		ContentType: "text/xml; charset=utf-8",
+	})
+	b.AddExchange(Exchange{
+		DAV:         strings.Repeat("a", MaxHeaderValue-2) + "😀", // the rune ends 2 bytes after the cap
+		Server:      strings.Repeat("a", MaxHeaderValue-3) + "😀", // the rune ends 3 bytes after the cap
+		ContentType: strings.Repeat("a", MaxHeaderValue-1) + "😀", // the rune ends 4 bytes after the cap
+	})
+	b.AddExchange(Exchange{Server: strings.Repeat("\x80", 1000)}) // no rune start anywhere
 	got := b.Snapshot().Exchanges
 
 	for name, v := range map[string]string{"DAV": got[0].DAV, "Server": got[0].Server, "ContentType": got[0].ContentType} {
-		if len(v) != MaxHeaderValue || v != long[:MaxHeaderValue] {
+		if v != long[:MaxHeaderValue] {
 			t.Errorf("%s of 100 KiB stored as %d bytes, want the first %d", name, len(v), MaxHeaderValue)
 		}
 	}
-	if len(got[0].Path) != 1000 || got[0].Error != "e" {
-		t.Errorf("fields that are not headers were cut: path %d bytes, error %q", len(got[0].Path), got[0].Error)
+	if got[1].DAV != strings.Repeat("é", MaxHeaderValue/2) {
+		t.Errorf("DAV cut on a boundary = %d bytes, want %d bytes of whole runes", len(got[1].DAV), MaxHeaderValue)
 	}
-	if v := got[1].DAV; len(v) != MaxHeaderValue || !utf8.ValidString(v) {
-		t.Errorf("DAV cut on a boundary = %d bytes, valid UTF-8 %v, want %d bytes and valid", len(v), utf8.ValidString(v), MaxHeaderValue)
-	}
-	if v := got[1].Server; len(v) != MaxHeaderValue-1 || !utf8.ValidString(v) {
-		t.Errorf("Server cut inside a rune = %d bytes, valid UTF-8 %v, want %d bytes and valid", len(v), utf8.ValidString(v), MaxHeaderValue-1)
+	if got[1].Server != "a"+strings.Repeat("é", MaxHeaderValue/2-1) {
+		t.Errorf("Server cut inside a rune = %d bytes, want %d bytes without the split rune", len(got[1].Server), MaxHeaderValue-1)
 	}
 	if got[1].ContentType != "text/xml; charset=utf-8" {
 		t.Errorf("short ContentType = %q, want it unchanged", got[1].ContentType)
 	}
+	for name, v := range map[string]string{"DAV": got[2].DAV, "Server": got[2].Server, "ContentType": got[2].ContentType} {
+		if want := strings.Repeat("a", len(v)); v != want || !utf8.ValidString(v) {
+			t.Errorf("%s with a 4-byte rune over the cap = %q, want only the a's before it", name, v)
+		}
+	}
+	if len(got[2].DAV) != MaxHeaderValue-2 || len(got[2].Server) != MaxHeaderValue-3 || len(got[2].ContentType) != MaxHeaderValue-1 {
+		t.Errorf("lengths with a 4-byte rune over the cap = %d, %d, %d, want %d, %d, %d",
+			len(got[2].DAV), len(got[2].Server), len(got[2].ContentType), MaxHeaderValue-2, MaxHeaderValue-3, MaxHeaderValue-1)
+	}
+	// Bytes that are no UTF-8 are cut after at most 3 steps back, not to nothing.
+	if want := strings.Repeat("\x80", MaxHeaderValue-3); got[3].Server != want {
+		t.Errorf("Server of continuation bytes = %d bytes, want %d", len(got[3].Server), len(want))
+	}
+}
 
-	// A header that is not UTF-8 at all is cut at the limit or, with no rune
-	// start to back up to, to nothing.
-	b = NewBuffer(AnonymousLimits)
-	b.AddExchange(Exchange{Server: strings.Repeat("\x80", 1000)})
-	if v := b.Snapshot().Exchanges[0].Server; len(v) > MaxHeaderValue {
-		t.Errorf("Server of continuation bytes = %d bytes, want at most %d", len(v), MaxHeaderValue)
+func TestBufferFieldCaps(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", 100<<10)
+	capped := strings.Repeat("x", MaxFieldValue)
+	mid := strings.Repeat("y", 400) // over a header's cap, under a field's
+
+	b := NewBuffer(AnonymousLimits)
+	b.AddExchange(Exchange{RequestID: long, Method: long, Host: long, Path: long, Error: long})
+	b.AddExchange(Exchange{RequestID: "r", Method: "PROPFIND", Host: "dav.example", Path: mid, Error: "e", Server: mid})
+	b.AddProblem(Problem{RequestID: long, Path: long, ObjectID: long, Reason: long})
+	b.AddProblem(Problem{RequestID: "r", Path: mid, ObjectID: mid, Reason: "x"})
+	snap := b.Snapshot()
+
+	if x := snap.Exchanges[0]; x.RequestID != capped || x.Method != capped || x.Host != capped || x.Path != capped || x.Error != capped {
+		t.Errorf("exchange fields of 100 KiB = %d, %d, %d, %d, %d bytes, want %d each",
+			len(x.RequestID), len(x.Method), len(x.Host), len(x.Path), len(x.Error), MaxFieldValue)
+	}
+	if x := snap.Exchanges[1]; x.RequestID != "r" || x.Method != "PROPFIND" || x.Host != "dav.example" || x.Path != mid || x.Error != "e" {
+		t.Errorf("short exchange fields were changed: %+v", x)
+	} else if x.Server != mid[:MaxHeaderValue] {
+		t.Errorf("Server of 400 bytes = %d bytes, want the header cap %d", len(x.Server), MaxHeaderValue)
+	}
+	if p := snap.Problems[0]; p.RequestID != capped || p.Path != capped || p.ObjectID != capped || p.Reason != capped {
+		t.Errorf("problem fields of 100 KiB = %d, %d, %d, %d bytes, want %d each",
+			len(p.RequestID), len(p.Path), len(p.ObjectID), len(p.Reason), MaxFieldValue)
+	}
+	if p := snap.Problems[1]; p.RequestID != "r" || p.Path != mid || p.ObjectID != mid || p.Reason != "x" {
+		t.Errorf("short problem fields were changed: %+v", p)
+	}
+
+	// The cap does not split a rune of a field either.
+	b.AddExchange(Exchange{Path: "a" + strings.Repeat("é", 400)})
+	if got := b.Snapshot().Exchanges[2].Path; got != "a"+strings.Repeat("é", MaxFieldValue/2-1) {
+		t.Errorf("Path cut inside a rune = %d bytes, want %d without the split rune", len(got), MaxFieldValue-1)
+	}
+}
+
+func TestBufferCalendarPathCap(t *testing.T) {
+	t.Parallel()
+	capped := strings.Repeat("c", MaxFieldValue)
+	b := NewBuffer(AnonymousLimits)
+	// Two paths that differ only beyond the cap are one calendar, noted under
+	// the cut path, and the update sees that path.
+	b.NoteCalendar(capped+"1", func(n *CalendarNote) {
+		if n.Path != capped {
+			t.Errorf("update got Path of %d bytes, want the cut path of %d", len(n.Path), MaxFieldValue)
+		}
+		n.Events = true
+	})
+	b.NoteCalendar(capped+"2", func(n *CalendarNote) { n.Todos = true })
+
+	got := b.Snapshot().Calendars
+	if len(got) != 1 || got[0] != (CalendarNote{Path: capped, Events: true, Todos: true}) {
+		t.Errorf("calendars = %+v, want one note of the cut path with both flags", got)
+	}
+}
+
+func TestBufferSkeletonCap(t *testing.T) {
+	t.Parallel()
+	lines := strings.Repeat("xxxxxxxxx\n", 500) // 10-byte lines, 5000 bytes, the last ends in a line break
+	tests := []struct {
+		name          string
+		in            Skeleton
+		want          string
+		wantTruncated bool
+	}{
+		{"within the cap", Skeleton{Text: "a\nb"}, "a\nb", false},
+		{"at the cap", Skeleton{Text: strings.Repeat("x", MaxSkeleton)}, strings.Repeat("x", MaxSkeleton), false},
+		{"truncated flag stays", Skeleton{Text: "a", Truncated: true}, "a", true},
+		// Line breaks are at 9, 19, ...: the last one in the first 4097 bytes is at 4089.
+		{"cut on a line", Skeleton{Text: lines}, lines[:4089], true},
+		{"line break right after the cap", Skeleton{Text: strings.Repeat("x", MaxSkeleton) + "\nmore"}, strings.Repeat("x", MaxSkeleton), true},
+		{"one long line", Skeleton{Text: strings.Repeat("x", 10000)}, strings.Repeat("x", MaxSkeleton), true},
+		{"line break first", Skeleton{Text: "\n" + strings.Repeat("x", 10000)}, "\n" + strings.Repeat("x", MaxSkeleton-1), true},
+		{"not inside a rune", Skeleton{Text: "a" + strings.Repeat("é", 3000)}, "a" + strings.Repeat("é", MaxSkeleton/2-1), true},
+		{"long and already truncated", Skeleton{Text: lines, Truncated: true}, lines[:4089], true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			b := NewBuffer(AnonymousLimits)
+			b.AddProblem(Problem{Skeleton: tt.in})
+			got := b.Snapshot().Problems[0].Skeleton
+			if got.Text != tt.want || got.Truncated != tt.wantTruncated {
+				t.Errorf("skeleton = %d bytes, truncated %v, want %d bytes, truncated %v",
+					len(got.Text), got.Truncated, len(tt.want), tt.wantTruncated)
+			}
+		})
+	}
+}
+
+func TestBufferKeepsTimesInUTC(t *testing.T) {
+	t.Parallel()
+	zone := time.FixedZone("CEST", 2*60*60)
+	at := time.Date(2026, 10, 20, 14, 0, 0, 0, zone)
+	b := NewBuffer(AnonymousLimits)
+	b.AddExchange(Exchange{At: at})
+	b.AddProblem(Problem{At: at})
+	snap := b.Snapshot()
+	for name, got := range map[string]time.Time{"exchange": snap.Exchanges[0].At, "problem": snap.Problems[0].At} {
+		if !got.Equal(at) || got.Location() != time.UTC {
+			t.Errorf("%s At = %v, want the same instant in UTC", name, got)
+		}
+	}
+}
+
+func TestCapString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		in    string
+		limit int
+		want  string
+	}{
+		{"within", "abc", 3, "abc"},
+		{"ascii", "abcd", 3, "abc"},
+		{"on a boundary", "éé", 2, "é"},
+		{"inside a 2-byte rune", "aé", 2, "a"},
+		{"inside a 3-byte rune", "a€", 3, "a"},
+		{"inside a 4-byte rune", "a😀", 4, "a"},
+		{"inside a 4-byte rune at its first continuation", "a😀", 2, "a"},
+		{"only continuation bytes", "\x80\x80\x80\x80\x80\x80", 5, "\x80\x80"},
+		{"limit one", "\x80\x80\x80", 1, ""},
+		{"limit zero", "abc", 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := capString(tt.in, tt.limit); got != tt.want {
+				t.Errorf("capString(%q, %d) = %q, want %q", tt.in, tt.limit, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -363,12 +507,25 @@ func TestBufferConcurrent(t *testing.T) {
 				return
 			default:
 			}
-			_ = b.WithoutObjects()
-			snap := b.Snapshot()
-			if len(snap.Exchanges) > 50 || len(snap.Problems) > 10 || len(snap.Calendars) > MaxCalendarNotes {
-				t.Errorf("snapshot over the limits: %d exchanges, %d problems, %d calendars",
-					len(snap.Exchanges), len(snap.Problems), len(snap.Calendars))
-				return
+			// Both read the elements, not just the lengths, so a copy that
+			// shared storage with the buffer would be a data race.
+			for _, snap := range []Snapshot{b.Snapshot(), b.WithoutObjects().Snapshot()} {
+				if len(snap.Exchanges) > 50 || len(snap.Problems) > 10 || len(snap.Calendars) > MaxCalendarNotes {
+					t.Errorf("snapshot over the limits: %d exchanges, %d problems, %d calendars",
+						len(snap.Exchanges), len(snap.Problems), len(snap.Calendars))
+					return
+				}
+				var seen int
+				for i := range snap.Exchanges {
+					seen += len(snap.Exchanges[i].Path)
+				}
+				for i := range snap.Problems {
+					seen += len(snap.Problems[i].Path) + len(snap.Problems[i].ObjectID)
+				}
+				for i := range snap.Calendars {
+					seen += snap.Calendars[i].Objects
+				}
+				_ = seen
 			}
 		}
 	})

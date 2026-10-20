@@ -12,7 +12,9 @@ import (
 // Exchange is one HTTP exchange with the CalDAV server, as metadata only
 // (FR-36): what was asked, what came back, how long it took. Path is already
 // pseudonymised (Pseudonymizer.Path), and Error is a fixed wording, never a
-// message that carries content (NFR-36).
+// message that carries content (NFR-36). The Buffer cuts every string field to
+// MaxFieldValue bytes (the three headers to MaxHeaderValue) and keeps At in
+// UTC.
 type Exchange struct {
 	At         time.Time `json:"at"`
 	RequestID  string    `json:"requestId,omitempty"`
@@ -23,7 +25,7 @@ type Exchange struct {
 	DurationMS int64     `json:"durationMs"`
 	Bytes      int64     `json:"bytes"`
 	// ContentType, Server and DAV are the server's response headers of those
-	// names. The Buffer cuts each to MaxHeaderValue bytes.
+	// names, cut to MaxHeaderValue bytes.
 	ContentType string `json:"contentType,omitempty"`
 	Server      string `json:"server,omitempty"`
 	DAV         string `json:"dav,omitempty"`
@@ -54,7 +56,8 @@ const (
 // Problem is something that went wrong, with its reason and the skeleton of
 // the document involved (FR-36). Path is pseudonymised, Reason comes from
 // Reason, Skeleton from ICalSkeleton or XMLSkeleton, so none of it carries
-// content (NFR-36).
+// content (NFR-36). The Buffer cuts Path, ObjectID and Reason to MaxFieldValue
+// bytes and Skeleton.Text to MaxSkeleton, and keeps At in UTC.
 type Problem struct {
 	At        time.Time   `json:"at"`
 	RequestID string      `json:"requestId"`
@@ -70,7 +73,7 @@ type Problem struct {
 
 // CalendarNote is what Lucid found out about one calendar: its capabilities
 // and how many objects it holds, never its name or contents (FR-36). Path is
-// pseudonymised.
+// pseudonymised, and the Buffer cuts it to MaxFieldValue bytes.
 type CalendarNote struct {
 	Path      string `json:"path"`
 	ReadOnly  bool   `json:"readOnly"`
@@ -98,9 +101,14 @@ var (
 const (
 	// MaxCalendarNotes caps the number of calendars a Buffer keeps a note of.
 	MaxCalendarNotes = 50
-	// MaxHeaderValue caps the response header values an Exchange keeps, in
-	// bytes: a server decides how long they are.
+	// MaxHeaderValue caps the response header values an Exchange keeps
+	// (ContentType, Server, DAV), in bytes: a server decides how long they are.
 	MaxHeaderValue = 256
+	// MaxFieldValue caps every other string a Buffer keeps, in bytes: paths,
+	// hosts, request IDs, errors and reasons are bounded by what produced
+	// them, and a server or a client chooses what that is. Skeleton.Text has
+	// its own cap, MaxSkeleton.
+	MaxFieldValue = 512
 )
 
 // Snapshot is a copy of what a Buffer holds, oldest entry first. Calendars are
@@ -112,9 +120,14 @@ type Snapshot struct {
 }
 
 // Buffer keeps the most recent exchanges and problems of one session and a
-// note per calendar, within its Limits and MaxCalendarNotes (FR-36). It is
-// safe for concurrent use, and a nil *Buffer drops everything it is given, so
-// code that records into the buffer of a Scope need not check for one.
+// note per calendar, within its Limits, MaxCalendarNotes and the caps on the
+// size of what it keeps (FR-36): it is bounded in entries and in bytes, as
+// anyone can open an anonymous session. It is safe for concurrent use.
+//
+// A nil *Buffer is a buffer that keeps nothing, so code that records into the
+// Buffer of a Scope need not check for one: AddExchange, AddProblem,
+// NoteCalendar and SetLimits do nothing, Snapshot is empty, and WithoutObjects
+// returns a new, empty Buffer that works.
 type Buffer struct {
 	mu        sync.Mutex
 	limits    Limits
@@ -128,26 +141,40 @@ func NewBuffer(l Limits) *Buffer {
 	return &Buffer{limits: l, calendars: make(map[string]CalendarNote)}
 }
 
-// AddExchange appends e, with its header values cut to MaxHeaderValue bytes,
-// and drops the oldest exchange if there are more than the limit.
+// AddExchange appends e, with its strings cut to their caps (MaxHeaderValue
+// for the headers, MaxFieldValue for the rest) and At in UTC, and drops the
+// oldest exchange if there are more than the limit.
 func (b *Buffer) AddExchange(e Exchange) {
 	if b == nil {
 		return
 	}
-	e.ContentType = capHeader(e.ContentType)
-	e.Server = capHeader(e.Server)
-	e.DAV = capHeader(e.DAV)
+	e.At = e.At.UTC()
+	e.RequestID = capString(e.RequestID, MaxFieldValue)
+	e.Method = capString(e.Method, MaxFieldValue)
+	e.Host = capString(e.Host, MaxFieldValue)
+	e.Path = capString(e.Path, MaxFieldValue)
+	e.Error = capString(e.Error, MaxFieldValue)
+	e.ContentType = capString(e.ContentType, MaxHeaderValue)
+	e.Server = capString(e.Server, MaxHeaderValue)
+	e.DAV = capString(e.DAV, MaxHeaderValue)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.exchanges = trim(append(b.exchanges, e), b.limits.Exchanges)
 }
 
-// AddProblem appends p and drops the oldest problem if there are more than the
-// limit.
+// AddProblem appends p, with its strings cut to MaxFieldValue bytes, its
+// skeleton to MaxSkeleton and At in UTC, and drops the oldest problem if there
+// are more than the limit.
 func (b *Buffer) AddProblem(p Problem) {
 	if b == nil {
 		return
 	}
+	p.At = p.At.UTC()
+	p.RequestID = capString(p.RequestID, MaxFieldValue)
+	p.Path = capString(p.Path, MaxFieldValue)
+	p.ObjectID = capString(p.ObjectID, MaxFieldValue)
+	p.Reason = capString(p.Reason, MaxFieldValue)
+	p.Skeleton = capSkeleton(p.Skeleton)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.problems = trim(append(b.problems, p), b.limits.Problems)
@@ -155,13 +182,16 @@ func (b *Buffer) AddProblem(p Problem) {
 
 // NoteCalendar calls update on the note of the calendar at path, which is
 // empty the first time, and stores the result: calls for one path merge. The
-// note's Path stays path whatever update does. A new path is ignored, update
-// not called, once MaxCalendarNotes calendars have a note. update runs while
-// the Buffer is locked and must not call it.
+// path is cut to MaxFieldValue bytes first, so two longer paths with the same
+// beginning are one calendar. The note's Path stays that path whatever update
+// does. A new path is ignored, update not called, once MaxCalendarNotes
+// calendars have a note. update runs while the Buffer is locked and must not
+// call it.
 func (b *Buffer) NoteCalendar(path string, update func(*CalendarNote)) {
 	if b == nil || update == nil {
 		return
 	}
+	path = capString(path, MaxFieldValue)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	note, known := b.calendars[path]
@@ -208,7 +238,8 @@ func (b *Buffer) Snapshot() Snapshot {
 // without the object IDs of the problems, which are not, and with
 // AnonymousLimits, so the newest entries within them. The Buffer is not
 // changed, and the two share nothing. It is what survives a forced logout
-// (FR-36).
+// (FR-36). On a nil Buffer it returns a new, empty one with AnonymousLimits,
+// never nil.
 func (b *Buffer) WithoutObjects() *Buffer {
 	c := NewBuffer(AnonymousLimits)
 	if b == nil {
@@ -228,7 +259,7 @@ func (b *Buffer) WithoutObjects() *Buffer {
 // sortedCalendars returns the notes sorted by Path. The caller holds b.mu.
 func (b *Buffer) sortedCalendars() []CalendarNote {
 	notes := slices.Collect(maps.Values(b.calendars))
-	slices.SortFunc(notes, func(a, b CalendarNote) int { return strings.Compare(a.Path, b.Path) })
+	slices.SortFunc(notes, func(x, y CalendarNote) int { return strings.Compare(x.Path, y.Path) })
 	return notes
 }
 
@@ -244,14 +275,36 @@ func trim[T any](s []T, limit int) []T {
 	return s[:n]
 }
 
-// capHeader cuts v to MaxHeaderValue bytes, not in the middle of a rune.
-func capHeader(v string) string {
-	if len(v) <= MaxHeaderValue {
+// capString cuts v to limit bytes, not in the middle of a rune: a cut that
+// lands inside one backs up to its first byte, at most utf8.UTFMax-1 bytes. So
+// the result is as valid as v was, and a value that is not UTF-8 at all is cut
+// within three bytes of limit rather than to nothing.
+func capString(v string, limit int) string {
+	if len(v) <= limit {
 		return v
 	}
-	n := MaxHeaderValue
-	for n > 0 && !utf8.RuneStart(v[n]) {
+	n := limit
+	for back := 0; back < utf8.UTFMax-1 && n > 0 && !utf8.RuneStart(v[n]); back++ {
 		n--
 	}
 	return v[:n]
+}
+
+// capSkeleton keeps the text of s within MaxSkeleton bytes. Skeletons from
+// ICalSkeleton and XMLSkeleton already are, so this only holds for one that
+// was made another way. Text that is too long is cut after its last line that
+// fits, or, with no line break to cut at, at MaxSkeleton bytes, and Truncated
+// is set.
+func capSkeleton(s Skeleton) Skeleton {
+	if len(s.Text) <= MaxSkeleton {
+		return s
+	}
+	s.Truncated = true
+	// A line break right after the cap ends a line that fits, so it counts.
+	if i := strings.LastIndexByte(s.Text[:MaxSkeleton+1], '\n'); i > 0 {
+		s.Text = s.Text[:i]
+	} else {
+		s.Text = capString(s.Text, MaxSkeleton)
+	}
+	return s
 }

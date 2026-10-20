@@ -35,7 +35,7 @@ func TestScope(t *testing.T) {
 
 func TestBuildReport(t *testing.T) {
 	t.Parallel()
-	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 10, 20, 14, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
 	lucid := LucidInfo{Version: "1.2.3", Mode: "server", OS: "linux", Arch: "amd64"}
 	acct := &AccountInfo{Endpoint: "https://dav.example/", Principal: "/principals/{user}/", Home: "/calendars/{user}/"}
 	snap := Snapshot{
@@ -53,8 +53,8 @@ func TestBuildReport(t *testing.T) {
 	if r.Format != 1 {
 		t.Errorf("Format = %d, want 1", r.Format)
 	}
-	if !r.CreatedAt.Equal(now) {
-		t.Errorf("CreatedAt = %v, want %v", r.CreatedAt, now)
+	if !r.CreatedAt.Equal(now) || r.CreatedAt.Location() != time.UTC {
+		t.Errorf("CreatedAt = %v, want the same instant as %v, in UTC", r.CreatedAt, now)
 	}
 	if r.Lucid != lucid {
 		t.Errorf("Lucid = %+v, want %+v", r.Lucid, lucid)
@@ -62,8 +62,10 @@ func TestBuildReport(t *testing.T) {
 	if !r.Authenticated {
 		t.Error("Authenticated = false, want true")
 	}
-	if want := (ServerInfo{Host: "dav.example", Product: "Radicale/3", DAV: "1, 2, calendar-access"}); r.Server != want {
-		t.Errorf("Server = %+v, want %+v (the newest exchange with a Server header)", r.Server, want)
+	// Product and Host come from the newest exchange with a Server header, DAV
+	// from the newest one with a DAV header, which is a later one here.
+	if want := (ServerInfo{Host: "dav.example", Product: "Radicale/3", DAV: "1, 3"}); r.Server != want {
+		t.Errorf("Server = %+v, want %+v", r.Server, want)
 	}
 	if r.Account == nil || *r.Account != *acct {
 		t.Errorf("Account = %+v, want %+v", r.Account, acct)
@@ -72,8 +74,18 @@ func TestBuildReport(t *testing.T) {
 		t.Errorf("report does not carry the snapshot: %+v", r)
 	}
 
-	// No exchange names a server: the server info stays empty.
+	// The DAV header may come from an exchange older than the Server header.
+	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "a", DAV: "1, 2"}, {Host: "b", Server: "nginx"}, {Host: "c"}}}, lucid, nil, false, now)
+	if want := (ServerInfo{Host: "b", Product: "nginx", DAV: "1, 2"}); r.Server != want {
+		t.Errorf("Server = %+v, want %+v", r.Server, want)
+	}
+
+	// No exchange names a server: Host and Product stay empty, DAV is still seen.
 	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "h", DAV: "1"}}}, lucid, nil, false, now)
+	if want := (ServerInfo{DAV: "1"}); r.Server != want {
+		t.Errorf("Server = %+v, want %+v", r.Server, want)
+	}
+	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "h"}}}, lucid, nil, false, now)
 	if r.Server != (ServerInfo{}) {
 		t.Errorf("Server = %+v, want none", r.Server)
 	}

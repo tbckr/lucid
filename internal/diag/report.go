@@ -45,13 +45,15 @@ type Report struct {
 }
 
 // BuildReport assembles the report of a session from a snapshot of its Buffer.
-// Server is taken from the newest exchange that has a Server header, Host and
-// DAV from that exchange too. The report shares the snapshot's slices. Empty
-// ones are empty, not nil, so they marshal as [].
+// Server.Product and Server.Host are those of the newest exchange that has a
+// Server header, and Server.DAV is the newest non-empty DAV header of any
+// exchange: servers often send it only on some responses. CreatedAt is now in
+// UTC. The report shares the snapshot's slices. Empty ones are empty, not nil,
+// so they marshal as [].
 func BuildReport(s Snapshot, lucid LucidInfo, acct *AccountInfo, authenticated bool, now time.Time) Report {
 	r := Report{
 		Format:        ReportFormat,
-		CreatedAt:     now,
+		CreatedAt:     now.UTC(),
 		Lucid:         lucid,
 		Authenticated: authenticated,
 		Account:       acct,
@@ -68,10 +70,16 @@ func BuildReport(s Snapshot, lucid LucidInfo, acct *AccountInfo, authenticated b
 	if r.Problems == nil {
 		r.Problems = []Problem{}
 	}
-	for i := len(s.Exchanges) - 1; i >= 0; i-- {
-		if e := s.Exchanges[i]; e.Server != "" {
-			r.Server = ServerInfo{Host: e.Host, Product: e.Server, DAV: e.DAV}
-			break
+	var haveServer, haveDAV bool
+	for i := len(s.Exchanges) - 1; i >= 0 && !(haveServer && haveDAV); i-- {
+		e := &s.Exchanges[i]
+		if !haveServer && e.Server != "" {
+			r.Server.Host, r.Server.Product = e.Host, e.Server
+			haveServer = true
+		}
+		if !haveDAV && e.DAV != "" {
+			r.Server.DAV = e.DAV
+			haveDAV = true
 		}
 	}
 	return r
