@@ -11,6 +11,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -19,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -71,7 +74,7 @@ func TestRunVersionAndFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out syncBuffer
-			err := run(t.Context(), tt.args, envFunc(tt.env), &out)
+			err := run(t.Context(), tt.args, envFunc(tt.env), &out, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("run() error = %v, want %q", err, tt.wantErr)
@@ -161,7 +164,7 @@ func startServer(t *testing.T, env map[string]string, wantListeners int) (addrs 
 	logs = &syncBuffer{}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, nil, envFunc(env), logs) }()
+	go func() { done <- run(ctx, nil, envFunc(env), logs, nil) }()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for len(addrs) < wantListeners {
@@ -269,7 +272,7 @@ func TestRunServes(t *testing.T) {
 	}
 
 	// The healthcheck subcommand probes the running server.
-	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[0]}), io.Discard); err != nil {
+	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[0]}), io.Discard, nil); err != nil {
 		t.Errorf("healthcheck: %v", err)
 	}
 
@@ -287,7 +290,7 @@ func TestRunServes(t *testing.T) {
 		}
 	}
 	// After shutdown the healthcheck fails.
-	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[0]}), io.Discard); err == nil {
+	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[0]}), io.Discard, nil); err == nil {
 		t.Error("healthcheck succeeded against a stopped server")
 	}
 }
@@ -322,11 +325,11 @@ func TestRunSeparateMetricsAndTLS(t *testing.T) {
 	healthEnv := envFunc(map[string]string{
 		"LUCID_ADDR": ":" + portOf(t, addrs[0]), "LUCID_TLS_CERT": certFile, "LUCID_TLS_KEY": keyFile,
 	})
-	if err := run(t.Context(), []string{"healthcheck"}, healthEnv, io.Discard); err != nil {
+	if err := run(t.Context(), []string{"healthcheck"}, healthEnv, io.Discard, nil); err != nil {
 		t.Errorf("TLS healthcheck: %v", err)
 	}
 	// Plain HTTP against the metrics port's /healthz is a 404: exit 1.
-	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[1]}), io.Discard); err == nil ||
+	if err := run(t.Context(), []string{"healthcheck"}, envFunc(map[string]string{"LUCID_ADDR": addrs[1]}), io.Discard, nil); err == nil ||
 		!strings.Contains(err.Error(), "status 404") {
 		t.Errorf("healthcheck error = %v, want status 404", err)
 	}
@@ -345,7 +348,7 @@ func TestRunTLSFailure(t *testing.T) {
 	var out syncBuffer
 	err := run(t.Context(), nil, envFunc(map[string]string{
 		"LUCID_ADDR": "127.0.0.1:0", "LUCID_TLS_CERT": missing, "LUCID_TLS_KEY": missing,
-	}), &out)
+	}), &out, nil)
 	if err == nil || !strings.Contains(err.Error(), "missing.pem") {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -390,6 +393,219 @@ func TestWarnInsecure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// freePort returns a loopback port that nothing listens on right now.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// startLocal runs Lucid in local mode on a free port and waits until the
+// banner is printed. stop cancels it and returns what run returned.
+func startLocal(t *testing.T, env map[string]string, open func(context.Context, string) error) (port int, out *syncBuffer, stop func() error) {
+	t.Helper()
+	// A port that freePort found free can be taken before run listens on it,
+	// for example by an outgoing connection of a parallel test; try again.
+	for range 5 {
+		if port, out, stop, ok := tryStartLocal(t, env, open); ok {
+			return port, out, stop
+		}
+	}
+	t.Fatal("no free port for local mode")
+	return 0, nil, nil
+}
+
+// tryStartLocal is one attempt of startLocal; ok is false if the port was taken.
+func tryStartLocal(t *testing.T, env map[string]string, open func(context.Context, string) error) (port int, out *syncBuffer, stop func() error, ok bool) {
+	t.Helper()
+	port = freePort(t)
+	e := map[string]string{"LUCID_LOCAL_PORT": strconv.Itoa(port)}
+	for k, v := range env {
+		e[k] = v
+	}
+	out = &syncBuffer{}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, nil, envFunc(e), out, open) }()
+	stop = func() error {
+		cancel()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(30 * time.Second):
+			return context.DeadlineExceeded
+		}
+	}
+	deadline := time.After(10 * time.Second)
+	for !strings.Contains(out.String(), "Lucid is running at") {
+		select {
+		case err := <-done:
+			cancel()
+			if err != nil && strings.Contains(err.Error(), "address already in use") {
+				return 0, nil, nil, false
+			}
+			t.Fatalf("run() returned early: %v\n%s", err, out)
+		case <-deadline:
+			cancel()
+			t.Fatalf("local mode did not start; output:\n%s", out)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return port, out, stop, true
+}
+
+func TestRunLocalMode(t *testing.T) {
+	t.Parallel()
+	opened := make(chan string, 1)
+	healthy := make(chan int, 1)
+	open := func(ctx context.Context, url string) error {
+		// The server must already accept connections when the browser opens.
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"healthz", http.NoBody)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			healthy <- resp.StatusCode
+		}
+		opened <- url
+		return nil
+	}
+	port, out, stop := startLocal(t, nil, open)
+	want := fmt.Sprintf("http://127.0.0.1:%d/", port)
+
+	select {
+	case got := <-opened:
+		if got != want {
+			t.Errorf("browser opened %q, want %q", got, want)
+		}
+	case <-time.After(10 * time.Second):
+		_ = stop()
+		t.Fatalf("browser was not opened; output:\n%s", out)
+	}
+	select {
+	case code := <-healthy:
+		if code != http.StatusOK {
+			t.Errorf("healthz while opening the browser: %d", code)
+		}
+	default:
+		t.Error("the server did not answer while the browser was opened")
+	}
+	for _, s := range []string{"Lucid is running at " + want, "Close this window to stop Lucid"} {
+		if !strings.Contains(out.String(), s) {
+			t.Errorf("output does not contain %q:\n%s", s, out)
+		}
+	}
+	// NFR-23: structured logs, as text for a person reading the window.
+	if !strings.Contains(out.String(), "msg=listening") {
+		t.Errorf("logs are not text:\n%s", out)
+	}
+	if strings.Contains(out.String(), `"msg"`) {
+		t.Errorf("logs are JSON in local mode:\n%s", out)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, want+"api/v1/session", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/session: %v", err)
+	}
+	resp.Body.Close()
+	cookies := resp.Header.Values("Set-Cookie")
+	if len(cookies) == 0 {
+		t.Error("no session cookie")
+	}
+	for _, c := range cookies {
+		if strings.Contains(strings.ToLower(c), "secure") {
+			t.Errorf("cookie %q is Secure, which a browser drops on plain HTTP", c)
+		}
+	}
+	// A foreign Host (DNS rebinding) is rejected.
+	req, err = http.NewRequestWithContext(t.Context(), http.MethodGet, want+"healthz", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "evil.example"
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /healthz with foreign Host: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("healthz with Host evil.example: %d, want 403", resp.StatusCode)
+	}
+
+	if err := stop(); err != nil {
+		t.Errorf("run() = %v", err)
+	}
+}
+
+func TestRunLocalNoBrowser(t *testing.T) {
+	t.Parallel()
+	_, _, stop := startLocal(t, map[string]string{"LUCID_OPEN_BROWSER": "false"},
+		func(context.Context, string) error {
+			t.Error("browser opened although LUCID_OPEN_BROWSER=false")
+			return nil
+		})
+	if err := stop(); err != nil {
+		t.Errorf("run() = %v", err)
+	}
+}
+
+func TestRunLocalBrowserFails(t *testing.T) {
+	t.Parallel()
+	port, out, stop := startLocal(t, nil, func(context.Context, string) error { return errors.New("no display") })
+	// The failed launch does not stop the server.
+	client := &http.Client{Timeout: 5 * time.Second}
+	if code, _ := get(t, client, fmt.Sprintf("http://127.0.0.1:%d/healthz", port)); code != http.StatusOK {
+		t.Errorf("healthz: %d", code)
+	}
+	if err := stop(); err != nil {
+		t.Errorf("run() = %v", err)
+	}
+	for _, want := range []string{"could not open the browser", "no display"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("logs do not contain %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunLocalPortInUse(t *testing.T) {
+	t.Parallel()
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0") // kept open: the port is taken
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	err = run(t.Context(), nil, envFunc(map[string]string{"LUCID_LOCAL_PORT": strconv.Itoa(port)}), io.Discard,
+		func(context.Context, string) error {
+			t.Error("browser opened for a taken port")
+			return nil
+		})
+	if err == nil {
+		t.Fatal("run() succeeded on a taken port")
+	}
+	for _, want := range []string{
+		fmt.Sprintf("cannot listen on 127.0.0.1:%d", port),
+		"already running",
+		fmt.Sprintf("port %d", port),
+		"LUCID_LOCAL_PORT",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
 	}
 }
 

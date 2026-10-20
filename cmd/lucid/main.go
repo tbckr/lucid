@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"crypto/tls"
@@ -80,17 +81,26 @@ const (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Getenv, os.Stdout)
+	// SIGHUP: closing the macOS Terminal window sends it, and in local mode
+	// that window is how the user stops Lucid.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, openBrowser)
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lucid:", err)
+		if keepWindowOpen(runtime.GOOS, os.Getenv) {
+			fmt.Fprintln(os.Stderr, "Press Enter to close this window.")
+			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		}
 		os.Exit(1)
 	}
 }
 
-// run is the testable entry point. Logs go to stdout as JSON.
-func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
+// run is the testable entry point. Logs go to stdout: JSON in server mode, text
+// in local mode, where a person reads them (NFR-23). In local mode run also
+// prints the banner there and opens the browser with openURL, which server
+// mode never calls.
+func run(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer, openURL func(context.Context, string) error) error {
 	if len(args) > 0 && args[0] == "healthcheck" {
 		return healthcheck(ctx, getenv)
 	}
@@ -123,13 +133,18 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	if err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
-	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	handlerOpts := &slog.HandlerOptions{Level: cfg.LogLevel}
+	var handler slog.Handler = slog.NewJSONHandler(stdout, handlerOpts)
+	if cfg.Local {
+		handler = slog.NewTextHandler(stdout, handlerOpts)
+	}
+	logger := slog.New(handler)
 	slog.SetDefault(logger)
-	return serve(ctx, &cfg, logger, build)
+	return serve(ctx, &cfg, logger, build, stdout, openURL)
 }
 
 // serve wires all components and runs the servers until ctx is canceled.
-func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build buildMeta) error {
+func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build buildMeta, stdout io.Writer, openURL func(context.Context, string) error) error {
 	logger.InfoContext(ctx, "starting lucid", "version", build.version, "commit", build.commit, "date", build.date)
 	warnInsecure(cfg, logger)
 
@@ -225,7 +240,15 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	for i, srv := range servers {
 		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", listeners[i])
 		if err != nil {
-			return errors.Join(fmt.Errorf("listening on %s: %w", listeners[i], err), shutdown(servers[:i], logger))
+			if cfg.Local { // the only listener; the message is for a person who double-clicked
+				//nolint:staticcheck // ST1005: sentences for a person at a double-clicked window, not an error chain
+				err = fmt.Errorf("cannot listen on %s: %w\nIf Lucid is already running, use its window. "+
+					"Otherwise close the program that uses port %d, or choose another port with LUCID_LOCAL_PORT.",
+					cfg.Addr, err, cfg.LocalPort)
+			} else {
+				err = fmt.Errorf("listening on %s: %w", listeners[i], err)
+			}
+			return errors.Join(err, shutdown(servers[:i], logger))
 		}
 		useTLS := cfg.TLSEnabled() && i == 0
 		logger.InfoContext(ctx, "listening", "addr", ln.Addr().String(), "tls", useTLS, "metrics_only", i > 0)
@@ -243,6 +266,10 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		}()
 	}
 
+	if cfg.Local {
+		announceLocal(ctx, cfg, logger, stdout, openURL)
+	}
+
 	select {
 	case err = <-errCh:
 		// A server stopped on its own (e.g. unreadable TLS certificate).
@@ -252,6 +279,20 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 	// Report not-ready first so load balancers drain, then stop.
 	api.SetReady(false)
 	return errors.Join(err, shutdown(servers, logger))
+}
+
+// announceLocal tells the user where Lucid runs and how to stop it, then opens
+// the browser (FR-35). The listeners are up, so the page loads on the first try.
+// The banner is for the person at the window and does not go through the logger.
+func announceLocal(ctx context.Context, cfg *config.Config, logger *slog.Logger, stdout io.Writer, openURL func(context.Context, string) error) {
+	url := "http://" + cfg.Addr + "/"
+	fmt.Fprintf(stdout, "Lucid is running at %s\nClose this window to stop Lucid. Closing the browser tab does not stop it.\n", url)
+	if !cfg.OpenBrowser {
+		return
+	}
+	if err := openURL(ctx, url); err != nil {
+		logger.WarnContext(ctx, "could not open the browser", "error", err)
+	}
 }
 
 func shutdown(servers []*http.Server, logger *slog.Logger) error {
