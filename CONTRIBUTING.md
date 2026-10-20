@@ -224,7 +224,7 @@ vulnerability:
 1. Assess the impact. `govulncheck` only reports code that is reachable. A
    finding in `vuln-release.yml` concerns what users run; if `vuln.yml` no
    longer reports it, the fix is already on `main` and only needs a release.
-   The same goes for a standard library finding in the release binary, since
+   The same goes for a standard library finding in a release binary, since
    a new release picks up the latest Go patch release, and for a Grype
    finding in the release image: it is in a package of the distroless base
    image, and a new release picks up the current base image. If the base

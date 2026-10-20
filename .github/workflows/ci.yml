@@ -163,11 +163,12 @@ jobs:
           check-latest: true
 
       # Runs on every change: whether vulnerable code is reachable depends on
-      # our code, not only on the dependencies (NFR-11).
+      # our code, not only on the dependencies (NFR-11). Once per released OS
+      # (NFR-35), see the script.
       - name: govulncheck (NFR-11)
         uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
         with:
-          run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          run: scripts/govulncheck.sh
 
   frontend:
     name: Frontend (lint, typecheck, test, build)

@@ -2,9 +2,11 @@
 # turns vuln.yml green while users still run the released version; these
 # jobs stay red until a release ships the fix. The same signals as in
 # vuln.yml fail the run (see "Updating dependencies" in CONTRIBUTING.md):
-#   - govulncheck on the release binary, which carries the Go release it was
-#     built with, so standard library fixes that need a new Lucid release
-#     show up here.
+#   - govulncheck on the release binaries, which carry the Go release they
+#     were built with, so standard library fixes that need a new Lucid
+#     release show up here. Every binary, because the vulnerability database
+#     marks some entries for one OS or architecture only, and a binary scan
+#     reports only those of its own (NFR-35).
 #   - Grype on the release image, but only the packages of the distroless
 #     base image (.github/grype-config.yml): the binary in it is
 #     govulncheck's. The Dockerfile references the base image by tag, so a
@@ -71,23 +73,33 @@ jobs:
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
   govulncheck:
-    name: govulncheck (release binary)
+    name: govulncheck (release binaries)
     needs: release
     if: needs.release.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Download the release binary
+      - name: Download the release binaries
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'lucid_*_linux_amd64.tar.gz' --dir release
-          tar -xzf release/lucid_*_linux_amd64.tar.gz -C release lucid
+            --pattern 'lucid_*.tar.gz' --pattern 'lucid_*.zip' --dir release
+          # One directory per archive, e.g. release/lucid_1.2.3_linux_amd64/lucid.
+          shopt -s nullglob
+          for archive in release/*.tar.gz release/*.zip; do
+            dir="${archive%.tar.gz}"
+            dir="${dir%.zip}"
+            mkdir "$dir"
+            case "$archive" in
+              *.zip) unzip -q "$archive" lucid.exe -d "$dir" ;;
+              *) tar -xzf "$archive" -C "$dir" lucid ;;
+            esac
+          done
 
-      # Only runs govulncheck itself; the binary's Go version is read from
-      # its build info.
+      # Only runs govulncheck itself; each binary's Go version, OS and
+      # architecture are read from its build info.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
@@ -95,7 +107,13 @@ jobs:
 
       - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
         with:
-          run: go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary release/lucid
+          run: |
+            status=0
+            for bin in release/*/lucid*; do
+              echo "== $bin"
+              go run golang.org/x/vuln/cmd/govulncheck@latest -mode=binary "$bin" || status=1
+            done
+            exit "$status"
 
   grype:
     name: Grype (release image)

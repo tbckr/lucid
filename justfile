@@ -96,7 +96,7 @@ fmt:
 # Scan for known vulnerabilities (reachable Go code, shipped frontend packages) and malware
 [group('quality')]
 vuln:
-    {{ GO }} run golang.org/x/vuln/cmd/govulncheck@latest ./...
+    scripts/govulncheck.sh
     {{ PNPM }} --dir web audit --prod
     scripts/deps.sh malware
 
