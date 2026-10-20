@@ -477,7 +477,7 @@ which mode that is, for a removed one what replaces it or why it is gone.
 | `LUCID_CACHE_SIZE` | Both | `256` | Cached entries (LRU), one per user, calendar and component (events or tasks) |
 | `LUCID_CACHE_FRESHNESS` | Both | `10s` | Serve cache without CTag check for this long |
 | `LUCID_UPSTREAM_TIMEOUT` | Both | `20s` | Timeout for requests to CalDAV servers |
-| `LUCID_LOG_LEVEL` | Both | `info` | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode, JSON in server mode; each request is logged only at `debug` |
+| `LUCID_LOG_LEVEL` | Both | `info` | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode, JSON in server mode; `debug` adds a line for each API request and each CalDAV call, without contents and with pseudonymised paths, see [Reporting problems](#reporting-problems) |
 
 Durations use Go syntax (`90s`, `15m`, `12h`).
 
@@ -497,6 +497,77 @@ The REST API is documented in [docs/API.md](docs/API.md).
 - `/metrics` is served only on the separate address `LUCID_METRICS_ADDR`, never
   on the main listener. Keep that address internal; without it there are no
   metrics.
+
+## Reporting problems
+
+Calendar servers differ in small ways, and a problem with yours is easiest to
+fix if the maintainers can see what your server sent. Lucid helps you share
+that without sharing your calendar.
+
+### If you use Lucid
+
+Choose **Report a problem** in the account menu. The same dialog opens from an
+error message that shows a reference such as `Reference: 3f9a1c2b` (also on the
+login screen), from the placeholder of an item Lucid could not read, and from
+**Add to problem report** in the details of any event or task, because the
+likeliest bugs, a wrong time or a missing repeat, leave no error behind.
+
+The dialog shows the file exactly as it is downloaded. By default it holds:
+
+- the Lucid version, its mode and the operating system,
+- the product and host of your CalDAV server and the endpoint Lucid found,
+- what each calendar supports and how many items it holds, never its name,
+- your recent CalDAV calls (up to 100, 30 before you sign in): method, path,
+  status, duration and a few response headers, without any request or response
+  body,
+- what Lucid could not use in your server's answers, as **structure only**:
+  property names and the format of values, with titles, notes, places, names,
+  addresses and IDs replaced (time zone and repeat rules stay, as bugs hide
+  in them),
+- the field names that failed in items Lucid could not read.
+
+User and calendar names in paths are replaced by placeholders, and no title,
+description, place or attendee is in it. For an event or task you add, the file
+holds its structure. Its **content** is added only if you choose **Show
+content**, read it, and tick the box **Add this content to the report**, which
+starts unticked, for that one item. Closing the dialog forgets what was shown
+and ticked.
+
+Lucid sends nothing itself: the report is a file you download. **Open issue
+form** opens the [issue form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml)
+in a new tab, with Lucid's version and mode and your server product filled
+in, and you attach the file there. Issues on GitHub are public, so read the
+file first. Report security problems privately, see [SECURITY.md](SECURITY.md).
+Lucid keeps the calls and problems in memory only, for as long as your
+session lasts.
+
+### If you run Lucid for others
+
+Lucid never logs calendar contents or passwords, at any level and in either
+mode, and no setting changes that. With `LUCID_LOG_LEVEL=debug` it adds a
+`caldav exchange` line for every request to a CalDAV server (method, host,
+path, status, duration, size, content type, the `Server` and `DAV` headers and,
+for a transport failure, a class such as `dns`, `tls` or `timeout`) and an
+`http request` line for every API request. A `caldav problem` line, written at
+`warn` and so at the default level too, comes with the structure of the
+document Lucid could not read.
+
+- **Find a user's request.** Every response has an `X-Request-Id`, and every
+  line logged while serving the request has it as `request_id`. The reference
+  a user sees in an error message is its first 8 characters.
+- **Paths are pseudonymised.** The user name is `{user}`, the calendar home and
+  principal are `{home}` and `{principal}`, and the names below the home
+  become placeholders such as `cal-1a2b3c4d/` and `obj-5e6f7a8b.ics`, derived
+  with a key that exists only in RAM: the same name has the same placeholder
+  until Lucid restarts, and none can be turned back into a name. API IDs in
+  URLs are encrypted with a key that exists only in RAM, so your reverse
+  proxy's log shows no names either, and the IDs change on restart. The host of
+  the CalDAV server stays, so you can tell servers apart.
+- **Share the CalDAV lines, not all of them.** The `caldav exchange` and
+  `caldav problem` lines can go into a public issue. `security event` lines
+  record a login with the user name and server URL entered, for abuse
+  detection, and carry a client IP address; `http request` lines carry client
+  IP addresses too. Keep both to yourself.
 
 ## Security
 

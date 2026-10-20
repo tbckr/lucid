@@ -97,6 +97,12 @@ Types: `feat`, `fix`, `perf`, `refactor`, `security`, `docs`, `test`,
 - Pass `context.Context` as the first parameter through every I/O path.
 - Structured logging with `log/slog`, snake_case keys: JSON in server mode,
   text in local mode (NFR-23). Never log credentials, session keys or tokens.
+  No log line at any level may hold calendar contents (NFR-36): log a CalDAV
+  path only through `diag.Pseudonymizer`, a parser error only through
+  `diag.Reason`, and a document Lucid cannot read as a `diag` skeleton.
+  `TestNoContentsInLogsOrReport` (`internal/httpapi/privacy_test.go`) fails
+  when a marker string from the account or the calendar reaches a log or the
+  problem report.
 - Code must pass `golangci-lint run` with the repository configuration
   (`.golangci.yml`) and be formatted with `gofumpt`/`goimports`
   (`just fmt`). `//nolint` requires a specific linter and an explanation.
@@ -267,6 +273,47 @@ is not on the list in `.github/dependency-review-config.yml`:
 - If it is not, prefer another dependency. Exempt the package under
   `allow-dependencies-licenses` only for data or disclaimers that do not
   restrict use, with a comment naming the license and why it is fine.
+
+## From a problem report to a fixture
+
+Problems with a CalDAV server reach us as an issue from the
+[CalDAV server form](.github/ISSUE_TEMPLATE/caldav-server.yml), usually with
+the file from Lucid's "Report a problem" dialog (FR-36,
+[README](README.md#reporting-problems)), sometimes with log lines. The
+report holds no calendar contents unless the reporter added an object's
+content; the aim is to reproduce the problem from its shape alone:
+
+1. **Read the report.** `lucid` and `server` say which Lucid and which server
+   product (`Server` and `DAV` headers) are involved, `calendars` what each
+   calendar supports, `exchanges` the CalDAV calls in the order they happened
+   (method, path shape, status, selected response headers, an `error` class
+   for a transport failure), and `problems` what Lucid could not use, each
+   with a `reason` and a `skeleton`. `client` is added by the browser: the
+   field names that failed in the items it could not read (`corrupted`) and
+   the events and tasks the reporter added (`objects`, each with a skeleton).
+   `requestId` ties an exchange or problem to the log lines of the request.
+2. **Build the server side.** Reproduce the sequence of `exchanges` with a
+   `caldavtest` server: `SetHook` answers a method and a path shape with the
+   status and the headers of the report, and `PutObject` stores the objects.
+   Paths are placeholders (`{home}`, `{principal}`, `{user}`, `cal-<h>/`,
+   `obj-<h>.ics`): choose any names, they only have to keep their shape.
+   A response that needs a body can also be a file in
+   `internal/caldav/testdata`, next to the existing fixtures.
+3. **Build the data from the skeletons.** A skeleton keeps the structure,
+   the names of properties and parameters, `TZID`, `RRULE` and `VTIMEZONE`
+   rules, `PRODID` and the enumerated values, and masks the rest: `…` stands
+   for a value, and a date or time keeps its format with its digits zeroed
+   (`00000000T000000`). Fill the `…` with neutral values (`Test`,
+   an address at `example.com`) and the dates with ones that reproduce the
+   problem. `truncated` means the skeleton stops at 4096 bytes, so ask the
+   reporter for the rest or for the object's content.
+4. **Write the failing test, then fix it.** The test goes into
+   `internal/caldav` (or `internal/httpapi` for a problem in the API) like any
+   other, and the fixed bug keeps it as its regression test.
+
+Even when a report holds an object's content, do not commit it as it is: it
+is the reporter's data and may name other people. Reduce it to the smallest
+fixture that still fails, with neutral values.
 
 ## Security issues
 

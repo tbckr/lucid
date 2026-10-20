@@ -1,0 +1,64 @@
+name: Problem with a CalDAV server
+description: Lucid does not work, or works wrongly, with your CalDAV server
+labels: ["caldav"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues on GitHub are **public**: anyone can read what you write here and
+        everything you attach.
+
+        The best way to report a problem is the file from Lucid's **Report a
+        problem** dialog (account menu, or the link in an error message). It
+        holds no titles, names or other calendar contents unless you add an
+        object's content yourself. If you run Lucid for others, you can paste
+        the `caldav exchange` and `caldav problem` log lines of
+        `LUCID_LOG_LEVEL=debug` instead: they hold no calendar contents either.
+        Read what you attach before you submit it.
+
+        Never paste passwords or session cookies. Leave out the `security event`
+        lines (they carry user names) and the `http request` lines; both carry
+        IP addresses.
+
+        **Security vulnerabilities do not belong here.** Report them privately
+        through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
+  - type: input
+    id: lucid-version
+    attributes:
+      label: Lucid version
+      description: Shown in the report file, or run `lucid --version`.
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: input
+    id: mode
+    attributes:
+      label: Mode
+      description: "`local` (started without `LUCID_ADDR`) or `server`."
+      placeholder: server
+  - type: input
+    id: server-product
+    attributes:
+      label: CalDAV server
+      description: The product, for example Nextcloud, Radicale, Baïkal, SOGo, iCloud or Synology.
+      placeholder: Nextcloud
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: CalDAV server version
+      description: If you know it.
+      placeholder: "30.0.2"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead, for example an event that is missing, a wrong time or an error message with its reference.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Problem report or log lines
+      description: Drop the report file here, or paste log lines from `LUCID_LOG_LEVEL=debug`. Leave this empty if you have neither.
