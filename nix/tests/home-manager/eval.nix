@@ -22,6 +22,14 @@ import "${lucid}/nix/tests/run-tests.nix" {
   inherit pkgs;
   name = "lucid-home-manager-eval";
   tests = {
+    # This flake's lock pins lucid's inputs on its own, so it goes stale when
+    # only the main flake.lock is updated. On failure run
+    # nix flake update --flake ./nix/tests/home-manager (just upgrade does).
+    testLockFollowsMainFlake = {
+      expr = nixpkgs.rev;
+      expected = (lib.importJSON "${lucid}/flake.lock").nodes.nixpkgs.locked.rev;
+    };
+
     testLinuxLocal = {
       expr =
         let

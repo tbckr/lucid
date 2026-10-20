@@ -152,7 +152,7 @@ project's own schedule, typically at the start of a release cycle:
 
 ```sh
 just outdated     # direct dependencies with newer versions, platform versions
-just upgrade      # upgrade direct dependencies and flake.lock
+just upgrade      # upgrade direct dependencies and both flake locks
 just nix-hashes   # recompute the hashes in nix/package.nix (needs nix build)
 just lint test vuln
 ```

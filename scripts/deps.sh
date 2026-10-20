@@ -50,6 +50,9 @@ upgrade_flake() {
     return 0
   fi
   nix flake update
+  # The Home Manager test flake pins lucid's inputs in its own lock; its eval
+  # check fails when that lags behind flake.lock.
+  nix flake update --flake ./nix/tests/home-manager
 }
 
 # The Go project supports the two most recent major releases; the list of
