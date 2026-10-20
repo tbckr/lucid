@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render as renderElement, renderHook, waitFor } from '@testing-library/react'
 import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action, type ToastT } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -153,6 +153,12 @@ function descriptionOf(id: string): unknown {
   return shown?.description
 }
 
+/** The words of a toast action's label, which also holds an icon. */
+function labelOf(action: Action | undefined): string | null {
+  if (!action) return null
+  return renderElement(<>{action.label}</>).container.textContent
+}
+
 /** The action of the live toast `id`, sonner's own state. */
 function actionOf(id: string): Action | undefined {
   const shown = toast.getToasts().find((x): x is ToastT => x.id === id && !('dismiss' in x))
@@ -187,7 +193,7 @@ describe('useRefresh toast reference', () => {
     await failedRefresh(serverError())
     expect(descriptionOf('refresh')).toBe('Reference: 01234567')
     const action = actionOf('refresh')
-    expect(action?.label).toBe('Report a problem')
+    expect(labelOf(action)).toBe('Report a problem')
     act(() => {
       action?.onClick({} as MouseEvent<HTMLButtonElement>)
     })
@@ -230,7 +236,7 @@ describe('useLoadErrorToast', () => {
   it('shows the reference of a server error, and drops it when the next error has none', () => {
     const { rerender } = render(serverError(), false)
     expect(descriptionOf('events-load')).toBe('Reference: 01234567')
-    expect(actionOf('events-load')?.label).toBe('Report a problem')
+    expect(labelOf(actionOf('events-load'))).toBe('Report a problem')
 
     // Sonner merges a live toast with the new one of its id: the description and action must be set again.
     rerender({ error: new Error('502'), refreshing: false })

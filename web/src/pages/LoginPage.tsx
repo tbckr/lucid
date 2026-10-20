@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { format, isSameDay, isSameMonth } from 'date-fns'
-import { CircleAlertIcon } from 'lucide-react'
+import { CircleAlertIcon, LifeBuoyIcon } from 'lucide-react'
 import { startTransition, useActionState, useId } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -103,8 +103,9 @@ export function LoginPage() {
                         onClick={() => {
                           openReport()
                         }}
-                        className="justify-self-start rounded-sm text-xs font-medium underline decoration-destructive/40 underline-offset-2 hover:decoration-destructive"
+                        className="inline-flex items-center gap-1.5 justify-self-start rounded-sm text-xs font-medium underline decoration-destructive/40 underline-offset-2 hover:decoration-destructive"
                       >
+                        <LifeBuoyIcon className="size-3.5 shrink-0" aria-hidden />
                         {t('diagnostics.open')}
                       </button>
                     </>

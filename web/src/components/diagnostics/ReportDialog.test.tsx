@@ -1,15 +1,17 @@
 import { type QueryClient } from '@tanstack/react-query'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { diagnosticsReportSchema, type CorruptedItem, type DiagnosticsReport } from '@/lib/api/schemas'
 import { assembleReport, issueUrl } from '@/lib/diagnostics'
+import { toCalEvent } from '@/lib/events'
 import { useUi, type ReportCandidate } from '@/stores/ui'
-import { calendar, diagnosticsReport, jsonResponse, urlOf } from '@/test/fixtures'
+import { apiEvent, calendar, diagnosticsReport, jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
-import { ReportDialog } from './ReportDialog'
+import { ReportDialogMount } from './ReportDialogMount'
 
 /** The raw text of every object, as `GET .../content` answers: what must not leave without consent (NFR-36). */
 const CONTENT = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Therapy\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
@@ -17,10 +19,20 @@ const CONTENT = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Therapy\r\nEND:VEVEN
 const SKELETON = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:<text 7>\nEND:VEVENT\nEND:VCALENDAR\n'
 
 const dentist: ReportCandidate = { objectId: 'ev-1', kind: 'event', label: 'Dentist', calendarId: 'c1' }
+const rent: ReportCandidate = { objectId: 'td-1', kind: 'todo', label: 'Pay rent', calendarId: 'c1' }
 
-/** The API of the dialog: the report, and each object's skeleton and content; `failContent` fails the content once. */
-function mockApi(report: DiagnosticsReport = diagnosticsReport(), opts: { failContent?: boolean } = {}) {
+const failure = () => jsonResponse(502, { error: { code: 'upstream_error', message: 'down' } })
+
+/**
+ * The API of the dialog: the report, and each object's skeleton and content. `failContent` and `failSkeleton` fail
+ * the first answer of their kind.
+ */
+function mockApi(
+  report: DiagnosticsReport = diagnosticsReport(),
+  opts: { failContent?: boolean; failSkeleton?: boolean } = {},
+) {
   let failContent = opts.failContent ?? false
+  let failSkeleton = opts.failSkeleton ?? false
   return vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
     const url = urlOf(input)
     if (url.endsWith('/diagnostics')) return Promise.resolve(jsonResponse(200, report))
@@ -28,18 +40,46 @@ function mockApi(report: DiagnosticsReport = diagnosticsReport(), opts: { failCo
     if (m?.[1] && m[2]) {
       if (failContent) {
         failContent = false
-        return Promise.resolve(jsonResponse(502, { error: { code: 'upstream_error', message: 'down' } }))
+        return Promise.resolve(failure())
       }
       return Promise.resolve(jsonResponse(200, { id: decodeURIComponent(m[1]), content: CONTENT }))
     }
-    if (m?.[1]) return Promise.resolve(jsonResponse(200, { id: decodeURIComponent(m[1]), skeleton: { text: SKELETON } }))
+    if (m?.[1]) {
+      if (failSkeleton) {
+        failSkeleton = false
+        return Promise.resolve(failure())
+      }
+      return Promise.resolve(jsonResponse(200, { id: decodeURIComponent(m[1]), skeleton: { text: SKELETON } }))
+    }
     return Promise.resolve(jsonResponse(404, { error: { code: 'not_found', message: '' } }))
   })
 }
 
+/** `URL.createObjectURL` and `revokeObjectURL`, which jsdom lacks, stubbed for this test only. */
+function stubObjectUrls() {
+  const saved = {
+    create: Object.getOwnPropertyDescriptor(URL, 'createObjectURL'),
+    revoke: Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL'),
+  }
+  const createObjectURL = vi.fn((_blob: Blob) => 'blob:report')
+  const revokeObjectURL = vi.fn()
+  Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+  Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+  onTestFinished(() => {
+    for (const [name, descriptor] of [
+      ['createObjectURL', saved.create],
+      ['revokeObjectURL', saved.revoke],
+    ] as const) {
+      if (descriptor) Object.defineProperty(URL, name, descriptor)
+      else Reflect.deleteProperty(URL, name)
+    }
+  })
+  return { createObjectURL, revokeObjectURL }
+}
+
 /** Mount the dialog as the app does, with calendar `c1` ("Personal") loaded; it opens after the render, as in the app. */
 function mount(seed?: (qc: QueryClient) => void) {
-  return renderWithProviders(<ReportDialog />, (qc) => {
+  return renderWithProviders(<ReportDialogMount />, (qc) => {
     qc.setQueryData(queryKeys.calendars, [calendar()])
     seed?.(qc)
   })
@@ -164,13 +204,10 @@ describe('ReportDialog (FR-36)', () => {
   it('downloads exactly the preview', async () => {
     mockApi()
     const user = userEvent.setup()
-    const createObjectURL = vi.fn((_blob: Blob) => 'blob:report')
-    const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
-    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+    const { createObjectURL, revokeObjectURL } = stubObjectUrls()
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const success = vi.spyOn(toast, 'success')
-    mount()
+    const { unmount } = mount()
     const { dialog, sheet } = await open(dentist)
     const row = within(dialog).getByRole('listitem', { name: 'Dentist' })
     await user.click(within(row).getByRole('button', { name: 'Show content' }))
@@ -196,6 +233,11 @@ describe('ReportDialog (FR-36)', () => {
     await waitFor(() => {
       expect(within(dialog).queryByText('Dentist')).toBeNull()
     })
+
+    // The file's URL goes with the dialog at the latest, its timer with it.
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:report')
   })
 
   it('uses an event added to the report', async () => {
@@ -319,6 +361,68 @@ describe('ReportDialog (FR-36)', () => {
     expect(within(dialog).getByRole('button', { name: 'Download report' })).toBeEnabled()
   })
 
+  it('drops the content of an added item that is removed after it was ticked', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog, sheet } = await open(dentist)
+    const row = within(dialog).getByRole('listitem', { name: 'Dentist' })
+    await user.click(within(row).getByRole('button', { name: 'Show content' }))
+    await user.click(await within(row).findByRole('checkbox', { name: 'Add this content to the report' }))
+    await waitFor(() => {
+      expect(preview(sheet)).toContain(JSON.stringify(CONTENT))
+    })
+
+    await user.click(within(row).getByRole('button', { name: 'Remove Dentist from the report' }))
+    expect(preview(sheet)).not.toContain('Therapy')
+    expect(preview(sheet)).not.toContain('ev-1')
+  })
+
+  it('lists an object that is an added item and a problem once, as the item, with one tick for both', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    // The problem of the fixture is about object `obj-id-1`; the user added the same object as an event.
+    const { dialog, sheet } = await open({ ...dentist, objectId: 'obj-id-1' })
+    const item = within(dialog).getByRole('listitem', { name: 'Dentist' })
+    const problem = within(dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
+    await user.click(within(item).getByRole('button', { name: 'Show content' }))
+    // Shown once, in both rows.
+    const box = await within(item).findByRole('checkbox', { name: 'Add this content to the report' })
+    expect(within(problem).getByRole('checkbox', { name: 'Add this content to the report' })).not.toBeChecked()
+
+    await user.click(box)
+    expect(within(problem).getByRole('checkbox', { name: 'Add this content to the report' })).toBeChecked()
+    await waitFor(() => {
+      expect(preview(sheet)).toContain(JSON.stringify(CONTENT))
+    })
+    const file = JSON.parse(preview(sheet)) as { client: { objects: { objectId: string; source: string }[] } }
+    expect(file.client.objects.map((o) => [o.objectId, o.source])).toEqual([['obj-id-1', 'event']])
+    expect(preview(sheet).split('"content":')).toHaveLength(2)
+  })
+
+  it('announces each tick, also the same message twice in a row', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open(dentist)
+    const live = dialog.querySelector('[aria-live="polite"]')!
+    for (const name of ['Dentist', "An item Lucid couldn't read"]) {
+      const row = within(dialog).getByRole('listitem', { name })
+      await user.click(within(row).getByRole('button', { name: 'Show content' }))
+      await user.click(await within(row).findByRole('checkbox', { name: 'Add this content to the report' }))
+    }
+    const second = live.firstElementChild
+    expect(second).toHaveTextContent('Content added to the report')
+
+    // A new node each time: screen readers announce what is added to a live region, not what stays.
+    const row = within(dialog).getByRole('listitem', { name: 'Dentist' })
+    await user.click(within(row).getByRole('checkbox', { name: 'Add this content to the report' }))
+    await user.click(within(row).getByRole('checkbox', { name: 'Add this content to the report' }))
+    expect(live.firstElementChild).toHaveTextContent('Content added to the report')
+    expect(live.firstElementChild).not.toBe(second)
+  })
+
   it('keeps an added item once, however often it is added', () => {
     act(() => {
       useUi.getState().openReport(dentist)
@@ -330,11 +434,8 @@ describe('ReportDialog (FR-36)', () => {
 })
 
 describe('ReportDialog focus', () => {
-  beforeEach(() => {
-    mockApi()
-  })
-
   it('returns the focus to where the report was opened from', async () => {
+    mockApi()
     const user = userEvent.setup()
     renderWithProviders(
       <>
@@ -346,7 +447,7 @@ describe('ReportDialog focus', () => {
         >
           Opener
         </button>
-        <ReportDialog />
+        <ReportDialogMount />
       </>,
     )
     await user.click(screen.getByRole('button', { name: 'Opener' }))
@@ -355,5 +456,126 @@ describe('ReportDialog focus', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Opener' })).toHaveFocus()
     })
+  })
+
+  it("returns the focus to the item's block when it was opened from the item's details", async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    renderWithProviders(<button type="button">Block</button>)
+    const block = screen.getByRole('button', { name: 'Block' })
+    act(() => {
+      useUi.getState().openDetail({ item: toCalEvent(apiEvent({ title: 'Dentist' })), anchor: block })
+    })
+    // The details' button that opens the report goes with them: the block is where the user was.
+    const { dialog } = await open(dentist)
+    expect(useUi.getState().detail).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(block).toHaveFocus()
+    })
+  })
+
+  it('returns the focus to the account menu when what opened the report is gone', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    function MenuItem() {
+      const [shown, setShown] = useState(true)
+      return shown ? (
+        <button
+          type="button"
+          onClick={() => {
+            useUi.getState().openReport()
+            setShown(false)
+          }}
+        >
+          Menu item
+        </button>
+      ) : null
+    }
+    renderWithProviders(
+      <>
+        <button type="button" data-account-menu="">
+          Account
+        </button>
+        <MenuItem />
+        <ReportDialogMount />
+      </>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Menu item' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Report a problem' })
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Account' })).toHaveFocus()
+    })
+  })
+
+  it('moves the focus to the content once it is shown', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open()
+    const problem = within(dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
+    within(problem).getByRole('button', { name: 'Show content' }).focus()
+    await user.keyboard('{Enter}')
+    // The content, named by its row, then its box by Tab.
+    const content = await within(problem).findByRole('region', { name: "An item Lucid couldn't read" })
+    await waitFor(() => {
+      expect(content).toHaveFocus()
+    })
+    expect(content).toHaveTextContent('SUMMARY:Therapy')
+    await user.tab()
+    expect(within(problem).getByRole('checkbox', { name: 'Add this content to the report' })).toHaveFocus()
+  })
+
+  it('moves the focus to "Try again" when the content fails to load, and on to the content after it', async () => {
+    mockApi(diagnosticsReport(), { failContent: true })
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open()
+    const problem = within(dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
+    within(problem).getByRole('button', { name: 'Show content' }).focus()
+    await user.keyboard('{Enter}')
+    const retry = await within(problem).findByRole('button', { name: 'Try again' })
+    await waitFor(() => {
+      expect(retry).toHaveFocus()
+    })
+
+    await user.keyboard('{Enter}')
+    const content = await within(problem).findByRole('region', { name: "An item Lucid couldn't read" })
+    await waitFor(() => {
+      expect(content).toHaveFocus()
+    })
+  })
+
+  it("moves the focus to an added item's content button once its structure loads after a failure", async () => {
+    mockApi(diagnosticsReport(), { failSkeleton: true })
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open(dentist)
+    const row = within(dialog).getByRole('listitem', { name: 'Dentist' })
+    const retry = await within(row).findByRole('button', { name: 'Try again' })
+    expect(within(row).getByText("Lucid couldn't load this content.")).toBeInTheDocument()
+    retry.focus()
+    await user.keyboard('{Enter}')
+    const show = await within(row).findByRole('button', { name: 'Show content' })
+    await waitFor(() => {
+      expect(show).toHaveFocus()
+    })
+  })
+
+  it("moves the focus to the next row's first control after a removal, else to the list's heading", async () => {
+    mockApi(diagnosticsReport({ problems: [] }))
+    const user = userEvent.setup()
+    mount()
+    act(() => {
+      useUi.getState().openReport(dentist)
+    })
+    const { dialog } = await open(rent)
+    await user.click(within(dialog).getByRole('button', { name: 'Remove Dentist from the report' }))
+    expect(within(dialog).getByRole('button', { name: 'Remove Pay rent from the report' })).toHaveFocus()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove Pay rent from the report' }))
+    expect(within(dialog).getByRole('heading', { name: 'Items' })).toHaveFocus()
   })
 })

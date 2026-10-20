@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDownIcon, ExternalLinkIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
-import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useCorruptedItems, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { endpoints } from '@/lib/api/endpoints'
-import { type DiagnosticsReport } from '@/lib/api/schemas'
+import { type DiagnosticsReport, type ObjectSkeleton, type Skeleton } from '@/lib/api/schemas'
 import { assembleReport, issueUrl, reportFileName, SECURITY_URL, type ReportObject } from '@/lib/diagnostics'
 import { cn } from '@/lib/utils'
 import { useUi, type ReportCandidate } from '@/stores/ui'
@@ -29,28 +29,19 @@ type Shown = { status: 'loading' } | { status: 'failed' } | { status: 'shown'; t
 /** No retries and no refetch behind the user's back: the file must not change while they read it. */
 const ONCE = { staleTime: 0, gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false } as const
 
-/** The problem report dialog, mounted once for both screens; the store opens it. */
-export function ReportDialog() {
+/** What sits in a row and can take the focus, in the order of the row. */
+const CONTROLS = 'button, a[href], [tabindex="0"]'
+
+/**
+ * The problem report dialog; `ReportDialogMount` loads it and numbers its openings: each starts afresh, even one
+ * while the last is still fading out. On close the focus goes back to `returnFocus`, or to the account menu when
+ * that is gone (a menu item, a toast).
+ */
+export function ReportDialog({ opening, returnFocus }: { opening: number; returnFocus: RefObject<HTMLElement | null> }) {
   const { t } = useTranslation()
   const open = useUi((s) => s.report.open)
   const closeReport = useUi((s) => s.closeReport)
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const returnFocus = useRef<HTMLElement | null>(null)
-  // Each opening starts afresh, even one while the last is still fading out.
-  const [opening, setOpening] = useState(0)
-
-  useEffect(
-    () =>
-      useUi.subscribe((s, prev) => {
-        if (!s.report.open || prev.report.open) return
-        // Back to the item whose details it was opened from, or to what opened it, once it closes.
-        const active = document.activeElement
-        returnFocus.current =
-          prev.detail?.anchor ?? (active instanceof HTMLElement && active !== document.body ? active : null)
-        setOpening((n) => n + 1)
-      }),
-    [],
-  )
 
   return (
     <Dialog
@@ -67,9 +58,9 @@ export function ReportDialog() {
           headingRef.current?.focus()
         }}
         onCloseAutoFocus={(e) => {
-          const target = returnFocus.current
-          returnFocus.current = null
-          if (target?.isConnected) {
+          const opener = returnFocus.current
+          const target = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-account-menu]')
+          if (target) {
             e.preventDefault()
             target.focus()
           }
@@ -110,10 +101,16 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
   })
   const [shown, setShown] = useState<ReadonlyMap<string, Shown>>(new Map())
   const [included, setIncluded] = useState<ReadonlySet<string>>(new Set())
-  const [announcement, setAnnouncement] = useState('')
+  // Numbered, so that the same message twice in a row is announced twice.
+  const [announcement, setAnnouncement] = useState({ text: '', n: 0 })
   const [fileOpen, setFileOpen] = useState(false)
   const sheetRef = useRef<HTMLDivElement>(null)
+  const itemsRef = useRef<HTMLHeadingElement>(null)
   const scrollTo = useRef<string | null>(null)
+  // The row after a removed one, which takes the focus once it is gone; `undefined` while nothing was removed.
+  const afterRemove = useRef<Element | null | undefined>(undefined)
+  // Object URLs of downloads, revoked after a while or when the dialog closes, whichever comes first.
+  const downloads = useRef(new Map<string, ReturnType<typeof setTimeout>>())
 
   // The objects of the file: each added item by its skeleton, then each problem whose content was ticked. The
   // content goes along wherever it was shown, and assembleReport writes it for the ticked ones only.
@@ -126,7 +123,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
     }
     candidates.forEach((c, i) => {
       listed.add(c.objectId)
-      const skeleton = skeletons[i]?.data?.skeleton
+      const skeleton = skeletonOf(skeletons[i])
       if (skeleton) objects.push({ objectId: c.objectId, source: c.kind, skeleton, ...contentOf(c.objectId) })
     })
     for (const p of server.problems) {
@@ -157,6 +154,25 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
     sheet.scrollTo({ top, behavior: near && !reduced ? 'smooth' : 'auto' })
   }, [text])
 
+  // A removed row took the focus with it: the next row's first control gets it, else the list's heading.
+  useEffect(() => {
+    const next = afterRemove.current
+    if (next === undefined) return
+    afterRemove.current = undefined
+    const control = next?.isConnected ? next.querySelector<HTMLElement>(CONTROLS) : null
+    ;(control ?? itemsRef.current)?.focus()
+  })
+
+  useEffect(() => {
+    const pending = downloads.current
+    return () => {
+      for (const [url, timer] of pending) {
+        clearTimeout(timer)
+        URL.revokeObjectURL(url)
+      }
+    }
+  }, [])
+
   function showContent(objectId: string) {
     setShown((m) => new Map(m).set(objectId, { status: 'loading' }))
     void endpoints.getObjectContent(objectId).then(
@@ -176,8 +192,13 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
       else next.delete(objectId)
       return next
     })
-    setAnnouncement(t(on ? 'diagnostics.content.added' : 'diagnostics.content.removed'))
+    setAnnouncement((a) => ({ text: t(on ? 'diagnostics.content.added' : 'diagnostics.content.removed'), n: a.n + 1 }))
     scrollTo.current = on ? objectId : null
+  }
+
+  function remove(objectId: string, row: HTMLElement | null) {
+    afterRemove.current = row?.nextElementSibling ?? null
+    removeCandidate(objectId)
   }
 
   function download() {
@@ -190,9 +211,14 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
     link.click()
     link.remove()
     // The download reads the file after the click returns; give it time before the URL goes.
-    setTimeout(() => {
-      URL.revokeObjectURL(url)
-    }, 10_000)
+    const pending = downloads.current
+    pending.set(
+      url,
+      setTimeout(() => {
+        pending.delete(url)
+        URL.revokeObjectURL(url)
+      }, 10_000),
+    )
     clearReport()
     toast.success(t('diagnostics.downloaded'))
   }
@@ -220,7 +246,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
           </section>
 
           <section aria-labelledby={`${id}-items`} className="grid gap-2">
-            <h3 id={`${id}-items`} className="font-display text-sm font-semibold">
+            <h3 ref={itemsRef} id={`${id}-items`} tabIndex={-1} className="font-display text-sm font-semibold outline-none">
               {t('diagnostics.items.heading')}
             </h3>
             <p className="text-xs text-muted-foreground">
@@ -238,10 +264,12 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
                       <CandidateRow
                         key={c.objectId}
                         candidate={c}
-                        failed={skeleton?.isError === true}
+                        // Not in the file and not on its way: the same test as for the objects above.
+                        failed={skeletonOf(skeleton) === undefined && skeleton?.isError === true}
+                        fetching={skeleton?.isFetching === true}
                         onRetry={() => void skeleton?.refetch()}
-                        onRemove={() => {
-                          removeCandidate(c.objectId)
+                        onRemove={(row) => {
+                          remove(c.objectId, row)
                         }}
                         {...consent(c.objectId)}
                       />
@@ -257,8 +285,8 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
               </ul>
             )}
           </section>
-          <p aria-live="polite" className="sr-only">
-            {announcement}
+          <p aria-live="polite" aria-atomic="true" className="sr-only">
+            {announcement.text && <span key={announcement.n}>{announcement.text}</span>}
           </p>
         </div>
 
@@ -410,17 +438,35 @@ type ContentProps = ConsentProps & {
 function CandidateRow({
   candidate,
   failed,
+  fetching,
   onRetry,
   onRemove,
   ...consent
-}: ConsentProps & { candidate: ReportCandidate; failed: boolean; onRetry: () => void; onRemove: () => void }) {
+}: ConsentProps & {
+  candidate: ReportCandidate
+  failed: boolean
+  fetching: boolean
+  onRetry: () => void
+  /** Gets the row, whose neighbor takes the focus once it is gone. */
+  onRemove: (row: HTMLElement | null) => void
+}) {
   const { t } = useTranslation()
   const id = useId()
   const { byId } = useVisibleCalendars()
   const colors = useCalendarColors()(candidate.calendarId)
   const calendar = byId.get(candidate.calendarId)?.name ?? t('event.unknownCalendar')
+  const rowRef = useRef<HTMLLIElement>(null)
+  const retried = useRef(false)
+
+  // "Try again" goes once the skeleton is there: its place in the row takes the focus.
+  useEffect(() => {
+    if (!retried.current || failed || fetching) return
+    retried.current = false
+    rowRef.current?.querySelector<HTMLElement>('[data-focus]')?.focus()
+  }, [failed, fetching])
+
   return (
-    <li aria-labelledby={`${id}-label`} className="py-3">
+    <li ref={rowRef} aria-labelledby={`${id}-label`} className="py-3">
       <div className="relative border-l-[3px] pl-3" style={{ borderLeftColor: colors.solid }}>
         <div className="pr-9">
           <p id={`${id}-label`} className="text-sm font-medium [overflow-wrap:anywhere]">
@@ -434,14 +480,22 @@ function CandidateRow({
           variant="ghost"
           size="icon-sm"
           aria-label={t('diagnostics.items.remove', { label: candidate.label })}
-          onClick={onRemove}
+          onClick={() => {
+            onRemove(rowRef.current)
+          }}
           className="absolute -top-1 right-0 text-muted-foreground"
         >
           <XIcon aria-hidden />
         </Button>
         {/* Without its skeleton the item is not in the file, so its content can't be either. */}
         {failed ? (
-          <Failure message={t('diagnostics.content.failed')} onRetry={onRetry} />
+          <Failure
+            message={t('diagnostics.content.failed')}
+            onRetry={() => {
+              retried.current = true
+              onRetry()
+            }}
+          />
         ) : (
           <Content labelledBy={`${id}-label`} {...consent} />
         )}
@@ -471,25 +525,53 @@ function ProblemRow({ kind, consent }: { kind: string; consent?: ConsentProps })
 function Content({ state, included, onShow, onInclude, labelledBy }: ContentProps) {
   const { t } = useTranslation()
   const id = useId()
+  // The button pressed here goes away: the focus follows to what replaces it, in this row only.
+  const asked = useRef(false)
+  const loadingRef = useRef<HTMLParagraphElement>(null)
+  const boxRef = useRef<HTMLPreElement>(null)
+  const retryRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!asked.current || state === undefined) return
+    if (state.status === 'loading') {
+      loadingRef.current?.focus()
+      return
+    }
+    asked.current = false
+    ;(state.status === 'shown' ? boxRef : retryRef).current?.focus()
+  }, [state])
+  const show = () => {
+    asked.current = true
+    onShow()
+  }
+
   if (state === undefined) {
     return (
-      <Button variant="outline" size="sm" className="mt-2" onClick={onShow}>
+      <Button data-focus="" variant="outline" size="sm" className="mt-2" onClick={show}>
         {t('diagnostics.content.show')}
       </Button>
     )
   }
   if (state.status === 'loading') {
     return (
-      <p role="status" className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <p
+        ref={loadingRef}
+        role="status"
+        tabIndex={-1}
+        className="mt-2 flex items-center gap-2 text-xs text-muted-foreground outline-none"
+      >
         <Spinner />
         {t('diagnostics.content.loading')}
       </p>
     )
   }
-  if (state.status === 'failed') return <Failure message={t('diagnostics.content.failed')} onRetry={onShow} />
+  if (state.status === 'failed') {
+    return <Failure retryRef={retryRef} message={t('diagnostics.content.failed')} onRetry={show} />
+  }
   return (
     <div className="mt-2 grid gap-2.5">
       <pre
+        ref={boxRef}
+        data-focus=""
         role="region"
         aria-labelledby={labelledBy}
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the content must be read in full before it is added, by keyboard too
@@ -524,12 +606,21 @@ function Content({ state, included, onShow, onInclude, labelledBy }: ContentProp
   )
 }
 
-function Failure({ message, onRetry }: { message: string; onRetry: () => void }) {
+function Failure({
+  message,
+  onRetry,
+  retryRef,
+}: {
+  message: string
+  onRetry: () => void
+  retryRef?: Ref<HTMLButtonElement>
+}) {
   const { t } = useTranslation()
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
       <p>{message}</p>
       <button
+        ref={retryRef}
         type="button"
         onClick={onRetry}
         className="rounded-sm font-medium underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground"
@@ -538,6 +629,11 @@ function Failure({ message, onRetry }: { message: string; onRetry: () => void })
       </button>
     </div>
   )
+}
+
+/** The skeleton of an added item once fetched: then, and only then, the item is in the file. */
+function skeletonOf(query: { data?: ObjectSkeleton | undefined } | undefined): Skeleton | undefined {
+  return query?.data?.skeleton
 }
 
 interface SheetLine {

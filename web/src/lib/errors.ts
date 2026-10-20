@@ -1,4 +1,6 @@
 import { type TFunction } from 'i18next'
+import { LifeBuoyIcon } from 'lucide-react'
+import { createElement, type ReactNode } from 'react'
 import { isApiError, type ApiErrorCode } from './api/client'
 
 /** The reference is this many characters of the request ID: short enough to read out, long enough to find in a log. */
@@ -31,16 +33,19 @@ export function referenceDescription(t: TFunction, err: unknown): string | undef
 }
 
 /**
- * The toast action "Report a problem" for an error with a reference (FR-36), which runs `onReport`; undefined for
- * any other error. A toast with an ID passes it even then: sonner merges a new toast into a live one of its ID,
- * which would keep the old action.
+ * The toast action "Report a problem" for an error with a reference (FR-36), with the life buoy of every way to
+ * the report, which runs `onReport`; undefined for any other error. A toast with an ID passes it even then:
+ * sonner merges a new toast into a live one of its ID, which would keep the old action.
  */
 export function reportAction(
   t: TFunction,
   err: unknown,
   onReport: () => void,
-): { label: string; onClick: () => void } | undefined {
-  return errorReference(err) === null ? undefined : { label: t('diagnostics.open'), onClick: onReport }
+): { label: ReactNode; onClick: () => void } | undefined {
+  if (errorReference(err) === null) return undefined
+  const icon = createElement(LifeBuoyIcon, { className: 'size-3.5 shrink-0', 'aria-hidden': true })
+  const label = createElement('span', { className: 'inline-flex items-center gap-1.5' }, icon, t('diagnostics.open'))
+  return { label, onClick: onReport }
 }
 
 /** Localized, actionable message for an API error. */

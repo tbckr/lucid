@@ -2,7 +2,7 @@ import { QueryClientProvider, useQueryClient, type QueryClient } from '@tanstack
 import { RefreshCwIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ReportDialog } from '@/components/diagnostics/ReportDialog'
+import { ReportDialogMount } from '@/components/diagnostics/ReportDialogMount'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Logo } from '@/components/Logo'
 import { Button } from '@/components/ui/button'
@@ -29,7 +29,7 @@ export function App({ queryClient }: { queryClient: QueryClient }) {
         <AppErrorBoundary>
           <Root />
           {/* On both screens: the login screen reports a failed login, and a forced logout keeps it open (FR-36). */}
-          <ReportDialog />
+          <ReportDialogMount />
         </AppErrorBoundary>
         <ThemedToaster />
       </TooltipProvider>

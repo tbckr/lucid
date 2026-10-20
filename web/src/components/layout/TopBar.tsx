@@ -160,6 +160,8 @@ export function TopBar({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              // Where the focus goes back to after the problem report, when what opened it is gone (FR-36).
+              data-account-menu=""
               aria-label={t('account.menu', { user: username ?? '' })}
               className="ml-1 flex size-8 items-center justify-center rounded-full bg-primary/15 font-display text-sm font-semibold text-primary outline-none hover:bg-primary/25 focus-visible:ring-2 focus-visible:ring-ring"
             >

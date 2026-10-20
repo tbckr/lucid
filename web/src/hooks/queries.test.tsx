@@ -3893,9 +3893,12 @@ describe('reportMutationError', () => {
     reportMutationError(new ApiError(502, 'upstream_error', 'down', null, '0123456789abcdef'), t, qc, ['x'])
     expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.", {
       description: 'Reference: 01234567',
-      action: { label: 'Report a problem', onClick: expect.any(Function) as unknown },
+      action: { label: expect.anything() as unknown, onClick: expect.any(Function) as unknown },
     })
     const action = (error.mock.calls[0]![1] as { action: Action }).action
+    const { container } = render(<>{action.label}</>)
+    expect(container).toHaveTextContent('Report a problem')
+    expect(container.querySelector('svg.lucide-life-buoy')).not.toBeNull()
     action.onClick({} as MouseEvent<HTMLButtonElement>)
     expect(useUi.getState().report.open).toBe(true)
   })

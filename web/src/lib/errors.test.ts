@@ -1,3 +1,5 @@
+import { render } from '@testing-library/react'
+import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import i18next from '@/i18n'
 import { ApiError, type ApiErrorCode } from './api/client'
@@ -73,7 +75,10 @@ describe('reportAction', () => {
   it('opens the problem report from an error with a reference (FR-36)', () => {
     const onReport = vi.fn()
     const action = reportAction(i18next.getFixedT('de'), new ApiError(502, 'upstream_error', '', null, ID), onReport)
-    expect(action?.label).toBe('Problem melden')
+    // Named in words, with the life buoy of every way to the report.
+    const { container } = render(createElement('div', null, action?.label))
+    expect(container).toHaveTextContent('Problem melden')
+    expect(container.querySelector('svg.lucide-life-buoy')).toHaveAttribute('aria-hidden', 'true')
     action?.onClick()
     expect(onReport).toHaveBeenCalledTimes(1)
   })

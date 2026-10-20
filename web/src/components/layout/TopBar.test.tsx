@@ -78,5 +78,7 @@ describe('TopBar', () => {
     expect(items.slice(-3)).toEqual(['Keyboard shortcuts', 'Report a problem', 'Sign out'])
     await user.click(screen.getByRole('menuitem', { name: 'Report a problem' }))
     expect(useUi.getState().report.open).toBe(true)
+    // Where the focus goes back to once the report closes.
+    expect(screen.getByRole('button', { name: /account/i })).toHaveAttribute('data-account-menu')
   })
 })

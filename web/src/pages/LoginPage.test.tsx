@@ -85,7 +85,9 @@ describe('LoginPage', () => {
     expect(screen.queryByRole('button', { name: 'Report a problem' })).toBeNull()
     await fill(user, 'example.com', 'tim', 'pw')
     const alert = await screen.findByRole('alert')
-    await user.click(within(alert).getByRole('button', { name: 'Report a problem' }))
+    const link = within(alert).getByRole('button', { name: 'Report a problem' })
+    expect(link.querySelector('svg.lucide-life-buoy')).not.toBeNull()
+    await user.click(link)
     expect(useUi.getState().report.open).toBe(true)
   })
 

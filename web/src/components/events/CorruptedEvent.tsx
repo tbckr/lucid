@@ -1,4 +1,4 @@
-import { TriangleAlertIcon } from 'lucide-react'
+import { LifeBuoyIcon, TriangleAlertIcon } from 'lucide-react'
 import { type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,8 @@ export function CorruptedEvent({
       >
         <TriangleAlertIcon className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{label}</span>
+        {/* The life buoy of every way to the problem report. */}
+        <LifeBuoyIcon className="ml-auto size-3 shrink-0" aria-hidden />
       </button>
     </div>
   )

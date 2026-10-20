@@ -31,7 +31,9 @@ describe('Corrupted event placeholder (FR-19)', () => {
         <CorruptedEvent reason="title: expected string" />
       </div>,
     )
-    await user.click(screen.getByRole('button', { name: 'Corrupted event. Report a problem' }))
+    const placeholder = screen.getByRole('button', { name: 'Corrupted event. Report a problem' })
+    expect(placeholder.querySelector('svg.lucide-life-buoy')).not.toBeNull()
+    await user.click(placeholder)
     expect(useUi.getState().report.open).toBe(true)
     expect(create).not.toHaveBeenCalled()
   })
