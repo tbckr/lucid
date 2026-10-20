@@ -45,10 +45,16 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 // rejected by the rate limiter).
 const routeUnmatched = "unmatched"
 
-// Observe logs every request as structured JSON and records metrics.
+// Observe logs every request as a structured record and records metrics.
 // Metrics are labeled with the ServeMux route pattern, never the raw path,
 // to keep label cardinality bounded. metrics may be nil.
-func Observe(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Handler {
+//
+// quiet logs the request lines at debug instead of info (FR-35). Local mode
+// writes to the console window of a double-clicked binary, and on Windows 10's
+// classic console a click there starts a QuickEdit selection that blocks every
+// write until it ends. A line per request at info would stall the requests
+// behind it.
+func Observe(logger *slog.Logger, metrics *Metrics, quiet bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -68,6 +74,9 @@ func Observe(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Hand
 			}
 
 			level := slog.LevelInfo
+			if quiet {
+				level = slog.LevelDebug
+			}
 			switch r.URL.Path {
 			case "/healthz", "/readyz":
 				level = slog.LevelDebug // probes would drown the log

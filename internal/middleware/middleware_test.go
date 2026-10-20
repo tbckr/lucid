@@ -199,7 +199,7 @@ func TestObserve(t *testing.T) {
 		_, _ = io.WriteString(w, "tea")
 	})
 	mux.HandleFunc("GET /healthz", okHandler)
-	h := Chain(mux, RequestContext(false), Observe(logger, metrics))
+	h := Chain(mux, RequestContext(false), Observe(logger, metrics, false))
 
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/items/1", http.NoBody),
@@ -234,7 +234,41 @@ func TestObserve(t *testing.T) {
 	}
 
 	// nil metrics are allowed.
-	Observe(logger, nil)(okHandler).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+	Observe(logger, nil, false)(okHandler).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+}
+
+// TestObserveQuiet covers the local-mode access log (FR-35): the console
+// window of a double-clicked binary must not see a line per request, because
+// a QuickEdit selection blocks every write to it.
+func TestObserveQuiet(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		quiet bool
+		path  string
+		want  string
+	}{
+		{"server mode logs requests at info", false, "/items/1", "INFO"},
+		{"local mode logs requests at debug", true, "/items/1", "DEBUG"},
+		{"server mode probes stay at debug", false, "/healthz", "DEBUG"},
+		{"local mode probes stay at debug", true, "/healthz", "DEBUG"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			logger, buf := testLogger(t)
+			h := Chain(okHandler, RequestContext(false), Observe(logger, nil, tt.quiet))
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, tt.path, http.NoBody))
+
+			lines := buf.lines(t)
+			if len(lines) != 1 {
+				t.Fatalf("got %d log lines, want 1", len(lines))
+			}
+			if lines[0]["msg"] != "http request" || lines[0]["level"] != tt.want {
+				t.Errorf("log line = %v, want level %s", lines[0], tt.want)
+			}
+		})
+	}
 }
 
 func TestRecorderUnwrap(t *testing.T) {
