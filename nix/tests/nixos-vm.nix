@@ -10,12 +10,10 @@
 
       services.lucid = {
         enable = true;
-        # One value per freeform type (str, int, bool).
-        settings = {
-          LUCID_LOG_LEVEL = "debug";
-          LUCID_CACHE_SIZE = 64;
-          LUCID_TRUST_PROXY_HEADERS = true;
-        };
+        mode = "server";
+        trustProxyHeaders = true;
+        logLevel = "debug";
+        cache.size = 64;
       };
 
       environment.systemPackages = [ pkgs.curl ];

@@ -45,7 +45,7 @@
           inherit (pkgs.stdenv.hostPlatform) system;
         in
         {
-          imports = [ ./nix/module.nix ];
+          imports = [ ./nix/nixos.nix ];
           services.lucid.package = lib.mkDefault self.packages.${system}.default;
         };
 
@@ -86,12 +86,13 @@
           package = self.packages.${system}.default;
           devShell = self.devShells.${system}.default;
           nixfmt = pkgs.runCommand "lucid-nixfmt" { nativeBuildInputs = [ pkgs.nixfmt ]; } ''
-            nixfmt --check ${./flake.nix} ${./nix}/*.nix
+            nixfmt --check ${./flake.nix} $(find ${./nix} -name '*.nix')
             touch $out
           '';
         }
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          nixos-module = pkgs.testers.runNixOSTest (import ./nix/test.nix { inherit self; });
+          nixos-eval = import ./nix/tests/nixos-eval.nix { inherit self pkgs; };
+          nixos-module = pkgs.testers.runNixOSTest (import ./nix/tests/nixos-vm.nix { inherit self; });
         }
       );
     };
