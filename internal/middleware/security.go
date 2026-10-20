@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -19,6 +21,7 @@ const (
 	EventRateLimited    = "rate_limited"
 	EventSSRFBlocked    = "ssrf_blocked"
 	EventSessionExpired = "session_expired"
+	EventHostRejected   = "host_rejected"
 )
 
 // Security logs security-relevant events with the client IP and request
@@ -65,6 +68,30 @@ func (s *Security) Log(r *http.Request, event string, attrs ...slog.Attr) {
 		slog.String("path", r.URL.Path),
 	}
 	s.logger.LogAttrs(r.Context(), level, "security event", append(base, attrs...)...)
+}
+
+// LoopbackHost rejects requests whose Host header does not name the loopback
+// interface Lucid listens on in local mode (FR-35): "localhost" or
+// "127.0.0.1", with or without a port. Without it, a page on a foreign origin
+// could reach the plain-HTTP listener through DNS rebinding, because the
+// browser would treat the rebound name as same-origin. The rejection is plain
+// text on purpose: the response only ever reaches such a foreign origin, never
+// the SPA, so it is not part of the API error contract.
+func LoopbackHost(sec *Security) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			if !strings.EqualFold(host, "localhost") && host != "127.0.0.1" {
+				sec.Log(r, EventHostRejected, slog.String("host", r.Host))
+				http.Error(w, "invalid Host header", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // contentSecurityPolicy only allows same-origin resources. Inline styles

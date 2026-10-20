@@ -386,6 +386,45 @@ func TestSecurityLog(t *testing.T) {
 	}
 }
 
+func TestLoopbackHost(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		host string
+		want int
+	}{
+		{"127.0.0.1:3456", http.StatusOK},
+		{"localhost:5173", http.StatusOK}, // Vite dev server forwards its own Host
+		{"localhost", http.StatusOK},
+		{"LocalHost:1", http.StatusOK},
+		{"", http.StatusForbidden},
+		{"evil.example", http.StatusForbidden},
+		{"evil.example:3456", http.StatusForbidden},
+		{"127.0.0.1.nip.io:3456", http.StatusForbidden},
+		{"localhost.evil.example", http.StatusForbidden},
+		{"[::1]:3456", http.StatusForbidden}, // Lucid does not listen on ::1
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			t.Parallel()
+			logger, logs := testLogger(t)
+			sec, err := NewSecurity(logger, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+			r.Host = tt.host
+			w := httptest.NewRecorder()
+			LoopbackHost(sec)(okHandler).ServeHTTP(w, r)
+			if w.Code != tt.want {
+				t.Fatalf("Host %q: status %d, want %d", tt.host, w.Code, tt.want)
+			}
+			if rejected := strings.Contains(logs.String(), EventHostRejected); rejected != (tt.want == http.StatusForbidden) {
+				t.Errorf("Host %q: security log = %q", tt.host, logs.String())
+			}
+		})
+	}
+}
+
 func TestCSRF(t *testing.T) {
 	t.Parallel()
 	const token = "secret-token"
