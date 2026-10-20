@@ -83,11 +83,12 @@ in
             # files directly.
             EnvironmentVariables = lucidLib.environment cfg;
             RunAtLoad = true;
+            # No ProcessType: Background would throttle CPU and I/O, but
+            # Lucid answers requests of the user's own browser.
             KeepAlive = {
               Crashed = true;
               SuccessfulExit = false;
             };
-            ProcessType = "Background";
             StandardOutPath = log;
             StandardErrorPath = log;
           };

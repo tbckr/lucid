@@ -138,7 +138,12 @@ import "${lucid}/nix/tests/run-tests.nix" {
           a = c.launchd.agents.lucid.config;
         in
         {
-          inherit (a) EnvironmentVariables RunAtLoad StandardOutPath;
+          inherit (a)
+            EnvironmentVariables
+            RunAtLoad
+            StandardOutPath
+            ProcessType
+            ;
           # The submodule fills the fields not set with null.
           KeepAlive = lib.filterAttrs (_: v: v != null) a.KeepAlive;
           desktop = c.xdg.desktopEntries;
@@ -155,6 +160,9 @@ import "${lucid}/nix/tests/run-tests.nix" {
           SuccessfulExit = false;
         };
         StandardOutPath = "/Users/alice/Library/Logs/lucid.log";
+        # Unset means Standard: Lucid answers the user's own browser, which
+        # Background would throttle.
+        ProcessType = null;
         desktop = { };
         systemd = false;
       };
