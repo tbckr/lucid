@@ -648,6 +648,14 @@ type CalendarService interface {
 	// deleted then. etag must match (If-Match), otherwise ErrConflict
 	// (FR-17).
 	DeleteTodoFollowing(ctx context.Context, todoID, etag string, recurrenceID time.Time) (Todo, *Snapshot, error)
+
+	// ObjectData returns the data of the calendar object objectID, byte for
+	// byte as the CalDAV server sends them: not parsed, so also an object
+	// Lucid cannot read. It is what the user may add to the problem report,
+	// object by object (FR-36). An objectID that is none of the account's
+	// objects, a calendar's or another account's, is ErrNotFound, and nothing is
+	// asked of the server then.
+	ObjectData(ctx context.Context, objectID string) ([]byte, error)
 }
 
 type revalidationKey struct{}

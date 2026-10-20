@@ -38,6 +38,10 @@ This is the contract between the frontend (`web/`) and the Go backend
   The frontend sends it on a manual refresh. `Cache-Control: no-cache` does
   not skip it, because browsers add it to every `fetch` made with
   `cache: 'no-store'`.
+- **Request ID**: every response carries `X-Request-Id`. The same ID is on
+  every log line of the request, and on the exchanges and problems recorded
+  for it in the problem report (`requestId`, see *Diagnostics*), so an error
+  the user sees can be found in both.
 - Errors always have this shape:
 
   ```json
@@ -50,7 +54,7 @@ This is the contract between the frontend (`web/`) and the Go backend
   | 400    | `forbidden_target`    | Server URL points to a blocked (internal) net  |
   | 400    | `series_move_unsupported` | This series can't move like this, only this one can |
   | 400    | `series_split_unsupported` | This series can't be split, only this one or all can change |
-  | 401    | `unauthenticated`     | No/expired session → show login                |
+  | 401    | `unauthenticated`     | No/expired session → show login (also after a forced logout, see *Session & Auth*) |
   | 401    | `invalid_credentials` | Login rejected by the CalDAV server            |
   | 403    | `csrf_invalid`        | Missing/wrong CSRF token                       |
   | 403    | `read_only`           | Calendar is read-only                          |
@@ -94,6 +98,24 @@ The session ID is rotated. Response `200`: same shape as `GET /session`
 ### `POST /api/v1/auth/logout`
 
 `204`. Destroys the session and clears the cookie.
+
+### Forced logout
+
+If the CalDAV server rejects the stored credentials during a request (for
+example after a password change), that request answers `401 unauthenticated`
+and the session ends. It is not simply destroyed: it is replaced by a new
+*anonymous* session, and the response sets its `lucid_session` cookie (new
+session ID and CSRF token; `GET /api/v1/session` returns the token). The new
+session holds none of the credentials, but keeps the pseudonymised part of the
+diagnostics buffer, so the problem report can still be downloaded from the
+login screen and shows what led to the logout. Object IDs of problems are not
+kept (`objectId` is gone), since they name real paths, and the content routes
+answer `401` for an anonymous session.
+
+When several requests of one session fail like this at the same time, only one
+response sets the new cookie, and the others set no cookie at all: a cookie
+cleared by one of them would overwrite the new one. Only if no new session can
+be created is the old one destroyed and the cookie cleared.
 
 ## Calendars
 
@@ -1000,6 +1022,119 @@ In any other case the answer is `502`, the copy stays, and the token is kept.
 | 502    | `upstream_error` | CalDAV server error/unreachable; the snapshot is kept so the client can retry |
 
 ### `DELETE /api/v1/todos/{todoId}` (header `If-Match`) → `204`
+
+## Diagnostics
+
+The problem report (FR-36) is a JSON document about the caller's *own*
+session, which the user can download and attach to a bug report. Lucid sends
+it nowhere. By default it holds no calendar contents (NFR-36): the trace of the
+session's recent CalDAV calls, the problems recorded for objects and answers
+Lucid could not use, what it found out about each calendar, and **skeletons**
+(the structure of a document, with names and formats but never its values).
+The contents of an object go into the report only when the user views that
+object and adds it, one object at a time (`.../content` below).
+
+Everything lives in a per-session buffer in memory: it ends with the session,
+the one of an anonymous session (created before login) carries over to the
+session that logs in, and a forced logout keeps it without object IDs. An
+anonymous session keeps at most 30 exchanges and 5 problems, an authenticated
+one 100 and 20, the oldest first out (a problem Lucid can recreate by reading
+the object again goes before a one-off one).
+
+### `GET /api/v1/diagnostics` → `200` `Report`
+
+Any session, anonymous or authenticated; without a session `401
+unauthenticated`. It reads the buffer and makes no request to the CalDAV
+server.
+
+```json
+{
+  "format": 1,
+  "createdAt": "2025-03-01T12:00:00Z",
+  "lucid": { "version": "1.2.0", "mode": "server", "os": "linux", "arch": "amd64" },
+  "authenticated": true,
+  "server": { "host": "dav.example.com", "product": "Nextcloud", "dav": "1, 3, calendar-access" },
+  "account": { "endpoint": "https://dav.example.com/remote.php/dav/",
+               "principal": "/remote.php/dav/principals/users/{user}/",
+               "home": "/remote.php/dav/calendars/{user}/" },
+  "calendars": [ { "path": "{home}/cal-1a2b3c4d/", "readOnly": false, "events": true, "todos": false,
+                   "ctag": true, "syncToken": true, "objects": 12 } ],
+  "exchanges": [ { "at": "2025-03-01T11:59:58Z", "requestId": "4f9c0a7e2b1d3c58", "method": "PROPFIND",
+                   "host": "dav.example.com", "path": "{home}/", "status": 207, "durationMs": 41,
+                   "bytes": 5120, "contentType": "application/xml; charset=utf-8",
+                   "server": "Nextcloud", "dav": "1, 3, calendar-access" } ],
+  "problems": [ { "at": "2025-03-01T11:59:58Z", "requestId": "4f9c0a7e2b1d3c58", "kind": "unparsable_object",
+                  "path": "{home}/cal-1a2b3c4d/obj-5e6f7a8b.ics", "objectId": "...", "reason": "...",
+                  "skeleton": { "text": "BEGIN:VCALENDAR\nVERSION:2.0\n...", "truncated": true } } ]
+}
+```
+
+- `format` is `1`. It changes when a field is removed or changes its meaning,
+  not when one is added: ignore unknown fields.
+- `lucid.mode` is `"local"` or `"server"` (FR-35); `os` and `arch` are Go's
+  `GOOS` and `GOARCH`.
+- `authenticated` is whether the session is logged in. `account` is only there
+  then: the CalDAV endpoint (origin and path), the principal and the calendar
+  home (paths), each with the user name replaced by `{user}` in its path
+  segments, and no credentials, query or fragment.
+- `server` is what the CalDAV server said about itself: `host` and `product`
+  (its `Server` header) of the newest exchange that has one, `dav` the newest
+  `DAV` header; empty strings while unknown.
+- `calendars` has a note per calendar (capped at 50), sorted by `path`: what
+  it supports and how many objects the largest listing returned (`objects`).
+  Never its name, description or color.
+- `exchanges` are the HTTP calls to the CalDAV server, oldest first. `path`
+  is pseudonymised: `{home}` and `{principal}` stand for the account's calendar
+  home and principal, the names below them are placeholders (`cal-<h>/`,
+  `obj-<h>.ics`, `seg-<h>`, `<h>` being 8 hex characters of a keyed hash that
+  exists only in RAM, so two names can be told apart and none is recovered), the
+  user name is `{user}`, and structural names such as `remote.php` stay.
+  `requestId` is the `X-Request-Id` of the API request that caused the call;
+  `error` is a fixed class (`dns`, `connect`, `tls`, `timeout`, `canceled`,
+  `ssrf_blocked`, `body_too_large`, `redirect` or `other`), never a message.
+  Strings are cut to 512 bytes (the three header fields to 256), and empty
+  fields are left out.
+- `problems` are things the server sent that Lucid could not use, oldest first,
+  with `kind` one of `unparsable_object` (did not parse as iCalendar),
+  `invalid_object` (parsed, but a value Lucid cannot use), `invalid_xml` (a
+  WebDAV answer that was not the XML expected), `error_response` (the XML error
+  body of an error status) and `rejected_write` (a write the server refused,
+  with the skeleton of what Lucid sent). `reason` is fixed wording or `HTTP
+  <status>`, never the parser's text. `skeleton.text` is at most 4096 bytes,
+  cut at a line boundary, with `truncated` set (omitted when `false`).
+  `objectId` is the API ID of the calendar object the problem is about, for the
+  two routes below; it is left out for a problem without an object, and after a
+  forced logout.
+
+### `GET /api/v1/diagnostics/objects/{objectId}` → `200` `{ "id", "skeleton" }`
+
+```json
+{ "id": "...", "skeleton": { "text": "BEGIN:VCALENDAR\n...", "truncated": false } }
+```
+
+The skeleton of a calendar object as the CalDAV server sends it now: one `GET`
+to the server (traced like any other call), then the shape of the data without
+its values, as in `problems[].skeleton` (`truncated` is omitted when `false`).
+What the user sees before deciding to add the content. Needs an authenticated
+session: `401 unauthenticated` for an anonymous one. `404 not_found` for an ID
+that is no object of the account's calendar homes (a calendar's, another
+account's, a malformed one; the server is not asked) or an object that is gone;
+`400 invalid_input` for an ID longer than 1024 bytes; `502 upstream_error`.
+A server that rejects the credentials is a forced logout (see above).
+
+### `GET /api/v1/diagnostics/objects/{objectId}/content` → `200` `{ "id", "content" }`
+
+```json
+{ "id": "...", "content": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n..." }
+```
+
+The data of the object as the server sends it, not parsed or changed, so also
+an object Lucid cannot read (bytes that are not valid UTF-8 become U+FFFD, as
+JSON has no other way). The one answer of Lucid that returns calendar contents
+for the report. It is for the user's own session only, on the request of the
+user for that object, and is never logged (NFR-36); the frontend adds it to
+the downloaded file only after the user viewed the skeleton and ticked a box
+for this object. Same authentication and errors as the skeleton route.
 
 ## Operations (outside `/api`)
 

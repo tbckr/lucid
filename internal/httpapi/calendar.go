@@ -20,13 +20,13 @@ const (
 	maxIDLen = 1024
 )
 
-// service resolves the caller's session to a CalendarService. On failure
-// it writes the response and returns false.
-func (s *Server) service(w http.ResponseWriter, r *http.Request) (domain.CalendarService, bool) {
+// account resolves the caller's session to its account. On failure it writes
+// the response and returns false.
+func (s *Server) account(w http.ResponseWriter, r *http.Request) (domain.Account, bool) {
 	c, err := r.Cookie(CookieName)
 	if err != nil {
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
-		return nil, false
+		return domain.Account{}, false
 	}
 	acct, err := s.sessions.Account(c.Value)
 	if err != nil {
@@ -39,22 +39,58 @@ func (s *Server) service(w http.ResponseWriter, r *http.Request) (domain.Calenda
 				slog.String(middleware.RequestIDAttr, middleware.RequestID(r.Context())), slog.String("error", err.Error()))
 		}
 		middleware.WriteError(w, http.StatusUnauthorized, codeUnauthenticated, "not logged in")
+		return domain.Account{}, false
+	}
+	return acct, true
+}
+
+// service resolves the caller's session to a CalendarService. On failure it
+// writes the response and returns false.
+func (s *Server) service(w http.ResponseWriter, r *http.Request) (domain.CalendarService, bool) {
+	acct, ok := s.account(w, r)
+	if !ok {
 		return nil, false
 	}
 	return s.provider.Service(acct), true
 }
 
 // fail writes err. If the CalDAV server no longer accepts the stored
-// credentials (e.g. password changed), the session is destroyed so the UI
-// shows the login form.
+// credentials (e.g. password changed), the session is ended so the UI shows
+// the login form: replaced by an anonymous one, which keeps the pseudonymous
+// part of the diagnostics, so the problem report still shows what led to it
+// (FR-36), see forceLogout.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, domain.ErrUnauthorized) {
-		if c, cerr := r.Cookie(CookieName); cerr == nil {
-			s.sessions.Delete(c.Value)
-		}
-		s.clearCookie(w)
+		s.forceLogout(w, r)
 	}
 	s.writeError(w, r, err)
+}
+
+// forceLogout ends the caller's session after the CalDAV server rejected its
+// credentials: Demote swaps it for an anonymous session with a new ID and CSRF
+// token, and the response sets the cookie of that one.
+//
+// Requests that fail together all end up here, and only one of them wins the
+// Demote. The others find the session gone (or no longer authenticated) and
+// must send no Set-Cookie at all: clearing the cookie would overwrite the new
+// one of the winner if the answer arrives later, and lose the session that holds
+// the trace (FR-36). Only if Demote fails for another reason, so that there is no
+// new session, is the old one destroyed and the cookie cleared.
+func (s *Server) forceLogout(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(CookieName)
+	if err != nil {
+		return // no session to end
+	}
+	sess, err := s.sessions.Demote(c.Value)
+	switch {
+	case err == nil:
+		s.setCookie(w, sess)
+	case errors.Is(err, session.ErrNotFound), errors.Is(err, session.ErrExpired), errors.Is(err, session.ErrNotAuthenticated):
+		// Already ended, by the same kind of request that was first: no cookie.
+	default:
+		s.sessions.Delete(c.Value)
+		s.clearCookie(w)
+	}
 }
 
 // pathID returns the path parameter name, validated.

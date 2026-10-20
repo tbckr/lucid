@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/session"
@@ -32,6 +33,14 @@ type SessionStore interface {
 	Login(oldID string, acct domain.Account) (session.Session, error)
 	// Delete destroys a session.
 	Delete(id string)
+	// Diagnostics returns the diagnostics buffer of a session, with the errors
+	// of Get (FR-36).
+	Diagnostics(id string) (*diag.Buffer, error)
+	// Demote replaces an authenticated session by an anonymous one that keeps
+	// the pseudonymous part of its diagnostics (FR-36). Only one of several
+	// concurrent calls for a session succeeds: the others fail with
+	// session.ErrNotFound.
+	Demote(id string) (session.Session, error)
 }
 
 // Options configures the Server.
@@ -128,6 +137,9 @@ func New(opts Options) (*Server, error) {
 	mux.HandleFunc("PUT /api/v1/todos/{todoId}/following/{recurrenceId}", s.handleUpdateTodoFollowing)
 	mux.HandleFunc("DELETE /api/v1/todos/{todoId}/following/{recurrenceId}", s.handleDeleteTodoFollowing)
 	mux.HandleFunc("POST /api/v1/todos/{todoId}/undo", s.handleUndoTodo)
+	mux.HandleFunc("GET /api/v1/diagnostics", s.handleDiagnostics)
+	mux.HandleFunc("GET /api/v1/diagnostics/objects/{objectId}", s.handleObjectSkeleton)
+	mux.HandleFunc("GET /api/v1/diagnostics/objects/{objectId}/content", s.handleObjectContent)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		middleware.WriteError(w, http.StatusNotFound, codeNotFound, "no such API endpoint")
 	})
@@ -154,7 +166,10 @@ func New(opts Options) (*Server, error) {
 	if opts.APILimiter != nil {
 		mws = append(mws, middleware.RateLimit(opts.APILimiter, s.sec, middleware.IsAPI))
 	}
-	mws = append(mws, middleware.CSRF(s.csrfToken, s.sec))
+	mws = append(mws,
+		middleware.CSRF(s.csrfToken, s.sec),
+		s.withDiagnostics, // innermost: the handlers and the CalDAV calls see the scope (FR-36)
+	)
 	s.handler = middleware.Chain(mux, mws...)
 	return s, nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
+	"github.com/tbckr/lucid/internal/session"
 	"github.com/tbckr/lucid/internal/undo"
 )
 
@@ -110,6 +111,7 @@ func TestErrorMapping(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, nil)
 			c := h.login(t)
+			old := c.cookie
 			h.svc.err = tt.err
 			w := h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars"})
 			body := w.Body.String()
@@ -124,9 +126,13 @@ func TestErrorMapping(t *testing.T) {
 				t.Error("SSRF block not logged")
 			}
 			if errors.Is(tt.err, domain.ErrUnauthorized) {
-				// Upstream rejected stored credentials: session destroyed.
-				if len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge >= 0 {
-					t.Error("cookie not cleared")
+				// Upstream rejected stored credentials: the session is replaced by an
+				// anonymous one (see TestFailDemotes).
+				if cookies := w.Result().Cookies(); len(cookies) != 1 || cookies[0].MaxAge < 0 || cookies[0].Value == "" || cookies[0].Value == old {
+					t.Errorf("cookies = %v; want one new session cookie", cookies)
+				}
+				if _, err := h.store.Get(old); !errors.Is(err, session.ErrNotFound) {
+					t.Errorf("old session: err = %v; want it destroyed", err)
 				}
 				h.svc.err = nil
 				expectError(t, h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars"}), http.StatusUnauthorized, codeUnauthenticated)

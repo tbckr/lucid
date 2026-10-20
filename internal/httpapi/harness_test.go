@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,6 +81,14 @@ type fakeService struct {
 	// todoFollowingDeleted makes DeleteTodoFollowing answer as for a
 	// resource it deleted: a zero Todo.
 	todoFollowingDeleted bool
+	// objectData is what ObjectData returns, the raw data of any object.
+	objectData []byte
+	// onList runs first in ListCalendars, with the context of the request: a
+	// stand-in for the CalDAV calls that record into its diagnostics scope.
+	onList func(context.Context)
+	// rendezvous, if set, makes ListCalendars wait until every caller it was
+	// made for has arrived, before it answers.
+	rendezvous *rendezvous
 
 	calls    []string
 	gotCal   string
@@ -95,6 +104,8 @@ type fakeService struct {
 	// gotRevalidate is whether the last list call's context asked to
 	// revalidate the cache (domain.Revalidation).
 	gotRevalidate bool
+	// gotCtx is the context of the last ListCalendars or ObjectData call.
+	gotCtx context.Context
 }
 
 func (f *fakeService) record(name string) error {
@@ -107,11 +118,31 @@ func (f *fakeService) record(name string) error {
 	return f.err
 }
 
-func (f *fakeService) ListCalendars(context.Context) ([]domain.Calendar, error) {
+func (f *fakeService) ListCalendars(ctx context.Context) ([]domain.Calendar, error) {
+	f.mu.Lock()
+	f.gotCtx = ctx
+	onList, rv := f.onList, f.rendezvous
+	f.mu.Unlock()
+	if onList != nil {
+		onList(ctx)
+	}
+	if rv != nil {
+		rv.wait()
+	}
 	if err := f.record("ListCalendars"); err != nil {
 		return nil, err
 	}
 	return f.calendars, nil
+}
+
+func (f *fakeService) ObjectData(ctx context.Context, id string) ([]byte, error) {
+	f.mu.Lock()
+	f.gotCtx, f.gotID = ctx, id
+	f.mu.Unlock()
+	if err := f.record("ObjectData"); err != nil {
+		return nil, err
+	}
+	return f.objectData, nil
 }
 
 func (f *fakeService) ListEvents(ctx context.Context, cal string, start, end time.Time) ([]domain.Event, error) {
@@ -327,6 +358,33 @@ func (f *fakeService) DeleteTodoFollowing(_ context.Context, id, etag string, ri
 		return domain.Todo{}, nil, nil
 	}
 	return domain.Todo{ID: id, Title: "Series", ETag: `"9"`, Recurring: true}, snap, nil
+}
+
+// rendezvous makes n callers wait for each other: wait returns once all n have
+// called it, so requests that go through it are in flight together. A caller
+// gives up after a timeout, and timedOut says so, so a test that needs the
+// overlap fails instead of hanging.
+type rendezvous struct {
+	left     atomic.Int32
+	all      chan struct{}
+	timedOut atomic.Bool
+}
+
+func newRendezvous(n int) *rendezvous {
+	r := &rendezvous{all: make(chan struct{})}
+	r.left.Store(int32(n))
+	return r
+}
+
+func (r *rendezvous) wait() {
+	if r.left.Add(-1) == 0 {
+		close(r.all)
+	}
+	select {
+	case <-r.all:
+	case <-time.After(10 * time.Second):
+		r.timedOut.Store(true)
+	}
 }
 
 type syncBuffer struct {
