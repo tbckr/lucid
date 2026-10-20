@@ -62,8 +62,9 @@ Other useful recipes (`just` lists all):
 frontend build; the binary then serves a placeholder page.
 
 Please run `just lint test cover` before opening a pull request; CI runs the
-same checks plus `govulncheck`, CodeQL, the E2E suite and mutation testing
-(`just mutation`). Dependency scans run separately, see
+same checks plus the Go tests on macOS and Windows, `govulncheck`, CodeQL,
+the E2E suite and mutation testing (`just mutation`). Dependency scans run
+separately, see
 [Updating dependencies](#updating-dependencies).
 
 ## Commit messages

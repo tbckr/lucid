@@ -1,4 +1,4 @@
-# Continuous integration (NFR-05/06/10/11/12/28/30/31).
+# Continuous integration (NFR-05/06/10/11/12/28/30/31/35).
 #
 # Dependency audits run in vuln.yml (main) and vuln-release.yml (latest
 # release), CI against the latest direct dependencies in latest-deps.yml.
@@ -99,6 +99,31 @@ jobs:
           path: coverage.out
           if-no-files-found: ignore
           retention-days: 14
+
+  # The Go tests on the other systems Lucid is released for (NFR-35), for the
+  # code that differs per OS: browser launch, console window, signals, socket
+  # errors (FR-35). macos-latest is arm64, so both architectures run. Without
+  # the race detector, which needs cgo and on Windows a C compiler, and
+  # without coverage: the go job covers both.
+  go-os:
+    name: Go (test, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test -shuffle=on ./...
 
   go-lint:
     name: Go (golangci-lint)
