@@ -63,6 +63,8 @@ in
     local.succeed("ss -ltnH | grep -q '127.0.0.1:3456'")
     local.fail("ss -ltnH | grep -qE '(0\\.0\\.0\\.0|\\*|\\[::\\]):3456'")
     local.succeed("curl -fsS http://127.0.0.1:3456/healthz")
+    # A session cookie is set, and without Secure (plain HTTP on loopback).
+    local.succeed("curl -fsSi http://127.0.0.1:3456/api/v1/session | grep -qi '^set-cookie:'")
     local.fail("curl -fsSi http://127.0.0.1:3456/api/v1/session | grep -qi '^set-cookie:.*; secure'")
     local.fail("curl -fsS -H 'Host: evil.example' http://127.0.0.1:3456/healthz")
     local.succeed("grep -q 'http://127.0.0.1:3456/' /run/current-system/sw/share/applications/lucid.desktop")
