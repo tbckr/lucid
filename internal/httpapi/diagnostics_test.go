@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
@@ -679,5 +682,79 @@ func TestForceLogoutWithoutCookie(t *testing.T) {
 
 	if got := w.Result().Header.Values("Set-Cookie"); len(got) != 0 {
 		t.Errorf("Set-Cookie = %q; there is no session to end, so none to set or clear", got)
+	}
+}
+
+// TestRoutePatternSurvivesScope checks that a request with a diagnostics scope
+// is still logged and counted under its route pattern. withDiagnostics passes
+// on a copy of the request, and ServeMux sets the Pattern on that copy, so the
+// middleware has to copy it back for Observe, which reads it from the request it
+// passed on (NFR-08, NFR-23).
+func TestRoutePatternSurvivesScope(t *testing.T) {
+	t.Parallel()
+	reg := prometheus.NewRegistry()
+	metrics, err := middleware.NewMetrics(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, func(o *Options) { o.Metrics = metrics })
+	c := h.login(t)
+	h.svc.objectData = []byte(canaryICS)
+
+	tests := []struct {
+		path, query, route string
+		panics             bool // the service panics, which Recover answers
+	}{
+		{"/api/v1/calendars", "", "GET /api/v1/calendars", false},
+		{"/api/v1/diagnostics", "", "GET /api/v1/diagnostics", false},
+		{"/api/v1/diagnostics/objects/obj-1", "", "GET /api/v1/diagnostics/objects/{objectId}", false},
+		{"/api/v1/nope", "", "/api/", false},
+		{"/api/v1/calendars/c1/events", "?start=2025-01-01T00:00:00Z&end=2025-01-02T00:00:00Z", "GET /api/v1/calendars/{calendarId}/events", true},
+	}
+	for _, tt := range tests {
+		h.svc.panicMsg = ""
+		if tt.panics {
+			h.svc.panicMsg = "kaboom"
+		}
+		h.do(t, c, req{method: http.MethodGet, path: tt.path + tt.query})
+	}
+
+	logged := map[string]string{} // path -> route of the request line
+	for line := range strings.SplitSeq(strings.TrimSpace(h.logs.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if m["msg"] == "http request" {
+			logged[m["path"].(string)], _ = m["route"].(string)
+		}
+	}
+	counted := map[string]float64{} // route -> requests
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() != "lucid_http_requests_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "route" {
+					counted[l.GetValue()] += m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	for _, tt := range tests {
+		if got := logged[tt.path]; got != tt.route {
+			t.Errorf("%s logged under route %q; want %q", tt.path, got, tt.route)
+		}
+		if counted[tt.route] < 1 {
+			t.Errorf("no request counted under route %q; counted %v", tt.route, counted)
+		}
+	}
+	if n := counted["unmatched"]; n != 0 {
+		t.Errorf("%v requests counted as unmatched; want none", n)
 	}
 }

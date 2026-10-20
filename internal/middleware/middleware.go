@@ -74,9 +74,13 @@ const (
 const RequestIDHeader = "X-Request-Id"
 
 // RequestContext stores a request ID and the client IP in the request
-// context. It must be the outermost middleware: it is the only one that
-// replaces the *http.Request, and Observe relies on seeing the request that
-// ServeMux annotates with its Pattern.
+// context. It must be the outermost middleware: Observe, right inside it,
+// relies on seeing the request that ServeMux annotates with its Pattern. A
+// middleware further in that replaces the *http.Request (r.WithContext) hands
+// ServeMux a copy, and so must copy r.Pattern back to the request it was called
+// with once next returns, or Observe logs and counts every request it touches
+// as unmatched. The only one that does is httpapi's withDiagnostics, which
+// attaches the diagnostics scope (FR-36).
 //
 // Proxy headers (X-Forwarded-For, X-Request-Id) are only honored with
 // trustProxy, otherwise any client could spoof its IP and dodge rate limits.

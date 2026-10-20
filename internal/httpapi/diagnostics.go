@@ -20,25 +20,32 @@ import (
 // under its ID (FR-36). A request without a session, or with one that is gone,
 // has no scope and records nothing.
 //
+// The scope is on a copy of the request, and ServeMux sets the route Pattern on
+// that copy, so it is copied back to the request Observe holds: it labels its
+// log line and its metrics with it (NFR-08, NFR-23, see RequestContext).
+//
 // It is the innermost middleware, so the CSRF check, which resolves the session
 // of an unsafe request first, has already seen an expired one. For the others
 // the lookup here is the first: a session that has expired is removed by it, and
 // no later lookup would report the expiry, so it logs the security event itself.
 func (s *Server) withDiagnostics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scoped := r
 		if middleware.IsAPI(r) {
 			if c, err := r.Cookie(CookieName); err == nil {
 				buf, err := s.sessions.Diagnostics(c.Value)
 				switch {
 				case err == nil:
 					scope := diag.Scope{Buffer: buf, RequestID: middleware.RequestID(r.Context())}
-					r = r.WithContext(diag.WithScope(r.Context(), scope))
+					scoped = r.WithContext(diag.WithScope(r.Context(), scope))
 				case errors.Is(err, session.ErrExpired):
 					s.sec.Log(r, middleware.EventSessionExpired)
 				}
 			}
 		}
-		next.ServeHTTP(w, r)
+		// Deferred, so that a panic, which Recover answers further out, keeps it too.
+		defer func() { r.Pattern = scoped.Pattern }() // set by ServeMux on the copy, read by Observe on r
+		next.ServeHTTP(w, scoped)
 	})
 }
 
