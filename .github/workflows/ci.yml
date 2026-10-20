@@ -352,23 +352,134 @@ jobs:
           path: bin/lucid
           retention-days: 7
 
-  # Catches a broken .goreleaser.yaml on the pull request, not only after a
-  # release tag is pushed. `goreleaser check` only reads the config, so the
-  # job needs neither Go nor the frontend.
-  goreleaser-check:
-    name: GoReleaser (config check)
+  # Catches a broken release on the pull request, not only after a release tag
+  # is pushed. `goreleaser check` reads the config strictly (unknown keys,
+  # deprecations); the snapshot builds every release artifact except images,
+  # signatures and SBOMs, and so also catches what check lets through, like a
+  # missing packaging file. Then the amd64 Linux packages (NFR-35) are
+  # installed: the deb on the runner, which runs systemd, the rpm and the Arch
+  # package in containers of those distributions.
+  goreleaser:
+    name: GoReleaser (snapshot, Linux packages)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
+    needs: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download dist
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Check the config
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: ${{ env.GORELEASER_VERSION }}
           args: check
+
+      # The frontend job built web/dist (the before hooks would rebuild it).
+      - name: Snapshot
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: ${{ env.GORELEASER_VERSION }}
+          args: release --snapshot --clean --skip=before,docker,sign,sbom
+
+      - name: Maintainer scripts
+        run: packaging/test-scripts.sh
+
+      # The snapshot version is 0.0.0-SNAPSHOT-<commit>, a pre-release: each
+      # package must sort before the final 0.0.0.
+      - name: deb (Ubuntu, systemd)
+        run: |
+          debs=(dist/lucid_*_linux_amd64.deb)
+          [[ ${#debs[@]} -eq 1 && -f ${debs[0]} ]]
+          deb="./${debs[0]}"
+          dpkg --compare-versions "$(dpkg-deb -f "$deb" Version)" lt 0.0.0
+
+          sudo apt-get install -y --no-install-recommends "$deb"
+          # Installed, but neither enabled nor started.
+          [[ "$(systemctl is-enabled lucid || true)" == disabled ]]
+          if systemctl is-active --quiet lucid; then exit 1; fi
+
+          if ! command -v desktop-file-validate >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends desktop-file-utils
+          fi
+          desktop-file-validate /usr/share/applications/lucid.desktop
+          # verify also reports on other units of the runner; only ours count.
+          verify="$(sudo systemd-analyze verify lucid.service 2>&1)"
+          if grep -i lucid <<<"$verify"; then exit 1; fi
+
+          sudo systemctl enable --now lucid
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:8080/healthz
+          pid="$(systemctl show -p MainPID --value lucid)"
+          [[ "$(ps -o uid= -p "$pid" | tr -d ' ')" -ne 0 ]]
+
+          # An upgrade keeps the edited settings and restarts the service.
+          echo '# kept' | sudo tee -a /etc/lucid/lucid.env >/dev/null
+          sudo apt-get install -y --no-install-recommends --reinstall "$deb"
+          systemctl is-active --quiet lucid
+          [[ "$(systemctl show -p MainPID --value lucid)" != "$pid" ]]
+          sudo grep -qx '# kept' /etc/lucid/lucid.env
+
+          # Removal stops and disables the service and keeps the settings.
+          sudo apt-get remove -y lucid
+          if systemctl is-active --quiet lucid; then exit 1; fi
+          [[ ! -e /etc/systemd/system/multi-user.target.wants/lucid.service ]]
+          [[ ! -e /usr/bin/lucid ]]
+          sudo test -f /etc/lucid/lucid.env
+
+      # RPM 6 (Fedora 45 and later) refuses unsigned packages by default.
+      # Enforcing it here tests the README's install command on any Fedora.
+      - name: rpm (Fedora, signature checking enforced)
+        run: |
+          docker run -i --rm -v "$PWD/dist:/dist:ro" fedora:latest bash -euxo pipefail -s <<'EOF'
+          rpms=(/dist/lucid_*_linux_amd64.rpm)
+          [[ ${#rpms[@]} -eq 1 && -f ${rpms[0]} ]]
+          echo '%_pkgverify_level all' >/etc/rpm/macros.verify
+          opts=(-y --disablerepo='*' --setopt=install_weak_deps=False)
+          if dnf install "${opts[@]}" "${rpms[0]}"; then
+            echo "an unsigned rpm installed although signatures are enforced" >&2
+            exit 1
+          fi
+          dnf install "${opts[@]}" --nogpgcheck "${rpms[0]}"
+          lucid --version
+          rpm -q --configfiles lucid | grep -qx /etc/lucid/lucid.env
+          test -f /usr/lib/systemd/system/lucid.service
+          test -f /usr/share/licenses/lucid/LICENSE
+          version="$(rpm -q --qf '%{VERSION}' lucid)"
+          [[ "$(rpm --eval "%{lua: print(rpm.vercmp('$version', '0.0.0'))}")" == -1 ]]
+          EOF
+
+      - name: Arch package
+        run: |
+          docker run -i --rm -v "$PWD/dist:/dist:ro" archlinux:latest bash -euxo pipefail -s <<'EOF'
+          pkgs=(/dist/lucid_*_linux_amd64.pkg.tar.zst)
+          [[ ${#pkgs[@]} -eq 1 && -f ${pkgs[0]} ]]
+          pacman -U --noconfirm "${pkgs[0]}"
+          lucid --version
+          version="$(pacman -Q lucid | cut -d' ' -f2)"
+          # nfpm keeps the pre-release part only with an epoch (.goreleaser.yaml).
+          [[ $version == *SNAPSHOT* ]]
+          [[ "$(vercmp "$version" 0:0.0.0-1)" == -1 ]]
+          pacman -Qii lucid | grep -q '/etc/lucid/lucid.env'
+          test -f /usr/lib/systemd/system/lucid.service
+          test -f /usr/share/licenses/lucid/LICENSE
+          EOF
 
   # Vulnerabilities and licenses (OSI-approved only) of the dependencies a
   # pull request or a push to main adds or updates. On a push the check runs
