@@ -39,7 +39,10 @@ in
           Service = {
             ExecStart = lib.getExe cfg.package;
             Restart = "on-failure";
-            Environment = lib.mapAttrsToList (n: v: "${n}=${v}") (lucidLib.systemdEnvironment cfg);
+            # Quoted like NixOS does, so systemd does not split at spaces.
+            Environment = lib.mapAttrsToList (n: v: builtins.toJSON "${n}=${v}") (
+              lucidLib.systemdEnvironment cfg
+            );
             LoadCredential = lib.mkIf (credentials != [ ]) credentials;
 
             # The sandboxing of Home Manager's own syncthing user service,

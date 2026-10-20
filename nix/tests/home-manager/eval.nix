@@ -15,6 +15,10 @@ let
   hmEval = system: cfg: (hmConfiguration system cfg).config;
   xdgOpen = lib.getExe' nixpkgs.legacyPackages.${linux}.xdg-utils "xdg-open";
 
+  # Environment= entries quoted like NixOS does, so systemd does not split
+  # a value at spaces.
+  quoted = map builtins.toJSON;
+
   # Only Lucid's own warnings, not Home Manager's.
   ours = lib.filter (lib.hasPrefix "services.lucid.");
 in
@@ -42,7 +46,7 @@ import "${lucid}/nix/tests/run-tests.nix" {
           exec = c.xdg.desktopEntries.lucid.exec;
         };
       expected = {
-        Environment = [
+        Environment = quoted [
           "LUCID_LOCAL_PORT=3456"
           "LUCID_OPEN_BROWSER=false"
         ];
@@ -68,7 +72,7 @@ import "${lucid}/nix/tests/run-tests.nix" {
           desktop = c.xdg.desktopEntries;
         };
       expected = {
-        env = [
+        env = quoted [
           "LUCID_ADDR=127.0.0.1:8443"
           "LUCID_TLS_CERT=%d/tls-cert"
           "LUCID_TLS_KEY=%d/tls-key"
@@ -107,9 +111,24 @@ import "${lucid}/nix/tests/run-tests.nix" {
           darwin = (hmEval darwin cfg).launchd.agents.lucid.config.EnvironmentVariables.LUCID_ADDR;
         };
       expected = {
-        linux = [ "LUCID_ADDR=[fe80::1%%eth0]:8080" ];
+        linux = quoted [ "LUCID_ADDR=[fe80::1%%eth0]:8080" ];
         darwin = "[fe80::1%eth0]:8080";
       };
+    };
+
+    testSpaceStaysInOneVariable = {
+      expr =
+        (hmEval linux {
+          privateNetworks = [
+            "192.168.1.10/32"
+            " 10.0.0.0/8"
+          ];
+        }).systemd.user.services.lucid.Service.Environment;
+      expected = quoted [
+        "LUCID_LOCAL_PORT=3456"
+        "LUCID_OPEN_BROWSER=false"
+        "LUCID_PRIVATE_NETWORKS=192.168.1.10/32, 10.0.0.0/8"
+      ];
     };
 
     testDarwinLocal = {
