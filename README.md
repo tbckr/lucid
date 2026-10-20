@@ -259,14 +259,15 @@ Download the package from the
 install it:
 
 ```sh
-sudo apt install ./lucid_X.Y.Z_linux_amd64.deb                 # Debian, Ubuntu
-sudo dnf install --nogpgcheck ./lucid_X.Y.Z_linux_amd64.rpm    # Fedora, RHEL
-sudo pacman -U ./lucid_X.Y.Z_linux_amd64.pkg.tar.zst           # Arch
+sudo apt install ./lucid_X.Y.Z_linux_amd64.deb         # Debian, Ubuntu
+sudo dnf install ./lucid_X.Y.Z_linux_amd64.rpm         # Fedora, RHEL
+sudo pacman -U ./lucid_X.Y.Z_linux_amd64.pkg.tar.zst   # Arch
 ```
 
 The packages carry no signature of their own; the signed `checksums.txt`
-covers them. Fedora 45 and later refuse unsigned packages without
-`--nogpgcheck`, so verify the package before you install it.
+covers them, so verify the package before you install it. If dnf refuses the
+rpm as unsigned (it checks local packages where `localpkg_gpgcheck` is set),
+add `--nogpgcheck`.
 
 Then configure and start the service:
 
@@ -287,7 +288,8 @@ cannot read them:
 [Service]
 LoadCredential=tls-cert:/etc/ssl/lucid/cert.pem
 LoadCredential=tls-key:/etc/ssl/lucid/key.pem
-Environment=LUCID_TLS_CERT=%d/tls-cert LUCID_TLS_KEY=%d/tls-key
+Environment=LUCID_TLS_CERT=/run/credentials/lucid.service/tls-cert
+Environment=LUCID_TLS_KEY=/run/credentials/lucid.service/tls-key
 ```
 
 Then set `LUCID_ADDR` in `/etc/lucid/lucid.env` to the public address (for
