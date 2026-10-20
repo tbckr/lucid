@@ -69,8 +69,9 @@ and Lucid keeps the comfort you're used to from Google Calendar.
   formats that follow your locale or your own choice in the settings.
 - **Keyboard friendly:** shortcuts and full keyboard navigation (WCAG 2.1 AA
   target).
-- **Easy to run:** a single static binary or distroless container, a NixOS
-  module, JSON logs, Prometheus metrics and health endpoints.
+- **Easy to run:** download it and double-click on your own computer, or run
+  a single static binary, a distroless container or a NixOS module on a
+  server, with JSON logs, Prometheus metrics and health endpoints.
 
 ## Screenshots
 
@@ -105,7 +106,7 @@ and Lucid keeps the comfort you're used to from Google Calendar.
 
 ```mermaid
 flowchart LR
-    browser["Your browser"] -- "HTTPS + JSON" --> lucid["Lucid"]
+    browser["Your browser"] -- "HTTP(S) + JSON" --> lucid["Lucid"]
     lucid -- "CalDAV" --> server["Your CalDAV server"]
 ```
 
@@ -130,13 +131,52 @@ of how CalDAV clients handle repeating tasks.
 
 ## Quick start
 
+### On your own computer
+
+You need nothing but a CalDAV account: no server, no TLS, no configuration.
+
+1. Download the archive for your system from the
+   [releases page](https://github.com/tbckr/lucid/releases) (`.zip` for
+   Windows, `.tar.gz` for Linux and macOS) and extract it.
+2. Double-click `lucid` (`lucid.exe` on Windows).
+3. A window opens and your browser shows Lucid at <http://127.0.0.1:3456/>.
+   Log in with your CalDAV server's address (a bare domain is enough), your
+   username and your password.
+
+Close the window to stop Lucid. Closing the browser tab does not stop it.
+
+- **macOS:** Gatekeeper blocks apps that are not signed by an Apple
+  developer, and Lucid is not. Open System Settings, go to Privacy & Security
+  and click "Open Anyway" next to the message about `lucid`.
+- **Windows:** SmartScreen warns about the same. Click "More info", then "Run
+  anyway".
+- **Linux:** run `./lucid` in a terminal. Ctrl+C stops it.
+
+This mode is meant for your own computer. Lucid listens on `127.0.0.1` only, so
+no other device can reach it, and it serves plain HTTP because the traffic never
+leaves your machine. Do not use it on a computer shared with people you do not
+trust. CalDAV servers on your own computer or network (a Radicale on your NAS,
+for example) work without further setup. To use Lucid from other devices, run
+it on a server (below).
+
+You log in again after each start, because sessions live in memory only. If
+port 3456 is taken, Lucid says so and exits (on Windows the window stays open
+until you press Enter). To choose another port, set `LUCID_LOCAL_PORT` in a
+terminal, for example `LUCID_LOCAL_PORT=4000 ./lucid` on Linux and macOS, or
+`$env:LUCID_LOCAL_PORT = "4000"; .\lucid.exe` in Windows PowerShell.
+
+### On a server
+
 > [!IMPORTANT]
-> **TLS is mandatory in production.** Lucid sets `Secure` session cookies and
+> **TLS is mandatory on a server.** Lucid sets `Secure` session cookies and
 > handles your CalDAV credentials. Run it behind a TLS-terminating reverse
 > proxy (Caddy, Traefik, nginx, ...) or let it serve HTTPS itself via
 > `LUCID_TLS_CERT` / `LUCID_TLS_KEY`.
 
-### Docker Compose (recommended)
+Setting `LUCID_ADDR` makes Lucid a server (the container image, `compose.yaml`
+and the NixOS module set it for you); without it, Lucid runs in local mode.
+
+#### Docker Compose (recommended)
 
 The repository contains a hardened example [`compose.yaml`](compose.yaml)
 (read-only root filesystem, all capabilities dropped, non-root user,
@@ -144,8 +184,6 @@ The repository contains a hardened example [`compose.yaml`](compose.yaml)
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/tbckr/lucid/main/compose.yaml
-echo "LUCID_SESSION_KEY=$(openssl rand -base64 32)" > lucid.env
-chmod 600 lucid.env
 docker compose up -d
 ```
 
@@ -167,7 +205,6 @@ enough), your username and your password.
 docker run -d --name lucid \
   -p 127.0.0.1:8080:8080 \
   --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-  -e LUCID_SESSION_KEY="$(openssl rand -base64 32)" \
   ghcr.io/tbckr/lucid:latest
 ```
 
@@ -185,7 +222,7 @@ Download the archive for your platform from the
 [Verifying releases](SECURITY.md#verifying-releases)) and run:
 
 ```sh
-LUCID_SESSION_KEY="$(openssl rand -base64 32)" ./lucid
+LUCID_ADDR=:8080 ./lucid
 ./lucid --version
 ```
 
@@ -217,8 +254,6 @@ listening on `127.0.0.1:8080` for your reverse proxy:
             services.lucid = {
               enable = true;
               settings.LUCID_TRUST_PROXY_HEADERS = true;
-              # Contains LUCID_SESSION_KEY=..., readable by root only.
-              environmentFile = "/run/secrets/lucid.env";
             };
           }
         ];
@@ -227,39 +262,45 @@ listening on `127.0.0.1:8080` for your reverse proxy:
 }
 ```
 
-`settings` takes any variable from [Configuration](#configuration). Its values
-end up in the world-readable Nix store, so secrets belong in `environmentFile`.
-To try Lucid without installing it: `nix run github:tbckr/lucid`.
+`settings` takes any server-mode variable from [Configuration](#configuration).
+To try Lucid without installing it: `nix run github:tbckr/lucid` (this starts
+local mode).
 
 </details>
 
 ## Configuration
 
-Lucid is configured exclusively through environment variables (secrets never
-live in files or flags).
+Lucid is configured exclusively through environment variables; there are no
+secrets in the configuration (the session key is random per start, the TLS key
+is a file).
+
+Lucid runs in **local mode** when `LUCID_ADDR` is unset and in **server mode**
+when it is set. The Mode column says which mode a variable belongs to. A
+variable set for the other mode (even to its default value), or one of the
+variables of earlier versions that no longer exist, stops Lucid at startup with
+a message that names the variable and what to do instead.
 
 <details>
 <summary><strong>All environment variables</strong></summary>
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LUCID_ADDR` | `:8080` | Listen address |
-| `LUCID_METRICS_ADDR` | (empty) | If set, `/metrics` is served only on this address instead of `LUCID_ADDR` |
-| `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | (empty) | Serve HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
-| `LUCID_SESSION_KEY` | random | 32-byte key (base64 or hex) encrypting credentials in sessions. Random per start if unset (sessions are in-memory anyway) |
-| `LUCID_SESSION_TTL` | `12h` | Absolute session lifetime |
-| `LUCID_SESSION_IDLE_TIMEOUT` | `2h` | Idle timeout |
-| `LUCID_COOKIE_INSECURE` | `false` | Drop the `Secure` cookie flag (local HTTP development only) |
-| `LUCID_ALLOW_PRIVATE_NETWORKS` | `false` | Allow CalDAV servers on private/loopback addresses (self-hosting on a LAN) |
-| `LUCID_ALLOWED_CIDRS` | (empty) | Comma-separated CIDRs exempted from SSRF blocking, e.g. `192.168.1.10/32` |
-| `LUCID_RATE_LIMIT_RPS` | `20` | Token bucket refill per client IP (API) |
-| `LUCID_RATE_LIMIT_BURST` | `60` | Token bucket size |
-| `LUCID_LOGIN_RATE_LIMIT_PER_MIN` | `10` | Login attempts per client IP per minute |
-| `LUCID_TRUST_PROXY_HEADERS` | `false` | Use `X-Forwarded-For` for client IP (only behind a trusted proxy) |
-| `LUCID_CACHE_SIZE` | `256` | Cached calendars (LRU) |
-| `LUCID_CACHE_FRESHNESS` | `10s` | Serve cache without CTag check for this long |
-| `LUCID_UPSTREAM_TIMEOUT` | `20s` | Timeout for requests to CalDAV servers |
-| `LUCID_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` (JSON logs to stdout) |
+| Variable | Mode | Default | Description |
+|----------|------|---------|-------------|
+| `LUCID_ADDR` | Server | (unset) | Listen address, e.g. `:8080`. Setting it selects server mode; unset runs local mode |
+| `LUCID_LOCAL_PORT` | Local | `3456` | Port on `127.0.0.1`. The only port Lucid tries: if it is taken, Lucid exits |
+| `LUCID_OPEN_BROWSER` | Local | `true` | Open the browser at Lucid's address once it is listening. `false` for development, tests and headless machines |
+| `LUCID_METRICS_ADDR` | Server | (unset) | Address of a separate listener that serves `/metrics`. Unset: no `/metrics` at all |
+| `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | Server | (unset) | Paths of the certificate and key files, both or neither. Serves HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
+| `LUCID_TRUST_PROXY_HEADERS` | Server | `false` | Use `X-Forwarded-For` for the client IP (only behind a trusted proxy) |
+| `LUCID_PRIVATE_NETWORKS` | Both | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those |
+| `LUCID_SESSION_TTL` | Both | `12h` | Absolute session lifetime |
+| `LUCID_SESSION_IDLE_TIMEOUT` | Both | `2h` | Idle timeout, at most `LUCID_SESSION_TTL` |
+| `LUCID_RATE_LIMIT_RPS` | Both | `20` | Token bucket refill per client IP (API) |
+| `LUCID_RATE_LIMIT_BURST` | Both | `60` | Token bucket size |
+| `LUCID_LOGIN_RATE_LIMIT_PER_MIN` | Both | `10` | Login attempts per client IP per minute |
+| `LUCID_CACHE_SIZE` | Both | `256` | Cached entries (LRU), one per user, calendar and component (events or tasks) |
+| `LUCID_CACHE_FRESHNESS` | Both | `10s` | Serve cache without CTag check for this long |
+| `LUCID_UPSTREAM_TIMEOUT` | Both | `20s` | Timeout for requests to CalDAV servers |
+| `LUCID_LOG_LEVEL` | Both | `info` | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode, JSON in server mode |
 
 Durations use Go syntax (`90s`, `15m`, `12h`).
 
@@ -274,23 +315,33 @@ The REST API is documented in [docs/API.md](docs/API.md).
 - Set `LUCID_TRUST_PROXY_HEADERS=true` **only** if Lucid is reachable
   exclusively through the proxy; otherwise clients can spoof
   `X-Forwarded-For` and evade rate limiting.
-- If your CalDAV server runs on your LAN, allow it narrowly with
-  `LUCID_ALLOWED_CIDRS` rather than `LUCID_ALLOW_PRIVATE_NETWORKS`.
-- Expose `/metrics` on a separate, internal address via `LUCID_METRICS_ADDR`.
+- If your CalDAV server runs on your LAN, allow it narrowly with a CIDR in
+  `LUCID_PRIVATE_NETWORKS` (e.g. `192.168.1.10/32`) rather than `all`.
+- `/metrics` is served only on the separate address `LUCID_METRICS_ADDR`, never
+  on the main listener. Keep that address internal; without it there are no
+  metrics.
 
 ## Security
 
 - **Proxy architecture.** The browser only talks to Lucid; Lucid talks to the
   CalDAV server. This avoids CORS problems and keeps CalDAV credentials out of
   the browser: after login the frontend only holds an opaque session cookie
-  (`HttpOnly`, `Secure`, `SameSite=Strict`).
+  (`HttpOnly`, `SameSite=Strict`, and `Secure` in server mode; local mode
+  serves plain HTTP on the loopback interface only and sets no `Secure` flag).
 - **Encrypted in-memory sessions.** Credentials are stored server-side,
-  encrypted with AES-256-GCM using `LUCID_SESSION_KEY`, and only in RAM.
-  Nothing is written to disk.
+  encrypted with AES-256-GCM under a key that is random per start, and only in
+  RAM. Nothing is written to disk, and no key appears in the environment or the
+  configuration.
+- **Local mode.** It listens on `127.0.0.1` only and accepts requests only
+  when the `Host` header is `localhost` or `127.0.0.1` (any port), which
+  protects against DNS rebinding. It is meant for your own computer: other
+  users of that computer can reach the same address.
 - **SSRF protection.** Because users choose the server URL, every outgoing
   request (including auto-discovery and redirects) goes through a safe
   transport that refuses loopback, private, link-local and other internal
-  address ranges unless explicitly allowed.
+  address ranges unless `LUCID_PRIVATE_NETWORKS` allows them. Local mode allows
+  them all by default, because you can reach your own network anyway; server
+  mode allows none.
 - **Web hardening.** CSRF synchronizer tokens on all state-changing requests,
   token-bucket rate limiting (stricter for login), strict security headers
   (CSP, HSTS, `X-Frame-Options`, `X-Content-Type-Options`), XML entity
@@ -302,8 +353,6 @@ The REST API is documented in [docs/API.md](docs/API.md).
 > [!NOTE]
 > **Known limitation:** sessions live only in memory, so restarting Lucid logs
 > everybody out.
-> Setting a fixed `LUCID_SESSION_KEY` does not change that; it is recommended
-> anyway so the key is managed like any other secret.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 

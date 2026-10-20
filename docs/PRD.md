@@ -18,6 +18,7 @@ The backend is written in **Go** and serves as middleware to resolve CORS issues
 * **Privacy Enthusiasts:** Users who self-host or use independent providers but demand modern UX.
 * **Power Users:** People who need calendars and tasks in a single unified view.
 * **Developers/Admins:** Simple deployment (Single Binary via Go) is required.
+* **Individuals without admin skills:** People with a CalDAV account (a provider, a Nextcloud, a Radicale on a NAS) who want a good web client without running a server: download, double-click, done (FR-35).
 
 ## **3\. Technical Architecture**
 
@@ -66,6 +67,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 * **FR-01:** Login via CalDAV Server URL, Username, and Password.
 * **FR-02:** Support for Auto-Discovery (via DNS SRV or .well-known).
 * **FR-03:** Secure Session Handling. Credentials held server-side, encrypted within the session (Stateful Session Token).
+* **FR-35:** **Local Mode:** Without `LUCID_ADDR`, Lucid runs in local mode and needs no configuration, so that a double-click on the downloaded binary is enough. It listens on `127.0.0.1:<LUCID_LOCAL_PORT>` only (default 3456), serves plain HTTP with a session cookie without `Secure`, accepts only `localhost` and `127.0.0.1` as `Host` (DNS rebinding protection), allows internal networks by default (`LUCID_PRIVATE_NETWORKS=all`), logs text instead of JSON, and opens the default browser at `http://127.0.0.1:<port>/` unless `LUCID_OPEN_BROWSER=false`. It prints where it runs and that closing its window stops it (closing the browser tab does not). The port is fixed: if it is taken, Lucid exits with a message; it neither picks another port nor hands off to a running instance. Setting `LUCID_ADDR` selects server mode instead. Every `LUCID_*` variable belongs to local mode, server mode or both, and a variable set for the other mode, or one that earlier versions had and no longer exists, is a startup error.
 
 ### **4.2 Calendar Management (VEVENT)**
 
@@ -136,20 +138,20 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 
 ### **5.3 Observability & Operations**
 
-* **NFR-08:** **Prometheus Metrics:** Expose metrics at /metrics.
+* **NFR-08:** **Prometheus Metrics:** Expose metrics at /metrics, only on a separate listener (`LUCID_METRICS_ADDR`), never on the main listener. Without that address there are no metrics.
 * **NFR-09:** **Health Checks:** Liveness/Readiness Probes.
-* **NFR-23:** **Security Logging (OWASP A09:2021):** Structured Logging (JSON).
+* **NFR-23:** **Security Logging (OWASP A09:2021):** Structured Logging (JSON) in server mode; human-readable text in local mode (FR-35), where a person reads the window.
 
 ### **5.4 Backend & Network Security (OWASP Top 10\)**
 
-* **NFR-03:** **Session Mgmt:** Session Cookies: HttpOnly, Secure, SameSite=Strict.
-* **NFR-04:** **Cryptographic Failures:** TLS Termination mandatory.
+* **NFR-03:** **Session Mgmt:** Session Cookies: HttpOnly, Secure, SameSite=Strict. `Secure` is dropped only in local mode (FR-35), which serves plain HTTP on the loopback interface.
+* **NFR-04:** **Cryptographic Failures:** TLS Termination mandatory in server mode. Local mode (FR-35) serves plain HTTP on the loopback interface only, where traffic never leaves the machine.
 * **NFR-17:** **CSRF Protection:** Synchronizer Token Pattern for all State-Changing Requests.
 * **NFR-18:** **Rate Limiting:** Token-Bucket Middleware.
 * **NFR-19:** **Security Headers:** CSP, HSTS, X-Frame-Options, X-Content-Type-Options.
-* **NFR-20:** **Secrets Management:** Keys via ENV-Vars only.
+* **NFR-20:** **Secrets Management:** No secrets in the configuration. The session key is random per start and only in RAM; the TLS key is read from a file.
 * **NFR-21:** **Container Security:** Non-Root User, Read-Only FS.
-* **NFR-22:** **SSRF Protection:** Validation of target URLs against internal networks. SafeTransport must apply to Auto-Discovery (incl. Redirects).
+* **NFR-22:** **SSRF Protection:** Validation of target URLs against internal networks. SafeTransport must apply to Auto-Discovery (incl. Redirects). Server mode allows no internal network by default (`LUCID_PRIVATE_NETWORKS=none`); local mode (FR-35) allows internal networks by default (`LUCID_PRIVATE_NETWORKS=all`), because its one user can reach their own network anyway.
 * **NFR-24:** **Injection Prevention:** XML-Entity Protection, Input Validation.
 
 ### **5.5 Frontend Security (Client-Side & Supply Chain)**

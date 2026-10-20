@@ -53,7 +53,9 @@ Vitest sets `TZ=Europe/Berlin`, a zone with DST, so date tests are deterministic
 
 `cmd/lucid/main.go` wires everything: `config.Load(getenv)` → `safehttp` client → `caldav.Provider` → `session.Store` → `httpapi.Server`. The middleware chain is built in `internal/httpapi/server.go`:
 
-RequestContext (must stay outermost) → Observe (logs/metrics) → SecurityHeaders → Recover → BodyLimit → RateLimit (API only) → CSRF → `http.ServeMux` (Go 1.22 method+path patterns).
+RequestContext (must stay outermost) → Observe (logs/metrics) → SecurityHeaders → LoopbackHost (local mode only) → Recover → BodyLimit → RateLimit (API only) → CSRF → `http.ServeMux` (Go 1.22 method+path patterns).
+
+Without `LUCID_ADDR` Lucid runs in local mode (FR-35): loopback only, plain HTTP, no `Secure` cookie, text logs, browser opened on start. `just dev` and E2E use it; `LUCID_ADDR` selects server mode.
 
 - **`internal/domain`** holds the shared types, the `Provider` and `CalendarService` interfaces, and the sentinel errors (`ErrNotFound`, `ErrConflict`, `ErrForbiddenTarget`, ...). It depends on neither side, so `httpapi` and `caldav` are tested independently of each other. `httpapi` tests use hand-written fakes (`harness_test.go`), and `caldav` tests use `caldavtest`.
 - **`internal/httpapi/errors.go`** (`writeError`) is the single place that maps domain errors to HTTP status codes and API error codes. Implementations should return wrapped sentinels (`fmt.Errorf("%w: ...", domain.ErrX)`) and never write status codes themselves.
@@ -81,7 +83,7 @@ RequestContext (must stay outermost) → Observe (logs/metrics) → SecurityHead
 ## Changes that span several files
 
 - **REST API change:** update `internal/domain/domain.go` (the JSON types), `internal/httpapi`, `docs/API.md` (the contract), and `web/src/lib/api/schemas.ts` + `endpoints.ts`. For a new error code, also update the `ApiErrorCode` union / `KNOWN_CODES` in `client.ts`.
-- **New `LUCID_*` setting:** update `internal/config/config.go` and the configuration tables in both `README.md` and `docs/API.md`.
+- **New `LUCID_*` setting:** update `internal/config/config.go`, assigning it to a mode (the `serverOnly` / `localOnly` lists that `config.validate` checks; in neither list it applies to both modes), and the configuration tables in both `README.md` and `docs/API.md`.
 - **Dependency change (`go.mod`/`go.sum`, `web/pnpm-lock.yaml`):** update `vendorHash` / `pnpmDeps.hash` in `nix/package.nix` with `just nix-hashes`, or the Nix build fails. Upgrade direct dependencies only (`just upgrade`); never `go get -u`, `pnpm update` without `--depth 0` or `pnpm dedupe`, which rewrite transitive versions. The one exception, a targeted fix for a vulnerability, is described in `CONTRIBUTING.md` ("Updating dependencies").
 
 ## Conventions

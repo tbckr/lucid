@@ -11,8 +11,14 @@ This is the contract between the frontend (`web/`) and the Go backend
   All-day events use midnight UTC of the date, `end` is exclusive.
 - IDs (`calendarId`, `eventId`, `todoId`) are opaque URL-safe strings. Use them
   verbatim in paths.
-- Authentication: session cookie `lucid_session` (HttpOnly, Secure,
-  SameSite=Strict). The frontend never sees credentials after login.
+- Authentication: session cookie `lucid_session` (HttpOnly, SameSite=Strict,
+  and Secure in server mode; in local mode, which serves plain HTTP on the
+  loopback interface only, it is not Secure). The frontend never sees
+  credentials after login.
+- **Local mode `Host` check:** in local mode every request whose `Host`
+  header names anything but `localhost` or `127.0.0.1` (any port) is answered
+  with a plain-text `403` (`invalid Host header`), not the error envelope. It
+  protects against DNS rebinding and is not part of the API error contract.
 - **CSRF**: every `POST`, `PUT`, `PATCH`, `DELETE` must send the header
   `X-CSRF-Token: <token>`. The token comes from `GET /api/v1/session` or from
   the login response and is rotated on login. Missing/invalid token → `403`
@@ -989,27 +995,36 @@ In any other case the answer is `502`, the copy stays, and the token is kept.
 
 - `GET /healthz` – liveness, `200 {"status":"ok"}`
 - `GET /readyz` – readiness, `200 {"status":"ok"}` or `503` while shutting down
-- `GET /metrics` – Prometheus metrics (optionally on a separate listener, see config)
+- `GET /metrics` – Prometheus metrics, only on the separate listener `LUCID_METRICS_ADDR` (server mode); never on the main listener
 - Everything else serves the SPA (`index.html` fallback for unknown non-asset paths).
 
 ## Configuration (environment variables only)
 
-| Variable                      | Default   | Description |
-|-------------------------------|-----------|-------------|
-| `LUCID_ADDR`                  | `:8080`   | Listen address |
-| `LUCID_METRICS_ADDR`          | (empty)   | If set, `/metrics` is served only on this address instead of `LUCID_ADDR` |
-| `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | (empty) | Serve HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
-| `LUCID_SESSION_KEY`           | random    | 32-byte key (base64 or hex) encrypting credentials in sessions. Random per start if unset (sessions are in-memory anyway) |
-| `LUCID_SESSION_TTL`           | `12h`     | Absolute session lifetime |
-| `LUCID_SESSION_IDLE_TIMEOUT`  | `2h`      | Idle timeout |
-| `LUCID_COOKIE_INSECURE`       | `false`   | Drop the `Secure` cookie flag (local HTTP development only) |
-| `LUCID_ALLOW_PRIVATE_NETWORKS`| `false`   | Allow CalDAV servers on private/loopback addresses (self-hosting on a LAN) |
-| `LUCID_ALLOWED_CIDRS`         | (empty)   | Comma-separated CIDRs exempted from SSRF blocking, e.g. `192.168.1.10/32` |
-| `LUCID_RATE_LIMIT_RPS`        | `20`      | Token bucket refill per client IP (API) |
-| `LUCID_RATE_LIMIT_BURST`      | `60`      | Token bucket size |
-| `LUCID_LOGIN_RATE_LIMIT_PER_MIN` | `10`   | Login attempts per client IP per minute |
-| `LUCID_TRUST_PROXY_HEADERS`   | `false`   | Use `X-Forwarded-For` for client IP (only behind a trusted proxy) |
-| `LUCID_CACHE_SIZE`            | `256`     | Cached calendars (LRU) |
-| `LUCID_CACHE_FRESHNESS`       | `10s`     | Serve cache without CTag check for this long |
-| `LUCID_UPSTREAM_TIMEOUT`      | `20s`     | Timeout for requests to CalDAV servers |
-| `LUCID_LOG_LEVEL`             | `info`    | `debug`, `info`, `warn`, `error` (JSON logs to stdout) |
+Lucid is configured exclusively through environment variables; there are no
+secrets in the configuration (the session key is random per start, the TLS key
+is a file).
+
+Lucid runs in **local mode** when `LUCID_ADDR` is unset and in **server mode**
+when it is set. The Mode column says which mode a variable belongs to. A
+variable set for the other mode (even to its default value), or one of the
+variables of earlier versions that no longer exist, stops Lucid at startup with
+a message that names the variable and what to do instead.
+
+| Variable                          | Mode   | Default                    | Description |
+|-----------------------------------|--------|----------------------------|-------------|
+| `LUCID_ADDR`                      | Server | (unset)                    | Listen address, e.g. `:8080`. Setting it selects server mode; unset runs local mode |
+| `LUCID_LOCAL_PORT`                | Local  | `3456`                     | Port on `127.0.0.1`. The only port Lucid tries: if it is taken, Lucid exits |
+| `LUCID_OPEN_BROWSER`              | Local  | `true`                     | Open the browser at Lucid's address once it is listening. `false` for development, tests and headless machines |
+| `LUCID_METRICS_ADDR`              | Server | (unset)                    | Address of a separate listener that serves `/metrics`. Unset: no `/metrics` at all |
+| `LUCID_TLS_CERT`, `LUCID_TLS_KEY` | Server | (unset)                    | Paths of the certificate and key files, both or neither. Serves HTTPS directly. Otherwise TLS must be terminated by a reverse proxy |
+| `LUCID_TRUST_PROXY_HEADERS`       | Server | `false`                    | Use `X-Forwarded-For` for the client IP (only behind a trusted proxy) |
+| `LUCID_PRIVATE_NETWORKS`          | Both   | local `all`, server `none` | Internal addresses (loopback, private, link-local, ...) that CalDAV servers may have: `all` allows every one, `none` none, and a comma-separated list of CIDRs and addresses (e.g. `192.168.1.10/32`) only those |
+| `LUCID_SESSION_TTL`               | Both   | `12h`                      | Absolute session lifetime |
+| `LUCID_SESSION_IDLE_TIMEOUT`      | Both   | `2h`                       | Idle timeout, at most `LUCID_SESSION_TTL` |
+| `LUCID_RATE_LIMIT_RPS`            | Both   | `20`                       | Token bucket refill per client IP (API) |
+| `LUCID_RATE_LIMIT_BURST`          | Both   | `60`                       | Token bucket size |
+| `LUCID_LOGIN_RATE_LIMIT_PER_MIN`  | Both   | `10`                       | Login attempts per client IP per minute |
+| `LUCID_CACHE_SIZE`                | Both   | `256`                      | Cached entries (LRU), one per user, calendar and component (events or tasks) |
+| `LUCID_CACHE_FRESHNESS`           | Both   | `10s`                      | Serve cache without CTag check for this long |
+| `LUCID_UPSTREAM_TIMEOUT`          | Both   | `20s`                      | Timeout for requests to CalDAV servers |
+| `LUCID_LOG_LEVEL`                 | Both   | `info`                     | `debug`, `info`, `warn`, `error`. Logs go to stdout: text in local mode, JSON in server mode |

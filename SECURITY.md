@@ -51,9 +51,11 @@ In scope, for example:
 
 Out of scope:
 
-- deployments without TLS or with `LUCID_COOKIE_INSECURE=true`,
-  `LUCID_ALLOW_PRIVATE_NETWORKS=true` or `LUCID_TRUST_PROXY_HEADERS=true`
-  in an unprotected setup (these are documented as unsafe),
+- server deployments without TLS, or with `LUCID_PRIVATE_NETWORKS` set to
+  anything but `none` or `LUCID_TRUST_PROXY_HEADERS=true` in an unprotected
+  setup (these are documented as unsafe),
+- local mode on a computer shared with untrusted local users (it is meant for
+  your own computer),
 - logouts on restart (documented known limitation),
 - vulnerabilities in the CalDAV server itself,
 - `cmd/lucid-mockdav`, which is a development tool and not shipped.
