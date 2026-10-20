@@ -10,7 +10,8 @@
 # last step, because an immutable release can no longer change. Afterwards
 # the published image is scanned with Grype; vuln-release.yml rescans the
 # latest release daily. A published release that is no pre-release also
-# moves the stable branch, which Nix users follow.
+# moves the stable branch, which Nix users and the README's compose.yaml
+# download follow.
 #
 # Actions are pinned to full commit SHAs with a "# vX.Y.Z" comment;
 # Dependabot (.github/dependabot.yml) bumps them monthly. Pinning matters
@@ -254,10 +255,11 @@ jobs:
           severity-cutoff: high
           only-fixed: true
 
-  # Nix users follow releases through the stable branch
-  # (github:tbckr/lucid/stable, see README.md). It moves only once a release
-  # is published, so it never points to a tag whose run failed, and only
-  # forward: if a newer release got there first, this one leaves it alone.
+  # Nix users (github:tbckr/lucid/stable) and the README's compose.yaml
+  # download follow releases through the stable branch. It moves only once a
+  # release is published, so it never points to a tag whose run failed, and
+  # only forward: if a newer release got there first, this one leaves it
+  # alone.
   stable:
     name: Move the stable branch
     needs: [build, goreleaser]

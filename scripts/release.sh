@@ -2,8 +2,8 @@
 # Tags HEAD of main and pushes the tag, which starts .github/workflows/release.yml
 # (NFR-14). The workflow tests, builds, signs and publishes. Immutable releases
 # cannot change once published: a broken release gets a new version, not a
-# moved tag. The stable branch, which Nix users follow, moves to a release
-# only once the workflow has published it.
+# moved tag. The stable branch, which Nix users and the README's compose.yaml
+# download follow, moves to a release only once the workflow has published it.
 #
 # Usage: scripts/release.sh <kind> [version]
 #   stable [VERSION]  a release, e.g. 1.2.0 or v1.2.0

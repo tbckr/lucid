@@ -192,7 +192,7 @@ The repository contains a hardened example [`compose.yaml`](compose.yaml)
 `no-new-privileges`), bound to `127.0.0.1:8080` for your reverse proxy:
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/tbckr/lucid/main/compose.yaml
+curl -fsSLO https://raw.githubusercontent.com/tbckr/lucid/stable/compose.yaml
 docker compose up -d
 ```
 

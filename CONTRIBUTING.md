@@ -206,7 +206,8 @@ security fixes. `just outdated` lists what to review on every upgrade:
   dependency code, in jobs without write access; the job that signs and
   publishes starts only once all three pass and only consumes the frontend
   build. After a release (not a pre-release) is published, a job that runs no
-  dependency code fast-forwards the `stable` branch, which Nix users follow.
+  dependency code fast-forwards the `stable` branch, which Nix users and the
+  `compose.yaml` download in the README follow.
 - `latest-deps.yml`, weekly: tests against the newest direct dependencies,
   upgraded exactly like `just upgrade` does, inside a gVisor sandbox. It
   commits nothing; a failure means the next upgrade needs work.
