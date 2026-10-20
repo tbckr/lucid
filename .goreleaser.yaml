@@ -77,9 +77,11 @@ nfpms:
       - deb
       - rpm
       - archlinux
-    # Local mode opens the browser with xdg-open. A weak dependency for deb
-    # and rpm; nfpm has no equivalent for Arch.
-    recommends:
+    # Local mode opens the browser with xdg-open; without it Lucid prints the
+    # address. Only suggested: apt and dnf install recommended packages by
+    # default, and xdg-utils would pull X11 libraries onto a server. nfpm has
+    # no equivalent for Arch.
+    suggests:
       - xdg-utils
     contents:
       - src: packaging/lucid.service
