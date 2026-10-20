@@ -67,12 +67,24 @@ func TestSessionAnonymous(t *testing.T) {
 	}
 }
 
-func TestCookieInsecure(t *testing.T) {
+func TestLocalMode(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t, func(o *Options) { o.CookieInsecure = true })
-	w := h.do(t, &client{}, req{method: http.MethodGet, path: "/api/v1/session"})
-	if ck := w.Result().Cookies()[0]; ck.Secure {
-		t.Error("Secure set despite CookieInsecure")
+	local := newHarness(t, func(o *Options) { o.Local = true })
+	w := local.do(t, &client{}, req{method: http.MethodGet, path: "/api/v1/session", host: "127.0.0.1:3456"})
+	if w.Code != http.StatusOK || w.Result().Cookies()[0].Secure {
+		t.Errorf("local: status %d, cookie Secure = %v", w.Code, w.Result().Cookies()[0].Secure)
+	}
+	if w := local.do(t, nil, req{method: http.MethodGet, path: "/healthz", host: "localhost:5173"}); w.Code != http.StatusOK {
+		t.Errorf("local, Vite host: status %d", w.Code)
+	}
+	if w := local.do(t, nil, req{method: http.MethodGet, path: "/api/v1/session", host: "evil.example:3456"}); w.Code != http.StatusForbidden {
+		t.Errorf("local, foreign host: status %d", w.Code)
+	}
+
+	server := newHarness(t, nil)
+	w = server.do(t, &client{}, req{method: http.MethodGet, path: "/api/v1/session", host: "calendar.example.com"})
+	if w.Code != http.StatusOK || !w.Result().Cookies()[0].Secure {
+		t.Errorf("server: status %d, cookie Secure = %v", w.Code, w.Result().Cookies()[0].Secure)
 	}
 }
 

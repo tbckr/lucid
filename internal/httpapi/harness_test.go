@@ -413,6 +413,7 @@ type req struct {
 	body    string
 	headers map[string]string
 	noCSRF  bool
+	host    string // overrides the Host header; httptest.NewRequest defaults to example.com
 }
 
 func (h *harness) do(t *testing.T, c *client, rq req) *httptest.ResponseRecorder {
@@ -422,6 +423,9 @@ func (h *harness) do(t *testing.T, c *client, rq req) *httptest.ResponseRecorder
 		body = strings.NewReader(rq.body)
 	}
 	r := httptest.NewRequest(rq.method, rq.path, body)
+	if rq.host != "" {
+		r.Host = rq.host
+	}
 	if rq.body != "" {
 		r.Header.Set("Content-Type", "application/json")
 	}

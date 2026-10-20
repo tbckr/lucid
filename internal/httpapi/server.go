@@ -60,8 +60,10 @@ type Options struct {
 	APILimiter *middleware.Limiter
 	// LoginLimiter additionally limits login attempts per client. Optional.
 	LoginLimiter *middleware.Limiter
-	// CookieInsecure drops the Secure cookie attribute (local HTTP only).
-	CookieInsecure bool
+	// Local is local mode (FR-35): plain HTTP on loopback, so the session
+	// cookie drops Secure (NFR-03), and the Host header must name localhost or
+	// 127.0.0.1.
+	Local bool
 	// TrustProxyHeaders takes the client IP from X-Forwarded-For.
 	TrustProxyHeaders bool
 	// Version of the running binary, reported by GET /api/v1/session.
@@ -75,7 +77,7 @@ type Server struct {
 	undo     *undo.Store
 	logger   *slog.Logger
 	sec      *middleware.Security
-	insecure bool
+	local    bool
 	version  string
 	ready    atomic.Bool
 	handler  http.Handler
@@ -95,7 +97,7 @@ func New(opts Options) (*Server, error) {
 		undo:     opts.Undo,
 		logger:   opts.Logger,
 		sec:      opts.Security,
-		insecure: opts.CookieInsecure,
+		local:    opts.Local,
 		version:  opts.Version,
 	}
 	s.ready.Store(true)
@@ -144,9 +146,16 @@ func New(opts Options) (*Server, error) {
 		middleware.RequestContext(opts.TrustProxyHeaders), // must stay outermost
 		middleware.Observe(opts.Logger, opts.Metrics),
 		middleware.SecurityHeaders,
+	}
+	if opts.Local {
+		// Right after SecurityHeaders: Observe logs the rejection and the
+		// response carries the security headers.
+		mws = append(mws, middleware.LoopbackHost(s.sec))
+	}
+	mws = append(mws,
 		middleware.Recover(opts.Logger),
 		middleware.BodyLimit(middleware.MaxBodyBytes),
-	}
+	)
 	if opts.APILimiter != nil {
 		mws = append(mws, middleware.RateLimit(opts.APILimiter, s.sec, middleware.IsAPI))
 	}

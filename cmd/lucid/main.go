@@ -193,7 +193,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		Assets:            web.Dist(),
 		APILimiter:        apiLimiter,
 		LoginLimiter:      loginLimiter,
-		CookieInsecure:    cfg.CookieInsecure,
+		Local:             cfg.CookieInsecure, // interim until cfg.Local exists
 		TrustProxyHeaders: cfg.TrustProxyHeaders,
 		Version:           build.version,
 	}

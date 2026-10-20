@@ -61,27 +61,27 @@ func (s *Server) csrfToken(r *http.Request) string {
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, sess session.Session) {
-	//nolint:gosec // G124: Secure is only dropped with LUCID_COOKIE_INSECURE (local HTTP development)
+	//nolint:gosec // G124: Secure is only dropped in local mode (FR-35, plain HTTP on loopback)
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    sess.ID,
 		Path:     "/",
 		Expires:  sess.ExpiresAt,
 		HttpOnly: true,
-		Secure:   !s.insecure,
+		Secure:   !s.local,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
 
 func (s *Server) clearCookie(w http.ResponseWriter) {
-	//nolint:gosec // G124: Secure is only dropped with LUCID_COOKIE_INSECURE (local HTTP development)
+	//nolint:gosec // G124: Secure is only dropped in local mode (FR-35, plain HTTP on loopback)
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   !s.insecure,
+		Secure:   !s.local,
 		SameSite: http.SameSiteStrictMode,
 	})
 }
