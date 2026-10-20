@@ -231,10 +231,11 @@ func (s *Store) Diagnostics(id string) (*diag.Buffer, error) {
 
 // Login creates a new authenticated session for acct and destroys oldID
 // (if any). Issuing a fresh ID and CSRF token on login prevents session
-// fixation. The new session takes over the diagnostics buffer of oldID, so
-// what was recorded while logging in survives the login, with the limits of
-// a session (diag.SessionLimits, FR-36); without an old session it starts with
-// an empty one.
+// fixation. If oldID is an anonymous session, the new session takes over its
+// diagnostics buffer, so what was recorded while logging in survives the login,
+// with the limits of a session (diag.SessionLimits, FR-36). Otherwise, with no
+// old session or an authenticated one (an account switch without a logout), it
+// starts with an empty buffer with those limits.
 func (s *Store) Login(oldID string, acct domain.Account) (Session, error) {
 	id, e := s.newEntry()
 	plain, err := json.Marshal(acct) //nolint:gosec // G117: serialized only to be encrypted right below
@@ -253,7 +254,10 @@ func (s *Store) Login(oldID string, acct domain.Account) (Session, error) {
 	defer s.mu.Unlock()
 	if oldID != "" {
 		k := hashID(oldID)
-		if old, ok := s.sessions[k]; ok {
+		// Only an anonymous session hands its buffer on: with an authenticated
+		// one this is an account switch, and the report of the new session must
+		// show only its own (FR-36, NFR-36).
+		if old, ok := s.sessions[k]; ok && old.sealed == nil {
 			e.diag = old.diag
 		}
 		s.removeLocked(k)

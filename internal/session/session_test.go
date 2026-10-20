@@ -554,6 +554,40 @@ func TestLoginCarriesDiagnostics(t *testing.T) {
 	}
 }
 
+func TestLoginAccountSwitchStartsFresh(t *testing.T) {
+	t.Parallel()
+	s, _ := newStore(t, nil)
+	first, _ := s.Login("", acct)
+	firstBuf := diagnostics(t, s, first.ID)
+	firstBuf.AddExchange(diag.Exchange{RequestID: "of-first"})
+	firstBuf.AddProblem(diag.Problem{RequestID: "p1", Kind: diag.ProblemInvalidObject, Path: "/cal/obj", ObjectID: "x", Reason: "bad"})
+
+	// Logging in again with the cookie of an authenticated session is an account
+	// switch: the new session must not show what the first one recorded (FR-36).
+	other := acct
+	other.Username = "mallory"
+	second, err := s.Login(first.ID, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := diagnostics(t, s, second.ID)
+	if buf == firstBuf {
+		t.Error("account switch carried the buffer of the authenticated session")
+	}
+	if snap := buf.Snapshot(); len(snap.Exchanges) != 0 || len(snap.Problems) != 0 || len(snap.Calendars) != 0 {
+		t.Errorf("new buffer = %+v, want empty", snap)
+	}
+	if _, err := s.Get(first.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("old session still valid: %v", err)
+	}
+
+	// It has the limits of a session.
+	addExchanges(t, buf, "r", diag.SessionLimits.Exchanges+1)
+	if got := requestIDs(t, buf); len(got) != diag.SessionLimits.Exchanges || got[0] != "r1" {
+		t.Errorf("kept %d exchanges starting at %q, want %d starting at r1", len(got), got[0], diag.SessionLimits.Exchanges)
+	}
+}
+
 func TestLoginWithUnknownOldSessionStartsFresh(t *testing.T) {
 	t.Parallel()
 	s, _ := newStore(t, nil)
