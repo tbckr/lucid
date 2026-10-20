@@ -53,8 +53,8 @@ var (
 // other href is masked) and s:exception (a Sabre class name).
 //
 // An element or attribute name is shown only if its namespace was declared in
-// the document, and not inside a text-only element (textOnly); otherwise it is
-// "…". An attribute without a prefix has the namespace of its element. A
+// the document, and not inside a text-only element (textOnly) or after text in
+// the same element (mixed content); otherwise it is "…". An attribute without a prefix has the namespace of its element. A
 // namespace gets a fixed prefix: d (DAV:), c (CalDAV), cs (calendarserver.org),
 // a (apple.com/ns/ical), s (sabredav.org/ns); any other is x1, x2 and so on,
 // listed in front as "# x1=<namespace>", for the lines shown only. Attribute
@@ -97,10 +97,16 @@ type xmlSkeleton struct {
 	declared map[string]bool   // the namespaces the document declares
 	prefixes map[string]string // namespace to prefix, for the unknown ones
 	unknown  []string          // those namespaces, in the order of their prefixes
-	frames   []bool            // per open element: is what is nested in it masked
+	frames   []xmlFrame        // the open elements
 	pending  *xmlElement       // the last element started, its line not yet written
 	yield    func(xmlLine) bool
 	stopped  bool // the consumer wants no more lines
+}
+
+// xmlFrame is an open element, for what is nested in it.
+type xmlFrame struct {
+	masked bool // what is nested in it has masked names
+	text   bool // it has had text, and elements in mixed content are text too
 }
 
 // xmlElement is an element whose line waits for its text.
@@ -155,7 +161,9 @@ func (b *xmlSkeleton) emit(text string) {
 
 func (b *xmlSkeleton) start(t xml.StartElement) {
 	b.flush()
-	masked := len(b.frames) > 0 && b.frames[len(b.frames)-1]
+	// Text-only elements and mixed content: a well-formed WebDAV response has no
+	// element after text in the same element, so what is there is the text's.
+	masked := len(b.frames) > 0 && (b.frames[len(b.frames)-1].masked || b.frames[len(b.frames)-1].text)
 	if !masked {
 		b.declare(t.Attr)
 	}
@@ -176,7 +184,7 @@ func (b *xmlSkeleton) start(t xml.StartElement) {
 		depth:   len(b.frames),
 		special: name == "d:href" || name == "d:status" || name == "s:exception",
 	}
-	b.frames = append(b.frames, masked || textOnly[name])
+	b.frames = append(b.frames, xmlFrame{masked: masked || textOnly[name]})
 }
 
 func (b *xmlSkeleton) end() {
@@ -189,6 +197,9 @@ func (b *xmlSkeleton) end() {
 func (b *xmlSkeleton) text(t xml.CharData) {
 	if len(bytes.TrimSpace(t)) == 0 {
 		return
+	}
+	if len(b.frames) > 0 {
+		b.frames[len(b.frames)-1].text = true
 	}
 	e := b.pending
 	if e == nil { // text after a child, or outside any element

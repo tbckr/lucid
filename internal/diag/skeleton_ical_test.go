@@ -544,3 +544,112 @@ func TestOneLine(t *testing.T) {
 		}
 	}
 }
+
+// TestICalSkeletonScopeFollowsTheStructureInAnyCase: what the lines show is by
+// their exact names, but a BEGIN or END in another case, or one that is hardly
+// a line at all, still opens or closes a component. Otherwise an unclosed
+// VTIMEZONE stays innermost, and the dates, rules and names of what follows
+// pass through as a time zone's.
+func TestICalSkeletonScopeFollowsTheStructureInAnyCase(t *testing.T) {
+	t.Parallel()
+	event := []string{
+		"DTSTART:20240315T093000",
+		"RRULE:FREQ=WEEKLY;UNTIL=20241231T000000Z",
+		"RDATE:20240101T000000Z",
+		"LAST-MODIFIED:20240101T000000Z",
+		"TZNAME:zz-canary",
+	}
+	maskedEvent := []string{
+		"DTSTART:00000000T000000",
+		"RRULE:FREQ=WEEKLY;UNTIL=00000000T000000Z",
+		"RDATE:00000000T000000Z",
+		"LAST-MODIFIED:00000000T000000Z",
+		"TZNAME:…",
+	}
+	tests := []struct {
+		name         string
+		before, want []string
+	}{
+		{
+			"begin in lowercase after an unclosed zone",
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "begin:VEVENT"},
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "…:…"},
+		},
+		{
+			"begin in mixed case, value in lowercase",
+			[]string{"BEGIN:VTIMEZONE", "Begin:vevent"},
+			[]string{"BEGIN:VTIMEZONE", "…:…"},
+		},
+		{
+			"begin without a colon",
+			[]string{"BEGIN:VTIMEZONE", "BEGIN VEVENT"},
+			[]string{"BEGIN:VTIMEZONE", "<malformed line>"},
+		},
+		{
+			"begin with a blank in the name",
+			[]string{"BEGIN:VTIMEZONE", "BEGIN VEVENT:x"},
+			[]string{"BEGIN:VTIMEZONE", "<malformed line>"},
+		},
+		{
+			"begin of a component that is no name",
+			[]string{"BEGIN:VTIMEZONE", "BEGIN:Bob"},
+			[]string{"BEGIN:VTIMEZONE", "BEGIN:…"},
+		},
+		{
+			"end without a colon leaves the zone",
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "END VTIMEZONE"},
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "<malformed line>"},
+		},
+		{
+			"end in lowercase closes the zone",
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "end:VTIMEZONE"},
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "…:…"},
+		},
+		{
+			"end with a value in lowercase closes the zone",
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "END:vtimezone"},
+			[]string{"BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "END:…"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := icalText(t, crlf(append(append([]string(nil), tc.before...), event...)...))
+			want := strings.Join(append(append([]string(nil), tc.want...), maskedEvent...), "\n")
+			if got != want {
+				t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+
+	// The zone still is one when the lines in front of it are only odd.
+	got := icalText(t, crlf("BEGINNING OF TEXT", "BEGIN:VTIMEZONE", "TZID:Europe/Berlin", "TZNAME:CET", "END:VTIMEZONE", "TZNAME:zz-canary"))
+	want := "<malformed line>\nBEGIN:VTIMEZONE\nTZID:Europe/Berlin\nTZNAME:CET\nEND:VTIMEZONE\nTZNAME:…"
+	if got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestICalSkeletonMasksTheParametersOfAMaskedName(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ line, want string }{
+		{"Diagnose;TZID=Depression:y", "…;…=…:…"},
+		{"Diagnose;VALUE=DATE;Depression:y", "…;…=…;…:…"},
+		{"x-men;PARTSTAT=ACCEPTED;ROLE=CHAIR:y", "…;…=…;…=…:…"},
+		{"X-Men;TZID=:y", "…;…=:…"},
+		{`Diagnose;CN="zz: canary";TZID=zz-canary:y`, "…;…=…;…=…:…"},
+	}
+	for _, tc := range tests {
+		got := icalText(t, crlf(tc.line))
+		if got != tc.want {
+			t.Errorf("ICalSkeleton(%q) = %q, want %q", tc.line, got, tc.want)
+		}
+		if strings.Contains(got, "Depression") || strings.Contains(got, "canary") {
+			t.Errorf("ICalSkeleton(%q) = %q leaks", tc.line, got)
+		}
+	}
+	// A name that is shown has its parameters shown.
+	if got, want := icalText(t, crlf("X-DIAGNOSE;TZID=Depression:y")), "X-DIAGNOSE;TZID=Depression:…"; got != want {
+		t.Errorf("skeleton = %q, want %q", got, want)
+	}
+}

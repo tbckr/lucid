@@ -190,17 +190,22 @@ type icalState struct {
 func (s *icalState) render(line string) string {
 	colon := indexOutsideQuotes(line, ':')
 	if colon < 0 {
+		s.leaveScope(line)
 		return malformedLine
 	}
 	head := splitOutsideQuotes(line[:colon], ';')
 	name, params, value := head[0], head[1:], line[colon+1:]
 	if !isToken(name) {
+		s.leaveScope(line)
 		return malformedLine
+	}
+	// The structure is followed in any case, what is shown is by the name.
+	if begin := strings.EqualFold(name, "BEGIN"); begin || strings.EqualFold(name, "END") {
+		s.track(begin, value)
 	}
 
 	switch {
 	case name == "BEGIN" || name == "END":
-		s.track(name == "BEGIN", value)
 		if value != "" && !knownName(value) {
 			value = mask
 		}
@@ -209,28 +214,41 @@ func (s *icalState) render(line string) string {
 	default:
 		value = propertyValue(name, params, value)
 	}
-	if !knownName(name) {
+	known := knownName(name)
+	if !known {
 		name = mask
 	}
-	return composeLine(name, params, value)
+	return composeLine(name, params, value, !known)
 }
 
-// track records a BEGIN or an END.
+// track records a BEGIN or an END, in any case. A BEGIN of a component that is
+// not a known name leaves "" on the stack: what is inside is not a time zone.
+// An END closes the innermost component of its name, and what is open inside
+// that one.
 func (s *icalState) track(begin bool, value string) {
 	switch {
 	case begin && knownName(value):
 		s.stack = append(s.stack, value)
 	case begin:
 		s.stack = append(s.stack, "")
-	case knownName(value):
-		// An END closes the innermost component of its name, and what is
-		// open inside that one.
+	case value != "":
 		for i := len(s.stack) - 1; i >= 0; i-- {
-			if s.stack[i] == value {
+			if strings.EqualFold(s.stack[i], value) {
 				s.stack = s.stack[:i]
 				return
 			}
 		}
+	}
+}
+
+// leaveScope is for a line that cannot be classified. If it starts with BEGIN
+// or END, in any case ("BEGIN VEVENT"), it may open or close a component, and
+// nothing after it is a time zone until the components around it close:
+// verbatim lines must not reach past a line this does not understand.
+func (s *icalState) leaveScope(line string) {
+	word := line[:tokenLen(line)]
+	if strings.EqualFold(word, "BEGIN") || strings.EqualFold(word, "END") {
+		s.stack = append(s.stack, "")
 	}
 }
 
@@ -249,17 +267,32 @@ func (s *icalState) inZone() bool {
 }
 
 // composeLine puts a skeleton line together from the name, the raw parameters
-// and the value that is shown.
-func composeLine(name string, params []string, value string) string {
+// and the value that is shown. On a line whose name is masked so is every
+// parameter, names and values: a parameter says nothing the line's own name
+// does not, and "Diagnose;TZID=Depression:y" is text, not a time zone.
+func composeLine(name string, params []string, value string, maskParams bool) string {
 	var b strings.Builder
 	b.WriteString(name)
 	for _, param := range params {
 		b.WriteByte(';')
-		b.WriteString(renderParam(param))
+		if maskParams {
+			b.WriteString(maskParam(param))
+		} else {
+			b.WriteString(renderParam(param))
+		}
 	}
 	b.WriteByte(':')
 	b.WriteString(value)
 	return b.String()
+}
+
+// maskParam shows nothing of a parameter but that it is one and has a value.
+func maskParam(param string) string {
+	_, value, ok := strings.Cut(param, "=")
+	if !ok {
+		return mask
+	}
+	return mask + "=" + maskNonEmpty(value)
 }
 
 // renderParam shows a parameter: its name if it is a name, and its value if it

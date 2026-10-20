@@ -219,7 +219,7 @@ func TestXMLSkeletonText(t *testing.T) {
 		"    d:h",
 		"    …",
 		"  d:i …",
-		"    d:j",
+		"    …", // text came first: the element after it is the text's
 		"  d:k …",
 	}, "\n")
 	if got != want {
@@ -530,10 +530,11 @@ func TestXMLSkeletonTextOnlyElements(t *testing.T) {
 		})
 	}
 
-	// The same markup in an element that is not text-only is structure, and
-	// when the default namespace is declared its names are in it.
-	got := xmlText(t, `<d:prop xmlns:d="DAV:" xmlns="DAV:">`+inner+`</d:prop>`)
-	if want := "d:prop …\n  d:Bob Smith=\"…\" zz=\"…\" …"; got != want {
+	// The same markup in an element that is not text-only, without text before
+	// it, is structure, and when the default namespace is declared its names are
+	// in it.
+	got := xmlText(t, `<d:prop xmlns:d="DAV:" xmlns="DAV:"><Bob Smith zz="zz-canary">bring the files</Bob></d:prop>`)
+	if want := "d:prop\n  d:Bob Smith=\"…\" zz=\"…\" …"; got != want {
 		t.Errorf("control: skeleton:\n%s\nwant:\n%s", got, want)
 	}
 	// And inside a text-only one it is not, with or without the default namespace.
@@ -551,7 +552,7 @@ func TestXMLSkeletonTextOnlyElements(t *testing.T) {
 func TestXMLSkeletonDecodesLeniently(t *testing.T) {
 	t.Parallel()
 	// Neither the missing end tags nor the bare attribute value are well-formed.
-	const doc = `<d:a xmlns:d="DAV:"><d:b attr=bare>text<d:c>more</d:a>`
+	const doc = `<d:a xmlns:d="DAV:"><d:b attr=bare><d:c>more</d:a>`
 	dec := xml.NewDecoder(strings.NewReader(doc))
 	var strictErr error
 	for strictErr == nil {
@@ -562,7 +563,7 @@ func TestXMLSkeletonDecodesLeniently(t *testing.T) {
 	}
 
 	got := xmlText(t, doc)
-	want := "d:a\n  d:b attr=\"…\" …\n    d:c …"
+	want := "d:a\n  d:b attr=\"…\"\n    d:c …"
 	if got != want {
 		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
 	}
@@ -612,6 +613,49 @@ func TestXMLSkeletonHrefBehindAPrefix(t *testing.T) {
 	for _, leak := range []string{"therapy", "6f1c", "0042", "alice"} {
 		if strings.Contains(sk.Text, leak) {
 			t.Errorf("skeleton %q leaks %q", sk.Text, leak)
+		}
+	}
+}
+
+func TestXMLSkeletonMixedContent(t *testing.T) {
+	t.Parallel()
+	// A well-formed WebDAV response has no element after text in the same
+	// element: what is there is somebody's text with markup in it, and its
+	// names are masked, however deep and whatever namespace is the default.
+	got := xmlText(t, `<d:prop xmlns:d="DAV:" xmlns="DAV:"><owner-displayname>Dr. <Smith-Therapy/></owner-displayname></d:prop>`)
+	if want := "d:prop\n  d:owner-displayname …\n    …"; got != want {
+		t.Errorf("skeleton:\n%s\nwant:\n%s", got, want)
+	}
+	if strings.Contains(got, "Smith") {
+		t.Errorf("skeleton leaks the name:\n%s", got)
+	}
+
+	tests := []struct{ name, doc, want string }{
+		{
+			"children before the text are structure",
+			`<d:a xmlns:d="DAV:"><d:b/><d:c/>text</d:a>`,
+			"d:a\n  d:b\n  d:c\n  …",
+		},
+		{
+			"the second child after text, and what is nested in a masked one",
+			`<d:a xmlns:d="DAV:">text<d:b><d:c d:e="f"/></d:b>more<d:g/></d:a>`,
+			"d:a …\n  …\n    … …=\"…\"\n  …\n  …",
+		},
+		{
+			"a sibling of the element with text is structure",
+			`<d:a xmlns:d="DAV:"><d:b>text</d:b><d:c/></d:a>`,
+			"d:a\n  d:b …\n  d:c",
+		},
+		{
+			"text only in a comment or white space is none",
+			"<d:a xmlns:d=\"DAV:\">\n <!-- zz -->\n <d:b/></d:a>",
+			"d:a\n  d:b",
+		},
+	}
+	for _, tc := range tests {
+		got := xmlText(t, tc.doc)
+		if got != tc.want {
+			t.Errorf("%s: skeleton:\n%s\nwant:\n%s", tc.name, got, tc.want)
 		}
 	}
 }

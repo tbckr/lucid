@@ -356,3 +356,35 @@ func TestURLHomeBehindAPrefix(t *testing.T) {
 		t.Errorf("URL = %q, want https://dav.example.com/public/obj-<h>.ics", got)
 	}
 }
+
+func TestPathTheRunThatStartsFirstWins(t *testing.T) {
+	t.Parallel()
+	p := NewPseudonymizer(testKey)
+	n := Names{Username: "alice", Principal: "/p/alice/", Home: "/cal/"}
+
+	// The home turns up below the principal, in a name the user chose: the
+	// principal starts first, and what is below it is below it.
+	got := p.Path(n, "/p/alice/secret-name/cal/x/")
+	if !regexp.MustCompile(`^\{principal\}/(seg-[0-9a-f]{8}/){3}$`).MatchString(got) {
+		t.Errorf("Path = %q, want {principal}/ and three seg-<h>", got)
+	}
+	if strings.Contains(got, "secret-name") {
+		t.Errorf("Path = %q leaks the name", got)
+	}
+	// The other way round: the home starts first.
+	n = Names{Principal: "/p/", Home: "/cal/alice/"}
+	got = p.Path(n, "/cal/alice/c/p/x/")
+	if !regexp.MustCompile(`^\{home\}/cal-[0-9a-f]{8}/obj-[0-9a-f]{8}/seg-[0-9a-f]{8}/$`).MatchString(got) {
+		t.Errorf("Path = %q, want {home}/cal-<h>/obj-<h>/seg-<h>/", got)
+	}
+	// Starting at the same segment, the home wins (it is the more specific).
+	n = Names{Principal: "/dav/user/", Home: "/dav/user/calendars/"}
+	if got := p.Path(n, "/dav/user/calendars/c/"); !strings.HasPrefix(got, "{home}/cal-") {
+		t.Errorf("Path = %q, want the home rule", got)
+	}
+	// Behind a prefix, with both there: the earlier one wins there as well.
+	n = Names{Principal: "/p/alice/", Home: "/cal/"}
+	if got := p.Path(n, "/nextcloud/p/alice/x/cal/y/"); !strings.HasPrefix(got, "/nextcloud/{principal}/seg-") {
+		t.Errorf("Path = %q, want /nextcloud/{principal}/...", got)
+	}
+}

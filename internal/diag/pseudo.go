@@ -36,7 +36,7 @@ func NewPseudonymizer(key []byte) *Pseudonymizer {
 	return &Pseudonymizer{key: bytes.Clone(key)}
 }
 
-// Path replaces the user-chosen names in a URL path, first matching rule wins:
+// Path replaces the user-chosen names in a URL path:
 //
 //  1. Names.Home, found anywhere in the path as a run of whole segments (a
 //     server behind a prefix such as "/nextcloud" has its home further in):
@@ -47,16 +47,21 @@ func NewPseudonymizer(key []byte) *Pseudonymizer {
 //  3. Otherwise only the username is replaced, see RedactUser, and every
 //     segment that ends in ".ics" is an object name and becomes "obj-<h>.ics".
 //
-// What comes before the home or principal is treated like rule 3. <h> is the
+// Of the home and the principal the one whose run starts first applies, the home
+// if both start at the same segment: what is below the one that starts first
+// is below it, even if the other turns up in it. What comes before the home or
+// principal is treated like rule 3. <h> is the
 // first 8 hex characters of HMAC-SHA256(key, percent-decoded segment). A
 // trailing slash is preserved.
 func (p *Pseudonymizer) Path(n Names, path string) string {
 	segs := strings.Split(path, "/")
-	if at, rest, ok := below(segs, n.Home); ok {
-		return p.lead(n, segs[:at]) + "{home}/" + p.placeholders(rest, "cal", "obj", "seg")
-	}
-	if at, rest, ok := below(segs, n.Principal); ok {
-		return p.lead(n, segs[:at]) + "{principal}/" + p.placeholders(rest, "seg")
+	homeAt, homeRest, homeOK := below(segs, n.Home)
+	principalAt, principalRest, principalOK := below(segs, n.Principal)
+	switch {
+	case homeOK && (!principalOK || homeAt <= principalAt):
+		return p.lead(n, segs[:homeAt]) + "{home}/" + p.placeholders(homeRest, "cal", "obj", "seg")
+	case principalOK:
+		return p.lead(n, segs[:principalAt]) + "{principal}/" + p.placeholders(principalRest, "seg")
 	}
 	return p.outside(n, segs)
 }
