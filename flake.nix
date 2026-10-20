@@ -49,6 +49,17 @@
           services.lucid.package = lib.mkDefault self.packages.${system}.default;
         };
 
+      # The output name Home Manager's own flake-module.nix uses.
+      homeModules.default =
+        { lib, pkgs, ... }:
+        let
+          inherit (pkgs.stdenv.hostPlatform) system;
+        in
+        {
+          imports = [ ./nix/home-manager.nix ];
+          services.lucid.package = lib.mkDefault self.packages.${system}.default;
+        };
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           # Everything the justfile and CI use. The stdenv C compiler lets
