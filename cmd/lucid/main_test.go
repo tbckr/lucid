@@ -450,7 +450,7 @@ func tryStartLocal(t *testing.T, env map[string]string, open func(context.Contex
 		select {
 		case err := <-done:
 			cancel()
-			if err != nil && strings.Contains(err.Error(), "address already in use") {
+			if addrInUse(err) {
 				return 0, nil, nil, false
 			}
 			t.Fatalf("run() returned early: %v\n%s", err, out)
@@ -461,6 +461,13 @@ func tryStartLocal(t *testing.T, env map[string]string, open func(context.Contex
 		}
 	}
 	return port, out, stop, true
+}
+
+// addrInUse reports whether err says that the port is taken. Windows returns
+// WSAEADDRINUSE (10048) for it; its syscall.EADDRINUSE is a value of Go's own
+// that no socket call returns.
+func addrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048))
 }
 
 func TestRunLocalMode(t *testing.T) {
@@ -608,6 +615,10 @@ func TestRunLocalPortInUse(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
+	}
+	// startLocal retries on this error; the check runs on every OS in CI.
+	if !addrInUse(err) {
+		t.Errorf("addrInUse(%v) = false for a taken port", err)
 	}
 }
 
