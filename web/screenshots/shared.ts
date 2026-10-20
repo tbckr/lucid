@@ -3,4 +3,5 @@
 // The day mockdav seeds its demo data around and the browser clock shows.
 export const SCREENSHOT_DATE = '2026-03-11'
 export const MOCKDAV_ADDR = '127.0.0.1:5233'
-export const LUCID_ADDR = '127.0.0.1:8081'
+export const LUCID_PORT = 8081
+export const LUCID_ADDR = `127.0.0.1:${LUCID_PORT}`

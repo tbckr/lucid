@@ -52,9 +52,9 @@ export default defineConfig({
       timeout: 300_000,
       stdout: 'pipe',
       env: {
-        LUCID_ADDR: '127.0.0.1:8080',
-        LUCID_ALLOW_PRIVATE_NETWORKS: 'true',
-        LUCID_COOKIE_INSECURE: 'true',
+        // Local mode (FR-35): plain HTTP on loopback, private CalDAV servers allowed.
+        LUCID_LOCAL_PORT: '8080',
+        LUCID_OPEN_BROWSER: 'false',
         // Every spec signs in; keep the login rate limit out of the way.
         LUCID_LOGIN_RATE_LIMIT_PER_MIN: '1000',
         LUCID_LOG_LEVEL: 'warn',

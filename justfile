@@ -17,8 +17,7 @@ COVERAGE_OUT := env('COVERAGE_OUT', 'coverage.out')
 RACE := env('RACE', '-race')
 
 # Local development (just dev)
-LUCID_DEV_ADDR := env('LUCID_DEV_ADDR', '127.0.0.1:8080')
-MOCKDAV_ADDR := env('MOCKDAV_ADDR', '127.0.0.1:5232')
+MOCKDAV_ADDR := env('LUCID_MOCKDAV_ADDR', '127.0.0.1:5232')
 
 # Show this help
 help:
@@ -132,12 +131,11 @@ nix-hashes:
 mockdav:
     LUCID_MOCKDAV_ADDR={{ MOCKDAV_ADDR }} {{ GO }} run ./cmd/lucid-mockdav
 
-# Run the backend for local HTTP development
+# Run the backend in local mode on :8080, where Vite proxies /api
 [group('run')]
 dev-backend:
-    LUCID_ADDR={{ LUCID_DEV_ADDR }} \
-    LUCID_COOKIE_INSECURE=true \
-    LUCID_ALLOW_PRIVATE_NETWORKS=true \
+    LUCID_LOCAL_PORT=8080 \
+    LUCID_OPEN_BROWSER=false \
     LUCID_LOG_LEVEL=debug \
     {{ GO }} run ./cmd/lucid
 

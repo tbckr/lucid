@@ -303,6 +303,22 @@ jobs:
           curl -fsS http://127.0.0.1:8080/ | grep -qi '<script' \
             || { echo "::error::embedded frontend not served"; exit 1; }
 
+      # Local mode (FR-35): without LUCID_ADDR the binary listens on
+      # 127.0.0.1:3456 over plain HTTP. Only the browser launch is switched off
+      # (the runner has none); everything else stays at the defaults.
+      - name: Smoke test (local mode)
+        env:
+          LUCID_OPEN_BROWSER: "false"
+        run: |
+          ./bin/lucid &
+          pid=$!
+          trap 'kill "$pid"' EXIT
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3456/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:3456/healthz
+
       - name: Upload binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

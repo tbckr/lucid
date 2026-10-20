@@ -4,12 +4,9 @@
 // Login with user "demo" and password "demo". The server listens on
 // LUCID_MOCKDAV_ADDR (default 127.0.0.1:5232). The demo data lies around
 // today, or around LUCID_MOCKDAV_NOW (a date such as 2026-03-11) for
-// reproducible screenshots. Because it runs on a loopback
-// address over plain HTTP, Lucid must be started with
-//
-//	LUCID_ALLOW_PRIVATE_NETWORKS=true LUCID_COOKIE_INSECURE=true
-//
-// to be able to reach it and to accept the session cookie without TLS.
+// reproducible screenshots. Lucid reaches it in local mode (leave LUCID_ADDR
+// unset), which allows loopback CalDAV servers and plain-HTTP cookies; no
+// further configuration is needed.
 package main
 
 import (
@@ -62,7 +59,7 @@ func run() error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	fmt.Printf("lucid-mockdav listening on http://%s/ (login: demo / demo)\n", addr)
-	fmt.Println("start Lucid with LUCID_ALLOW_PRIVATE_NETWORKS=true LUCID_COOKIE_INSECURE=true")
+	fmt.Println("Lucid reaches it in local mode: start it without LUCID_ADDR")
 
 	select {
 	case err := <-errCh:

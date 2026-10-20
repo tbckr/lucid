@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { defineConfig } from '@playwright/test'
 import base from './playwright.config'
-import { LUCID_ADDR, MOCKDAV_ADDR, SCREENSHOT_DATE } from './screenshots/shared'
+import { LUCID_ADDR, LUCID_PORT, MOCKDAV_ADDR, SCREENSHOT_DATE } from './screenshots/shared'
 
 /**
  * Screenshots for the README, written to docs/screenshots. Run with
@@ -49,7 +49,7 @@ export default defineConfig({
       command: `pnpm run build && go -C .. run -ldflags '-X main.version=${latestRelease()}' ./cmd/lucid`,
       url: `http://${LUCID_ADDR}/healthz`,
       reuseExistingServer: false,
-      env: { ...lucid.env, LUCID_ADDR },
+      env: { ...lucid.env, LUCID_LOCAL_PORT: String(LUCID_PORT) },
     },
   ],
 })
