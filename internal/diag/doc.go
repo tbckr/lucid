@@ -11,4 +11,8 @@
 //
 // Callers log a path only through a Pseudonymizer and a parser error only
 // through Reason.
+//
+// A Buffer keeps, per session, the last CalDAV exchanges and problems as
+// metadata and skeletons, and a Scope carries it through a request. BuildReport
+// turns a Buffer's Snapshot into the problem report a user can download.
 package diag
