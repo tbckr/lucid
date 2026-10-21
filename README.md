@@ -94,8 +94,10 @@ Not there yet:
 - **Reminders:** Lucid doesn't show or set alarms. Alarms set in other apps
   stay when you edit an event or task in Lucid.
 - **Invitations:** attendees aren't shown, and you can't answer an
-  invitation. They stay when you edit, and your server may send them the
-  change.
+  invitation. They stay when you edit, but your server may email them:
+  Nextcloud tells the attendees when the organizer changes an event's time
+  or repeat or deletes it, and the organizer when an attendee deletes it,
+  though not for a new title, place or note, nor for past events.
 - **Calendars:** no creating, renaming or deleting calendars, no
   subscriptions to calendar feeds (webcal), no import or export of `.ics`
   files, and one account at a time. Calendars shared with you show if your
