@@ -839,6 +839,34 @@ event, and the refusal comes as a toast.
   unchanged-rule case). It takes only the changed title, description and
   location into the series too (`applyChangedEventFields`), so an
   exception's own title stays out of it.
+- A timed series that changes its zone or form that way (into another
+  zone, into UTC, from a floating time, or from a `TZID` written otherwise)
+  goes there **by date** (`zoneMove`): `DTSTART` and every `EXDATE`,
+  `RDATE` and `RECURRENCE-ID` keep their date and clock time, moved by the
+  same number of seconds. That is the difference of the two zones' UTC
+  offsets at the edited event's place in the rule, its `RECURRENCE-ID`,
+  where the editor reads the rule (next item), plus the event's move on the
+  new zone's clock, from where it was shown to where it was entered. An
+  event of the rule is so where it was entered, every value stays with its
+  event, and an exception moved into a week where the zones are another
+  amount apart leaves the series on the days the editor showed. The
+  references take the series' new form, its `TZID` or UTC
+  (`rezoneRecurrenceRefs`), as overrides Lucid writes do; a `DATE` or
+  `PERIOD` value stays as it is, and so do the exceptions' own `DTSTART`
+  and `DTEND`, with the old zone's `VTIMEZONE`. Kept as instants and in
+  their old form, as before, they were off wherever only one of the zones
+  had changed to summer time: a New York series on Tuesday and Thursday at
+  18:00 from 2026-03-17, changed in Berlin from its event on Wednesday
+  11-11 at 00:00 to every two weeks on Wednesday and Friday, got
+  `DTSTART;TZID=Europe/Berlin:20260317T230000` (New York changes to summer
+  time three weeks before Berlin) and so went to 23:00 on every event,
+  while its references, left in New York's `TZID`, matched none of them: a
+  deleted event came back, and an exception showed next to the event it
+  replaces. It now gets `DTSTART;TZID=Europe/Berlin:20260318T000000`. On
+  Berlin's clock from then on, its events in the weeks where the
+  difference is another move with it: those of March, while New York is
+  already on summer time and Berlin not yet, from Tuesday 23:00 to
+  Wednesday 00:00, 19:00 in New York.
 - The editor shows and builds that rule on the browser's wall clock, where
   the series then recurs. A series from another zone opens on the days it
   shows on (`ruleInZone`, `web/src/lib/seriesShift.ts`, which reads the rule

@@ -1437,6 +1437,275 @@ func TestUpdateSeriesNewRuleAcrossDSTChange(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesNewRuleIntoAnotherZone is the reproduction of issue #5 as
+// a regression test: a changed rule moves a New York series on Tuesday and
+// Thursday at 18:00, from 2026-03-17, into Berlin from its event on
+// Wednesday 11-11 at 00:00 Berlin time, where it shows, on the days that
+// event is on there. DTSTART takes the event's place in Berlin, the
+// Wednesday at 00:00, and the references take Berlin's TZID and stay with
+// their events. DTSTART kept as an instant went to Tuesday 23:00 Berlin
+// time, as New York changes to summer time weeks before Berlin, and moved
+// every event to 23:00; the references stayed in New York's TZID, so the
+// deleted event came back (FR-17, FR-18).
+func TestUpdateSeriesNewRuleIntoAnotherZone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Call",
+		"DTSTART;TZID=America/New_York:20260317T180000", "DTEND;TZID=America/New_York:20260317T190000",
+		"RRULE:FREQ=WEEKLY;BYDAY=TU,TH", "EXDATE;TZID=America/New_York:20260319T180000",
+		"RDATE;TZID=America/New_York:20261121T180000",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=America/New_York:20261112T180000",
+		"DTSTART;TZID=America/New_York:20261112T120000", "DTEND;TZID=America/New_York:20261112T130000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-11-10; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Call", "", date(2026, 11, 10, 23, 0), date(2026, 11, 11, 0, 0))
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR", "Europe/Berlin"
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{
+		"DTSTART;TZID=Europe/Berlin:20260318T000000", "DTEND;TZID=Europe/Berlin:20260318T010000",
+		"EXDATE;TZID=Europe/Berlin:20260320T000000", "RDATE;TZID=Europe/Berlin:20261122T000000",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261113T000000",
+		// The exception keeps its own times.
+		"DTSTART;TZID=America/New_York:20261112T120000",
+	}, []string{"EXDATE;TZID=America/New_York", "RDATE;TZID=America/New_York", "RECURRENCE-ID;TZID=America/New_York"})
+	// The answer says what the list shows.
+	edited := occ{title: "Call", start: date(2026, 11, 10, 23, 0), end: date(2026, 11, 11, 0, 0), rid: ptr(date(2026, 11, 10, 23, 0))}
+	checkOccurrences(t, []domain.Event{up}, []occ{edited})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 9, 0, 0), date(2026, 11, 24, 0, 0)), []occ{
+		edited,
+		{title: "Special", start: date(2026, 11, 12, 17, 0), end: date(2026, 11, 12, 18, 0), rid: ptr(date(2026, 11, 12, 23, 0))},
+		{title: "Call", start: date(2026, 11, 21, 23, 0), end: date(2026, 11, 22, 0, 0), rid: ptr(date(2026, 11, 21, 23, 0))},
+	})
+	// Wednesday 03-18 at 00:00 Berlin time; Friday's event stays deleted.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 16, 0, 0), date(2026, 3, 24, 0, 0)), []occ{
+		{title: "Call", start: date(2026, 3, 17, 23, 0), end: date(2026, 3, 18, 0, 0), rid: ptr(date(2026, 3, 17, 23, 0))},
+	})
+}
+
+// nySeries is the New York series on Tuesday and Thursday at 18:00 from
+// 2026-03-17 of TestUpdateSeriesNewRuleIntoAnotherZone, a day later in
+// Berlin from April to 10-24, then the same day until 10-31, when New York
+// changes back from summer time a week after Berlin, with extra lines in its
+// VEVENT and the VEVENTs of exceptions after it.
+func nySeries(extra []string, exceptions ...string) []string {
+	return slices.Concat([]string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Call",
+		"DTSTART;TZID=America/New_York:20260317T180000", "DTEND;TZID=America/New_York:20260317T190000",
+		"RRULE:FREQ=WEEKLY;BYDAY=TU,TH",
+	}, extra, []string{"END:VEVENT"}, exceptions)
+}
+
+// TestUpdateSeriesNewRuleIntoAnotherZoneMoved checks that a changed rule
+// from an event moved on Berlin's clock into another week where the two
+// zones are another hour apart puts it where it was entered, Tuesday 11-03
+// at 23:00, and the series with it: read where the event was in the rule,
+// 10-27, the series would go an hour earlier (issue #5, FR-17, FR-18).
+func TestUpdateSeriesNewRuleIntoAnotherZoneMoved(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", nySeries(nil)...)
+	evs := listed(t, e, "work", date(2026, 10, 27, 0, 0), date(2026, 10, 28, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-10-27; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Call", "", date(2026, 11, 3, 22, 0), date(2026, 11, 3, 23, 0))
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", "Europe/Berlin"
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20260324T230000")
+	edited := occ{title: "Call", start: date(2026, 11, 3, 22, 0), end: date(2026, 11, 3, 23, 0), rid: ptr(date(2026, 11, 3, 22, 0))}
+	checkOccurrences(t, []domain.Event{up}, []occ{edited})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 2, 0, 0), date(2026, 11, 9, 0, 0)), []occ{
+		edited,
+		{title: "Call", start: date(2026, 11, 5, 22, 0), end: date(2026, 11, 5, 23, 0), rid: ptr(date(2026, 11, 5, 22, 0))},
+	})
+}
+
+// TestUpdateSeriesNewRuleIntoAnotherZoneFromException checks that a changed
+// rule from an exception moved into another week where the two zones are
+// another hour apart reads the series where the exception is in the rule,
+// as the editor reads the rule there: its 10-29 event, Thursday 23:00 in
+// Berlin, moved to Sunday 11-01 at 16:00. Read where the exception shows,
+// DTSTART went to Wednesday at 00:00, off the rule the editor showed, every
+// event to 00:00, and the exception's RECURRENCE-ID onto a Friday, which
+// orphaned it (issue #5, FR-17, FR-18).
+func TestUpdateSeriesNewRuleIntoAnotherZoneFromException(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", nySeries(nil,
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Moved",
+		"RECURRENCE-ID;TZID=America/New_York:20261029T180000",
+		"DTSTART;TZID=America/New_York:20261101T100000", "DTEND;TZID=America/New_York:20261101T110000",
+		"END:VEVENT")...)
+	evs := listed(t, e, "work", date(2026, 11, 1, 0, 0), date(2026, 11, 2, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-11-01; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Moved", "", evs[0].Start, evs[0].End)
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{
+		"DTSTART;TZID=Europe/Berlin:20260317T230000", "DTEND;TZID=Europe/Berlin:20260318T000000",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261029T230000",
+	}, []string{"RECURRENCE-ID;TZID=America/New_York"})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 16, 0, 0), date(2026, 3, 21, 0, 0)), []occ{
+		{title: "Call", start: date(2026, 3, 17, 22, 0), end: date(2026, 3, 17, 23, 0), rid: ptr(date(2026, 3, 17, 22, 0))},
+		{title: "Call", start: date(2026, 3, 19, 22, 0), end: date(2026, 3, 19, 23, 0), rid: ptr(date(2026, 3, 19, 22, 0))},
+	})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 10, 26, 0, 0), date(2026, 11, 2, 0, 0)), []occ{
+		{title: "Call", start: date(2026, 10, 27, 22, 0), end: date(2026, 10, 27, 23, 0), rid: ptr(date(2026, 10, 27, 22, 0))},
+		{title: "Moved", start: date(2026, 11, 1, 15, 0), end: date(2026, 11, 1, 16, 0), rid: ptr(date(2026, 10, 29, 22, 0))},
+	})
+}
+
+// TestUpdateSeriesNewRuleWithoutZone checks that a changed rule moves a
+// series without a zone, from another app, into the browser's zone at the
+// time its edited event shows there in January, also in summer, and with
+// its deleted events: a Monday series at 08:00 UTC from July. Into Berlin,
+// DTSTART kept as an instant went to 10:00 summer time, which put the
+// January events at 10:00, and the January EXDATE, kept in UTC, then
+// matched none of them. Into UTC, a floating EXDATE stayed floating next to
+// a DTSTART in UTC (issue #5, FR-17, FR-18).
+func TestUpdateSeriesNewRuleWithoutZone(t *testing.T) {
+	t.Parallel()
+	for _, form := range []struct {
+		name string
+		prop func(name, value string) string // the date property name with value in this form
+	}{
+		{"utc", func(name, v string) string { return name + ":" + v + "Z" }},
+		{"floating", func(name, v string) string { return name + ":" + v }},
+		{"unknown tzid", func(name, v string) string { return name + ";TZID=Nowhere/Land:" + v }},
+	} {
+		for _, zone := range []struct {
+			name        string
+			want, lacks []string // in the series as stored
+			hour        int      // the hour of the July events, in UTC
+		}{
+			{"Europe/Berlin", []string{
+				"DTSTART;TZID=Europe/Berlin:20260706T090000", "DTEND;TZID=Europe/Berlin:20260706T093000",
+				"EXDATE;TZID=Europe/Berlin:20260713T090000", "EXDATE;TZID=Europe/Berlin:20270111T090000",
+			}, []string{"EXDATE:", "Nowhere/Land"}, 7},
+			{"UTC", []string{
+				"DTSTART:20260706T080000Z", "DTEND:20260706T083000Z", "EXDATE:20260713T080000Z", "EXDATE:20270111T080000Z",
+			}, []string{"EXDATE;", "T080000\r\n", "Nowhere/Land"}, 8},
+		} {
+			t.Run(form.name+" into "+zone.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, caldavtest.Options{})
+				id := e.put(t, "work", "series.ics",
+					"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Sync",
+					form.prop("DTSTART", "20260706T080000"), form.prop("DTEND", "20260706T083000"),
+					"RRULE:FREQ=WEEKLY;BYDAY=MO",
+					form.prop("EXDATE", "20260713T080000"), form.prop("EXDATE", "20270111T080000"),
+					"END:VEVENT")
+				evs := listed(t, e, "work", date(2027, 1, 18, 0, 0), date(2027, 1, 19, 0, 0))
+				if len(evs) != 1 {
+					t.Fatalf("got %d events on 2027-01-18; want 1", len(evs))
+				}
+
+				in := seriesUpdate(evs[0], "Sync", "", date(2027, 1, 18, 8, 0), date(2027, 1, 18, 8, 30))
+				in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", zone.name
+				_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+				mustNoErr(t, err)
+
+				checkStored(t, "series", stored(t, e, "work", "series.ics"), zone.want, zone.lacks)
+				h := zone.hour
+				checkOccurrences(t, listed(t, e, "work", date(2026, 7, 6, 0, 0), date(2026, 7, 17, 0, 0)), []occ{
+					{title: "Sync", start: date(2026, 7, 6, h, 0), end: date(2026, 7, 6, h, 30), rid: ptr(date(2026, 7, 6, h, 0))},
+					{title: "Sync", start: date(2026, 7, 9, h, 0), end: date(2026, 7, 9, h, 30), rid: ptr(date(2026, 7, 9, h, 0))},
+					{title: "Sync", start: date(2026, 7, 16, h, 0), end: date(2026, 7, 16, h, 30), rid: ptr(date(2026, 7, 16, h, 0))},
+				})
+				checkOccurrences(t, listed(t, e, "work", date(2027, 1, 11, 0, 0), date(2027, 1, 19, 0, 0)), []occ{
+					{title: "Sync", start: date(2027, 1, 14, 8, 0), end: date(2027, 1, 14, 8, 30), rid: ptr(date(2027, 1, 14, 8, 0))},
+					{title: "Sync", start: date(2027, 1, 18, 8, 0), end: date(2027, 1, 18, 8, 30), rid: ptr(date(2027, 1, 18, 8, 0))},
+				})
+			})
+		}
+	}
+}
+
+// TestUpdateSeriesNewRuleIntoUTC checks that a changed rule from a browser
+// in UTC moves a Berlin series into UTC by date, at 08:00 as its January
+// event shows there, with its references in UTC, and leaves a DATE and a
+// PERIOD, which Lucid does not carry, as they are (issue #5, FR-17, FR-18).
+func TestUpdateSeriesNewRuleIntoUTC(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Sync",
+		"DTSTART;TZID=Europe/Berlin:20260706T090000", "DTEND;TZID=Europe/Berlin:20260706T093000",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE:20260713T070000Z", "EXDATE;VALUE=DATE:20260720",
+		"RDATE;VALUE=PERIOD;TZID=Europe/Berlin:20261121T090000/PT1H",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261102T090000",
+		"DTSTART;TZID=Europe/Berlin:20261102T120000", "DTEND;TZID=Europe/Berlin:20261102T123000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2027, 1, 18, 0, 0), date(2027, 1, 19, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2027-01-18; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Sync", "", date(2027, 1, 18, 8, 0), date(2027, 1, 18, 8, 30))
+	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", "UTC"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{
+		"DTSTART:20260706T080000Z", "DTEND:20260706T083000Z", "EXDATE:20260713T080000Z",
+		"RECURRENCE-ID:20261102T080000Z", "EXDATE;VALUE=DATE:20260720\r\n",
+		"RDATE;TZID=Europe/Berlin;VALUE=PERIOD:20261121T090000/PT1H",
+	}, []string{"EXDATE:20260713T070000Z", "RECURRENCE-ID;TZID=Europe/Berlin"})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 7, 6, 0, 0), date(2026, 7, 17, 0, 0)), []occ{
+		{title: "Sync", start: date(2026, 7, 6, 8, 0), end: date(2026, 7, 6, 8, 30), rid: ptr(date(2026, 7, 6, 8, 0))},
+		{title: "Sync", start: date(2026, 7, 9, 8, 0), end: date(2026, 7, 9, 8, 30), rid: ptr(date(2026, 7, 9, 8, 0))},
+		{title: "Sync", start: date(2026, 7, 16, 8, 0), end: date(2026, 7, 16, 8, 30), rid: ptr(date(2026, 7, 16, 8, 0))},
+	})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 2, 0, 0), date(2026, 11, 3, 0, 0)), []occ{
+		{title: "Special", start: date(2026, 11, 2, 11, 0), end: date(2026, 11, 2, 11, 30), rid: ptr(date(2026, 11, 2, 8, 0))},
+	})
+}
+
+// TestUpdateSeriesMadeAllDayKeepsRefs checks that turning a series all-day
+// leaves its references in their own zone, also where the request names
+// another, which an all-day series has no use for: they keep their value
+// type and move by the shift, see docs/RECURRING-EVENTS.md, Limits (FR-17).
+func TestUpdateSeriesMadeAllDayKeepsRefs(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20260904T090000", "DTEND;TZID=Europe/Berlin:20260904T100000",
+		"RRULE:FREQ=WEEKLY", "EXDATE;TZID=Europe/Berlin:20260911T090000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-11-06; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Review", "", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
+	in.AllDay, in.Timezone = true, "America/New_York"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"),
+		[]string{"DTSTART;VALUE=DATE:20260904", "EXDATE;TZID=Europe/Berlin:20260911T"}, []string{"America/New_York"})
+}
+
 // TestUpdateSeriesAllDay checks that "all events" moves an all-day series,
 // with its DATE values EXDATE and UNTIL, by whole days (spec section 3 items
 // 2 and 8, FR-17).

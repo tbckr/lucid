@@ -619,11 +619,14 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// shown (see wallShift), and take the new duration (spec section 3
 		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
 		// instead (see toggledStart); the references keep their value type
-		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A move
-		// the series cannot follow is refused as in moveSeries, judged on
-		// DTSTART and the references, since the rule is the one entered, and
-		// nothing is written. Of title, description and location only what
-		// changed from the event as shown goes into the series, see
+		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A timed
+		// series that goes into the request's zone, or form, from another
+		// goes there by date, see zoneMove, and its references with it, in
+		// its new form (see rezoneRecurrenceRefs, FR-18). A move the series
+		// cannot follow is refused as in moveSeries, judged on DTSTART and
+		// the references, since the rule is the one entered, and nothing is
+		// written. Of title, description and location only what changed from
+		// the event as shown goes into the series, see
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
 		ov, shown := shownOccurrence(cal, master, oldTm, rid)
@@ -642,6 +645,11 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		shiftRecurrenceRefs(cal, master, mv.shift)
 		if mv.lost {
 			return nil, nil, errMoveOffMonth
+		}
+		if loc := seriesZone(tz); !in.AllDay && !oldTm.start.allDay && !writtenIn(oldTm.start.form(), loc) {
+			zm := newZoneMove(oldTm.start.loc(), loc, rid, shown.start.t, in.Start)
+			start = zm.at(start)
+			rezoneRecurrenceRefs(cal, master, zm)
 		}
 		end = start.Add(in.End.Sub(in.Start))
 		instance = &in.Start
@@ -961,11 +969,7 @@ func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.Even
 	loc := st.loc() // the series' zone, UTC for an all-day series
 	to := in.Start.UTC()
 	if !in.AllDay {
-		zone := loadLocation(tz)
-		if zone == nil {
-			zone = time.UTC // as applyEventFields writes it then
-		}
-		to = in.Start.In(zone)
+		to = in.Start.In(seriesZone(tz))
 	}
 	start := st.t.In(loc)
 	change, err := dateShift(rule, start, rid.In(loc), from.In(loc), to)
@@ -980,6 +984,118 @@ func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.Even
 		return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
 	}
 	return time.Date(y, m, d, to.Hour(), to.Minute(), to.Second(), 0, to.Location()), nil
+}
+
+// seriesZone returns the zone applyEventSchedule writes a timed series in
+// for the request's zone tz: the one tz names, else UTC (FR-18).
+func seriesZone(tz string) *time.Location {
+	if loc := loadLocation(tz); loc != nil {
+		return loc
+	}
+	return time.UTC
+}
+
+// writtenIn reports whether a DATE-TIME of the form f is written as
+// applyEventSchedule writes a series in the zone loc: in UTC, or with loc's
+// name as TZID (FR-18).
+func writtenIn(f dateForm, loc *time.Location) bool {
+	if loc == time.UTC {
+		return f.param == "" && !f.floating
+	}
+	return f.param == loc.String()
+}
+
+// zoneMove carries the values of a timed series whose changed rule moves it
+// from the zone it recurs in to another (FR-17, FR-18), by date: each keeps
+// its date and clock time there, moved by the same number of seconds, so
+// the series recurs on the new zone's wall clock as the editor showed it
+// there (see newZoneMove), and every value stays with its event. Kept as
+// instants, DTSTART and the references would be off wherever the two zones'
+// UTC offsets differ by another amount than at the edited event: by an hour
+// where only one of them has changed to summer time, which also puts an
+// event near midnight on another date, such as a New York series at 18:00
+// seen in Berlin while New York has changed to summer time and Berlin has
+// not.
+type zoneMove struct {
+	from, to *time.Location
+	secs     int // added to the wall clock, see newZoneMove
+}
+
+// newZoneMove returns the zoneMove from the zone from to the zone to for
+// the event at rid in the rule, shown at shown and entered at entered
+// (FR-17): the series is read in to at rid, by the difference of the two
+// zones' UTC offsets there, as the editor reads its rule there (see
+// ruleInZone in web/src/lib/seriesShift.ts), and then moves as the event
+// moved on to's wall clock. An event of the rule is so where it was entered,
+// and an exception moved into a week where the zones are another amount
+// apart leaves the series on the days the editor showed.
+func newZoneMove(from, to *time.Location, rid, shown, entered time.Time) zoneMove {
+	apart := func(t time.Time) int {
+		_, fromOff := t.In(from).Zone()
+		_, toOff := t.In(to).Zone()
+		return toOff - fromOff
+	}
+	return zoneMove{from: from, to: to, secs: apart(rid) + apart(entered) - apart(shown)}
+}
+
+// at returns the instant t, read on z.from's wall clock, carried into z.to
+// (see zoneMove).
+func (z zoneMove) at(t time.Time) time.Time {
+	w := t.In(z.from)
+	return time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second()+z.secs, w.Nanosecond(), z.to)
+}
+
+// rezoneRecurrenceRefs carries the DATE-TIME values of EXDATE, RDATE and
+// RECURRENCE-ID by zm and writes them in the series' new form, in UTC or
+// with zm.to's TZID, as applyEventSchedule writes DTSTART (FR-17, FR-18).
+// Left in their own zone, or floating, next to a DTSTART in another, they
+// would be the mixed forms Nextcloud Calendar drops, InfCloud duplicates,
+// Roundcube misdates, and Radicale and SabreDAV reject (see
+// docs/RECURRING-EVENTS.md). A value read as UTC, a floating one or one
+// with a TZID Lucid cannot resolve, is carried as the instant Lucid matches
+// it by. DATE and PERIOD values stay as they are.
+func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, zm zoneMove) {
+	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
+		vals := master.Props[name]
+		for i := range vals {
+			rezoneDateProp(&vals[i], zm)
+		}
+	}
+	for _, c := range cal.Children {
+		if c == master || c.Name != master.Name {
+			continue
+		}
+		vals := c.Props[ical.PropRecurrenceID]
+		for i := range vals {
+			rezoneDateProp(&vals[i], zm)
+		}
+	}
+}
+
+// rezoneDateProp writes the DATE-TIME values of p carried by zm, see
+// rezoneRecurrenceRefs. It leaves p as it is if it has a value of another
+// type, a DATE or a PERIOD, which does not parse as a date, since its values
+// share its parameters.
+func rezoneDateProp(p *ical.Prop, zm zoneMove) {
+	parts := strings.Split(p.Value, ",")
+	for i, v := range parts {
+		d, err := parseDateValue(v, p.Params)
+		if err != nil || d.allDay {
+			return
+		}
+		t := zm.at(d.t)
+		if zm.to == time.UTC {
+			parts[i] = t.UTC().Format(icalDateTimeUTC)
+		} else {
+			parts[i] = t.Format(icalDateTime)
+		}
+	}
+	if zm.to == time.UTC {
+		p.Params.Del(ical.ParamTimezoneID)
+	} else {
+		p.Params.Set(ical.ParamTimezoneID, zm.to.String())
+	}
+	p.Value = strings.Join(parts, ",")
 }
 
 // shownAt returns the event of o with the recurrence ID rid as ListEvents

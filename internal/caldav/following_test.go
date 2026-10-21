@@ -1701,6 +1701,36 @@ func earlier(t *testing.T, clock string) string {
 	return c.Add(-time.Hour).Format(time.TimeOnly)
 }
 
+// TestUpdateFollowingNewRuleIntoAnotherZone checks that a changed rule from
+// a browser in New York moves the new series into New York with its
+// references: the Berlin series at 09:00, split at its 03-24 event, which
+// is 04:00 there, before Berlin changes to summer time, keeps its deleted
+// event of 04-14 at 04:00 New York time. Left in Berlin's TZID, it was an
+// hour before that event, which came back (issue #5, FR-17, FR-18).
+func TestUpdateFollowingNewRuleIntoAnotherZone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	got := updateFollowing(t, e, weeklyStandup("EXDATE;TZID=Europe/Berlin:20250414T090000"), date(2025, 3, 24, 8, 0),
+		func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO", "America/New_York" })
+	mustNoErr(t, got.err)
+
+	_, nData := newSeriesIn(t, e, got.id)
+	checkStored(t, "N", nData,
+		[]string{"DTSTART;TZID=America/New_York:20250324T040000", "EXDATE;TZID=America/New_York:20250414T040000"},
+		[]string{"TZID=Europe/Berlin:2025"})
+	var shownN []string
+	for _, day := range []string{"03-24", "03-31", "04-07", "04-21", "04-28"} {
+		shownN = append(shownN, "2025-"+day+"T08:00:00Z/2025-"+day+"T09:00:00Z Standup")
+	}
+	before := []string{
+		"2025-03-03T08:00:00Z/2025-03-03T09:00:00Z Standup", "2025-03-10T08:00:00Z/2025-03-10T09:00:00Z Standup",
+		"2025-03-17T08:00:00Z/2025-03-17T09:00:00Z Standup",
+	}
+	if shown, want := listedEvents(t, e), slices.Concat(before, shownN); !slices.Equal(shown, want) {
+		t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // TestUpdateFollowingFirst checks that "this and following events" at the
 // first event the series shows is "all events": UpdateEvent with the event
 // as instanceStart, one PUT and no new resource, also where the client's view
