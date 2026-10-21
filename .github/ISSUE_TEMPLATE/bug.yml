@@ -5,21 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Issues on GitHub are **public**: anyone can read what you write here and
-        everything you attach.
+        Issues on GitHub are **public**: anyone can read what you write here and everything you attach.
 
-        If the problem shows only with your CalDAV server, for example an event
-        that is missing, a wrong time or an error on sign-in, use the
-        [CalDAV server form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml)
-        instead.
+        If the problem shows only with your CalDAV server, for example an event that is missing, a wrong time or an error on sign-in, use the [CalDAV server form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml) instead.
 
-        Screenshots show your calendar: take them with a test calendar, or
-        black out titles, names and places first. Never paste passwords or
-        session cookies, and leave out the `security event` and `http request`
-        log lines; they carry IP addresses and the user name that was entered.
+        Screenshots show your calendar: take them with a test calendar, or black out titles, names and places first. Never paste passwords or session cookies, and leave out the `security event` and `http request` log lines; they carry IP addresses and the user name that was entered.
 
-        **Security vulnerabilities do not belong here.** Report them privately
-        through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
+        **Security vulnerabilities do not belong here.** Report them privately through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
   - type: input
     id: lucid-version
     attributes:

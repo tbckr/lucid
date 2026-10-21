@@ -2,10 +2,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Discussions on GitHub are **public**: anyone can read what you write
-        here and everything you attach. Screenshots show your calendar: take
-        them with a test calendar, or black out titles, names and places
-        first.
+        Discussions on GitHub are **public**: anyone can read what you write here and everything you attach. Screenshots show your calendar: take them with a test calendar, or black out titles, names and places first.
 
         An idea becomes an issue once it is planned.
   - type: textarea

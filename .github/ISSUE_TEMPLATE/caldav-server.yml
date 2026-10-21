@@ -5,27 +5,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        Issues on GitHub are **public**: anyone can read what you write here and
-        everything you attach.
+        Issues on GitHub are **public**: anyone can read what you write here and everything you attach.
 
-        The best way to report a problem is the file from Lucid's **Report a
-        problem** dialog (account menu, or the action in an error message). It
-        holds no titles, names or other calendar contents unless you add an
-        object's content yourself. If you run Lucid for others, you can paste
-        the `caldav exchange` and `caldav problem` log lines of
-        `LUCID_LOG_LEVEL=debug` instead: they hold no calendar contents either.
+        The best way to report a problem is the file from Lucid's **Report a problem** dialog (account menu, or the action in an error message). It holds no titles, names or other calendar contents unless you add an object's content yourself. If you run Lucid for others, you can paste the `caldav exchange` and `caldav problem` log lines of `LUCID_LOG_LEVEL=debug` instead: they hold no calendar contents either.
 
-        Read what you attach before you submit it. The paths in the file, those
-        of your account included, show placeholders instead of names, but it
-        names your CalDAV server's host: mask a private host name you would
-        rather not publish.
+        Read what you attach before you submit it. The paths in the file, those of your account included, show placeholders instead of names, but it names your CalDAV server's host: mask a private host name you would rather not publish.
 
-        Never paste passwords or session cookies. Leave out the `security event`
-        lines (a login line carries the user name that was entered) and the
-        `http request` lines; both carry IP addresses.
+        Never paste passwords or session cookies. Leave out the `security event` lines (a login line carries the user name that was entered) and the `http request` lines; both carry IP addresses.
 
-        **Security vulnerabilities do not belong here.** Report them privately
-        through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
+        **Security vulnerabilities do not belong here.** Report them privately through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
   - type: input
     id: lucid-version
     attributes:
