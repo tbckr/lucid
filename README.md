@@ -576,8 +576,12 @@ document Lucid could not read.
   RAM: the same name has the same placeholder until Lucid restarts, and none
   can be turned back into a name. API IDs in URLs are encrypted with a key
   that exists only in RAM, so your reverse proxy's log shows no names either,
-  and the IDs change on restart. The host of the CalDAV server stays, so you
-  can tell servers apart. So do structural names outside the home and
+  and the IDs change on restart. One thing in a URL is no pseudonym: a change
+  to one occurrence of a repeating event or task has the occurrence's start
+  time in its URL (`.../occurrences/<time>`, `.../following/<time>`), so your
+  reverse proxy's log and the `http request` lines show that time, though not
+  the event's or task's name or content. The host of the CalDAV server stays,
+  so you can tell servers apart. So do structural names outside the home and
   principal, such as `remote.php`, `dav`, `principals` and `calendars` (a name
   somebody chose that is one of these words stays as well), so that a
   discovery path remains readable.

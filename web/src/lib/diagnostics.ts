@@ -33,11 +33,13 @@ export interface ReportCorrupted {
 
 /**
  * The placeholders for the report: their reference and the field paths and codes of their Zod issues. Not `reason`
- * and not `start`: the reason holds Zod's messages, which can contain what was received (NFR-36).
+ * and not `start`: the reason holds Zod's messages, which can contain what was received (NFR-36). The reference is
+ * the key without what follows an "@": the key of an occurrence is its ID and its start (`<id>@<RFC 3339>`), and
+ * the report names no times of the user's calendar.
  */
 export function corruptedForReport(items: readonly CorruptedItem[]): ReportCorrupted[] {
   return items.map((item) => ({
-    key: item.key,
+    key: item.key.split('@', 1)[0] ?? '',
     calendarId: item.calendarId,
     // Copied field by field, so that nothing but path and code gets in, whatever an issue carries.
     issues: item.issues.map(({ path, code }) => ({ path, code })),

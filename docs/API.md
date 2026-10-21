@@ -13,10 +13,13 @@ This is the contract between the frontend (`web/`) and the Go backend
   until Lucid restarts; persist a calendar's `stableId`, not its `id`. Use
   them verbatim in paths. They are encrypted resource paths under a key that
   exists only in RAM, so access and reverse-proxy logs show nothing of
-  usernames, calendar or object names; an ID from before a restart is
-  `404 not_found`. An ID longer than 1024 characters is `400 invalid_input`,
-  so the lists leave out an object whose path on the CalDAV server is longer
-  than 752 bytes: its ID would be longer.
+  usernames, calendar or object names. The routes of one occurrence
+  (`.../occurrences/{recurrenceId}`, `.../following/{recurrenceId}`) are the
+  exception: their path carries the occurrence's start time, which these logs
+  then show, though not the event's or task's name or content. An ID from
+  before a restart is `404 not_found`. An ID longer than 1024 characters is
+  `400 invalid_input`, so the lists leave out an object whose path on the
+  CalDAV server is longer than 752 bytes: its ID would be longer.
 - Authentication: session cookie `lucid_session` (HttpOnly, SameSite=Strict,
   and Secure in server mode; in local mode, which serves plain HTTP on the
   loopback interface only, it is not Secure). The frontend never sees

@@ -145,6 +145,16 @@ describe('corruptedForReport', () => {
   it('returns an empty list for no items', () => {
     expect(corruptedForReport([])).toEqual([])
   })
+
+  it('leaves the start of an occurrence out of its reference', () => {
+    const out = corruptedForReport([
+      corrupted({ key: 'ev1@2025-03-02T10:00:00Z' }),
+      corrupted({ key: 'ev2' }),
+      corrupted({ key: '@2025-03-02T10:00:00Z' }),
+    ])
+    expect(out.map((c) => c.key)).toEqual(['ev1', 'ev2', ''])
+    expect(JSON.stringify(out)).not.toContain('2025')
+  })
 })
 
 describe('issueUrl', () => {
