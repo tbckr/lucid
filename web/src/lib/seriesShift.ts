@@ -1,4 +1,5 @@
 import { formatInTimeZone } from 'date-fns-tz'
+import { type Todo } from './api/schemas'
 import { type TaskDates, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
 import { utcToZoned } from './dates'
 import { type CalEvent } from './events'
@@ -280,6 +281,55 @@ export function moveAllRefusal(
     to = wallClock(newStart, zone)
   }
   return shiftRefusal(event.rrule, from, to)
+}
+
+/** Where a series' rule recurs: on the wall clock of `zone`, read at its event `at` (FR-17, FR-18). */
+export interface RuleClock {
+  at: Date
+  zone: string
+}
+
+/**
+ * `rule`, which recurs on the wall clock of `from`, as it reads on the wall
+ * clock of `to` (FR-17, FR-18), or `null` where it does not read the same
+ * there: `seriesShift` from the one wall clock to the other at the series'
+ * event `at`, as if the series moved there. A rule without fixed days stays,
+ * plain weekdays follow the date, and other fixed days or times only read
+ * the same on the same date and clock. Its own zone leaves it as written.
+ *
+ * The browser shows a series, and its editors build a rule, on its own wall
+ * clock; the server evaluates the rule on the series'. Two zones can be a
+ * date apart for part of the year only, so `at` is the event the rule is
+ * read at, the same for both directions.
+ */
+export function ruleInZone(rule: string, at: Date, from: string, to: string): string | null {
+  return from === to ? rule : seriesShift(rule, wallClock(at, from), wallClock(at, to))
+}
+
+/**
+ * Where the rule of the event series `event` recurs (FR-17, FR-18), read at
+ * the event: a timed series in its own zone, else in UTC, as the server
+ * reads a time in UTC, a floating one and one in a zone it cannot resolve
+ * (see `moveAllRefusal`); `null` for an all-day series, whose days are
+ * dates, the same in every zone.
+ */
+export function eventRuleClock(event: Pick<CalEvent, 'allDay' | 'timezone' | 'startsAt'>): RuleClock | null {
+  return event.allDay ? null : { at: event.startsAt, zone: event.timezone || 'UTC' }
+}
+
+/**
+ * Where the rule of the task `todo` recurs, before and after a save that
+ * changes it (FR-17, FR-18), read at its anchor (start, else due): a timed
+ * series in its own zone, else in UTC, as `taskMoveRefusal` reads it, and a
+ * single task with a zone of its own in that zone, which the server keeps
+ * for a rule it is given. `null` where a rule recurs on dates, or, for a
+ * single task without a zone, in the zone the write names.
+ */
+export function taskRuleClock(todo: Todo): RuleClock | null {
+  const anchor = taskAnchor(todo)
+  if (!anchor || anchor.allDay) return null
+  const zone = (todo.timezone ?? '') || (todo.recurring ? 'UTC' : '')
+  return zone ? { at: new Date(anchor.at), zone } : null
 }
 
 /** The date that places a task's dates (start, else due) as written, with its value type; `null` without one. */

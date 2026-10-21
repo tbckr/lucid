@@ -203,27 +203,32 @@ describe('recurringLabel', () => {
 
   it('anchors the rule on the series\' own dates', () => {
     const series = todo({ rrule: 'FREQ=WEEKLY;BYDAY=MO,TH', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Every week on Monday and Thursday')
+    expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Every week on Monday and Thursday')
   })
 
   it('falls back to the given date without one of its own', () => {
     const series = todo({ rrule: 'FREQ=DAILY', recurring: true, ruleUnsupported: true })
-    expect(recurringLabel(t, series, new Date(2026, 9, 5), prefs, now)).toBe('Every day')
+    expect(recurringLabel(t, series, new Date(2026, 9, 5), prefs, now, 'Europe/Berlin')).toBe('Every day')
   })
 
   it('puts a rule from another app into words', () => {
     const series = todo({ rrule: 'FREQ=MONTHLY;BYSETPOS=-1;BYDAY=MO', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Every month on the last Monday')
+    expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Every month on the last Monday')
   })
 
   it('names a rule without any anchor at all as one from another app', () => {
     const series = todo({ rrule: 'FREQ=DAILY', recurring: true, ruleUnsupported: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Repeats by a rule from another app')
+    expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Repeats by a rule from another app')
+  })
+
+  it('says the days a series in another zone shows on', () => {
+    const series = todo({ rrule: 'FREQ=WEEKLY;BYDAY=TU,TH', recurring: true, due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' })
+    expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Every week on Wednesday and Friday')
   })
 
   it('names a series of dates without a rule', () => {
     const series = todo({ rrule: '', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
-    expect(recurringLabel(t, series, null, prefs, now)).toBe('Repeats on set dates')
+    expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Repeats on set dates')
   })
 })
 

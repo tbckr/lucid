@@ -26,6 +26,7 @@ import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { anchorOf, canComplete, recurringLabel, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
 import { formatEventWhen, formatPickerDate } from '@/lib/format'
+import { browserTimeZone } from '@/lib/locale'
 import { scopeOptions, taskGlyphSlots, taskScopeItems, taskScopeMissing, type Scope, type ScopeResult } from '@/lib/scope'
 import { isDetached, isDone, isOverdue, priorityLevel } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
@@ -54,6 +55,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   const { t } = useTranslation()
   const prefs = usePrefs()
   const now = useNow()
+  const tz = useMemo(() => browserTimeZone(), [])
   const { byId } = useVisibleCalendars()
   const colors = useCalendarColors()(task.calendarId)
   const openDetail = useUi((s) => s.openDetail)
@@ -220,7 +222,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
                   )
                 }
               >
-                {todo.recurring && <p>{recurringLabel(t, todo, placed.startsAt, prefs, now)}</p>}
+                {todo.recurring && <p>{recurringLabel(t, todo, placed.startsAt, prefs, now, tz)}</p>}
                 {detachedNotice && <p className={cn(todo.recurring && 'mt-1 text-muted-foreground')}>{detachedNotice}</p>}
                 {hint && <p className="mt-1 text-muted-foreground">{hint}</p>}
               </DetailRow>

@@ -229,6 +229,7 @@
     "ordinalNumber_ordinal_other": "{{count}}th",
     "foreign": "Repeats by a rule from another app",
     "dates": "Repeats on set dates",
+    "inZone": "{{rule}} ({{zone}})",
     "editor": {
       "title": "Custom repeat",
       "every": "Repeat every",

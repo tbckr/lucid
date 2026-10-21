@@ -8,8 +8,9 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { eventTitle, type CalEvent } from '@/lib/events'
 import { formatEventWhen, type FormatPrefs } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
-import { describeRRule } from '@/lib/rrule'
+import { describeSeriesRule } from '@/lib/rrule'
 import { eventScopeItems, eventScopeMissing, scopeOptions, type Scope } from '@/lib/scope'
+import { eventRuleClock } from '@/lib/seriesShift'
 import { useUi } from '@/stores/ui'
 import { DetailActions, DetailClose, DetailContent, DetailReport, DetailRow, Linked } from './DetailParts'
 import { RepeatGlyph } from './EventItems'
@@ -64,7 +65,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const tz = useMemo(() => browserTimeZone(), [])
   const now = useMemo(() => new Date(), [])
   const title = eventTitle(event, t('event.untitled'))
-  const repeats = event.rrule ? describeRRule(event.rrule, event.startsAt, prefs, now, t) : t('recurrence.dates')
+  const repeats = event.rrule ? describeSeriesRule(event.rrule, event.startsAt, eventRuleClock(event), tz, prefs, now, t) : t('recurrence.dates')
   const inZone = zoneTimes(event, tz, prefs, now)
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
   // An event of a series asks which events to delete (FR-17); a single event only whether.

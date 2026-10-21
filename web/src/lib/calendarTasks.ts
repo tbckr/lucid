@@ -3,7 +3,8 @@ import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
 import { localDateToUtc, utcDateToLocal } from './dates'
 import { type FormatPrefs } from './format'
-import { describeRRule } from './rrule'
+import { describeSeriesRule } from './rrule'
+import { taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
 
 /** Height of a task that has a single point in time (FR-16). */
@@ -71,14 +72,16 @@ function anchorDate(d: TaskDates): TaskDate | null {
 /**
  * The rule a `RecurringMark` names, in words (FR-17): anchored on the series'
  * own dates, else `fallback` (a placed occurrence's, when the series itself
- * has none). A series of dates without a rule says so; a rule without any
- * anchor at all, which only another app writes, is named as one from it.
+ * has none), on the browser's wall clock in `timeZone` where the series
+ * recurs on another (`describeSeriesRule`, FR-18). A series of dates without
+ * a rule says so; a rule without any anchor at all, which only another app
+ * writes, is named as one from it.
  */
-export function recurringLabel(t: TFunction, todo: Todo, fallback: Date | null, prefs: FormatPrefs, now: Date): string {
+export function recurringLabel(t: TFunction, todo: Todo, fallback: Date | null, prefs: FormatPrefs, now: Date, timeZone: string): string {
   if (!todo.rrule.trim()) return todo.recurring ? t('recurrence.dates') : t('recurrence.none')
   const anchor = anchorOf(todo) ?? fallback
   if (!anchor) return t('recurrence.foreign')
-  return describeRRule(todo.rrule, anchor, prefs, now, t)
+  return describeSeriesRule(todo.rrule, anchor, taskRuleClock(todo), timeZone, prefs, now, t)
 }
 
 type Placement = Pick<CalTask, 'allDay' | 'point' | 'dates' | 'startsAt' | 'endsAt'>

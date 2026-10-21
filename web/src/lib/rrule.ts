@@ -1,6 +1,7 @@
 import { type TFunction } from 'i18next'
-import { dayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayAt, dayKey, utcToZoned, zonedToUtc } from './dates'
 import { formatMonthDay, formatPickerDate, formatTime, type FormatPrefs } from './format'
+import { ruleInZone, type RuleClock } from './seriesShift'
 
 /**
  * RRULE support for the editors and the details (FR-17): the simple presets
@@ -442,6 +443,31 @@ export function describeRRule(rule: string, start: Date, p: FormatPrefs, now: Da
   if (r.count) return t('recurrence.times', { rule: repeats, count: r.count })
   if (r.until) return t('recurrence.until', { rule: repeats, date: formatPickerDate(r.until.at, p, now) })
   return repeats
+}
+
+/**
+ * A series' rule in words as the browser shows the series (FR-17, FR-18): on
+ * its wall clock in `timeZone`, the environment's own, read at the event of
+ * `clock`, the wall clock the rule recurs on (see `ruleInZone`), and filled
+ * in from `start` as `describeRRule` does. A rule that doesn't read the same
+ * there is said on its own wall clock, filled in from its event there, and
+ * names its zone. Without `clock` the rule recurs on dates, the same
+ * everywhere.
+ */
+export function describeSeriesRule(
+  rule: string,
+  start: Date,
+  clock: RuleClock | null,
+  timeZone: string,
+  p: FormatPrefs,
+  now: Date,
+  t: TFunction,
+): string {
+  if (!clock) return describeRRule(rule, start, p, now, t)
+  const shown = ruleInZone(rule, clock.at, clock.zone, timeZone)
+  if (shown !== null) return describeRRule(shown, start, p, now, t)
+  const there = utcToZoned(clock.at, clock.zone)
+  return t('recurrence.inZone', { rule: describeRRule(rule, dayAt(there.date, there.time), p, now, t), zone: clock.zone })
 }
 
 const compact = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')

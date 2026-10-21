@@ -1,5 +1,5 @@
 import { CheckIcon, FlagIcon, ListChecksIcon, PencilIcon, Trash2Icon } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RecurringMark } from '@/components/events/EventItems'
 import { ScopePopover } from '@/components/scope/ScopePopover'
@@ -11,6 +11,7 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { type Calendar, type Todo, type TodoInput } from '@/lib/api/schemas'
 import { currentRepeat, recurringLabel, type TaskRepeat } from '@/lib/calendarTasks'
+import { browserTimeZone } from '@/lib/locale'
 import {
   scopeOptions,
   taskGlyphSlots,
@@ -64,6 +65,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
   const { t } = useTranslation()
   const prefs = usePrefs()
   const now = useNow()
+  const tz = useMemo(() => browserTimeZone(), [])
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const { done, toggle } = useToggleTodo(todo)
   // The writes of a series wait for its other writes (FR-17, NFR-26).
@@ -106,7 +108,7 @@ export function TaskRow({ todo, calendar, timeOnly = false }: { todo: Todo; cale
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
       {due && <span className="tabular">{due}</span>}
       {/* FR-17: names the series' rule, e.g. "Every week on Monday and Thursday", or that the task was detached from one. */}
-      <RecurringMark recurring={todo.recurring} detached={detached} label={recurringLabel(t, todo, null, prefs, now)} />
+      <RecurringMark recurring={todo.recurring} detached={detached} label={recurringLabel(t, todo, null, prefs, now, tz)} />
       {!done && <PriorityChip priority={todo.priority} />}
       {progress.total > 0 && (
         <span className="tabular inline-flex items-center gap-1" aria-label={t('tasks.progress', progress)}>

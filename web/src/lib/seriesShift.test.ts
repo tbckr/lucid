@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { type TaskDates, type TaskRepeat } from './calendarTasks'
-import { moveAllRefusal, seriesShift, taskMoveRefusal } from './seriesShift'
+import { eventRuleClock, moveAllRefusal, ruleInZone, seriesShift, taskMoveRefusal, taskRuleClock } from './seriesShift'
 import { todo } from '@/test/fixtures'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
@@ -430,5 +430,92 @@ describe('taskMoveRefusal', () => {
     expect(
       taskMoveRefusal(fifteenth, { start: null, startAllDay: false, due: null, dueAllDay: false }, 'repeat'),
     ).toBeNull()
+  })
+})
+
+// A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+describe('ruleInZone', () => {
+  const tuesday = new Date('2026-11-10T23:00:00Z') // 18:00 EST, Wednesday 00:00 CET
+  it.each([
+    ['rotates plain weekdays to the dates shown', 'FREQ=WEEKLY;BYDAY=TU,TH', tuesday, 'America/New_York', 'Europe/Berlin', 'FREQ=WEEKLY;BYDAY=WE,FR'],
+    [
+      'rotates them back',
+      'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR;WKST=MO',
+      tuesday,
+      'Europe/Berlin',
+      'America/New_York',
+      'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;WKST=MO',
+    ],
+    ['keeps a rule without fixed days', 'FREQ=MONTHLY;COUNT=5', tuesday, 'America/New_York', 'Europe/Berlin', 'FREQ=MONTHLY;COUNT=5'],
+    ['cannot read days of the month on another date', 'FREQ=MONTHLY;BYMONTHDAY=10', tuesday, 'America/New_York', 'Europe/Berlin', null],
+    [
+      'keeps days of the month on the same date',
+      'FREQ=MONTHLY;BYMONTHDAY=10',
+      new Date('2026-11-10T15:00:00Z'), // 10:00 EST, 16:00 CET
+      'America/New_York',
+      'Europe/Berlin',
+      'FREQ=MONTHLY;BYMONTHDAY=10',
+    ],
+    [
+      'cannot read hours on another clock',
+      'FREQ=DAILY;BYHOUR=10',
+      new Date('2026-11-10T15:00:00Z'),
+      'America/New_York',
+      'Europe/Berlin',
+      null,
+    ],
+    [
+      'goes by the date at its event: here New York is already on summer time',
+      'FREQ=WEEKLY;BYDAY=TU,TH',
+      new Date('2026-03-10T22:00:00Z'), // 18:00 EDT, 23:00 CET
+      'America/New_York',
+      'Europe/Berlin',
+      'FREQ=WEEKLY;BYDAY=TU,TH',
+    ],
+    [
+      'cannot read weekdays that leave the weeks every other week pairs up',
+      'FREQ=WEEKLY;INTERVAL=2;BYDAY=TH,SU',
+      tuesday,
+      'America/New_York',
+      'Europe/Berlin',
+      null,
+    ],
+    ['reads a series without a zone in UTC', 'FREQ=WEEKLY;BYDAY=TU', tuesday, 'UTC', 'Asia/Tokyo', 'FREQ=WEEKLY;BYDAY=WE'],
+    ['leaves the rule as written in its own zone', 'FREQ=WEEKLY;BYDAY=TU, TH', tuesday, 'Europe/Berlin', 'Europe/Berlin', 'FREQ=WEEKLY;BYDAY=TU, TH'],
+  ])('%s', (_, rule, at, from, to, want) => {
+    expect(ruleInZone(rule, at, from, to)).toBe(want)
+  })
+})
+
+describe('eventRuleClock', () => {
+  const at = new Date('2026-11-10T23:00:00Z')
+  it('reads a timed series in its own zone, else in UTC, as the server does', () => {
+    expect(eventRuleClock({ allDay: false, timezone: 'America/New_York', startsAt: at })).toEqual({ at, zone: 'America/New_York' })
+    expect(eventRuleClock({ allDay: false, timezone: '', startsAt: at })).toEqual({ at, zone: 'UTC' })
+  })
+
+  it('has none for an all-day series, whose days are dates', () => {
+    expect(eventRuleClock({ allDay: true, timezone: '', startsAt: at })).toBeNull()
+  })
+})
+
+describe('taskRuleClock', () => {
+  const at = '2026-11-10T23:00:00Z'
+  it('reads a timed series at its start, else its due, in its own zone, else in UTC', () => {
+    expect(taskRuleClock(todo({ recurring: true, start: at, due: '2026-11-11T23:00:00Z', timezone: 'America/New_York' }))).toEqual({
+      at: new Date(at),
+      zone: 'America/New_York',
+    })
+    expect(taskRuleClock(todo({ recurring: true, due: at }))).toEqual({ at: new Date(at), zone: 'UTC' })
+  })
+
+  it('keeps a single task in its own zone, where the server keeps a rule it is given', () => {
+    expect(taskRuleClock(todo({ due: at, timezone: 'America/New_York' }))).toEqual({ at: new Date(at), zone: 'America/New_York' })
+  })
+
+  it('has none where a rule recurs in the zone the write names, or on dates', () => {
+    expect(taskRuleClock(todo({ due: at }))).toBeNull()
+    expect(taskRuleClock(todo({ recurring: true, due: '2026-11-10T00:00:00Z', dueAllDay: true }))).toBeNull()
+    expect(taskRuleClock(todo({ recurring: true, rrule: 'FREQ=DAILY' }))).toBeNull()
   })
 })

@@ -226,6 +226,7 @@
     "ordinalNumber_ordinal_other": "{{count}}.",
     "foreign": "Wiederholt sich nach einer Regel aus einer anderen App",
     "dates": "Wiederholt sich an festgelegten Tagen",
+    "inZone": "{{rule}} ({{zone}})",
     "editor": {
       "title": "Eigene Wiederholung",
       "every": "Wiederholen alle",

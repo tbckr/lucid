@@ -10,6 +10,7 @@ import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
 import { type DragBinding, type ScopePreview } from '@/lib/dnd'
 import { eventTitle } from '@/lib/events'
 import { formatPickerDate, formatShortTime, type FormatPrefs } from '@/lib/format'
+import { browserTimeZone } from '@/lib/locale'
 import { isDetached } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
@@ -74,6 +75,7 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
   const { done: toggledDone, toggle } = useToggleTodo(task.todo)
   // Fixed per render, so a re-render mid-day never flips a year suffix under the pointer.
   const now = useMemo(() => new Date(), [])
+  const tz = useMemo(() => browserTimeZone(), [])
   const title = eventTitle(task, t('event.untitled'))
   // An occurrence another app completed (FR-17) shows as done regardless of the series' own status.
   const done = task.occurrence?.state === 'done' ? true : toggledDone
@@ -83,7 +85,7 @@ function useTaskItem(task: CalTask, onOpen?: (task: CalTask) => void) {
     if (onOpen) onOpen(task)
     else openDetail({ item: task, anchor: e.currentTarget })
   }
-  return { t, title, done, toggle, open, pending, now }
+  return { t, title, done, toggle, open, pending, now, tz }
 }
 
 /**
@@ -234,7 +236,7 @@ export function TaskChip({
   /** Opens the details elsewhere, e.g. at the "+N more" button whose list closes. */
   onOpen?: (task: CalTask) => void
 }) {
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task, onOpen)
+  const { t, title, done, toggle, open, pending, now, tz } = useTaskItem(task, onOpen)
   const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
@@ -286,7 +288,7 @@ export function TaskChip({
         <RecurringMark
           recurring={task.todo.recurring}
           detached={isDetached(task.todo)}
-          label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+          label={recurringLabel(t, task.todo, task.startsAt, prefs, now, tz)}
           className={CHIP_MARK_IF_ROOM}
         />
       </button>
@@ -315,7 +317,7 @@ export function TaskBar({
   className?: string
   style?: CSSProperties
 }) {
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now, tz } = useTaskItem(task)
   const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
@@ -373,7 +375,7 @@ export function TaskBar({
         <RecurringMark
           recurring={task.todo.recurring}
           detached={isDetached(task.todo)}
-          label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+          label={recurringLabel(t, task.todo, task.startsAt, prefs, now, tz)}
         />
       </button>
     </div>
@@ -399,7 +401,7 @@ export function TaskBlock({
   style?: CSSProperties
 }) {
   const compact = size === 'xs'
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now, tz } = useTaskItem(task)
   const { ref, handle, isDragging, ringed } = useTaskDrag(task, drag)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Pencilled in: a planned repeat, or the drag overlay of a task that can't land where it is (FR-17).
@@ -449,7 +451,7 @@ export function TaskBlock({
           <RecurringMark
             recurring={task.todo.recurring}
             detached={isDetached(task.todo)}
-            label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+            label={recurringLabel(t, task.todo, task.startsAt, prefs, now, tz)}
             className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
         </span>
@@ -465,7 +467,7 @@ export function TaskBlock({
  * the pencil mark inside it, at the same spot.
  */
 export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemProps & { time: string }) {
-  const { t, title, done, toggle, open, pending, now } = useTaskItem(task)
+  const { t, title, done, toggle, open, pending, now, tz } = useTaskItem(task)
   const upcoming = task.occurrence?.state === 'upcoming'
   // Centre of the middle column: padding + first column + gap + half the column.
   const markClassName = 'absolute top-1/2 left-[10.125rem] z-10 -translate-x-1/2 -translate-y-1/2 max-sm:left-[7.625rem]'
@@ -497,7 +499,7 @@ export function TaskAgendaRow({ task, time, colors, prefs, readOnly }: TaskItemP
           <RecurringMark
             recurring={task.todo.recurring}
             detached={isDetached(task.todo)}
-            label={recurringLabel(t, task.todo, task.startsAt, prefs, now)}
+            label={recurringLabel(t, task.todo, task.startsAt, prefs, now, tz)}
           />
         </span>
       </button>

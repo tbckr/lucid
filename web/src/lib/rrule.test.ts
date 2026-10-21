@@ -3,7 +3,8 @@ import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
 import i18n from '@/i18n'
 import { type FormatPrefs } from './format'
-import { buildRRule, describeRRule, fitUntil, normalizeRRule, parseRRule, parseRule, recurrenceFromRRule } from './rrule'
+import { type RuleClock } from './seriesShift'
+import { buildRRule, describeRRule, describeSeriesRule, fitUntil, normalizeRRule, parseRRule, parseRule, recurrenceFromRRule } from './rrule'
 
 describe('rrule', () => {
   it('builds presets', () => {
@@ -164,6 +165,30 @@ describe('describeRRule', () => {
   ])('describes %s', (rule, english, deutsch) => {
     expect(en(rule)).toBe(english)
     expect(german(rule)).toBe(deutsch)
+  })
+})
+
+// A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+describe('describeSeriesRule', () => {
+  const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
+  const now = new Date(2026, 10, 1)
+  const at = new Date('2026-11-10T23:00:00Z') // Tuesday 18:00 EST, Wednesday 00:00 CET
+  const ny = { at, zone: 'America/New_York' }
+  const words = (rule: string, clock: RuleClock | null) => describeSeriesRule(rule, at, clock, 'Europe/Berlin', us, now, i18n.getFixedT('en'))
+
+  it('says the days the series shows on', () => {
+    expect(words('FREQ=WEEKLY;BYDAY=TU,TH', ny)).toBe('Every week on Wednesday and Friday')
+    expect(words('FREQ=MONTHLY', ny)).toBe('Every month on day 11')
+  })
+
+  it("says a rule that doesn't read the same here in its own zone, naming it", () => {
+    expect(words('FREQ=MONTHLY;BYMONTHDAY=10', ny)).toBe('Every month on day 10 (America/New_York)')
+    // What the rule leaves out comes from its event there: November 10, not 11.
+    expect(words('FREQ=YEARLY;BYMONTH=11', ny)).toBe('Every year on November 10 (America/New_York)')
+  })
+
+  it('says a rule without a clock as written', () => {
+    expect(words('FREQ=WEEKLY;BYDAY=TU', null)).toBe('Every week on Tuesday')
   })
 })
 
