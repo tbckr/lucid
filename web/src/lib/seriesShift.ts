@@ -308,28 +308,31 @@ export function ruleInZone(rule: string, at: Date, from: string, to: string): st
 
 /**
  * Where the rule of the event series `event` recurs (FR-17, FR-18), read at
- * the event: a timed series in its own zone, else in UTC, as the server
+ * the event's place in the rule, its RECURRENCE-ID, not where an exception
+ * moved it: a timed series in its own zone, else in UTC, as the server
  * reads a time in UTC, a floating one and one in a zone it cannot resolve
  * (see `moveAllRefusal`); `null` for an all-day series, whose days are
  * dates, the same in every zone.
  */
-export function eventRuleClock(event: Pick<CalEvent, 'allDay' | 'timezone' | 'startsAt'>): RuleClock | null {
-  return event.allDay ? null : { at: event.startsAt, zone: event.timezone || 'UTC' }
+export function eventRuleClock(event: Pick<CalEvent, 'allDay' | 'timezone' | 'startsAt' | 'recurrenceId'>): RuleClock | null {
+  if (event.allDay) return null
+  return { at: event.recurrenceId ? new Date(event.recurrenceId) : event.startsAt, zone: event.timezone || 'UTC' }
 }
 
 /**
  * Where the rule of the task `todo` recurs, before and after a save that
- * changes it (FR-17, FR-18), read at its anchor (start, else due): a timed
- * series in its own zone, else in UTC, as `taskMoveRefusal` reads it, and a
- * single task with a zone of its own in that zone, which the server keeps
- * for a rule it is given. `null` where a rule recurs on dates, or, for a
- * single task without a zone, in the zone the write names.
+ * changes it (FR-17, FR-18), read at its current repeat's place in the rule,
+ * its RECURRENCE-ID, else at its anchor (start, else due): a timed series in
+ * its own zone, else in UTC, as `taskMoveRefusal` reads it, and a single task
+ * with a zone of its own in that zone, which the server keeps for a rule it
+ * is given. `null` where a rule recurs on dates, or, for a single task
+ * without a zone, in the zone the write names.
  */
 export function taskRuleClock(todo: Todo): RuleClock | null {
   const anchor = taskAnchor(todo)
   if (!anchor || anchor.allDay) return null
   const zone = (todo.timezone ?? '') || (todo.recurring ? 'UTC' : '')
-  return zone ? { at: new Date(anchor.at), zone } : null
+  return zone ? { at: new Date(todo.recurrenceId ?? anchor.at), zone } : null
 }
 
 /** The date that places a task's dates (start, else due) as written, with its value type; `null` without one. */

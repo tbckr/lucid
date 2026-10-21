@@ -219,6 +219,20 @@ describe('a series in another time zone', () => {
     })
   })
 
+  it('opens an exception moved to another time on the days the series shows on', () => {
+    const moved = toCalEvent(
+      apiEvent({
+        start: '2026-11-10T15:00:00Z', // 10:00 in New York, 16:00 on Tuesday in Berlin
+        end: '2026-11-10T16:00:00Z',
+        timezone: 'America/New_York',
+        recurring: true,
+        rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+        recurrenceId: '2026-11-10T23:00:00Z',
+      }),
+    )
+    expect(editFormValues(moved, TZ)).toMatchObject({ startDate: '2026-11-10', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
+  })
+
   it("keeps a rule that doesn't read the same here as it is", () => {
     const series = ny('FREQ=MONTHLY;BYMONTHDAY=10')
     expect(shownRule(series, TZ)).toBeNull()

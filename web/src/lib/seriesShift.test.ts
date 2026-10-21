@@ -497,6 +497,12 @@ describe('eventRuleClock', () => {
   it('has none for an all-day series, whose days are dates', () => {
     expect(eventRuleClock({ allDay: true, timezone: '', startsAt: at })).toBeNull()
   })
+
+  // An exception moved to 10:00 in New York shows on Tuesday in Berlin too, though the rule's events show on Wednesday.
+  it("reads an event at its place in the rule, not where an exception moved it", () => {
+    const moved = { allDay: false, timezone: 'America/New_York', startsAt: new Date('2026-11-10T15:00:00Z'), recurrenceId: '2026-11-10T23:00:00Z' }
+    expect(eventRuleClock(moved)).toEqual({ at, zone: 'America/New_York' })
+  })
 })
 
 describe('taskRuleClock', () => {
@@ -507,6 +513,11 @@ describe('taskRuleClock', () => {
       zone: 'America/New_York',
     })
     expect(taskRuleClock(todo({ recurring: true, due: at }))).toEqual({ at: new Date(at), zone: 'UTC' })
+  })
+
+  it('reads the current repeat at its place in the rule, not where an override moved it', () => {
+    const moved = todo({ recurring: true, due: '2026-11-10T15:00:00Z', timezone: 'America/New_York', recurrenceId: at })
+    expect(taskRuleClock(moved)).toEqual({ at: new Date(at), zone: 'America/New_York' })
   })
 
   it('keeps a single task in its own zone, where the server keeps a rule it is given', () => {
