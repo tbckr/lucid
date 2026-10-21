@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import i18next from '@/i18n'
 import { ApiError, type ApiErrorCode } from './api/client'
-import { errorReference, referenceDescription, reportAction } from './errors'
+import { errorReference, REFERENCE_TOAST_MS, referenceDescription, referenceDuration, reportAction } from './errors'
 
 const ID = '0123456789abcdef'
 
@@ -68,6 +68,19 @@ describe('referenceDescription', () => {
 
   it('is undefined without a reference', () => {
     expect(referenceDescription(i18next.getFixedT('en'), new ApiError(409, 'conflict', '', null, ID))).toBeUndefined()
+  })
+})
+
+describe('referenceDuration', () => {
+  it('keeps a toast with a reference for 10 seconds', () => {
+    expect(REFERENCE_TOAST_MS).toBe(10_000)
+    expect(referenceDuration(new ApiError(502, 'upstream_error', '', null, ID))).toBe(REFERENCE_TOAST_MS)
+  })
+
+  it("leaves any other toast at sonner's default", () => {
+    expect(referenceDuration(new ApiError(409, 'conflict', '', null, ID))).toBeUndefined()
+    expect(referenceDuration(new ApiError(502, 'upstream_error', ''))).toBeUndefined()
+    expect(referenceDuration(undefined)).toBeUndefined()
   })
 })
 

@@ -26,6 +26,18 @@ export function errorReference(err: unknown): string | null {
   return err.requestId.slice(0, REFERENCE_LENGTH)
 }
 
+/** How long an error toast with a reference stays (FR-36): time to read the reference out and reach its action. */
+export const REFERENCE_TOAST_MS = 10_000
+
+/**
+ * The duration of an error toast about `err`: `REFERENCE_TOAST_MS` for an error with a reference, undefined (sonner's
+ * own) for any other. Sonner still pauses the toast while it is hovered or focused. A toast with an ID passes it even
+ * when undefined, as sonner merges a new toast into a live one of its ID.
+ */
+export function referenceDuration(err: unknown): number | undefined {
+  return errorReference(err) === null ? undefined : REFERENCE_TOAST_MS
+}
+
 /** "Reference: 3f9a1c2b" for a toast's description; undefined if the error has no reference. */
 export function referenceDescription(t: TFunction, err: unknown): string | undefined {
   const ref = errorReference(err)

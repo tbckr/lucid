@@ -4,6 +4,7 @@ import { type MouseEvent, type ReactNode } from 'react'
 import { toast, type Action, type ToastT } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api/client'
+import { REFERENCE_TOAST_MS } from '@/lib/errors'
 import { isReported, markReported } from '@/lib/refresh'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
@@ -159,6 +160,12 @@ function labelOf(action: Action | undefined): string | null {
   return renderElement(<>{action.label}</>).container.textContent
 }
 
+/** How long the live toast `id` stays, sonner's own state; undefined for its default. */
+function durationOf(id: string): number | undefined {
+  const shown = toast.getToasts().find((x): x is ToastT => x.id === id && !('dismiss' in x))
+  return shown?.duration
+}
+
 /** The action of the live toast `id`, sonner's own state. */
 function actionOf(id: string): Action | undefined {
   const shown = toast.getToasts().find((x): x is ToastT => x.id === id && !('dismiss' in x))
@@ -192,6 +199,7 @@ describe('useRefresh toast reference', () => {
   it('shows the reference of the error that failed it, with an action that opens the report (FR-36)', async () => {
     await failedRefresh(serverError())
     expect(descriptionOf('refresh')).toBe('Reference: 01234567')
+    expect(durationOf('refresh')).toBe(REFERENCE_TOAST_MS)
     const action = actionOf('refresh')
     expect(labelOf(action)).toBe('Report a problem')
     act(() => {
@@ -204,10 +212,15 @@ describe('useRefresh toast reference', () => {
     await failedRefresh(new Error('502'))
     expect(descriptionOf('refresh')).toBeUndefined()
     expect(actionOf('refresh')).toBeUndefined()
+    expect(durationOf('refresh')).toBeUndefined()
   })
 
   it('drops the reference of an earlier refresh toast it replaces', async () => {
-    toast.error('Couldn\'t refresh. Showing what was loaded at 14:32.', { id: 'refresh', description: 'Reference: 01234567' })
+    toast.error('Couldn\'t refresh. Showing what was loaded at 14:32.', {
+      id: 'refresh',
+      description: 'Reference: 01234567',
+      duration: REFERENCE_TOAST_MS,
+    })
     vi.useFakeTimers()
     const { queryClient, wrapper } = setup()
     vi.spyOn(queryClient, 'invalidateQueries').mockRejectedValue(new Error('boom'))
@@ -218,6 +231,7 @@ describe('useRefresh toast reference', () => {
     await act(() => vi.advanceTimersByTimeAsync(600))
     expect(descriptionOf('refresh')).toBeUndefined()
     expect(actionOf('refresh')).toBeUndefined()
+    expect(durationOf('refresh')).toBeUndefined()
   })
 })
 
@@ -237,11 +251,13 @@ describe('useLoadErrorToast', () => {
     const { rerender } = render(serverError(), false)
     expect(descriptionOf('events-load')).toBe('Reference: 01234567')
     expect(labelOf(actionOf('events-load'))).toBe('Report a problem')
+    expect(durationOf('events-load')).toBe(REFERENCE_TOAST_MS)
 
-    // Sonner merges a live toast with the new one of its id: the description and action must be set again.
+    // Sonner merges a live toast with the new one of its id: the description, action and duration must be set again.
     rerender({ error: new Error('502'), refreshing: false })
     expect(descriptionOf('events-load')).toBeUndefined()
     expect(actionOf('events-load')).toBeUndefined()
+    expect(durationOf('events-load')).toBeUndefined()
   })
 
   it('opens the problem report from the action of a load toast (FR-36)', () => {

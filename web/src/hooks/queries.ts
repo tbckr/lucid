@@ -34,7 +34,7 @@ import {
 } from '@/lib/api/schemas'
 import { anchorOf, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
 import { eventColors, FALLBACK_COLOR } from '@/lib/color'
-import { apiErrorMessage, referenceDescription, reportAction } from '@/lib/errors'
+import { apiErrorMessage, referenceDescription, referenceDuration, reportAction } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
 import { overlapsRange, toCalEvent, type CalEvent } from '@/lib/events'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
@@ -371,10 +371,16 @@ export function reportMutationError(err: unknown, t: TFn, qc: QueryClient, inval
     void qc.invalidateQueries({ queryKey: invalidate })
     return
   }
-  // A server error comes with its reference, and a way to report it (FR-36).
+  // A server error comes with its reference, and a way to report it (FR-36), and stays longer.
   const description = referenceDescription(t, err)
   if (description === undefined) toast.error(apiErrorMessage(t, err))
-  else toast.error(apiErrorMessage(t, err), { description, action: reportAction(t, err, openReport) })
+  else {
+    toast.error(apiErrorMessage(t, err), {
+      description,
+      action: reportAction(t, err, openReport),
+      duration: referenceDuration(err),
+    })
+  }
 }
 
 function openReport(): void {

@@ -3894,6 +3894,8 @@ describe('reportMutationError', () => {
     expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.", {
       description: 'Reference: 01234567',
       action: { label: expect.anything() as unknown, onClick: expect.any(Function) as unknown },
+      // Longer than sonner's 4 s: time to read the reference out and reach the action.
+      duration: 10_000,
     })
     const action = (error.mock.calls[0]![1] as { action: Action }).action
     const { container } = render(<>{action.label}</>)
