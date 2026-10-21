@@ -357,7 +357,9 @@ Releases are tagged from a clean `main` that is pushed:
    of commits: what is new, what to do when upgrading (required when a commit
    is marked breaking, such as a removed `LUCID_*` variable or Nix option),
    fixes worth knowing, and what is known to be broken or untested.
-   `.github/release-notes/v0.1.0.md` is an example. A pre-release takes its
+   `.github/release-notes/v0.1.0.md` is an example. Write each paragraph and
+   each list item on one line: a release page, like an issue comment, shows
+   every line break. A pre-release takes its
    version's notes unless it has its own (`vX.Y.Z-rc.N.md`), for example to
    say what to test.
 3. Push, then run `just prerelease` for a release candidate or
