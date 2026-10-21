@@ -544,6 +544,7 @@
     "reference": "Reference: {{ref}}",
     "open": "Report a problem",
     "signedOut": "You were signed out. If that was unexpected, you can report the problem.",
+    "loadFailed": "Lucid couldn't open the problem report. Reload the page and try again.",
     "addItem": "Add to problem report",
     "title": "Report a problem",
     "description": "Lucid puts together a file for an issue on GitHub. It is only downloaded; Lucid sends nothing itself.",

@@ -541,6 +541,7 @@
     "reference": "Referenz: {{ref}}",
     "open": "Problem melden",
     "signedOut": "Du wurdest abgemeldet. Falls das unerwartet war, kannst du das Problem melden.",
+    "loadFailed": "Lucid konnte den Problembericht nicht öffnen. Lade die Seite neu und versuche es noch einmal.",
     "addItem": "Zum Problembericht hinzufügen",
     "title": "Problem melden",
     "description": "Lucid stellt eine Datei für ein Issue auf GitHub zusammen. Sie wird nur heruntergeladen, Lucid verschickt nichts selbst.",
