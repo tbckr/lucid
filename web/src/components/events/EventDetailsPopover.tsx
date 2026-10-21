@@ -32,7 +32,7 @@ export function EventDetailsPopover() {
   )
 }
 
-// The event's times in its own zone, when that is another one than the browser's.
+// The event's times in its own zone, its series' for an event of a series, when that is another one than the browser's.
 function zoneTimes(event: CalEvent, tz: string, prefs: FormatPrefs, now: Date): string | null {
   if (event.allDay || !event.timezone || event.timezone === tz) return null
   try {

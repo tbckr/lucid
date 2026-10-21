@@ -905,7 +905,10 @@ event, and the refusal comes as a toast.
   the primary guard. Both read the move on the series' wall clock: in its
   `TZID`, else in UTC, as the server reads a time in UTC, a floating one
   and one with a `TZID` it can't resolve, and never in the browser's zone,
-  where an event can fall on another date than in the series' own. And
+  where an event can fall on another date than in the series' own. The API
+  reports that zone for every event of a series, also for an exception
+  another client wrote in another zone, which the browser read in that
+  zone before. And
   both judge the series' move, not the dragged event's: the series moves
   from the event's place in the rule, its `RECURRENCE-ID`, by the distance
   the event moves, which for an exception at another time of day can cross

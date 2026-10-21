@@ -101,7 +101,7 @@ type Event struct {
 	Start        time.Time  `json:"start"` // UTC instant; for all-day events midnight UTC of the start date
 	End          time.Time  `json:"end"`   // exclusive; for all-day events midnight UTC of the day after the last day
 	AllDay       bool       `json:"allDay"`
-	Timezone     string     `json:"timezone,omitempty"` // IANA TZID of DTSTART, if any
+	Timezone     string     `json:"timezone,omitempty"` // IANA TZID of DTSTART, if any; the series' for each of its events
 	RRule        string     `json:"rrule,omitempty"`    // e.g. "FREQ=WEEKLY;BYDAY=MO"
 	Recurring    bool       `json:"recurring"`
 	RecurrenceID *time.Time `json:"recurrenceId,omitempty"` // original start of this occurrence

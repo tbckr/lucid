@@ -256,6 +256,68 @@ func TestListEventsOverrideFields(t *testing.T) {
 	}
 }
 
+// TestListEventsOverrideZone checks that an exception another client wrote
+// in another zone than its series is listed in the series' zone, the one
+// its rule recurs in and the server judges a move of the series in (#6,
+// FR-17, FR-18), and that an override without a series keeps its own.
+func TestListEventsOverrideZone(t *testing.T) {
+	t.Parallel()
+	series := func(dtstart string) []string {
+		return []string{
+			"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Review",
+			dtstart, "DURATION:PT30M", "RRULE:FREQ=MONTHLY;BYMONTHDAY=15", "END:VEVENT",
+		}
+	}
+	override := func(rid, dtstart string) []string {
+		return []string{
+			"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:Review moved",
+			rid, dtstart, "DURATION:PT30M", "END:VEVENT",
+		}
+	}
+	for _, tt := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{
+			"in UTC, of a series in Berlin",
+			append(series("DTSTART;TZID=Europe/Berlin:20250115T233000"),
+				override("RECURRENCE-ID:20250415T213000Z", "DTSTART:20250415T213000Z")...),
+			"Europe/Berlin",
+		},
+		{
+			"in New York, of a series in Berlin",
+			append(series("DTSTART;TZID=Europe/Berlin:20250115T233000"),
+				override("RECURRENCE-ID;TZID=Europe/Berlin:20250415T233000", "DTSTART;TZID=America/New_York:20250415T173000")...),
+			"Europe/Berlin",
+		},
+		{
+			"in Berlin, of a series in UTC",
+			append(series("DTSTART:20250115T223000Z"),
+				override("RECURRENCE-ID:20250415T223000Z", "DTSTART;TZID=Europe/Berlin:20250416T003000")...),
+			"",
+		},
+		{
+			"in New York, without a series",
+			override("RECURRENCE-ID;TZID=Europe/Berlin:20250415T233000", "DTSTART;TZID=America/New_York:20250415T173000"),
+			"America/New_York",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
+			got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, date(2025, 4, 1, 0, 0), date(2025, 5, 1, 0, 0))
+			mustNoErr(t, err)
+			if len(got) != 1 || got[0].Title != "Review moved" {
+				t.Fatalf("got %+v; want the exception alone", got)
+			}
+			if got[0].Timezone != tt.want {
+				t.Errorf("Timezone = %q; want %q", got[0].Timezone, tt.want)
+			}
+		})
+	}
+}
+
 // TestListEventsModified checks that expandObject sets Modified for
 // occurrences an override visibly changes (start, duration, all-day, title,
 // location or description), and not for occurrences it only differs from

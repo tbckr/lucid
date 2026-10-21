@@ -261,9 +261,10 @@ function shiftRefusal(rule: string, from: string, to: string): ShiftReason | nul
  * does not (#6). All-day events have no real zone, so their day comes from
  * the UTC-midnight wire format (`start`), read in UTC, never from
  * `startsAt`; timed events are read in `event.timezone` (the series' own
- * zone), else in UTC, as the server reads a time in UTC ("Z"), a floating
- * one and one in a zone it cannot resolve, which it reports without
- * `timezone`. Never in the browser's zone, as `taskMoveRefusal`.
+ * zone, which the server reports for an exception in another too), else in
+ * UTC, as the server reads a time in UTC ("Z"), a floating one and one in a
+ * zone it cannot resolve, which it reports without `timezone`. Never in the
+ * browser's zone, as `taskMoveRefusal`.
  *
  * A refusal is `'fixedTimes'` when the rule fixes the clock itself (BYHOUR,
  * BYMINUTE or BYSECOND) and the move changes the clock — that is what the

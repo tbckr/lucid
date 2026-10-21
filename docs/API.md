@@ -163,6 +163,13 @@ resource for updates/deletes. `modified` is `true` for an occurrence of a
 series whose override visibly changed it (start, duration, all-day, title,
 location or description); it is omitted (`false`) otherwise.
 
+`timezone` is the IANA zone of a timed event's `DTSTART`, as its `TZID`
+names it: for a series, the zone it recurs in, whose wall clock its moves
+count in (see `PUT` below). It is omitted for a date-time in UTC (`Z`) or
+floating and a `TZID` the backend can't resolve, which it reads in UTC.
+Every event of a series reports the series' zone, also an exception another
+client wrote in another zone.
+
 `first` is `true` on the occurrence that is the first one of its series
 that the server shows, whatever range was asked for: a range that starts
 after it has no event with `first`. The series' first one is the earliest

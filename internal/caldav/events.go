@@ -232,6 +232,10 @@ func expandObject(o calObject, ref objRef, from, to time.Time) ([]domain.Event, 
 		ev.Location = textOr(c.Props, ical.PropLocation, base.Location)
 		ev.Modified = overrideModified(c, otm, rid, master, tm)
 		ev = asOccurrence(at(ev, otm, otm.start.t), rid)
+		// The series' zone, which its rule recurs in and a move of it is
+		// judged in, also for an exception another client wrote in another
+		// (#6, FR-17, FR-18).
+		ev.Timezone = tm.start.tzid
 		if overlaps(ev, from, to) {
 			out = append(out, ev)
 		}
