@@ -470,11 +470,13 @@ export function describeSeriesRule(
 /**
  * A rule in words on the wall clock it recurs on, `clock`'s, which it names
  * (FR-17, FR-18): for a rule that doesn't read the same on the browser's
- * (see `ruleInZone`). What it leaves out comes from its event there.
+ * (see `ruleInZone`). What it leaves out comes from its event there. A rule
+ * Lucid can't read names no zone: it is not said at all.
  */
 export function describeRRuleIn(rule: string, clock: RuleClock, p: FormatPrefs, now: Date, t: TFunction): string {
   const there = utcToZoned(clock.at, clock.zone)
-  return t('recurrence.inZone', { rule: describeRRule(rule, dayAt(there.date, there.time), p, now, t), zone: clock.zone })
+  const words = describeRRule(rule, dayAt(there.date, there.time), p, now, t)
+  return parseRule(rule) ? t('recurrence.inZone', { rule: words, zone: clock.zone }) : words
 }
 
 const compact = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')

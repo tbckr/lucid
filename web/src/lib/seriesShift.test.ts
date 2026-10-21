@@ -498,6 +498,12 @@ describe('eventRuleClock', () => {
     expect(eventRuleClock({ allDay: true, timezone: '', startsAt: at })).toBeNull()
   })
 
+  // The server resolves zones the browser may not know yet (a newer IANA name in an older browser).
+  it('has none in a zone the browser cannot read', () => {
+    expect(eventRuleClock({ allDay: false, timezone: 'right/Europe/Berlin', startsAt: at })).toBeNull()
+    expect(taskRuleClock(todo({ recurring: true, due: '2026-11-10T23:00:00Z', timezone: 'right/Europe/Berlin' }))).toBeNull()
+  })
+
   // An exception moved to 10:00 in New York shows on Tuesday in Berlin too, though the rule's events show on Wednesday.
   it("reads an event at its place in the rule, not where an exception moved it", () => {
     const moved = { allDay: false, timezone: 'America/New_York', startsAt: new Date('2026-11-10T15:00:00Z'), recurrenceId: '2026-11-10T23:00:00Z' }

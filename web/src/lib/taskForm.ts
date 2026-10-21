@@ -134,15 +134,22 @@ export function repeatChanged(v: RepeatFields, timeZone: string, original?: Todo
  * The rule a save of the repeat `v` writes for `original` (FR-17, FR-18):
  * built on the browser's wall clock in `timeZone`, with its UNTIL in the form
  * of the date it recurs from (`fitUntil`), and, for a time, on the wall clock
- * the server keeps the task's rule on (`taskRuleClock`), read at the same
- * anchor as `shownTaskRule`, so that what the editor showed goes back as it
- * was. `null` where it doesn't read the same there (`ruleInZone`).
+ * the server keeps the task's rule on (`taskRuleClock`). `null` where it
+ * doesn't read the same there (`ruleInZone`).
+ *
+ * The server starts the rule over at the dates the save sends (its anchor,
+ * start else due), so it is read at the time of day they have now. A series
+ * is read on the date of its own place in the rule, as `shownTaskRule` shows
+ * it, as two zones can be a date apart for part of the year only; a task that
+ * doesn't repeat yet, shown no rule, on its new date.
  */
 function writtenRule(v: TaskFormValues, timeZone: string, original?: Todo): string | null {
-  const allDay = v.startDate ? v.startTime === '' : v.dueTime === ''
-  const rule = fitUntil(buildRRule(v.recurrence, v.customRule), allDay, timeZone)
-  const clock = original && !allDay ? taskRuleClock(original) : null
-  return clock ? ruleInZone(rule, clock.at, timeZone, clock.zone) : rule
+  const [date, time] = v.startDate ? [v.startDate, v.startTime] : [v.dueDate, v.dueTime]
+  const rule = fitUntil(buildRRule(v.recurrence, v.customRule), time === '', timeZone)
+  const clock = original && time !== '' ? taskRuleClock(original) : null
+  if (!clock) return rule
+  const day = original?.recurring ? utcToZoned(clock.at, timeZone).date : date
+  return ruleInZone(rule, zonedToUtc(day, time, timeZone), timeZone, clock.zone)
 }
 
 /**

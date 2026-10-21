@@ -438,6 +438,27 @@ describe('a repeat in another time zone', () => {
     expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY;BYDAY=TU,TH' })
   })
 
+  // The server starts the rule over at the dates the save sends: what the zones' dates are there decides.
+  it('writes a changed rule at the time the task now has', () => {
+    const v = { ...taskToForm(ny, TZ), startTime: '09:00', dueTime: '09:00', customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
+    // Wednesday 09:00 here is Wednesday 03:00 in New York.
+    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' })
+    // 10:00 here is the same date there too, so the day of the month reads the same.
+    const monthly = { ...v, startTime: '10:00', dueTime: '10:00', customRule: 'FREQ=MONTHLY;BYMONTHDAY=11' }
+    expect(issues(ny, monthly)).toBeUndefined()
+    expect(formToTodoInput(monthly, TZ, ny)).toMatchObject({ rrule: 'FREQ=MONTHLY;BYMONTHDAY=11' })
+    // A series at 10:00 in New York, 16:00 here, moved to 03:00 here: Monday 21:00 there.
+    const morning = { ...ny, rrule: 'FREQ=WEEKLY', start: '2026-11-10T15:00:00Z', due: '2026-11-10T15:00:00Z', recurrenceId: '2026-11-10T15:00:00Z' }
+    const early = { ...taskToForm(morning, TZ), startTime: '03:00', dueTime: '03:00', recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' }
+    expect(formToTodoInput(early, TZ, morning)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO' })
+  })
+
+  it('writes the rule a single task is given at its new time', () => {
+    const single = todo({ due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' })
+    const v = { ...taskToForm(single, TZ), dueTime: '09:00', recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;BYDAY=MO,WE' }
+    expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY;BYDAY=MO,WE' })
+  })
+
   // In March 2027 New York is on summer time two weeks before Berlin: 18:00 there is 23:00 here, on the same day.
   it('reads the rule at the series, also when the editor opens at a later repeat', () => {
     const later = taskToForm({ ...ny, start: '2027-03-16T22:00:00Z', due: '2027-03-16T22:00:00Z' }, TZ, ny)

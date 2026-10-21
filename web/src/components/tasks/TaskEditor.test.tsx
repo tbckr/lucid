@@ -478,7 +478,7 @@ describe('TaskEditor', () => {
 
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
       expect(
-        await within(dialog).findByText('The task repeats in another time zone, where these days fall on other dates. Choose another repeat.'),
+        await within(dialog).findByText('The task keeps its own time zone, where these days fall on other dates. Choose another repeat.'),
       ).toBeInTheDocument()
       expect(puts(fetch)).toHaveLength(0)
     })

@@ -187,6 +187,10 @@ describe('describeSeriesRule', () => {
     expect(words('FREQ=YEARLY;BYMONTH=11', ny)).toBe('Every year on November 10 (America/New_York)')
   })
 
+  it('names no zone for a rule Lucid cannot read', () => {
+    expect(words('FREQ=MONTHLY;BYMONTHDAY=10;RSCALE=GREGORIAN', ny)).toBe('Repeats by a rule from another app')
+  })
+
   it('says a rule without a clock as written', () => {
     expect(words('FREQ=WEEKLY;BYDAY=TU', null)).toBe('Every week on Tuesday')
   })

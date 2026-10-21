@@ -549,7 +549,7 @@
     "startDueType": "Gib beiden Daten eine Uhrzeit oder keinem.",
     "startAfterDue": "Der Beginn kann nicht nach der Fälligkeit liegen.",
     "repeatNeedsDate": "Eine wiederkehrende Aufgabe braucht ein Datum.",
-    "repeatOtherZone": "Die Aufgabe wiederholt sich in einer anderen Zeitzone, in der diese Tage auf andere Daten fallen. Wähle eine andere Wiederholung."
+    "repeatOtherZone": "Die Aufgabe behält ihre eigene Zeitzone, in der diese Tage auf andere Daten fallen. Wähle eine andere Wiederholung."
   },
   "diagnostics": {
     "reference": "Referenz: {{ref}}",
