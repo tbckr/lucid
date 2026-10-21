@@ -307,12 +307,13 @@ content; the aim is to reproduce the problem from its shape alone:
    `seriesshift_test.go` does with `series-shift.json`.
 3. **Build the data from the skeletons.** A skeleton keeps the structure,
    the names of properties and parameters, `TZID`, `RRULE` and `VTIMEZONE`
-   rules, `PRODID` and the enumerated values, and masks the rest: `…` stands
-   for a value, and a date or time keeps its format with its digits zeroed
-   (`00000000T000000`). Fill the `…` with neutral values (`Test`,
-   an address at `example.com`) and the dates with ones that reproduce the
-   problem. `truncated` means the skeleton stops at 4096 bytes, so ask the
-   reporter for the rest or for the object's content.
+   rules, `PRODID` (if it is printable ASCII of at most 200 bytes) and the
+   enumerated values, and masks the rest: `…` stands for a value, and a date
+   or time keeps its format with its digits zeroed (`00000000T000000`). Fill
+   the `…` with neutral values (`Test`, an address at `example.com`) and the
+   dates with ones that reproduce the problem. `truncated` means the skeleton
+   stops at 4096 bytes, so ask the reporter for the rest or for the object's
+   content.
 4. **Write the failing test, then fix it.** The test goes into
    `internal/caldav` (or `internal/httpapi` for a problem in the API) like any
    other, and the fixed bug keeps it as its regression test. A report that

@@ -75,17 +75,20 @@ func isToken(s string) bool {
 	return true
 }
 
+// hasControl reports whether s has an ASCII control character in it.
+func hasControl(s string) bool {
+	for i := range len(s) {
+		if s[i] < ' ' || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // oneLine keeps a string that is shown as it is from breaking the line
 // structure of a skeleton: control characters become "?".
 func oneLine(s string) string {
-	clean := true
-	for i := range len(s) {
-		if s[i] < ' ' || s[i] == 0x7f {
-			clean = false
-			break
-		}
-	}
-	if clean {
+	if !hasControl(s) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {

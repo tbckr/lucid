@@ -560,21 +560,82 @@ func TestICalSkeletonCapLineThatNeverFits(t *testing.T) {
 
 func TestICalSkeletonCapBoundary(t *testing.T) {
 	t.Parallel()
-	// 100 masked lines of 11 bytes and a PRODID line of the padding that makes
-	// the whole text exactly MaxSkeleton bytes, line breaks included.
+	// 100 masked lines of 11 bytes and a line with an x-name, which is shown,
+	// of the length that makes the whole text exactly MaxSkeleton bytes, line
+	// breaks included.
 	const lines = 100
 	head := strings.Repeat("SUMMARY:x\r\n", lines)
-	pad := MaxSkeleton - (lines*(len("SUMMARY:…")+1) + len("PRODID:"))
-	data := head + "PRODID:" + strings.Repeat("a", pad)
+	pad := MaxSkeleton - (lines*(len("SUMMARY:…")+1) + len("X-:…"))
+	data := head + "X-" + strings.Repeat("A", pad) + ":x"
 
 	sk := ICalSkeleton([]byte(data))
 	if len(sk.Text) != MaxSkeleton || sk.Truncated {
 		t.Errorf("text that fills the cap exactly: len = %d, Truncated = %v, want %d, false", len(sk.Text), sk.Truncated, MaxSkeleton)
 	}
-	// One byte more and the PRODID line, the last, no longer fits.
-	sk = ICalSkeleton([]byte(data + "a"))
+	// One byte more and the x-name line, the last, no longer fits.
+	sk = ICalSkeleton([]byte(head + "X-" + strings.Repeat("A", pad+1) + ":x"))
 	if !sk.Truncated || len(sk.Text) != lines*(len("SUMMARY:…")+1)-1 {
 		t.Errorf("one byte over: len = %d, Truncated = %v, want %d, true", len(sk.Text), sk.Truncated, lines*(len("SUMMARY:…")+1)-1)
+	}
+}
+
+// A PRODID is kept only if it can be a product's name: printable ASCII of at
+// most 200 bytes. Anything else in it is somebody's text, or no name at all.
+func TestICalSkeletonProdID(t *testing.T) {
+	t.Parallel()
+	longest := "-//" + strings.Repeat("a", 193) + "//EN"
+	if len(longest) != 200 {
+		t.Fatalf("longest PRODID has %d bytes", len(longest))
+	}
+	tests := []struct{ value, want string }{
+		{"-//Apple Inc.//macOS 14.4//EN", "-//Apple Inc.//macOS 14.4//EN"},
+		{"-//Nextcloud calendar v4.6.0", "-//Nextcloud calendar v4.6.0"},
+		{longest, longest},
+		{longest + "x", "…"},
+		{"-//Café zz-canary//EN", "…"},
+		{"-//Kelvin \u212a//EN", "…"},
+		{"-//long s \u017f//EN", "…"},
+		{"-//zz-canary\x01//EN", "…"},
+		{"-//zz-canary\x7f//EN", "…"},
+		{"-//zz-canary\tx//EN", "…"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Parallel()
+			if got := icalText(t, crlf("PRODID:"+tt.value)); got != "PRODID:"+tt.want {
+				t.Errorf("skeleton = %q, want %q", got, "PRODID:"+tt.want)
+			}
+		})
+	}
+}
+
+// A control character in a line of a time zone, a bare CR above all, ends its
+// scope: what follows the CR could be any line, and the lines after it are not
+// the zone's (the case of a VEVENT smuggled behind a TZID).
+func TestICalSkeletonVTimezoneControlCharacter(t *testing.T) {
+	t.Parallel()
+	for name, line := range map[string]string{
+		"bare CR":          "TZID:Europe/Berlin\rBEGIN:VEVENT",
+		"other control":    "TZNAME:CET\x01",
+		"tab in a name":    "TZNAME:C\tET",
+		"DEL in an offset": "TZOFFSETTO:+0100\x7f",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := icalText(t, crlf("BEGIN:VTIMEZONE", "TZID:Europe/Berlin", line,
+				"DTSTART:20240315T093000", "TZNAME:zz-canary", "END:VTIMEZONE"))
+			lines := strings.Split(got, "\n")
+			if lines[1] != "TZID:Europe/Berlin" {
+				t.Errorf("zone line before the odd one = %q, want it kept", lines[1])
+			}
+			if want := []string{"DTSTART:00000000T000000", "TZNAME:…", "END:VTIMEZONE"}; strings.Join(lines[3:], "\n") != strings.Join(want, "\n") {
+				t.Errorf("lines after the odd one = %q, want %q", lines[3:], want)
+			}
+			if strings.HasSuffix(lines[2], ":"+line[strings.IndexByte(line, ':')+1:]) || strings.Contains(got, "zz-canary") {
+				t.Errorf("skeleton keeps a value of the odd line or after it:\n%s", got)
+			}
+		})
 	}
 }
 

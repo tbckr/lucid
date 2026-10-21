@@ -44,13 +44,19 @@ const (
 	duration = `[+-]?P[0-9WDTHMS]+`
 )
 
+// prodID is what a PRODID has to look like to be kept: printable ASCII, at most
+// 200 bytes. PRODID is free text, but it names the software that wrote the
+// document, and that is what the format bugs hinge on; a value of any other
+// shape names no product. Not fixed: matching in any case would fold the
+// Kelvin sign and the long s into the ASCII range.
+var prodID = regexp.MustCompile(`^[\x20-\x7e]{1,200}$`)
+
 // keptValues are the properties whose value stays as it is, and what the value
 // has to look like to be kept. A value that does not look like it is what a
 // parser rejects more often than not, and is masked: nothing in a skeleton
-// depends on the word being right. PRODID is free text, but it names the
-// software that wrote the document, and that is what the format bugs hinge on.
+// depends on the word being right.
 var keptValues = map[string]*regexp.Regexp{
-	"PRODID":           fixed(`.*`),
+	"PRODID":           prodID,
 	"VERSION":          fixed(`[0-9]{1,2}\.[0-9]{1,2}`),
 	"CALSCALE":         fixed(`GREGORIAN`),
 	"METHOD":           fixed(`PUBLISH|REQUEST|REPLY|ADD|CANCEL|REFRESH|COUNTER|DECLINECOUNTER`),
@@ -114,13 +120,14 @@ var rruleParts = map[string]*regexp.Regexp{
 //   - BEGIN and END values that are names, and the values of VERSION,
 //     CALSCALE, METHOD, PRODID, STATUS, CLASS, TRANSP, ACTION, PRIORITY,
 //     SEQUENCE, PERCENT-COMPLETE, REPEAT, DURATION and TRIGGER that look
-//     like what they hold (PRODID: anything);
+//     like what they hold (PRODID: printable ASCII, up to 200 bytes);
 //   - date and time values, which keep their format only: every digit becomes
 //     0, T, Z, ",", "/" and the signs and separators of the formats stay;
 //   - RRULE and EXRULE, whose keys and enumerated values are kept, UNTIL
 //     masked like a date;
 //   - the time zone properties inside a VTIMEZONE, as they are, for as long as
-//     nothing in the zone is out of the ordinary (zoneScope).
+//     nothing in the zone is out of the ordinary (zoneScope): a line with a
+//     control character in it, such as a bare CR, is.
 //
 // Parameter values are masked, except TZID and the enumerations VALUE,
 // RELATED, RANGE, FBTYPE, ENCODING, PARTSTAT, ROLE, CUTYPE and RSVP; on a line
@@ -197,6 +204,11 @@ func (s *icalState) render(line string) string {
 		s.zone.odd()
 		return malformedLine
 	}
+	if hasControl(line) {
+		// A bare CR or another control character is no part of a time zone, and
+		// what follows it could be any line: the zone's scope ends.
+		s.zone.odd()
+	}
 	zoneLine := s.zone.line(name, params, value)
 
 	switch {
@@ -222,8 +234,8 @@ func (s *icalState) render(line string) string {
 // zoneProps in exact uppercase or the exact BEGIN and END of VTIMEZONE and, in
 // it, STANDARD and DAYLIGHT, nothing around them. The first line in a zone
 // that is anything else (a blank or indented line, an unknown name, another
-// case, a trailing blank, no colon, another component) turns it off for the rest
-// of the document. A document that is not well-formed does not carry its
+// case, a trailing blank, no colon, another component, a control character)
+// turns it off for the rest of the document. A document that is not well-formed does not carry its
 // events' dates, rules and names through as a time zone's, however the
 // malformation is made.
 type zoneScope struct {
