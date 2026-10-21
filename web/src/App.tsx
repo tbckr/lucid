@@ -36,9 +36,21 @@ export function App({ queryClient }: { queryClient: QueryClient }) {
   )
 }
 
+/** Sonner's own offsets, raised by the room the problem report's tray takes while it waits (FR-36). */
+const TOAST_OFFSET = { bottom: 'calc(24px + var(--report-tray-space, 0px))' }
+const TOAST_MOBILE_OFFSET = { bottom: 'calc(16px + var(--report-tray-space, 0px))' }
+
 function ThemedToaster() {
   const dark = useTheme()
-  return <Toaster theme={dark ? 'dark' : 'light'} position="bottom-center" closeButton />
+  return (
+    <Toaster
+      theme={dark ? 'dark' : 'light'}
+      position="bottom-center"
+      offset={TOAST_OFFSET}
+      mobileOffset={TOAST_MOBILE_OFFSET}
+      closeButton
+    />
+  )
 }
 
 /** Apply the persisted language override (FR-21). */

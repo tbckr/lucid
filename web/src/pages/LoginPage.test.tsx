@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
 import { useSettings } from '@/stores/settings'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { LoginPage } from './LoginPage'
@@ -11,7 +11,7 @@ import { LoginPage } from './LoginPage'
 afterEach(() => {
   api.setCsrfToken(null)
   window.history.replaceState(null, '', '/')
-  useUi.setState({ report: { open: false, candidates: [] }, signedOut: false })
+  useUi.setState({ report: emptyReport, signedOut: false })
   // A sign-in remembers its server, which the next test's form would start with.
   useSettings.setState({ lastServerUrl: '' })
 })

@@ -266,7 +266,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
 
         {readOnly ? (
           <div className="flex justify-end">
-            <DetailReport onReport={report} />
+            <DetailReport objectId={todo.id} onReport={report} />
           </div>
         ) : (
           <DetailActions
@@ -282,7 +282,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
               del.mutate({ todo })
               openDetail(null)
             }}
-            onReport={report}
+            report={{ objectId: todo.id, onReport: report }}
             deleteScope={
               repeat && deleteOptions.length > 1
                 ? {

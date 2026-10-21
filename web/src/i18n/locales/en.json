@@ -546,6 +546,7 @@
     "signedOut": "You were signed out. If that was unexpected, you can report the problem.",
     "loadFailed": "Lucid couldn't open the problem report. Reload the page and try again.",
     "addItem": "Add to problem report",
+    "openItem": "Open problem report",
     "title": "Report a problem",
     "description": "Lucid puts together a file for an issue on GitHub. It is only downloaded; Lucid sends nothing itself.",
     "summary": {
@@ -572,6 +573,9 @@
       "hint": "Lucid adds each item's structure, without titles or other data. Its content goes in only if you add it.",
       "empty": "To add an event or task, open it and choose Add to problem report.",
       "signedOut": "Sign in to add events or tasks.",
+      "add": "Add an item",
+      "addAnother": "Add another item",
+      "waits": "The report waits at the bottom of the screen until you download or discard it.",
       "event": "Event in {{calendar}}",
       "task": "Task in {{calendar}}",
       "remove": "Remove {{label}} from the report"
@@ -607,8 +611,16 @@
     "newTab": "(opens in a new tab)",
     "download": "Download report",
     "downloaded": "Report downloaded",
+    "discarded": "Problem report discarded",
     "loading": "Putting the report together …",
     "failed": "Lucid couldn't put the report together.",
-    "corruptedAction": "{{label}}. Report a problem"
+    "corruptedAction": "{{label}}. Report a problem",
+    "tray": {
+      "label": "Problem report",
+      "empty": "No items yet",
+      "hint": "To add an item, open an event or task and choose <icon/>.",
+      "open": "Open report",
+      "discard": "Discard report"
+    }
   }
 }

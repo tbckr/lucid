@@ -539,8 +539,14 @@ before you post the file if you would rather not publish it. For an event or
 task you add, the file
 holds its structure. Its **content** is added only if you choose **Show
 content**, read it, and tick the box **Add this content to the report**, which
-starts unticked, for that one item. Closing the dialog forgets what was shown
-and ticked.
+starts unticked, for that one item.
+
+To add several events or tasks, choose **Add another item** (or close the
+dialog): the report then waits at the bottom of the screen, with the items in
+it, until you download or discard it. The life buoy of the next item adds it
+and opens the report again. While it waits, Lucid keeps what you showed and ticked, in your
+browser only; downloading, discarding or signing out forgets it, and so does
+closing a report without items.
 
 Lucid sends nothing itself: the report is a file you download. **Open issue
 form** opens the [issue form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml)

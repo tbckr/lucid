@@ -8,10 +8,11 @@ import { queryKeys } from '@/hooks/queries'
 import { diagnosticsReportSchema, type CorruptedItem, type DiagnosticsReport } from '@/lib/api/schemas'
 import { assembleReport, issueUrl } from '@/lib/diagnostics'
 import { toCalEvent } from '@/lib/events'
-import { useUi, type ReportCandidate } from '@/stores/ui'
+import { emptyReport, reportWaits, useUi, type ReportCandidate } from '@/stores/ui'
 import { apiEvent, calendar, diagnosticsReport, jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { ReportDialogMount } from './ReportDialogMount'
+import { ReportTray } from './ReportTray'
 
 /** The raw text of every object, as `GET .../content` answers: what must not leave without consent (NFR-36). */
 const CONTENT = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Therapy\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
@@ -103,7 +104,7 @@ function preview(sheet: HTMLElement): string {
 const escaped = (s: string) => JSON.stringify(s).slice(1, -1)
 
 afterEach(() => {
-  useUi.setState({ report: { open: false, candidates: [] }, detail: null })
+  useUi.setState({ report: emptyReport, detail: null })
   toast.dismiss()
 })
 
@@ -175,8 +176,8 @@ describe('ReportDialog (FR-36)', () => {
     expect(within(dialog).getByRole('checkbox', { name: 'Add this content to the report' })).not.toBeChecked()
   })
 
-  it('forgets shown content and ticks on close', async () => {
-    mockApi()
+  it('keeps shown content and ticks while the report waits', async () => {
+    const fetch = mockApi()
     const user = userEvent.setup()
     mount()
     const { dialog } = await open(dentist)
@@ -188,17 +189,105 @@ describe('ReportDialog (FR-36)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull()
     })
-    expect(useUi.getState().report).toEqual({ open: false, candidates: [dentist] })
+    expect(reportWaits(useUi.getState())).toBe(true)
 
     const again = await open()
     const listed = within(again.dialog).getByRole('listitem', { name: 'Dentist' })
+    expect(within(listed).getByText(/SUMMARY:Therapy/)).toBeInTheDocument()
+    expect(within(listed).getByRole('checkbox', { name: 'Add this content to the report' })).toBeChecked()
+    await waitFor(() => {
+      expect(preview(again.sheet)).toContain(`"content": ${JSON.stringify(CONTENT)}`)
+    })
+    // Kept from the first time, not read from the server again.
+    expect(fetch.mock.calls.filter(([u]) => urlOf(u).endsWith('/content'))).toHaveLength(1)
+  })
+
+  it('forgets shown content and ticks when closed without items', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open()
+    const problem = within(dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
+    await user.click(within(problem).getByRole('button', { name: 'Show content' }))
+    await user.click(await within(problem).findByRole('checkbox', { name: 'Add this content to the report' }))
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(reportWaits(useUi.getState())).toBe(false)
+
+    const again = await open()
+    const listed = within(again.dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
     expect(within(listed).getByRole('button', { name: 'Show content' })).toBeInTheDocument()
     expect(within(again.dialog).queryByText(/SUMMARY:Therapy/)).toBeNull()
     expect(within(again.dialog).queryByRole('checkbox')).toBeNull()
-    await waitFor(() => {
-      expect(preview(again.sheet)).toContain(escaped(SKELETON))
-    })
     expect(preview(again.sheet)).not.toContain('Therapy')
+  })
+
+  it('forgets shown content and ticks after a download', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    stubObjectUrls()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    mount()
+    const { dialog, sheet } = await open()
+    const problem = within(dialog).getByRole('listitem', { name: "An item Lucid couldn't read" })
+    await user.click(within(problem).getByRole('button', { name: 'Show content' }))
+    await user.click(await within(problem).findByRole('checkbox', { name: 'Add this content to the report' }))
+    expect(preview(sheet)).toContain('Therapy')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Download report' }))
+    expect(await within(problem).findByRole('button', { name: 'Show content' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('checkbox')).toBeNull()
+    expect(preview(sheet)).not.toContain('Therapy')
+  })
+
+  it('lists the newest item first, in the file too', async () => {
+    mockApi(diagnosticsReport({ problems: [] }))
+    mount()
+    act(() => {
+      useUi.getState().openReport(dentist)
+      useUi.getState().closeReport()
+    })
+    const { dialog, sheet } = await open(rent)
+    const rows = within(dialog).getAllByRole('listitem')
+    expect(rows.map((row) => row.querySelector('p')?.textContent)).toEqual(['Pay rent', 'Dentist'])
+    await waitFor(() => {
+      expect(preview(sheet)).toContain('"objectId": "ev-1"')
+    })
+    const file = JSON.parse(preview(sheet)) as { client: { objects: { objectId: string }[] } }
+    expect(file.client.objects.map((o) => o.objectId)).toEqual(['td-1', 'ev-1'])
+  })
+
+  it('lets the report wait for another item, and says so before', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open(dentist)
+    const add = within(dialog).getByRole('button', { name: 'Add another item' })
+    expect(add).toHaveAccessibleDescription(
+      'The report waits at the bottom of the screen until you download or discard it.',
+    )
+
+    await user.click(add)
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(useUi.getState().report.candidates).toEqual([dentist])
+    expect(reportWaits(useUi.getState())).toBe(true)
+  })
+
+  it('lets a report without items wait for its first one', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open()
+    await user.click(within(dialog).getByRole('button', { name: 'Add an item' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(reportWaits(useUi.getState())).toBe(true)
   })
 
   it('downloads exactly the preview', async () => {
@@ -291,6 +380,8 @@ describe('ReportDialog (FR-36)', () => {
     expect(within(dialog).getByText("An item Lucid couldn't read")).toBeInTheDocument()
     expect(within(dialog).getByText("An answer Lucid couldn't read")).toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: 'Show content' })).toBeNull()
+    // No item can be added before signing in, so the report has nothing to wait for.
+    expect(within(dialog).queryByRole('button', { name: /^Add (an|another) item$/ })).toBeNull()
     await waitFor(() => {
       expect(preview(sheet)).toContain('"authenticated": false')
     })
@@ -378,6 +469,24 @@ describe('ReportDialog (FR-36)', () => {
     expect(preview(sheet)).not.toContain('ev-1')
   })
 
+  it('forgets the shown content and tick of a removed item, so it comes back without them', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    const { dialog } = await open(dentist)
+    const row = within(dialog).getByRole('listitem', { name: 'Dentist' })
+    await user.click(within(row).getByRole('button', { name: 'Show content' }))
+    await user.click(await within(row).findByRole('checkbox', { name: 'Add this content to the report' }))
+    await user.click(within(row).getByRole('button', { name: 'Remove Dentist from the report' }))
+
+    act(() => {
+      useUi.getState().openReport(dentist)
+    })
+    const again = await within(dialog).findByRole('listitem', { name: 'Dentist' })
+    expect(within(again).getByRole('button', { name: 'Show content' })).toBeInTheDocument()
+    expect(within(again).queryByRole('checkbox')).toBeNull()
+  })
+
   it('lists an object that is an added item and a problem once, as the item, with one tick for both', async () => {
     mockApi()
     const user = userEvent.setup()
@@ -429,7 +538,8 @@ describe('ReportDialog (FR-36)', () => {
       useUi.getState().closeReport()
       useUi.getState().openReport({ ...dentist, label: 'Dentist again' })
     })
-    expect(useUi.getState().report).toEqual({ open: true, candidates: [dentist] })
+    expect(useUi.getState().report.open).toBe(true)
+    expect(useUi.getState().report.candidates).toEqual([dentist])
   })
 })
 
@@ -473,6 +583,34 @@ describe('ReportDialog focus', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Close' }))
     await waitFor(() => {
       expect(block).toHaveFocus()
+    })
+  })
+
+  it('returns the focus to the tray when it was opened from there', async () => {
+    mockApi()
+    const user = userEvent.setup()
+    mount()
+    // The account menu comes first on the page, as in the top bar: the tray still goes before it.
+    renderWithProviders(
+      <>
+        <button type="button" data-account-menu="">
+          Account
+        </button>
+        <ReportTray />
+      </>,
+    )
+    act(() => {
+      useUi.getState().openReport(dentist)
+      useUi.getState().closeReport()
+    })
+    const tray = screen.getByRole('region', { name: 'Problem report' })
+    await user.click(within(tray).getByRole('button', { name: 'Open report' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Report a problem' })
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('region', { name: 'Problem report' })).getByRole('button', { name: 'Open report' }),
+      ).toHaveFocus()
     })
   })
 
@@ -571,11 +709,12 @@ describe('ReportDialog focus', () => {
     act(() => {
       useUi.getState().openReport(dentist)
     })
+    // The newest first: Pay rent, then Dentist.
     const { dialog } = await open(rent)
-    await user.click(within(dialog).getByRole('button', { name: 'Remove Dentist from the report' }))
-    expect(within(dialog).getByRole('button', { name: 'Remove Pay rent from the report' })).toHaveFocus()
-
     await user.click(within(dialog).getByRole('button', { name: 'Remove Pay rent from the report' }))
+    expect(within(dialog).getByRole('button', { name: 'Remove Dentist from the report' })).toHaveFocus()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove Dentist from the report' }))
     expect(within(dialog).getByRole('heading', { name: 'Items' })).toHaveFocus()
   })
 })

@@ -166,7 +166,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
 
         {readOnly ? (
           <div className="flex justify-end">
-            <DetailReport onReport={report} />
+            <DetailReport objectId={event.id} onReport={report} />
           </div>
         ) : (
           <DetailActions
@@ -181,7 +181,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
               del.mutate(event)
               openDetail(null)
             }}
-            onReport={report}
+            report={{ objectId: event.id, onReport: report }}
             deleteScope={
               deleteOptions.length > 1
                 ? {

@@ -117,7 +117,7 @@ test('content only after consent', async ({ page }) => {
   await expect(row).toHaveCount(0)
   await expect(page.getByText('Report downloaded')).toBeVisible()
 
-  // Added again after the dialog was closed: it forgot what was shown, so the content has to be shown again.
+  // Added again after the download: it forgot what was shown, so the content has to be shown again.
   await dialog.getByRole('button', { name: 'Close' }).click()
   await expect(dialog).toBeHidden()
   const again = await addToReport(page, block)
@@ -131,6 +131,49 @@ test('content only after consent', async ({ page }) => {
   const ticked = await downloadReport(page)
   expect(ticked.report.client.objects).toHaveLength(1)
   expect(ticked.report.client.objects[0]?.content).toContain(`SUMMARY:${CANARY}`)
+})
+
+test('the report waits in the tray while items are added, and keeps what was ticked', async ({ page }) => {
+  const block = await showCanary(page)
+  const dialog = reportDialog(page)
+  const row = await addToReport(page, block)
+  await row.getByRole('button', { name: 'Show content' }).click()
+  await row.getByRole('checkbox', { name: 'Add this content to the report' }).check()
+
+  // The dialog says where the report goes before it closes, and the tray shows it waiting.
+  const add = dialog.getByRole('button', { name: 'Add another item' })
+  await expect(add).toHaveAccessibleDescription(
+    'The report waits at the bottom of the screen until you download or discard it.',
+  )
+  await add.click()
+  await expect(dialog).toBeHidden()
+  const tray = page.getByRole('region', { name: 'Problem report' })
+  await expect(tray).toContainText(CANARY)
+  await expect(tray).toContainText('To add an item, open an event or task and choose Add to problem report.')
+
+  // The event's life buoy now says what it does: the event is in the report already.
+  await block.click()
+  await page.getByRole('dialog', { name: CANARY }).getByRole('button', { name: 'Open problem report' }).click()
+  await expect(dialog).toBeVisible()
+  await expect(tray).toBeHidden()
+  await expect(row.getByRole('checkbox', { name: 'Add this content to the report' })).toBeChecked()
+
+  // Discarded from the tray, and put back with Undo.
+  await page.keyboard.press('Escape')
+  await expect(tray).toBeVisible()
+  await tray.getByRole('button', { name: 'Discard report' }).click()
+  await expect(tray).toBeHidden()
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(tray).toContainText(CANARY)
+
+  await tray.getByRole('button', { name: 'Open report' }).click()
+  const { report } = await downloadReport(page)
+  expect(report.client.objects).toHaveLength(1)
+  expect(report.client.objects[0]?.content).toContain(`SUMMARY:${CANARY}`)
+  // Downloaded, nothing waits any more.
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(tray).toBeHidden()
 })
 
 test('report from the login page', async ({ page }) => {

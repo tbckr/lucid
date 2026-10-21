@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { CorruptedEvent } from './CorruptedEvent'
 import { EventBoundary } from './EventBoundary'
 
@@ -10,7 +10,7 @@ function Boom(): never {
 }
 
 afterEach(() => {
-  useUi.setState({ report: { open: false, candidates: [] } })
+  useUi.setState({ report: emptyReport })
 })
 
 describe('Corrupted event placeholder (FR-19)', () => {

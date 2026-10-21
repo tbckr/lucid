@@ -13,7 +13,7 @@ import { taskGlyphSlots } from '@/lib/scope'
 import { todoToInput } from '@/lib/tasks'
 import { apiEvent, bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import {
   MOVE_EVENT_KEY,
   queryKeys,
@@ -3885,7 +3885,7 @@ describe('reportMutationError', () => {
   const qc = new QueryClient()
 
   afterEach(() => {
-    useUi.setState({ report: { open: false, candidates: [] } })
+    useUi.setState({ report: emptyReport })
   })
 
   it('adds the reference of a server error to its toast, with an action that opens the report (FR-36)', () => {

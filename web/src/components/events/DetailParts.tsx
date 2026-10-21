@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { splitLinks } from '@/lib/links'
 import { detailPlacement, lastKnownBox, type Box } from '@/lib/placement'
 import { type Scope, type ScopeItem } from '@/lib/scope'
+import { useUi } from '@/stores/ui'
 
 /*
  * Parts of the details popovers of events (FR-09) and tasks (FR-16): the
@@ -128,13 +129,21 @@ export function Linked({ text }: { text: string }) {
   )
 }
 
+/** The item the details' life buoy is about (FR-36), and what adds it to the problem report and opens that. */
+export interface DetailReportProps {
+  objectId: string
+  onReport: () => void
+}
+
 /**
  * "Add to problem report" (FR-36), the same for events and tasks: an icon button between delete and edit, or
- * alone at the end of the footer of an item that can't be changed.
+ * alone at the end of the footer of an item that can't be changed. Once the item is in the report, the button
+ * says what it then does: it opens the report.
  */
-export function DetailReport({ onReport }: { onReport: () => void }) {
+export function DetailReport({ objectId, onReport }: DetailReportProps) {
   const { t } = useTranslation()
-  const label = t('diagnostics.addItem')
+  const added = useUi((s) => s.report.candidates.some((c) => c.objectId === objectId))
+  const label = t(added ? 'diagnostics.openItem' : 'diagnostics.addItem')
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -158,7 +167,7 @@ export function DetailActions({
   confirm,
   onEdit,
   onDelete,
-  onReport,
+  report,
   deleteScope,
   onScopeOpenChange,
 }: {
@@ -169,8 +178,8 @@ export function DetailActions({
   confirm: string
   onEdit: () => void
   onDelete: () => void
-  /** Adds the item to the problem report (FR-36). */
-  onReport: () => void
+  /** The item for the problem report (FR-36). */
+  report: DetailReportProps
   /**
    * The question which events or repeats of a series to delete (FR-17): the `question` itself, the
    * options it offers (`eventScopeItems`, `taskScopeItems`), the series' calendar color, why an
@@ -263,7 +272,7 @@ export function DetailActions({
         {deleteLabel}
       </Button>
       <div className="flex items-center gap-1">
-        <DetailReport onReport={onReport} />
+        <DetailReport {...report} />
         <Button ref={editRef} size="sm" variant="outline" onClick={onEdit}>
           <PencilIcon aria-hidden />
           {editLabel}

@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { renderWithProviders } from '@/test/render'
 import { ReportDialogMount } from './ReportDialogMount'
 
@@ -15,7 +15,7 @@ vi.mock('./ReportDialog', () => {
 })
 
 afterEach(() => {
-  useUi.setState({ report: { open: false, candidates: [] } })
+  useUi.setState({ report: emptyReport })
   toast.dismiss()
 })
 

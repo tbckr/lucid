@@ -543,6 +543,7 @@
     "signedOut": "Du wurdest abgemeldet. Falls das unerwartet war, kannst du das Problem melden.",
     "loadFailed": "Lucid konnte den Problembericht nicht öffnen. Lade die Seite neu und versuche es noch einmal.",
     "addItem": "Zum Problembericht hinzufügen",
+    "openItem": "Problembericht öffnen",
     "title": "Problem melden",
     "description": "Lucid stellt eine Datei für ein Issue auf GitHub zusammen. Sie wird nur heruntergeladen, Lucid verschickt nichts selbst.",
     "summary": {
@@ -569,6 +570,9 @@
       "hint": "Lucid fügt von jedem Eintrag den Aufbau hinzu, ohne Titel oder andere Daten. Den Inhalt nur, wenn du ihn hinzufügst.",
       "empty": "Um einen Termin oder eine Aufgabe hinzuzufügen, öffne ihn und wähle Zum Problembericht hinzufügen.",
       "signedOut": "Melde dich an, um Termine oder Aufgaben hinzuzufügen.",
+      "add": "Eintrag hinzufügen",
+      "addAnother": "Weiteren Eintrag hinzufügen",
+      "waits": "Der Bericht wartet unten am Bildschirmrand, bis du ihn herunterlädst oder verwirfst.",
       "event": "Termin in {{calendar}}",
       "task": "Aufgabe in {{calendar}}",
       "remove": "{{label}} aus dem Bericht entfernen"
@@ -604,8 +608,16 @@
     "newTab": "(öffnet in einem neuen Tab)",
     "download": "Bericht herunterladen",
     "downloaded": "Bericht heruntergeladen",
+    "discarded": "Problembericht verworfen",
     "loading": "Bericht wird zusammengestellt …",
     "failed": "Lucid konnte den Bericht nicht zusammenstellen.",
-    "corruptedAction": "{{label}}. Problem melden"
+    "corruptedAction": "{{label}}. Problem melden",
+    "tray": {
+      "label": "Problembericht",
+      "empty": "Noch keine Einträge",
+      "hint": "Um einen Eintrag hinzuzufügen, öffne einen Termin oder eine Aufgabe und wähle <icon/>.",
+      "open": "Bericht öffnen",
+      "discard": "Bericht verwerfen"
+    }
   }
 }

@@ -8,13 +8,13 @@ import { REFERENCE_TOAST_MS } from '@/lib/errors'
 import { isReported, markReported } from '@/lib/refresh'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { defaultSettings, useSettings } from '@/stores/settings'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { useLoadErrorToast, useRefresh } from './useRefresh'
 
 afterEach(() => {
   vi.useRealTimers()
   useSettings.setState(defaultSettings)
-  useUi.setState({ backendReachable: true, report: { open: false, candidates: [] } })
+  useUi.setState({ backendReachable: true, report: emptyReport })
   toast.dismiss()
 })
 

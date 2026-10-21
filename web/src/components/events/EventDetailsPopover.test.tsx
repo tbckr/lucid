@@ -5,7 +5,7 @@ import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type ApiEvent } from '@/lib/api/schemas'
 import { toCalEvent } from '@/lib/events'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { apiEvent, calendar, jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { EventDetailsPopover } from './EventDetailsPopover'
@@ -35,7 +35,7 @@ async function openDetails(p: Partial<ApiEvent>) {
 describe('EventDetailsPopover', () => {
   afterEach(() => {
     useUi.getState().openDetail(null)
-    useUi.setState({ report: { open: false, candidates: [] } })
+    useUi.setState({ report: emptyReport })
     vi.restoreAllMocks()
   })
 
@@ -258,11 +258,24 @@ describe('EventDetailsPopover', () => {
     const buttons = within(dialog).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)
     expect(buttons.slice(-3)).toEqual(['Delete event', 'Add to problem report', 'Edit event'])
     await user.click(within(dialog).getByRole('button', { name: 'Add to problem report' }))
-    expect(useUi.getState().report).toEqual({
-      open: true,
-      candidates: [{ objectId: 'e7', kind: 'event', label: 'Quarterly review', calendarId: 'c1' }],
-    })
+    expect(useUi.getState().report.open).toBe(true)
+    expect(useUi.getState().report.candidates).toEqual([
+      { objectId: 'e7', kind: 'event', label: 'Quarterly review', calendarId: 'c1' },
+    ])
     expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('says it opens the problem report when the event is in it already (FR-36)', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useUi.getState().openReport({ objectId: 'e7', kind: 'event', label: 'Quarterly review', calendarId: 'c1' })
+      useUi.getState().closeReport()
+    })
+    const { dialog } = await openDetails({ id: 'e7' })
+    expect(within(dialog).queryByRole('button', { name: 'Add to problem report' })).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Open problem report' }))
+    expect(useUi.getState().report.open).toBe(true)
+    expect(useUi.getState().report.candidates).toHaveLength(1)
   })
 
   it('opens the editor for the event', async () => {

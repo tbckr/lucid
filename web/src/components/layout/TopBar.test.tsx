@@ -4,12 +4,12 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderWithProviders } from '@/test/render'
 import { defaultSettings, useSettings } from '@/stores/settings'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { TopBar } from './TopBar'
 
 afterEach(() => {
   useSettings.setState(defaultSettings)
-  useUi.setState({ backendReachable: true, report: { open: false, candidates: [] } })
+  useUi.setState({ backendReachable: true, report: emptyReport })
 })
 
 /** Puts the calendar list on screen, as loaded by the seed. */

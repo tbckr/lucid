@@ -22,7 +22,7 @@ function setup(props: Partial<ComponentProps<typeof DetailActions>> = {}) {
       confirm="Delete this event?"
       onEdit={vi.fn()}
       onDelete={onDelete}
-      onReport={vi.fn()}
+      report={{ objectId: 'e1', onReport: vi.fn() }}
       onScopeOpenChange={onScopeOpenChange}
       {...props}
     />,

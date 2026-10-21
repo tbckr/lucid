@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { ChevronDownIcon, ExternalLinkIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ExternalLinkIcon, PlusIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -14,17 +14,15 @@ import { endpoints } from '@/lib/api/endpoints'
 import { type DiagnosticsReport, type ObjectSkeleton, type Skeleton } from '@/lib/api/schemas'
 import { assembleReport, issueUrl, reportFileName, SECURITY_URL, type ReportObject } from '@/lib/diagnostics'
 import { cn } from '@/lib/utils'
-import { useUi, type ReportCandidate } from '@/stores/ui'
+import { useUi, type ReportCandidate, type ReportContent } from '@/stores/ui'
 
 /*
  * The problem report (FR-36): a file the user downloads to hand a CalDAV server problem to the maintainers.
  * The left pane explains and chooses, the right pane is the file itself, exactly as it downloads. It holds no
  * calendar contents (NFR-36) unless the user, for one object at a time, asks to see its content and then ticks
- * the box that adds it. What was shown and ticked lives here only and is gone once the dialog closes.
+ * the box that adds it. What was shown and ticked stays in the browser while the report is open or waits, and is
+ * gone once it is downloaded, discarded or closed without items.
  */
-
-/** An object's raw content as the dialog shows it: asked for one at a time, never cached. */
-type Shown = { status: 'loading' } | { status: 'failed' } | { status: 'shown'; text: string }
 
 /** No retries and no refetch behind the user's back: the file must not change while they read it. */
 const ONCE = { staleTime: 0, gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false } as const
@@ -34,8 +32,8 @@ const CONTROLS = 'button, a[href], [tabindex="0"]'
 
 /**
  * The problem report dialog; `ReportDialogMount` loads it and numbers its openings: each starts afresh, even one
- * while the last is still fading out. On close the focus goes back to `returnFocus`, or to the account menu when
- * that is gone (a menu item, a toast).
+ * while the last is still fading out. On close the focus goes back to `returnFocus`, or when that is gone to the
+ * tray the report waits in (it was opened from there), else to the account menu (a menu item, a toast).
  */
 export function ReportDialog({ opening, returnFocus }: { opening: number; returnFocus: RefObject<HTMLElement | null> }) {
   const { t } = useTranslation()
@@ -59,7 +57,10 @@ export function ReportDialog({ opening, returnFocus }: { opening: number; return
         }}
         onCloseAutoFocus={(e) => {
           const opener = returnFocus.current
-          const target = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-account-menu]')
+          const target = opener?.isConnected
+            ? opener
+            : (document.querySelector<HTMLElement>('[data-report-tray-open]') ??
+              document.querySelector<HTMLElement>('[data-account-menu]'))
           if (target) {
             e.preventDefault()
             target.focus()
@@ -81,6 +82,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
   const id = useId()
   const candidates = useUi((s) => s.report.candidates)
   const removeCandidate = useUi((s) => s.removeReportCandidate)
+  const parkReport = useUi((s) => s.parkReport)
   const clearReport = useUi((s) => s.clearReport)
   const corrupted = useCorruptedItems()
   const report = useQuery({
@@ -99,8 +101,10 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
       ...ONCE,
     })),
   })
-  const [shown, setShown] = useState<ReadonlyMap<string, Shown>>(new Map())
-  const [included, setIncluded] = useState<ReadonlySet<string>>(new Set())
+  const shown = useUi((s) => s.report.shown)
+  const included = useUi((s) => s.report.included)
+  const showReportContent = useUi((s) => s.showReportContent)
+  const includeReportContent = useUi((s) => s.includeReportContent)
   // Numbered, so that the same message twice in a row is announced twice.
   const [announcement, setAnnouncement] = useState({ text: '', n: 0 })
   const [fileOpen, setFileOpen] = useState(false)
@@ -174,24 +178,23 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
   }, [])
 
   function showContent(objectId: string) {
-    setShown((m) => new Map(m).set(objectId, { status: 'loading' }))
+    showReportContent(objectId, { status: 'loading' })
+    // A report forgotten in the meantime, or the item removed, gets nothing back.
+    const settle = (content: ReportContent) => {
+      if (useUi.getState().report.shown.get(objectId)?.status === 'loading') showReportContent(objectId, content)
+    }
     void endpoints.getObjectContent(objectId).then(
       ({ content }) => {
-        setShown((m) => new Map(m).set(objectId, { status: 'shown', text: content }))
+        settle({ status: 'shown', text: content })
       },
       () => {
-        setShown((m) => new Map(m).set(objectId, { status: 'failed' }))
+        settle({ status: 'failed' })
       },
     )
   }
 
   function include(objectId: string, on: boolean) {
-    setIncluded((s) => {
-      const next = new Set(s)
-      if (on) next.add(objectId)
-      else next.delete(objectId)
-      return next
-    })
+    includeReportContent(objectId, on)
     setAnnouncement((a) => ({ text: t(on ? 'diagnostics.content.added' : 'diagnostics.content.removed'), n: a.n + 1 }))
     scrollTo.current = on ? objectId : null
   }
@@ -283,6 +286,18 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
                   />
                 ))}
               </ul>
+            )}
+            {/* Says before the click where the report goes: the dialog closes, the report waits in the tray. */}
+            {signedIn && (
+              <div className="mt-2 grid justify-items-start gap-1.5">
+                <Button variant="outline" size="sm" aria-describedby={`${id}-waits`} onClick={parkReport}>
+                  <PlusIcon aria-hidden />
+                  {t(candidates.length > 0 ? 'diagnostics.items.addAnother' : 'diagnostics.items.add')}
+                </Button>
+                <p id={`${id}-waits`} className="text-xs text-muted-foreground">
+                  {t('diagnostics.items.waits')}
+                </p>
+              </div>
             )}
           </section>
           <p aria-live="polite" aria-atomic="true" className="sr-only">
@@ -423,7 +438,7 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
 }
 
 interface ConsentProps {
-  state: Shown | undefined
+  state: ReportContent | undefined
   included: boolean
   onShow: () => void
   onInclude: (on: boolean) => void

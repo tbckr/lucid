@@ -6,7 +6,7 @@ import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Todo, type TodoOccurrence } from '@/lib/api/schemas'
 import { occurrenceTask, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
-import { useUi } from '@/stores/ui'
+import { emptyReport, useUi } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { TaskDetailsPopover } from './TaskDetailsPopover'
@@ -48,7 +48,7 @@ describe('TaskDetailsPopover', () => {
   afterEach(() => {
     useUi.getState().openDetail(null)
     useUi.getState().openTaskEditor(null)
-    useUi.setState({ report: { open: false, candidates: [] } })
+    useUi.setState({ report: emptyReport })
     vi.restoreAllMocks()
   })
 
@@ -143,11 +143,24 @@ describe('TaskDetailsPopover', () => {
     const buttons = within(dialog).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent)
     expect(buttons.slice(-3)).toEqual(['Delete task', 'Add to problem report', 'Edit task'])
     await user.click(within(dialog).getByRole('button', { name: 'Add to problem report' }))
-    expect(useUi.getState().report).toEqual({
-      open: true,
-      candidates: [{ objectId: 't7', kind: 'todo', label: 'Pay rent', calendarId: 'c1' }],
-    })
+    expect(useUi.getState().report.open).toBe(true)
+    expect(useUi.getState().report.candidates).toEqual([
+      { objectId: 't7', kind: 'todo', label: 'Pay rent', calendarId: 'c1' },
+    ])
     expect(useUi.getState().detail).toBeNull()
+  })
+
+  it('says it opens the problem report when the task is in it already (FR-36)', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useUi.getState().openReport({ objectId: 't7', kind: 'todo', label: 'Pay rent', calendarId: 'c1' })
+      useUi.getState().closeReport()
+    })
+    const { dialog } = await openDetails({ id: 't7' })
+    expect(within(dialog).queryByRole('button', { name: 'Add to problem report' })).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Open problem report' }))
+    expect(useUi.getState().report.open).toBe(true)
+    expect(useUi.getState().report.candidates).toHaveLength(1)
   })
 
   it('asks before deleting the task', async () => {

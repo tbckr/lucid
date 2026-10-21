@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { CalendarDnd } from '@/components/dnd/CalendarDnd'
 import { LimitPill } from '@/components/dnd/LimitPill'
 import { CreatePopover } from '@/components/create/CreatePopover'
+import { ReportTray } from '@/components/diagnostics/ReportTray'
 import { EditorDialog } from '@/components/EditorDialog'
 import { EventDetailsPopover } from '@/components/events/EventDetailsPopover'
 import { EventBar, EventChip, TimedBlock } from '@/components/events/EventItems'
@@ -338,6 +339,7 @@ export function CalendarPage() {
       <EditorDialog />
       <SettingsDialog />
       <ShortcutsDialog />
+      <ReportTray />
     </div>
   )
 }
