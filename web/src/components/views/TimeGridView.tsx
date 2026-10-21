@@ -149,7 +149,7 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
                 const e = b.event
                 const style = { top: 3 + b.lane * 22, left: 2, width: `calc(${b.span * 100}% + ${b.span - 1}px - 4px)` }
                 return (
-                  <EventBoundary key={e.key} className="absolute inset-x-1">
+                  <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
                     {e.kind === 'task' ? (
                       <TaskBar
                         task={e}
@@ -347,7 +347,7 @@ function DayColumn({
         const size = height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'
         const style = { top, height, left: `${left}%`, width: `calc(${width}% - 4px)`, zIndex: 10 + p.col }
         return (
-          <EventBoundary key={e.key} className="absolute inset-x-1">
+          <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
             {e.kind === 'task' ? (
               <TaskBlock
                 task={e}

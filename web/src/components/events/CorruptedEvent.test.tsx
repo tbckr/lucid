@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toCalTask } from '@/lib/calendarTasks'
+import { toCalEvent } from '@/lib/events'
 import { emptyReport, useUi } from '@/stores/ui'
+import { apiEvent, todo } from '@/test/fixtures'
 import { CorruptedEvent } from './CorruptedEvent'
 import { EventBoundary } from './EventBoundary'
 
@@ -43,7 +46,7 @@ describe('Corrupted event placeholder (FR-19)', () => {
     render(
       <ul>
         <li>
-          <EventBoundary>
+          <EventBoundary item={toCalEvent(apiEvent())}>
             <Boom />
           </EventBoundary>
         </li>
@@ -52,6 +55,24 @@ describe('Corrupted event placeholder (FR-19)', () => {
     )
     expect(screen.getByTestId('corrupted-event')).toHaveAttribute('title', 'bad RRULE')
     expect(screen.getByText('Healthy event')).toBeInTheDocument()
+    spy.mockRestore()
+  })
+
+  it.each([
+    ['an event', toCalEvent(apiEvent({ id: 'ev-1', title: 'Dentist', calendarId: 'c1' })), 'event', 'ev-1', 'Dentist'],
+    ['a task', toCalTask(todo({ id: 'td-1', title: '', calendarId: 'c1', due: '2026-10-05T00:00:00Z', dueAllDay: true })), 'todo', 'td-1', '(No title)'],
+  ])('adds %s that failed to render to the problem report (FR-36)', async (_, item, kind, objectId, label) => {
+    const user = userEvent.setup()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(
+      <EventBoundary item={item!}>
+        <Boom />
+      </EventBoundary>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Corrupted event. Report a problem' }))
+    const { open, candidates } = useUi.getState().report
+    expect(open).toBe(true)
+    expect(candidates).toEqual([{ objectId, kind, label, calendarId: 'c1' }])
     spy.mockRestore()
   })
 })

@@ -334,7 +334,7 @@ function DayCell({
         const e = b.event
         const style = { top: 30 + b.lane * 22, left: 4, width: `calc(${b.span * 100}% + ${b.span - 1}px - 8px)` }
         return (
-          <EventBoundary key={`${e.key}:${b.startCol}`} className="absolute inset-x-1">
+          <EventBoundary key={`${e.key}:${b.startCol}`} item={e} className="absolute inset-x-1">
             {e.kind === 'task' ? (
               <TaskBar
                 task={e}
@@ -373,7 +373,7 @@ function DayCell({
 
       <div className="flex flex-col gap-0.5 px-1" style={{ paddingTop: cell.barRows * 22 }}>
         {cell.singles.map((e) => (
-          <EventBoundary key={e.key}>
+          <EventBoundary key={e.key} item={e}>
             {e.kind === 'task' ? (
               <TaskChip
                 task={e}

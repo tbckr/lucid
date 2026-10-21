@@ -2,18 +2,20 @@ import { LifeBuoyIcon, TriangleAlertIcon } from 'lucide-react'
 import { type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { useUi } from '@/stores/ui'
+import { useUi, type ReportCandidate } from '@/stores/ui'
 
 /**
  * Placeholder for an event that could not be parsed or rendered (FR-19). A click opens the problem report
- * (FR-36), which lists what failed in it by field name.
+ * (FR-36), which lists what failed in it by field name; one that failed to render adds its item, the `candidate`.
  */
 export function CorruptedEvent({
   reason,
+  candidate,
   className,
   style,
 }: {
   reason?: string
+  candidate?: ReportCandidate
   className?: string
   style?: CSSProperties
 }) {
@@ -31,7 +33,7 @@ export function CorruptedEvent({
         onClick={(e) => {
           // A month cell or a day column behind it would open the create popover.
           e.stopPropagation()
-          openReport()
+          openReport(candidate)
         }}
         className="flex h-5 w-full min-w-0 items-center gap-1 rounded-sm border border-dashed border-destructive/60 bg-destructive/5 px-1.5 text-left text-xs text-destructive transition-colors outline-none hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-destructive/50"
       >

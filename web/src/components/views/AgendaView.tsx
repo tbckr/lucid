@@ -109,7 +109,7 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
                   </span>
                 </h2>
               ) : task ? (
-                <EventBoundary>
+                <EventBoundary item={task}>
                   <TaskAgendaRow
                     task={task}
                     time={timeLabel(task, row.day)}
@@ -119,7 +119,7 @@ export function AgendaView({ range, now, events, corrupted, prefs, colorsOf, cal
                   />
                 </EventBoundary>
               ) : event ? (
-                <EventBoundary>
+                <EventBoundary item={event}>
                   <button
                     type="button"
                     data-event-key={event.key}

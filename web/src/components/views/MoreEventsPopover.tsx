@@ -98,7 +98,7 @@ function VirtualList({
               className="absolute inset-x-0 top-0"
               style={{ height: item.size, transform: `translateY(${item.start}px)` }}
             >
-              <EventBoundary>
+              <EventBoundary item={e}>
                 <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
               </EventBoundary>
             </li>
@@ -166,7 +166,7 @@ export function MoreEventsPopover({
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
               <li key={e.key}>
-                <EventBoundary>
+                <EventBoundary item={e}>
                   <Entry item={e} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
                 </EventBoundary>
               </li>
