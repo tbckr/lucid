@@ -191,7 +191,9 @@ Body (`EventInput`):
 ```
 
 `201` with the created `Event` (not expanded; for recurring events the
-first occurrence).
+first occurrence). `timezone` is the IANA zone a timed series recurs in,
+written as `TZID` with a `VTIMEZONE`; `""` or `"UTC"` writes it in UTC
+without either. A single event is stored in UTC whatever it names (FR-18).
 `422 unsupported_component` if the calendar does not accept events
 (`supportsEvents: false`).
 

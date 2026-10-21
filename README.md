@@ -166,6 +166,22 @@ write.
 [docs/RECURRING-TASKS.md](docs/RECURRING-TASKS.md) explains why, with a survey
 of how CalDAV clients handle repeating tasks.
 
+### Time zones
+
+Lucid shows every time in your browser's time zone. It stores a single timed
+event or task in UTC. A repeating one you create in Lucid gets your browser's
+time zone, such as `Europe/Berlin`, as calendar apps usually do: that is what
+keeps a weekly meeting at 9:00 when daylight saving time begins or ends. The
+zone stays with the series on your CalDAV server, where whoever runs the
+server, and whoever you share the calendar with, can see it.
+
+To keep your time zone out, use a browser that reports UTC instead, such as
+Firefox with
+[`privacy.resistFingerprinting`](https://support.mozilla.org/en-US/kb/resist-fingerprinting),
+which reports UTC or Iceland's time (`Atlantic/Reykjavik`). Lucid then shows
+and stores every time in that zone, as Thunderbird does with its time zone set
+to UTC, so a weekly meeting at 9:00 stays at 9:00 UTC all year.
+
 ## Quick start
 
 ### On your own computer
