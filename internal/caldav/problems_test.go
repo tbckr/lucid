@@ -1356,3 +1356,98 @@ func TestProviderRemembersLoggedProblems(t *testing.T) {
 		t.Errorf("provider remembers %d problems; want 1024", got)
 	}
 }
+
+// panickingObject is iCalendar that go-ical panics on rather than reject: a
+// quoted parameter value followed by more text. The panic's value names the
+// character after the quote, here one of the canary.
+const panickingObject = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + canary + "-uid\r\n" +
+	"DTSTAMP:20250301T000000Z\r\nDTSTART:20250302T100000Z\r\n" +
+	`ATTENDEE;CN="Bob"` + canary + ":mailto:" + canary + "@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+func TestDecodeICal(t *testing.T) {
+	t.Parallel()
+	t.Run("a panic of the decoder is an error of fixed wording", func(t *testing.T) {
+		t.Parallel()
+		cal, err := decodeICal([]byte(panickingObject))
+		if cal != nil || !errors.Is(err, errDecoderPanic) {
+			t.Fatalf("decodeICal = %v, %v; want nil, errDecoderPanic", cal, err)
+		}
+		noCanary(t, "error", err.Error())
+	})
+	t.Run("an error of the decoder stays its own", func(t *testing.T) {
+		t.Parallel()
+		_, err := decodeICal([]byte(brokenObject))
+		if err == nil || errors.Is(err, errDecoderPanic) {
+			t.Errorf("decodeICal = %v; want the decoder's error", err)
+		}
+	})
+	t.Run("data that parse", func(t *testing.T) {
+		t.Parallel()
+		cal, err := decodeICal([]byte(canaryEvent("a")))
+		if err != nil || cal == nil || len(cal.Children) != 1 {
+			t.Errorf("decodeICal = %v, %v; want the calendar with its event", cal, err)
+		}
+	})
+}
+
+// An object go-ical panics on is one that does not parse: skipped from the
+// listing with a problem, the other objects listed, and nothing of the panic,
+// which names a character of the object, in the log (FR-36, NFR-36).
+func TestProblemDecoderPanicInListing(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.answerReport("personal",
+		reportObject{"good.ics", canaryEvent("good")},
+		reportObject{canary + "-panic.ics", panickingObject})
+
+	evs, err := r.listEvents(t, "personal")
+
+	mustNoErr(t, err)
+	if len(evs) != 1 || evs[0].UID != "good" {
+		t.Fatalf("events = %+v; want the one good event", evs)
+	}
+	got := r.problems()
+	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject || got[0].Reason != diag.Reason(errDecoderPanic) {
+		t.Fatalf("problems = %+v; want one unparsable_object with the fixed reason", got)
+	}
+	if id, ok := r.p.ids.open(got[0].ObjectID); !ok || id != r.calPath("personal")+canary+"-panic.ics" {
+		t.Errorf("ObjectID decodes to %q, %v; want the object", id, ok)
+	}
+	noCanary(t, "Skeleton", got[0].Skeleton.Text)
+	if out := r.logs.String(); strings.Contains(out, "unexpected character") || strings.Contains(out, "panic") {
+		t.Errorf("log carries the panic:\n%s", out)
+	}
+	noCanary(t, "log", r.logs.String())
+}
+
+// The same for an object read on its own, as a change reads it.
+func TestProblemDecoderPanicOnRead(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	objPath := r.putCanaryEvent(t, "personal", canary+"-obj.ics")
+	evs, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	r.hook(func(w http.ResponseWriter, req *http.Request) bool {
+		if req.Method != http.MethodGet || req.URL.Path != objPath {
+			return false
+		}
+		w.Header().Set("Content-Type", "text/calendar")
+		_, _ = io.WriteString(w, panickingObject)
+		return true
+	})
+
+	_, _, err = r.svc.UpdateEvent(r.ctx, evs[0].ID, evs[0].ETag, domain.EventInput{
+		Title: "x", Start: date(2025, 3, 2, 10, 0), End: date(2025, 3, 2, 11, 0),
+	})
+
+	mustErr(t, err, domain.ErrUpstream)
+	noCanary(t, "error", err.Error())
+	got := r.problems()
+	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject || got[0].Reason != diag.Reason(errDecoderPanic) {
+		t.Fatalf("problems = %+v; want one unparsable_object with the fixed reason", got)
+	}
+	if out := r.logs.String(); strings.Contains(out, "unexpected character") || strings.Contains(out, "panic") {
+		t.Errorf("log carries the panic:\n%s", out)
+	}
+	noCanary(t, "log", r.logs.String())
+}

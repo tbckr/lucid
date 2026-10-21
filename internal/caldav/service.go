@@ -243,7 +243,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 		if data == "" {
 			continue
 		}
-		cal, err := ical.NewDecoder(strings.NewReader(data)).Decode()
+		cal, err := decodeICal([]byte(data))
 		if err != nil {
 			// The object stays out of the listing; the problem says why, and
 			// the entry keeps it for the sessions that read it from the cache.
@@ -303,6 +303,25 @@ func canWrite(ps *privilegeSet) bool {
 	return false
 }
 
+// errDecoderPanic is what decodeICal returns for data the decoder panicked on.
+// It is fixed wording: the panic's value can carry a character of the data.
+var errDecoderPanic = errors.New("ical: decoder failed on malformed data")
+
+// decodeICal parses data as iCalendar. go-ical panics on some malformed input
+// (a quoted parameter value followed by more text, `CN="Bob"Smith`) instead of
+// returning an error; decodeICal turns that into errDecoderPanic, so the object
+// is one that does not parse like any other: skipped and recorded as a problem,
+// not a failed request whose panic, with its piece of the data, reaches the log
+// (FR-36, NFR-36).
+func decodeICal(data []byte) (cal *ical.Calendar, err error) {
+	defer func() {
+		if recover() != nil {
+			cal, err = nil, errDecoderPanic
+		}
+	}()
+	return ical.NewDecoder(bytes.NewReader(data)).Decode()
+}
+
 // getObject fetches and parses one object. It also returns the object's data
 // as read, raw.
 func (s *service) getObject(ctx context.Context, objPath string) (cal *ical.Calendar, etag string, raw []byte, err error) {
@@ -310,7 +329,7 @@ func (s *service) getObject(ctx context.Context, objPath string) (cal *ical.Cale
 	if err != nil {
 		return nil, "", nil, mapError(err)
 	}
-	cal, err = ical.NewDecoder(bytes.NewReader(resp.body)).Decode()
+	cal, err = decodeICal(resp.body)
 	if err != nil {
 		s.objectProblem(ctx, diag.ProblemUnparsableObject, objPath, resp.body, err)
 		return nil, "", nil, invalidData("invalid iCalendar data", err)

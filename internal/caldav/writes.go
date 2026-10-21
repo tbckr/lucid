@@ -1,7 +1,6 @@
 package caldav
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -292,7 +291,7 @@ func (s *service) restoreResource(ctx context.Context, snap domain.Snapshot, kin
 	}
 	// Parsed before the write, so that nothing is written that could not be
 	// reported; the change parsed the same data when it read it.
-	cal, err := ical.NewDecoder(bytes.NewReader(snap.Data)).Decode()
+	cal, err := decodeICal(snap.Data)
 	if err != nil {
 		return calObject{}, nil, "", false, invalidData("invalid iCalendar data", err)
 	}
