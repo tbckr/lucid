@@ -8,12 +8,23 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
-import { useCorruptedItems, useVisibleCalendars } from '@/hooks/queries'
+import { useCalendars, useCorruptedItems, useVisibleCalendars } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
+import { usePrefs } from '@/hooks/usePrefs'
 import { endpoints } from '@/lib/api/endpoints'
 import { type DiagnosticsReport, type ObjectSkeleton, type Skeleton } from '@/lib/api/schemas'
-import { assembleReport, issueUrl, reportFileName, SECURITY_URL, type ReportObject } from '@/lib/diagnostics'
+import {
+  assembleReport,
+  clientContext,
+  issueUrl,
+  reportFileName,
+  SECURITY_URL,
+  type ClientContext,
+  type ReportObject,
+} from '@/lib/diagnostics'
+import { browserLocale, browserTimeZone } from '@/lib/locale'
 import { cn } from '@/lib/utils'
+import { useSettings } from '@/stores/settings'
 import { useUi, type ReportCandidate, type ReportContent } from '@/stores/ui'
 
 /*
@@ -77,6 +88,29 @@ export function ReportDialog({ opening, returnFocus }: { opening: number; return
   )
 }
 
+/** The browser's part of the file (FR-36), as it is when the report renders; the account's calendars once signed in. */
+function useClientContext(signedIn: boolean): ClientContext {
+  const { i18n } = useTranslation()
+  const language = useSettings((s) => s.language)
+  const timeFormat = useSettings((s) => s.timeFormat)
+  const weekStart = useSettings((s) => s.weekStart)
+  const hideCompletedInCalendar = useSettings((s) => s.hideCompletedInCalendar)
+  const hiddenCalendars = useSettings((s) => s.hiddenCalendars)
+  const prefs = usePrefs()
+  const calendars = useCalendars(signedIn).data
+  return clientContext({
+    settings: { language, timeFormat, weekStart, hideCompletedInCalendar, hiddenCalendars },
+    language: i18n.resolvedLanguage ?? i18n.language,
+    hourCycle: prefs.hourCycle,
+    weekStartsOn: prefs.weekStartsOn,
+    ...(calendars ? { calendars: calendars.map((c) => c.stableId) } : {}),
+    timeZone: browserTimeZone(),
+    locale: browserLocale(),
+    userAgent: navigator.userAgent,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
+  })
+}
+
 function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement | null> }) {
   const { t } = useTranslation()
   const id = useId()
@@ -93,6 +127,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
   const server = report.data
   // Objects can be read for an authenticated session only, and only then does the report name any.
   const signedIn = server?.authenticated === true
+  const context = useClientContext(signedIn)
   const skeletons = useQueries({
     queries: candidates.map((c) => ({
       queryKey: ['diagnostics', 'objects', c.objectId],
@@ -137,7 +172,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
     }
   }
   // The preview is the file, byte for byte.
-  const text = server ? JSON.stringify(assembleReport(server, corrupted, objects, included), null, 2) : null
+  const text = server ? JSON.stringify(assembleReport(server, context, corrupted, objects, included), null, 2) : null
   const fileName = useMemo(() => reportFileName(new Date(report.dataUpdatedAt)), [report.dataUpdatedAt])
   const lineCount = text === null ? 0 : text.split('\n').length
   const ready = text !== null && !(signedIn && skeletons.some((s) => s.isLoading))
@@ -245,7 +280,7 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
             <h3 ref={headingRef} id={`${id}-summary`} tabIndex={-1} className="font-display text-sm font-semibold outline-none">
               {t('diagnostics.summary.heading')}
             </h3>
-            {server && <Summary report={server} corrupted={corrupted.length} />}
+            {server && <Summary report={server} context={context} corrupted={corrupted.length} />}
           </section>
 
           <section aria-labelledby={`${id}-items`} className="grid gap-2">
@@ -394,7 +429,15 @@ function ReportBody({ headingRef }: { headingRef: RefObject<HTMLHeadingElement |
   )
 }
 
-function Summary({ report, corrupted }: { report: DiagnosticsReport; corrupted: number }) {
+function Summary({
+  report,
+  context,
+  corrupted,
+}: {
+  report: DiagnosticsReport
+  context: ClientContext
+  corrupted: number
+}) {
   const { t } = useTranslation()
   const { version, mode } = report.lucid
   const { host, product } = report.server
@@ -424,6 +467,9 @@ function Summary({ report, corrupted }: { report: DiagnosticsReport; corrupted: 
           {t('diagnostics.summary.corruptedValue', { count: corrupted })}
         </Fact>
       )}
+      <Fact term={t('diagnostics.summary.browser')}>
+        {t('diagnostics.summary.browserValue', { timeZone: context.timeZone, locale: context.locale })}
+      </Fact>
     </dl>
   )
 }

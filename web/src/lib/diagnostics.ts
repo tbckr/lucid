@@ -1,4 +1,6 @@
+import { type SettingsState } from '@/stores/settings'
 import { type CorruptedItem, type DiagnosticsReport, type Skeleton } from './api/schemas'
+import { type HourCycle, type WeekStart } from './locale'
 
 /**
  * The problem report (FR-36) is put together here, in the browser, from the server's report, the placeholders of
@@ -57,13 +59,76 @@ function reportObject(object: ReportObject, included: ReadonlySet<string>): Reco
   }
 }
 
+type DayName = 'sunday' | 'monday' | 'saturday'
+
+const DAY_NAMES: Record<WeekStart, DayName> = { 0: 'sunday', 1: 'monday', 6: 'saturday' }
+
+/** What `clientContext` reads: the settings, what they resolved to, and the browser. */
+export interface ContextInput {
+  settings: Pick<SettingsState, 'language' | 'timeFormat' | 'weekStart' | 'hideCompletedInCalendar' | 'hiddenCalendars'>
+  /** The language the UI is shown in. */
+  language: string
+  hourCycle: HourCycle
+  weekStartsOn: WeekStart
+  /** The stable IDs of the account's calendars, once they are loaded. */
+  calendars?: readonly string[]
+  timeZone: string
+  locale: string
+  userAgent: string
+  viewport: { width: number; height: number }
+}
+
+/** The browser's part of the report, beside its placeholders and objects. */
+export interface ClientContext {
+  timeZone: string
+  locale: string
+  settings: {
+    language: { setting: string; used: string }
+    timeFormat: { setting: string; used: HourCycle }
+    weekStart: { setting: 'auto' | DayName; used: DayName }
+    hideCompletedInCalendar: boolean
+    /** How many of the account's calendars are hidden in the sidebar; absent while they are unknown. */
+    hiddenCalendars?: number
+  }
+  browser: string
+  viewport: { width: number; height: number }
+}
+
 /**
- * The file the user downloads: the server's report verbatim, plus what the browser knows as `client`. Of the
- * `objects` only the listed fields are written, so a label the dialog shows (an event's title, a calendar's name)
- * cannot get into the file with them. `content` is added only for the IDs in `included`.
+ * What the browser tells about itself and the settings that change what is shown (FR-36): a wrong time or a
+ * missing item depends on them. Field by field, so that no other setting, such as the last server URL, gets in. Of
+ * the hidden calendars only their number among the account's calendars, no ID.
+ */
+export function clientContext(input: ContextInput): ClientContext {
+  const { settings, calendars } = input
+  const hidden = calendars?.filter((id) => settings.hiddenCalendars.includes(id)).length
+  return {
+    timeZone: input.timeZone,
+    locale: input.locale,
+    settings: {
+      language: { setting: settings.language, used: input.language },
+      timeFormat: { setting: settings.timeFormat, used: input.hourCycle },
+      weekStart: {
+        setting: settings.weekStart === 'auto' ? 'auto' : DAY_NAMES[settings.weekStart],
+        used: DAY_NAMES[input.weekStartsOn],
+      },
+      hideCompletedInCalendar: settings.hideCompletedInCalendar,
+      ...(hidden === undefined ? {} : { hiddenCalendars: hidden }),
+    },
+    browser: input.userAgent,
+    viewport: { width: input.viewport.width, height: input.viewport.height },
+  }
+}
+
+/**
+ * The file the user downloads: the server's report verbatim, plus what the browser knows as `client`: `context`,
+ * then the placeholders and objects. Of the `objects` only the listed fields are written, so a label the dialog
+ * shows (an event's title, a calendar's name) cannot get into the file with them. `content` is added only for the
+ * IDs in `included`.
  */
 export function assembleReport(
   server: DiagnosticsReport,
+  context: ClientContext,
   corrupted: readonly CorruptedItem[],
   objects: readonly ReportObject[],
   included: ReadonlySet<string>,
@@ -71,6 +136,7 @@ export function assembleReport(
   return {
     ...server,
     client: {
+      ...context,
       corrupted: corruptedForReport(corrupted),
       objects: objects.map((object) => reportObject(object, included)),
     },

@@ -528,7 +528,11 @@ The dialog shows the file exactly as it is downloaded. By default it holds:
   property names and the format of values, with titles, notes, places, names,
   addresses and IDs replaced (time zone and repeat rules stay, as bugs hide
   in them),
-- the field names that failed in items Lucid could not read.
+- the field names that failed in items Lucid could not read,
+- your browser's time zone, language and user agent, the size of its window,
+  and the settings that change what Lucid shows: language, time format, week
+  start, whether done tasks are hidden in the calendar, and how many of your
+  calendars you hid (not which).
 
 In every path in the file, your login name is replaced by `{user}` and every
 other name, of a calendar, an item or an account ID, by a placeholder; only

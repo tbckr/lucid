@@ -566,7 +566,9 @@
       "problemsValue_other": "{{count}}, as structure only",
       "corrupted": "Damaged items",
       "corruptedValue_one": "{{count}}, field names only",
-      "corruptedValue_other": "{{count}}, field names only"
+      "corruptedValue_other": "{{count}}, field names only",
+      "browser": "Browser",
+      "browserValue": "{{timeZone}}, {{locale}}, with display settings"
     },
     "items": {
       "heading": "Items",

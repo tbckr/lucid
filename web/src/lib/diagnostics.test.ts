@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { defaultSettings } from '@/stores/settings'
 import { diagnosticsReport } from '@/test/fixtures'
 import { parseList, type CorruptedItem } from './api/schemas'
 import {
   assembleReport,
+  clientContext,
   corruptedForReport,
+  type ClientContext,
+  type ContextInput,
   ISSUE_TEMPLATE,
   issueUrl,
   REPO_URL,
@@ -15,6 +19,33 @@ import {
 
 function reportObject(p: Partial<ReportObject> = {}): ReportObject {
   return { objectId: 'o1', source: 'event', skeleton: { text: 'BEGIN:VCALENDAR\nEND:VCALENDAR\n' }, ...p }
+}
+
+function contextInput(p: Partial<ContextInput> = {}): ContextInput {
+  return {
+    settings: defaultSettings,
+    language: 'en',
+    hourCycle: '24h',
+    weekStartsOn: 1,
+    timeZone: 'Europe/Berlin',
+    locale: 'de-DE',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
+    viewport: { width: 1280, height: 800 },
+    ...p,
+  }
+}
+
+const context: ClientContext = {
+  timeZone: 'Europe/Berlin',
+  locale: 'de-DE',
+  settings: {
+    language: { setting: 'auto', used: 'en' },
+    timeFormat: { setting: 'auto', used: '24h' },
+    weekStart: { setting: 'auto', used: 'monday' },
+    hideCompletedInCalendar: false,
+  },
+  browser: 'Mozilla/5.0',
+  viewport: { width: 1280, height: 800 },
 }
 
 function corrupted(p: Partial<CorruptedItem> = {}): CorruptedItem {
@@ -37,13 +68,76 @@ describe('constants', () => {
   })
 })
 
+describe('clientContext', () => {
+  it('describes the browser and the settings that change what is shown', () => {
+    const out = clientContext(
+      contextInput({
+        settings: { ...defaultSettings, timeFormat: 'auto', weekStart: 6, hideCompletedInCalendar: true },
+        language: 'de',
+        hourCycle: '12h',
+        weekStartsOn: 6,
+        timeZone: 'America/New_York',
+        locale: 'en-US',
+        userAgent: 'Mozilla/5.0 (Macintosh) Safari/605.1.15',
+        viewport: { width: 390, height: 844 },
+      }),
+    )
+    expect(out).toEqual({
+      timeZone: 'America/New_York',
+      locale: 'en-US',
+      settings: {
+        language: { setting: 'auto', used: 'de' },
+        timeFormat: { setting: 'auto', used: '12h' },
+        weekStart: { setting: 'saturday', used: 'saturday' },
+        hideCompletedInCalendar: true,
+      },
+      browser: 'Mozilla/5.0 (Macintosh) Safari/605.1.15',
+      viewport: { width: 390, height: 844 },
+    })
+  })
+
+  it('names the week start that is used', () => {
+    expect(clientContext(contextInput({ weekStartsOn: 0 })).settings.weekStart).toEqual({ setting: 'auto', used: 'sunday' })
+    expect(
+      clientContext(contextInput({ settings: { ...defaultSettings, weekStart: 1 }, weekStartsOn: 1 })).settings.weekStart,
+    ).toEqual({ setting: 'monday', used: 'monday' })
+  })
+
+  it("counts the account's hidden calendars, and names none", () => {
+    const settings = { ...defaultSettings, hiddenCalendars: ['zz-hidden', 'zz-gone'] }
+    const out = clientContext(contextInput({ settings, calendars: ['zz-hidden', 'zz-shown'] }))
+    expect(out.settings.hiddenCalendars).toBe(1)
+    expect(JSON.stringify(out)).not.toContain('zz-')
+  })
+
+  it('leaves the count out while the calendars are unknown', () => {
+    const settings = { ...defaultSettings, hiddenCalendars: ['zz-hidden'] }
+    expect('hiddenCalendars' in clientContext(contextInput({ settings })).settings).toBe(false)
+  })
+
+  it('writes no other setting', () => {
+    const settings = {
+      ...defaultSettings,
+      theme: 'dark' as const,
+      lastServerUrl: 'https://zz-canary.example',
+      taskList: 'zz-canary-list',
+      defaultView: 'agenda' as const,
+    }
+    const text = JSON.stringify(clientContext(contextInput({ settings })))
+    expect(text).not.toContain('zz-canary')
+    expect(text).not.toContain('dark')
+    expect(text).not.toContain('agenda')
+  })
+})
+
 describe('assembleReport', () => {
   it('keeps the server report verbatim and adds the client part', () => {
     const server = diagnosticsReport({ extra: { kept: true } })
     const before = structuredClone(server)
-    const out = assembleReport(server, [], [], new Set())
-    expect(out).toEqual({ ...before, client: { corrupted: [], objects: [] } })
+    const out = assembleReport(server, context, [], [], new Set())
+    expect(out).toEqual({ ...before, client: { ...context, corrupted: [], objects: [] } })
     expect(Object.keys(out).at(-1)).toBe('client')
+    expect(Object.keys(out.client as object)).toEqual(['timeZone', 'locale', 'settings', 'browser', 'viewport', 'corrupted', 'objects'])
     expect(server).toEqual(before)
   })
 
@@ -53,7 +147,7 @@ describe('assembleReport', () => {
       reportObject({ objectId: 'o2', source: 'todo', content: 'zz-canary two' }),
       reportObject({ objectId: 'o3', source: 'problem' }),
     ]
-    const out = assembleReport(diagnosticsReport(), [], objects, new Set(['o1', 'o3']))
+    const out = assembleReport(diagnosticsReport(), context, [], objects, new Set(['o1', 'o3']))
     expect(out.client).toMatchObject({
       objects: [
         { objectId: 'o1', source: 'event', content: 'zz-canary one' },
@@ -72,11 +166,13 @@ describe('assembleReport', () => {
     const skeleton = { text: 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:\n', truncated: true }
     const out = assembleReport(
       diagnosticsReport(),
+      context,
       [],
       [reportObject({ skeleton, content: 'zz-canary' })],
       new Set(),
     )
     expect(out.client).toEqual({
+      ...context,
       corrupted: [],
       objects: [{ objectId: 'o1', source: 'event', skeleton }],
     })
@@ -90,8 +186,9 @@ describe('assembleReport', () => {
       calendarId: 'c1',
       skeleton: { text: 'BEGIN:VCALENDAR\n', label: 'zz-canary in the skeleton' },
     }
-    const out = assembleReport(diagnosticsReport(), [], [withLabel], new Set(['o1']))
+    const out = assembleReport(diagnosticsReport(), context, [], [withLabel], new Set(['o1']))
     expect(out.client).toEqual({
+      ...context,
       corrupted: [],
       objects: [{ objectId: 'o1', source: 'event', skeleton: { text: 'BEGIN:VCALENDAR\n' }, content: 'BEGIN:VCALENDAR' }],
     })
@@ -99,8 +196,9 @@ describe('assembleReport', () => {
   })
 
   it('reports corrupted items by field names only', () => {
-    const out = assembleReport(diagnosticsReport(), [corrupted({ reason: 'title: zz-canary' })], [], new Set())
+    const out = assembleReport(diagnosticsReport(), context, [corrupted({ reason: 'title: zz-canary' })], [], new Set())
     expect(out.client).toEqual({
+      ...context,
       corrupted: [{ key: 'k1', calendarId: 'c1', issues: [{ path: 'title', code: 'invalid_type' }] }],
       objects: [],
     })

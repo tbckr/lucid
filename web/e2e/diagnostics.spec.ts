@@ -22,7 +22,13 @@ interface Report {
   authenticated: boolean
   exchanges: { method: string; status?: number }[]
   problems: { kind: string; objectId?: string }[]
-  client: { corrupted: unknown[]; objects: { source: string; skeleton: { text: string }; content?: string }[] }
+  client: {
+    timeZone: string
+    locale: string
+    browser: string
+    corrupted: unknown[]
+    objects: { source: string; skeleton: { text: string }; content?: string }[]
+  }
 }
 
 /** Sign in, create `CANARY` today at 11:00 through the API and show it in the day view; returns its block. */
@@ -88,6 +94,9 @@ test('report from the account menu holds no contents', async ({ page }) => {
   expect(report.authenticated).toBe(true)
   expect(report.exchanges.length).toBeGreaterThan(0)
   expect(report.client.objects).toEqual([])
+  // The browser's zone and locale, as playwright.config.ts sets them, and its user agent.
+  expect(report.client).toMatchObject({ timeZone: 'Europe/Berlin', locale: 'en-US' })
+  expect(report.client.browser).toContain('Chrome')
   expect(text).not.toContain('zz-canary')
   await expect(page.getByText('Report downloaded')).toBeVisible()
 })

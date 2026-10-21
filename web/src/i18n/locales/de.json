@@ -563,7 +563,9 @@
       "problemsValue_other": "{{count}}, nur als Aufbau",
       "corrupted": "Beschädigte Einträge",
       "corruptedValue_one": "{{count}}, nur Feldnamen",
-      "corruptedValue_other": "{{count}}, nur Feldnamen"
+      "corruptedValue_other": "{{count}}, nur Feldnamen",
+      "browser": "Browser",
+      "browserValue": "{{timeZone}}, {{locale}}, mit Anzeige-Einstellungen"
     },
     "items": {
       "heading": "Einträge",

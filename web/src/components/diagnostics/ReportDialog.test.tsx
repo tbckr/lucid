@@ -6,8 +6,9 @@ import { toast } from 'sonner'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { diagnosticsReportSchema, type CorruptedItem, type DiagnosticsReport } from '@/lib/api/schemas'
-import { assembleReport, issueUrl } from '@/lib/diagnostics'
+import { assembleReport, issueUrl, type ClientContext } from '@/lib/diagnostics'
 import { toCalEvent } from '@/lib/events'
+import { defaultSettings, useSettings } from '@/stores/settings'
 import { emptyReport, reportWaits, useUi, type ReportCandidate } from '@/stores/ui'
 import { apiEvent, calendar, diagnosticsReport, jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -21,6 +22,21 @@ const SKELETON = 'BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:<text 7>\nEND:VEVENT\nE
 
 const dentist: ReportCandidate = { objectId: 'ev-1', kind: 'event', label: 'Dentist', calendarId: 'c1' }
 const rent: ReportCandidate = { objectId: 'td-1', kind: 'todo', label: 'Pay rent', calendarId: 'c1' }
+
+/** The browser's part of the file in Vitest: jsdom's locale (en-US), user agent and window, the Berlin time zone. */
+const jsdomContext = (): ClientContext => ({
+  timeZone: 'Europe/Berlin',
+  locale: 'en-US',
+  settings: {
+    language: { setting: 'auto', used: 'en' },
+    timeFormat: { setting: 'auto', used: '12h' },
+    weekStart: { setting: 'auto', used: 'sunday' },
+    hideCompletedInCalendar: false,
+    hiddenCalendars: 0,
+  },
+  browser: navigator.userAgent,
+  viewport: { width: 1024, height: 768 },
+})
 
 const failure = () => jsonResponse(502, { error: { code: 'upstream_error', message: 'down' } })
 
@@ -109,6 +125,32 @@ afterEach(() => {
 })
 
 describe('ReportDialog (FR-36)', () => {
+  it("writes the browser's time zone, the settings and how many calendars are hidden", async () => {
+    useSettings.setState({ timeFormat: '24h', weekStart: 1, hiddenCalendars: ['stable-c1', 'stable-gone'] })
+    onTestFinished(() => {
+      useSettings.setState(defaultSettings)
+    })
+    mockApi()
+    mount((qc) => {
+      qc.setQueryData(queryKeys.calendars, [calendar(), calendar({ id: 'c2' })])
+    })
+    const { sheet } = await open()
+    await waitFor(() => {
+      expect(preview(sheet)).toContain('"client"')
+    })
+    const client = (JSON.parse(preview(sheet)) as { client: Record<string, unknown> }).client
+    expect(client).toMatchObject({
+      timeZone: 'Europe/Berlin',
+      settings: {
+        timeFormat: { setting: '24h', used: '24h' },
+        weekStart: { setting: 'monday', used: 'monday' },
+        hiddenCalendars: 1,
+      },
+      browser: navigator.userAgent,
+    })
+    expect(preview(sheet)).not.toContain('stable-')
+  })
+
   it('shows no content until asked', async () => {
     mockApi()
     mount()
@@ -116,7 +158,7 @@ describe('ReportDialog (FR-36)', () => {
     // The server's report as parsed, and nothing added to it but empty client lists.
     const server = diagnosticsReportSchema.parse(diagnosticsReport())
     await waitFor(() => {
-      expect(preview(sheet)).toBe(JSON.stringify(assembleReport(server, [], [], new Set()), null, 2))
+      expect(preview(sheet)).toBe(JSON.stringify(assembleReport(server, jsdomContext(), [], [], new Set()), null, 2))
     })
     expect(preview(sheet)).toContain(escaped('BEGIN:VCALENDAR\nVERSION:2.0\n'))
     expect(within(dialog).getByText("An item Lucid couldn't read")).toBeInTheDocument()
@@ -407,6 +449,7 @@ describe('ReportDialog (FR-36)', () => {
     expect(within(summary).getByText('1 recent one, without contents')).toBeInTheDocument()
     expect(within(summary).getByText('1, as structure only')).toBeInTheDocument()
     expect(within(summary).getByText('1, field names only')).toBeInTheDocument()
+    expect(within(summary).getByText('Europe/Berlin, en-US, with display settings')).toBeInTheDocument()
     // The placeholder by its field names; never the reason, which can hold what Zod received.
     await waitFor(() => {
       expect(preview(sheet)).toContain('"code": "invalid_type"')

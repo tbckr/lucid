@@ -294,9 +294,12 @@ content; the aim is to reproduce the problem from its shape alone:
    calendar supports, `exchanges` the CalDAV calls in the order they happened
    (method, path shape, status, selected response headers, an `error` class
    for a transport failure), and `problems` what Lucid could not use, each
-   with a `reason` and a `skeleton`. `client` is added by the browser: the
-   field names that failed in the items it could not read (`corrupted`) and
-   the events and tasks the reporter added (`objects`, each with a skeleton).
+   with a `reason` and a `skeleton`. `client` is added by the browser: its
+   time zone, locale, user agent and window size, the display `settings`
+   (each with the value `auto` resolved to, as `used`), the field names that
+   failed in the items it could not read (`corrupted`) and the events and
+   tasks the reporter added (`objects`, each with a skeleton). A wrong time
+   is reproduced in the reporter's `timeZone`.
    `requestId` ties an exchange or problem to the log lines of the request.
 2. **Build the server side.** Reproduce the sequence of `exchanges` with a
    `caldavtest` server: `SetHook` answers a method and a path shape with the
