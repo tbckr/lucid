@@ -496,6 +496,8 @@
     "today": "Zu heute springen",
     "next": "Nächster Zeitraum",
     "previous": "Vorheriger Zeitraum",
+    "monthScroll": "Vorheriger oder nächster Monat in der Monatsansicht",
+    "scroll": "Scrollen",
     "month": "Monatsansicht",
     "week": "Wochenansicht",
     "day": "Tagesansicht",

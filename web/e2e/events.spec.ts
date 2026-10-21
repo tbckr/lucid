@@ -70,6 +70,48 @@ test('keyboard shortcuts switch views', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
 })
 
+/** The name of the month `offset` months from this one, as the month grid is labelled. */
+function monthName(offset: number): string {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth() + offset, 1).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
+test('scrolling over the month steps a month per gesture (FR-08)', async ({ page }) => {
+  await login(page)
+  await page.keyboard.press('m')
+  const grid = monthGrid(page)
+  await expect(grid).toHaveAttribute('aria-label', monthName(0))
+  await grid.hover()
+  await page.mouse.wheel(0, 100)
+  await expect(grid).toHaveAttribute('aria-label', monthName(1))
+  // A pause ends the gesture.
+  await page.waitForTimeout(400)
+  await page.mouse.wheel(0, -100)
+  await expect(grid).toHaveAttribute('aria-label', monthName(0))
+})
+
+test('a month taller than its window scrolls before it steps (FR-08)', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 480 })
+  await login(page)
+  await page.keyboard.press('m')
+  const grid = monthGrid(page)
+  const main = page.locator('main')
+  const roomBelow = () => main.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)
+  expect(await roomBelow()).toBeGreaterThan(0)
+  await grid.hover()
+  await page.mouse.wheel(0, 1000)
+  await expect.poll(roomBelow).toBeLessThan(1)
+  await expect(grid).toHaveAttribute('aria-label', monthName(0))
+  await page.waitForTimeout(400)
+  await page.mouse.wheel(0, 100)
+  await expect(grid).toHaveAttribute('aria-label', monthName(1))
+  // The next month shows from its start.
+  expect(await main.evaluate((el) => el.scrollTop)).toBe(0)
+})
+
 /** Create a one-hour event today in the day view, starting at `hour` (e.g. "1:00 PM"), and return its block. */
 async function createAt(page: Page, hour: string, title: string): Promise<Locator> {
   await login(page)

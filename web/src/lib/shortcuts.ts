@@ -24,12 +24,20 @@ export type ShortcutGroup = 'navigate' | 'views' | 'actions'
 /**
  * Documented shortcuts, used by the help dialog. Any of `keys` does the same,
  * unless `sequence` has them pressed one after the other (moving an event is
- * dnd-kit's keyboard sensor, not an app shortcut).
+ * dnd-kit's keyboard sensor, not an app shortcut). A `gesture` names what has
+ * no key in words (the month view's scroll, FR-08).
  */
-export const SHORTCUTS: { keys: string[]; labelKey: string; group: ShortcutGroup; sequence?: boolean }[] = [
+export const SHORTCUTS: {
+  keys: string[]
+  labelKey: string
+  group: ShortcutGroup
+  sequence?: boolean
+  gesture?: boolean
+}[] = [
   { keys: ['t'], labelKey: 'shortcuts.today', group: 'navigate' },
   { keys: ['j', '→'], labelKey: 'shortcuts.next', group: 'navigate' },
   { keys: ['k', '←'], labelKey: 'shortcuts.previous', group: 'navigate' },
+  { keys: ['shortcuts.scroll'], labelKey: 'shortcuts.monthScroll', group: 'navigate', gesture: true },
   { keys: ['m'], labelKey: 'shortcuts.month', group: 'views' },
   { keys: ['w'], labelKey: 'shortcuts.week', group: 'views' },
   { keys: ['d'], labelKey: 'shortcuts.day', group: 'views' },

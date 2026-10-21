@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as EventItems from '@/components/events/EventItems'
+import { DndStateContext, type DndState } from '@/components/dnd/dndState'
 import { api } from '@/lib/api/client'
 import { occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
@@ -269,6 +270,147 @@ describe('MonthView', () => {
     renderMonth([toCalEvent(apiEvent()), rent])
     expect(screen.getByRole('gridcell', { name: 'Friday, September 25th, 2026, 1 event, 1 task' })).toBeInTheDocument()
     expect(screen.getByRole('gridcell', { name: 'Saturday, September 26th, 2026, no events' })).toBeInTheDocument()
+  })
+
+  describe('scrolling (FR-08)', () => {
+    // As on the calendar page: the month the store has, in its scroll container.
+    function ConnectedMonth() {
+      const date = useUi((s) => s.date)
+      return (
+        <div data-testid="scroller" style={{ overflowY: 'auto' }}>
+          <MonthView
+            date={date}
+            now={new Date(2026, 8, 25, 12)}
+            events={[]}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </div>
+      )
+    }
+
+    function renderConnected(dnd: Partial<DndState> = {}) {
+      act(() => {
+        useUi.getState().setDate(new Date(2026, 8, 25))
+      })
+      renderWithProviders(
+        <DndContext>
+          <DndStateContext
+            value={{
+              pendingKeys: new Set(),
+              pendingSeries: new Set(),
+              pendingTodos: new Set(),
+              resize: null,
+              activeId: null,
+              scope: null,
+              held: null,
+              scopeAnchor: () => undefined,
+              ...dnd,
+            }}
+          >
+            <ConnectedMonth />
+          </DndStateContext>
+        </DndContext>,
+      )
+    }
+
+    /**
+     * Lays out the scroll container `clientHeight` tall, scrolled to `scrollTop`, around a month 100 px per row: a
+     * month of six weeks is taller than one of five. Like a browser, it scrolls no further than the month's end.
+     */
+    function layOut(scrollTop: number, clientHeight: number) {
+      const el = screen.getByTestId('scroller')
+      const scrollHeight = () => 100 * within(el).getAllByRole('row').length
+      let top = scrollTop
+      Object.defineProperties(el, {
+        scrollTop: {
+          get: () => top,
+          set: (v: number) => {
+            top = Math.max(0, Math.min(v, scrollHeight() - clientHeight))
+          },
+        },
+        clientHeight: { value: clientHeight },
+        scrollHeight: { get: scrollHeight },
+      })
+      return el
+    }
+
+    /** Scrolls over the month; false when the month kept the browser from scrolling. */
+    function scroll(deltaY: number, timeStamp: number): boolean {
+      const e = new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true })
+      Object.defineProperty(e, 'timeStamp', { value: timeStamp })
+      return fireEvent(screen.getByRole('grid'), e)
+    }
+
+    afterEach(() => {
+      act(() => {
+        useUi.getState().setSettingsOpen(false)
+      })
+    })
+
+    it('steps a month per gesture: down to the next, up to the previous', () => {
+      renderConnected()
+      expect(scroll(100, 0)).toBe(false)
+      expect(screen.getByRole('grid', { name: 'October 2026' })).toBeInTheDocument()
+      // Its momentum does not skip a month.
+      scroll(60, 16)
+      scroll(20, 32)
+      expect(screen.getByRole('grid', { name: 'October 2026' })).toBeInTheDocument()
+      scroll(-100, 1000)
+      expect(screen.getByRole('grid', { name: 'September 2026' })).toBeInTheDocument()
+    })
+
+    it('steps neither while a dialog nor while the create popover is open', () => {
+      renderConnected()
+      act(() => {
+        useUi.getState().setSettingsOpen(true)
+      })
+      scroll(100, 0)
+      expect(useUi.getState().date.getMonth()).toBe(8)
+      act(() => {
+        useUi.getState().setSettingsOpen(false)
+      })
+      fireEvent.keyDown(screen.getByRole('gridcell', { name: /September 25th/ }), { key: 'Enter' })
+      expect(useUi.getState().create).not.toBeNull()
+      scroll(100, 1000)
+      expect(useUi.getState().date.getMonth()).toBe(8)
+      expect(useUi.getState().create).not.toBeNull()
+    })
+
+    it.each<[string, Partial<DndState>]>([
+      ['an event is dragged', { activeId: 'e1' }],
+      ['an event is resized', { resize: toCalEvent(apiEvent()) }],
+      [
+        'a move asks which events it reaches',
+        { scope: { kind: 'event', key: 'k', id: 'e1', from: '2026-09-25', reach: null, start: '', end: '' } },
+      ],
+    ])('steps not while %s', (_, dnd) => {
+      renderConnected(dnd)
+      scroll(100, 0)
+      expect(useUi.getState().date.getMonth()).toBe(8)
+    })
+
+    it('scrolls a month taller than its window first and shows a stepped-to month from where it goes on', () => {
+      renderConnected()
+      // September 2026 has five weeks: with its header, 600 px in a 450 px window.
+      const scroller = layOut(0, 450)
+      expect(scroll(100, 0)).toBe(true)
+      expect(useUi.getState().date.getMonth()).toBe(8)
+      scroller.scrollTop = 150
+      expect(scroll(100, 400)).toBe(false)
+      expect(screen.getByRole('grid', { name: 'October 2026' })).toBeInTheDocument()
+      expect(scroller.scrollTop).toBe(0)
+      expect(scroll(-100, 800)).toBe(false)
+      expect(screen.getByRole('grid', { name: 'September 2026' })).toBeInTheDocument()
+      expect(scroller.scrollTop).toBe(150)
+      // August 2026 has six weeks, so its end lies further down than September's.
+      scroller.scrollTop = 0
+      expect(scroll(-100, 1200)).toBe(false)
+      expect(screen.getByRole('grid', { name: 'August 2026' })).toBeInTheDocument()
+      expect(scroller.scrollTop).toBe(250)
+    })
   })
 })
 

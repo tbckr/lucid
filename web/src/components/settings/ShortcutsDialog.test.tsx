@@ -20,4 +20,13 @@ describe('ShortcutsDialog', () => {
     expect(within(keys('Move a focused event')).getByText('then')).toBeInTheDocument()
     expect(within(keys('Move a focused event')).queryByText('or')).toBeNull()
   })
+
+  it('names the scroll that steps the month in words, as it has no key', () => {
+    render(<ShortcutsDialog />)
+    act(() => {
+      useUi.getState().setShortcutsOpen(true)
+    })
+    const keys = screen.getByText('Previous or next month in the month view').nextElementSibling as HTMLElement
+    expect(keys.textContent).toBe('Scroll')
+  })
 })

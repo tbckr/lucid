@@ -1,6 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addDays, addMonths, format, isSameDay, isSameMonth, startOfDay } from 'date-fns'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useDndState, useScopePreview } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
@@ -10,13 +11,14 @@ import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
 import { canDrag, type CalTask } from '@/lib/calendarTasks'
-import { dayKey, monthGrid } from '@/lib/dates'
+import { dayKey, monthGrid, stepDate } from '@/lib/dates'
 import { type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
 import { weekdayNames, type FormatPrefs } from '@/lib/format'
 import { cellCapacity, layoutWeekRow, type CellLayout, type WeekRowLayout } from '@/lib/layout'
 import { cn } from '@/lib/utils'
-import { useUi } from '@/stores/ui'
+import { monthWheel, scrollParent, scrollRoom } from '@/lib/wheel'
+import { isModalOpen, useUi } from '@/stores/ui'
 import { MoreEventsPopover } from './MoreEventsPopover'
 import { defaultCreateTimes } from './createDefaults'
 
@@ -88,6 +90,34 @@ export function MonthView({ date, now, events, corrupted, prefs, colorsOf, calen
     pendingFocus.current = false
     gridRef.current?.querySelector<HTMLElement>(`[data-day="${effectiveFocus}"]`)?.focus()
   }, [effectiveFocus])
+
+  // A scroll gesture steps a month (FR-08), but not under a dialog, the create popover or a drag, which a new month
+  // would close or lose.
+  const { activeId, scope, resize } = useDndState()
+  const dragging = activeId !== null || scope !== null || resize !== null
+  const [wheel] = useState(() => monthWheel())
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid || dragging) return
+    const scroller = scrollParent(grid)
+    const onWheel = (e: WheelEvent) => {
+      const s = useUi.getState()
+      if (isModalOpen(s) || s.create) return
+      const { step, swallow } = wheel(e, scrollRoom(scroller))
+      if (swallow) e.preventDefault()
+      if (step === 0) return
+      // Rendered at once, so a month taller than its window shows from where the gesture goes on: the next from its
+      // top, the previous from its end.
+      flushSync(() => {
+        s.setDate(stepDate('month', s.date, step))
+      })
+      if (scroller) scroller.scrollTop = step > 0 ? 0 : scroller.scrollHeight
+    }
+    grid.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      grid.removeEventListener('wheel', onWheel)
+    }
+  }, [dragging, wheel])
 
   const moveFocus = (target: Date) => {
     pendingFocus.current = true

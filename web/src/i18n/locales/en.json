@@ -499,6 +499,8 @@
     "today": "Go to today",
     "next": "Next period",
     "previous": "Previous period",
+    "monthScroll": "Previous or next month in the month view",
+    "scroll": "Scroll",
     "month": "Month view",
     "week": "Week view",
     "day": "Day view",

@@ -41,7 +41,7 @@ export function ShortcutsDialog() {
                               {t(s.sequence ? 'shortcuts.then' : 'shortcuts.or')}
                             </span>
                           )}
-                          <Kbd>{k}</Kbd>
+                          <Kbd>{s.gesture ? t(k as 'shortcuts.scroll') : k}</Kbd>
                         </Fragment>
                       ))}
                     </dd>
