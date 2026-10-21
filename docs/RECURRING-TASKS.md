@@ -1240,6 +1240,24 @@ start or due date. The editor only sends a rule the user changed: a preset
 writes a stored rule in its own words, which would count as a new rule and
 start the series over.
 
+The editor shows and builds a rule on the browser's wall clock, as for events
+(`ruleInZone`, see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)), but a task
+keeps its zone when its rule changes: the series' `TZID`, else UTC, and a
+single task's `TZID`. A changed rule of a timed task is therefore translated
+back onto that zone's wall clock before it is sent (`writtenRule` in
+`web/src/lib/taskForm.ts`): "every two weeks on Wednesday", chosen in Berlin
+for a task at 18:00 on Tuesdays in New York, is written as `BYDAY=TU`. The
+editor reads the rule at the series' current repeat, at its `RECURRENCE-ID`,
+also when it opens at a later one, so an untouched rule stays untouched. The
+server starts a changed rule over at the dates the save sends, so it is
+written back at their time of day: on the `RECURRENCE-ID`'s date for a series,
+as two zones can be a date apart for part of the year only, and on the new
+date for a task that doesn't repeat yet. Moved to 09:00 in Berlin, 03:00 in
+New York, the same "every two weeks on Wednesday" stays `BYDAY=WE`. A changed
+rule that doesn't read the same in the task's zone, such as a day of the month
+that falls on another date there, is refused at the repeat field; a stored
+rule like that is named with its zone and can't be customized.
+
 **Removing the rule** leaves a single task at the current occurrence's dates,
 without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events: the current
 occurrence alone, as shown. Its override, if it has one, is laid over the

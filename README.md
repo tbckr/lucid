@@ -182,6 +182,13 @@ which reports UTC or Iceland's time (`Atlantic/Reykjavik`). Lucid then shows
 and stores every time in that zone, as Thunderbird does with its time zone set
 to UTC, so a weekly meeting at 9:00 stays at 9:00 UTC all year.
 
+A repeating event or task from another time zone shows on the days it falls on
+in yours, and so does its repeat, in the details and the editor: a weekly
+meeting on Tuesdays at 18:00 in New York repeats on Wednesdays in Berlin. A
+repeat that can't be said that way, such as a day of the month that falls on
+another date in your time zone, comes with the series' time zone, and can be
+kept, replaced by a preset or removed, but not customized.
+
 ## Quick start
 
 ### On your own computer

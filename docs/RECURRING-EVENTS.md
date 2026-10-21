@@ -839,6 +839,20 @@ event, and the refusal comes as a toast.
   unchanged-rule case). It takes only the changed title, description and
   location into the series too (`applyChangedEventFields`), so an
   exception's own title stays out of it.
+- The editor shows and builds that rule on the browser's wall clock, where
+  the series then recurs. A series from another zone opens on the days it
+  shows on (`ruleInZone`, `web/src/lib/seriesShift.ts`, which reads the rule
+  there as `seriesShift` would move the series there): a weekly series on
+  Tuesday and Thursday at 18:00 in New York opens in Berlin as Wednesday and
+  Friday, and a changed rule goes out as built. The details say the rule the
+  same way. A rule that doesn't read the same there (a day of the month on
+  another date, hours on another clock, weekdays that leave the weeks an
+  every-other-week rule pairs up) is named with its zone, "Every month on
+  day 10 (America/New_York)", and can be kept, replaced by a preset or
+  removed, but not customized. Two zones can be a date apart for part of
+  the year only (New York changes to summer time weeks before Berlin), so
+  the rule is read at the edited event's place in the rule, its
+  `RECURRENCE-ID`, not where an exception moved it.
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,
