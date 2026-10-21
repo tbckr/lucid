@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"maps"
 	"net/http"
@@ -22,6 +23,19 @@ import (
 // maxLoggedProblems bounds how many recurring problems a Provider remembers
 // having logged (see problem).
 const maxLoggedProblems = 1024
+
+// loggedKeySize is the size of a key of the logged problems, in bytes: 128 bits
+// of SHA-256 tell problems apart as well as the problems themselves would.
+const loggedKeySize = 16
+
+// loggedKey is the key by which the Provider remembers having logged a problem
+// of an object: a hash of its kind, path and reason, of a fixed size whatever
+// their length, so that the 1024 problems it remembers are bounded in bytes too
+// (NFR-24). The path is the server's to choose.
+func loggedKey(pr diag.Problem) string {
+	sum := sha256.Sum256([]byte(string(pr.Kind) + "\x00" + pr.Path + "\x00" + pr.Reason))
+	return string(sum[:loggedKeySize])
+}
 
 // recentSet is a set of the strings it was most recently given, at most limit of
 // them: past that the oldest is forgotten. It is safe for concurrent use.
@@ -79,7 +93,7 @@ func (t *transport) problem(ctx context.Context, pr diag.Problem) {
 		fresh = scope.Buffer.AddProblem(pr)
 	}
 	if pr.Kind.Rederivable() {
-		fresh = t.p.logged.add(string(pr.Kind) + "\x00" + pr.Path + "\x00" + pr.Reason)
+		fresh = t.p.logged.add(loggedKey(pr))
 	}
 	if !fresh {
 		return
@@ -100,30 +114,18 @@ func (s *service) objectProblem(ctx context.Context, kind diag.ProblemKind, objP
 	s.t.problem(ctx, s.newObjectProblem(kind, objPath, data, err))
 }
 
-// newObjectProblem is the problem objectProblem records, see problemOf.
+// newObjectProblem is the problem objectProblem records: its path
+// pseudonymised, its ObjectID that of the object, for the content the user may
+// add to the report on request, its reason what err says (problemReason) and
+// its skeleton that of data. It is content-free as it is (NFR-36), so a cache
+// entry keeps it as it is, to replay (see calEntry.unreadable).
 func (s *service) newObjectProblem(kind diag.ProblemKind, objPath string, data []byte, err error) diag.Problem {
-	return s.problemOf(objectIssue{kind: kind, path: objPath, reason: problemReason(err), skeleton: diag.ICalSkeleton(data)})
-}
-
-// objectIssue is a problem with a calendar object in the form a cache entry
-// keeps it, content-free as it is (NFR-36): what the problem says, and the real
-// path of the object, which stays in memory like the cache's own paths.
-type objectIssue struct {
-	kind     diag.ProblemKind
-	path     string
-	reason   string
-	skeleton diag.Skeleton
-}
-
-// problemOf is the problem for is: its path pseudonymised, and its ObjectID that
-// of the object, for the content the user may add to the report on request.
-func (s *service) problemOf(is objectIssue) diag.Problem {
 	return diag.Problem{
-		Kind:     is.kind,
-		Path:     s.t.pseudoPath(is.path),
-		ObjectID: s.p.ids.encode(is.path),
-		Reason:   is.reason,
-		Skeleton: is.skeleton,
+		Kind:     kind,
+		Path:     s.t.pseudoPath(objPath),
+		ObjectID: s.p.ids.encode(objPath),
+		Reason:   problemReason(err),
+		Skeleton: diag.ICalSkeleton(data),
 	}
 }
 

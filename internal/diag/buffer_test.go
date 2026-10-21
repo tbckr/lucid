@@ -344,9 +344,20 @@ func TestBufferFieldCaps(t *testing.T) {
 	} else if x.Server != mid[:MaxHeaderValue] {
 		t.Errorf("Server of 400 bytes = %d bytes, want the header cap %d", len(x.Server), MaxHeaderValue)
 	}
-	if p := snap.Problems[0]; p.RequestID != capped || p.Path != capped || p.ObjectID != capped || p.Reason != capped {
-		t.Errorf("problem fields of 100 KiB = %d, %d, %d, %d bytes, want %d each",
-			len(p.RequestID), len(p.Path), len(p.ObjectID), len(p.Reason), MaxFieldValue)
+	if p := snap.Problems[0]; p.RequestID != capped || p.Path != capped || p.Reason != capped {
+		t.Errorf("problem fields of 100 KiB = %d, %d, %d bytes, want %d each",
+			len(p.RequestID), len(p.Path), len(p.Reason), MaxFieldValue)
+	}
+	// An object ID is whole or not there: a cut one addresses nothing.
+	if p := snap.Problems[0]; p.ObjectID != "" {
+		t.Errorf("ObjectID of 100 KiB = %d bytes, want it dropped", len(p.ObjectID))
+	}
+	longest := strings.Repeat("o", MaxObjectID)
+	b.AddProblem(Problem{Path: "longest", ObjectID: longest})
+	b.AddProblem(Problem{Path: "longer", ObjectID: longest + "o"})
+	if ps := b.Snapshot().Problems; ps[2].ObjectID != longest || ps[3].ObjectID != "" {
+		t.Errorf("ObjectIDs of %d and %d bytes = %d and %d bytes, want the first whole and the second dropped",
+			MaxObjectID, MaxObjectID+1, len(ps[2].ObjectID), len(ps[3].ObjectID))
 	}
 	if p := snap.Problems[1]; p.RequestID != "r" || p.Path != mid || p.ObjectID != mid || p.Reason != "x" {
 		t.Errorf("short problem fields were changed: %+v", p)

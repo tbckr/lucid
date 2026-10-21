@@ -66,16 +66,18 @@ func (k ProblemKind) Rederivable() bool {
 // the document involved (FR-36). Path is pseudonymised, Reason comes from
 // Reason, or is the HTTP status of an answer the server refused with ("HTTP
 // 403"), Skeleton from ICalSkeleton or XMLSkeleton, so none of it carries
-// content (NFR-36). The Buffer cuts Path, ObjectID and Reason to MaxFieldValue
-// bytes and Skeleton.Text to MaxSkeleton, and keeps At in UTC.
+// content (NFR-36). The Buffer cuts Path and Reason to MaxFieldValue bytes and
+// Skeleton.Text to MaxSkeleton, drops an ObjectID longer than MaxObjectID, and
+// keeps At in UTC.
 type Problem struct {
 	At        time.Time   `json:"at"`
 	RequestID string      `json:"requestId"`
 	Kind      ProblemKind `json:"kind"`
 	Path      string      `json:"path"`
-	// ObjectID is the ID of the calendar object the problem is about, for the
-	// content the user may add to the report. It is not pseudonymous: it
-	// encodes the real object path, so Buffer.WithoutObjects clears it.
+	// ObjectID is the API ID of the calendar object the problem is about, for
+	// the content the user may add to the report: the object's real path,
+	// encrypted under a key held in RAM only. It addresses that object, so
+	// Buffer.WithoutObjects clears it.
 	ObjectID string   `json:"objectId,omitempty"`
 	Reason   string   `json:"reason"`
 	Skeleton Skeleton `json:"skeleton"`
@@ -121,8 +123,13 @@ const (
 	// MaxFieldValue caps every other string a Buffer keeps, in bytes: paths,
 	// hosts, request IDs, errors and reasons are bounded by what produced
 	// them, and a server or a client chooses what that is. Skeleton.Text has
-	// its own cap, MaxSkeleton.
+	// its own cap, MaxSkeleton, and Problem.ObjectID its own limit,
+	// MaxObjectID.
 	MaxFieldValue = 512
+	// MaxObjectID is the longest Problem.ObjectID a Buffer keeps, in bytes: the
+	// longest API ID the routes take (domain.MaxIDLen). A longer one is
+	// dropped, not cut, as a cut ID addresses nothing.
+	MaxObjectID = 1024
 )
 
 // Snapshot is a copy of what a Buffer holds, oldest entry first. Calendars are
@@ -177,7 +184,8 @@ func (b *Buffer) AddExchange(e Exchange) {
 }
 
 // AddProblem adds p, with its strings cut to MaxFieldValue bytes, its skeleton
-// to MaxSkeleton and At in UTC, as the newest problem, and drops one if there
+// to MaxSkeleton, an ObjectID longer than MaxObjectID dropped and At in UTC, as
+// the newest problem, and drops one if there
 // are more than the limit: the oldest Rederivable, else the oldest, see
 // trimProblems. A problem the Buffer already holds, one with
 // the same Kind, Path, Reason and Skeleton.Text once cut, is kept once: the
@@ -193,7 +201,9 @@ func (b *Buffer) AddProblem(p Problem) bool {
 	p.At = p.At.UTC()
 	p.RequestID = Cap(p.RequestID, MaxFieldValue)
 	p.Path = Cap(p.Path, MaxFieldValue)
-	p.ObjectID = Cap(p.ObjectID, MaxFieldValue)
+	if len(p.ObjectID) > MaxObjectID {
+		p.ObjectID = ""
+	}
 	p.Reason = Cap(p.Reason, MaxFieldValue)
 	p.Skeleton = capSkeleton(p.Skeleton)
 	b.mu.Lock()

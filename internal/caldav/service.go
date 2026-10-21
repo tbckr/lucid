@@ -100,8 +100,10 @@ type calEntry struct {
 	listed    int // objects the listing returned, readable or not (FR-36)
 	// unreadable are the problems of the objects that did not parse and so are
 	// not in objects: the cache outlives the sessions, and a session served
-	// from it would otherwise never hear of them (FR-36).
-	unreadable []objectIssue
+	// from it would otherwise never hear of them (FR-36). They are made once,
+	// with the entry, and replayed as they are: a read from the cache does not
+	// pseudonymise and encrypt their paths again.
+	unreadable []diag.Problem
 	checked    atomic.Int64 // unix nanoseconds of the last validation
 }
 
@@ -176,8 +178,8 @@ func (s *service) noteEntry(ctx context.Context, calPath string, e *calEntry, fe
 	if scope, ok := diag.ScopeFrom(ctx); !fetched && (!ok || scope.Buffer == nil) {
 		return
 	}
-	for _, is := range e.unreadable {
-		s.t.problem(ctx, s.problemOf(is))
+	for i := range e.unreadable {
+		s.t.problem(ctx, e.unreadable[i])
 	}
 }
 
@@ -205,10 +207,20 @@ func (s *service) collectionTags(ctx context.Context, calPath string) (ctag, tok
 // many objects of a calendar do not parse.
 const maxUnreadable = 20
 
+// maxObjectPath is the longest object path whose API ID the routes take: the ID
+// is base64url of the synthetic IV and the path (idCodec), and that of a longer
+// path is longer than domain.MaxIDLen. So the longest path is
+// domain.MaxIDLen*6/8 - sivSize = 752 bytes.
+const maxObjectPath = domain.MaxIDLen*6/8 - sivSize
+
 // query fetches all objects of the component type via calendar-query. It also
 // returns how many objects the server listed, the unreadable ones included, and
-// the problems of those (FR-36).
-func (s *service) query(ctx context.Context, calPath, comp string) (objs []calObject, listed int, unreadable []objectIssue, err error) {
+// the problems of those (FR-36). An object whose path is longer than
+// maxObjectPath is left out, as if the server had not listed it: no route would
+// take its ID, and the work a problem takes, the skeleton, the pseudonym and
+// the ID of its path, grows with a length the server chooses, on every read of
+// the calendar (NFR-24).
+func (s *service) query(ctx context.Context, calPath, comp string) (objs []calObject, listed int, unreadable []diag.Problem, err error) {
 	body := `<?xml version="1.0" encoding="utf-8"?>` +
 		`<c:calendar-query xmlns:d="DAV:" xmlns:c="` + nsCalDAV + `">` +
 		`<d:prop><d:getetag/><c:calendar-data/></d:prop>` +
@@ -234,7 +246,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 			continue
 		}
 		u, err := resolveHref(s.home, r.Hrefs[0], false)
-		if err != nil || !strings.HasPrefix(u.Path, calPath) || len(u.Path) == len(calPath) {
+		if err != nil || !strings.HasPrefix(u.Path, calPath) || len(u.Path) == len(calPath) || len(u.Path) > maxObjectPath {
 			continue
 		}
 		listed++
@@ -248,10 +260,7 @@ func (s *service) query(ctx context.Context, calPath, comp string) (objs []calOb
 			// The object stays out of the listing; the problem says why, and
 			// the entry keeps it for the sessions that read it from the cache.
 			if len(unreadable) < maxUnreadable {
-				unreadable = append(unreadable, objectIssue{
-					kind: diag.ProblemUnparsableObject, path: u.Path,
-					reason: problemReason(err), skeleton: diag.ICalSkeleton([]byte(data)),
-				})
+				unreadable = append(unreadable, s.newObjectProblem(diag.ProblemUnparsableObject, u.Path, []byte(data), err))
 			}
 			continue
 		}

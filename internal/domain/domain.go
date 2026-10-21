@@ -170,6 +170,9 @@ const (
 	MaxDescriptionLen = 64 * 1024
 	MaxLocationLen    = 1024
 	MaxRRuleLen       = 1024
+	// MaxIDLen bounds the IDs the API takes in a path: a longer one is
+	// refused before it is looked at.
+	MaxIDLen = 1024
 )
 
 // Validate checks the input for structural problems. It wraps ErrInvalidInput.

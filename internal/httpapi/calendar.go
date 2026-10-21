@@ -17,7 +17,7 @@ const (
 	// maxEventRange bounds recurrence expansion (docs/API.md: 366 days).
 	maxEventRange = 366 * 24 * time.Hour
 	// maxIDLen bounds opaque IDs taken from the path.
-	maxIDLen = 1024
+	maxIDLen = domain.MaxIDLen
 )
 
 // account resolves the caller's session to its account. On failure it writes

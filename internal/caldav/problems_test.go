@@ -1451,3 +1451,150 @@ func TestProblemDecoderPanicOnRead(t *testing.T) {
 	}
 	noCanary(t, "log", r.logs.String())
 }
+
+// The longest object path is the longest whose ID the routes take.
+func TestMaxObjectPath(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	if n := len(c.encode(strings.Repeat("a", maxObjectPath))); n != domain.MaxIDLen {
+		t.Errorf("ID of the longest path has %d characters; want %d", n, domain.MaxIDLen)
+	}
+	if n := len(c.encode(strings.Repeat("a", maxObjectPath+1))); n <= domain.MaxIDLen {
+		t.Errorf("ID of a longer path has %d characters; want more than %d", n, domain.MaxIDLen)
+	}
+	// A buffer keeps every ID a route takes whole.
+	if diag.MaxObjectID != domain.MaxIDLen {
+		t.Errorf("diag.MaxObjectID = %d; want domain.MaxIDLen, %d", diag.MaxObjectID, domain.MaxIDLen)
+	}
+}
+
+// objectNamed is a name for an object of the calendar at calPath whose path is
+// n bytes long.
+func objectNamed(t *testing.T, calPath string, n int) string {
+	t.Helper()
+	name := strings.Repeat("d", n-len(calPath)-len(".ics")) + ".ics"
+	if got := len(calPath + name); got != n {
+		t.Fatalf("path has %d bytes; want %d", got, n)
+	}
+	return name
+}
+
+// A server chooses how long the hrefs of its objects are, and the work of a
+// problem grows with that length on every read. An object no route could
+// address by its ID is left out, without a problem and without a log line; one
+// at the limit is not (NFR-24, FR-36).
+func TestQueryLeavesOutTooLongPaths(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	cal := r.calPath("personal")
+	atLimit := objectNamed(t, cal, maxObjectPath)
+	tooLong := "x" + atLimit
+	r.answerReport("personal",
+		reportObject{"good.ics", canaryEvent("good")},
+		reportObject{"y" + atLimit, canaryEvent("deep")},
+		reportObject{atLimit, brokenObject},
+		reportObject{tooLong, brokenObject},
+		reportObject{strings.Repeat("x/", 5000) + "deeper.ics", brokenObject},
+	)
+
+	evs, err := r.listEvents(t, "personal")
+
+	mustNoErr(t, err)
+	if len(evs) != 1 || evs[0].UID != "good" {
+		t.Fatalf("events = %+v; want only the good one", evs)
+	}
+	got := r.problems()
+	if len(got) != 1 {
+		t.Fatalf("problems = %+v; want the one of the object at the limit", got)
+	}
+	if id, ok := r.p.ids.open(got[0].ObjectID); !ok || id != cal+atLimit || len(got[0].ObjectID) != domain.MaxIDLen {
+		t.Errorf("ObjectID (%d characters) decodes to a path of %d bytes, %v; want the object at the limit", len(got[0].ObjectID), len(id), ok)
+	}
+	if lines := r.problemLines(t); len(lines) != 1 {
+		t.Errorf("problem log lines = %d; want the one at the limit", len(lines))
+	}
+	if notes := r.buf.Snapshot().Calendars; len(notes) != 1 || notes[0].Objects != 2 {
+		t.Errorf("notes = %+v; want 2 objects, the ones too long left out", notes)
+	}
+}
+
+// A cache entry keeps its problems as they were made: a read from the cache
+// replays them without pseudonymising and encrypting their paths again. With
+// the provider's keys changed after the entry was made, a problem made anew
+// would differ from the one the first read recorded.
+func TestProblemReplayedAsMade(t *testing.T) {
+	t.Parallel()
+	r := newProblemRun(t)
+	r.answerReport("personal",
+		reportObject{"good.ics", canaryEvent("good")},
+		reportObject{canary + "-broken.ics", brokenObject})
+	_, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	first := r.problems()
+	if len(first) != 1 {
+		t.Fatalf("problems = %+v; want one", first)
+	}
+
+	r.p.ids = newTestCodec(t)
+	r.p.pseudo = diag.NewPseudonymizer([]byte("another key"))
+	other := diag.NewBuffer(diag.SessionLimits)
+	svc := r.p.Service(r.acct)
+	_, err = svc.ListEvents(scopedCtx(t.Context(), other, "req-2"), r.calendarID(t, svc, "Personal"),
+		date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+
+	mustNoErr(t, err)
+	if n := r.mock.Count("REPORT"); n != 1 {
+		t.Fatalf("REPORTs = %d; want the read served from the cache", n)
+	}
+	got := other.Snapshot().Problems
+	if len(got) != 1 || got[0].Path != first[0].Path || got[0].ObjectID != first[0].ObjectID {
+		t.Errorf("replayed problem = %+v; want the one made with the entry: %+v", got, first)
+	}
+	if r.p.pseudo.Path(r.names(), r.calPath("personal")+canary+"-broken.ics") == first[0].Path {
+		t.Error("the new key gives the same pseudonym; the test checks nothing")
+	}
+}
+
+// The provider remembers the problems it logged by keys of a fixed size,
+// whatever the length of their paths.
+func TestLoggedKeys(t *testing.T) {
+	t.Parallel()
+	base := diag.Problem{Kind: diag.ProblemInvalidObject, Path: "{home}/cal-1/obj-1.ics", Reason: "r"}
+	long := base
+	long.Path = strings.Repeat("seg-12345678/", 1000)
+	keys := map[string]bool{}
+	for _, pr := range []diag.Problem{
+		base, long,
+		{Kind: diag.ProblemUnparsableObject, Path: base.Path, Reason: base.Reason},
+		{Kind: base.Kind, Path: base.Path + "x", Reason: base.Reason},
+		{Kind: base.Kind, Path: base.Path, Reason: base.Reason + "x"},
+		// The parts are kept apart: a reason cannot pass for the end of a path.
+		{Kind: base.Kind, Path: base.Path + "\x00r", Reason: ""},
+	} {
+		key := loggedKey(pr)
+		if len(key) != loggedKeySize {
+			t.Errorf("key of %.40q has %d bytes; want %d", pr.Path, len(key), loggedKeySize)
+		}
+		if keys[key] {
+			t.Errorf("key of %+v is that of another problem", pr)
+		}
+		keys[key] = true
+	}
+	again := diag.Problem{Kind: diag.ProblemInvalidObject, Path: strings.Repeat("seg-12345678/", 1000), Reason: "r"}
+	if loggedKey(again) != loggedKey(long) {
+		t.Error("the same problem has another key")
+	}
+
+	r := newProblemRun(t)
+	r.putBrokenEvents(t, "personal", 3)
+	_, err := r.listEvents(t, "personal")
+	mustNoErr(t, err)
+	if n := len(r.p.logged.set); n != 3 {
+		t.Fatalf("logged set holds %d keys; want one per problem, 3", n)
+	}
+	for key := range r.p.logged.set {
+		if len(key) != loggedKeySize {
+			t.Errorf("logged key has %d bytes; want %d", len(key), loggedKeySize)
+		}
+	}
+}
