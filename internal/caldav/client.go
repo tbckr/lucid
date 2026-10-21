@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -314,7 +315,10 @@ func (t *transport) record(ctx context.Context, ex diag.Exchange) {
 // carry the URL and what the server said (NFR-36). The classes are "dns" (the
 // name did not resolve), "connect" (no connection, or it ended before the
 // answer was complete: a reset, an EOF), "tls" (the certificate or the
-// handshake), "timeout", "canceled" (the caller gave up), "ssrf_blocked" (the
+// handshake: an alert either side sent, which crypto/tls reports as a
+// *net.OpError of Op "remote error" or "local error", or one of its errors,
+// whose fixed wording starts with "tls: ", such as no protocol version in
+// common), "timeout", "canceled" (the caller gave up), "ssrf_blocked" (the
 // address is not allowed, NFR-24), "body_too_large", "redirect" (too many
 // redirects, or one the client could not parse) and "other".
 func errorClass(err error) string {
@@ -344,7 +348,9 @@ func errorClass(err error) string {
 	case errors.As(err, &dnsErr):
 		return "dns"
 	case errors.As(err, &verify), errors.As(err, &unknown), errors.As(err, &hostname),
-		errors.As(err, &invalid), errors.As(err, &recHdr), errors.As(err, &alert), errors.As(err, &ech):
+		errors.As(err, &invalid), errors.As(err, &recHdr), errors.As(err, &alert), errors.As(err, &ech),
+		errors.As(err, &opErr) && (opErr.Op == "remote error" || opErr.Op == "local error"),
+		hasTLSMessage(err):
 		return "tls"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
@@ -352,6 +358,25 @@ func errorClass(err error) string {
 		return "connect"
 	}
 	return "other"
+}
+
+// hasTLSMessage reports whether err or an error it wraps is one of crypto/tls's
+// own, whose messages start with "tls: ": no error of a request starts with
+// what a server sent.
+func hasTLSMessage(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.HasPrefix(err.Error(), "tls: ") {
+		return true
+	}
+	switch u := err.(type) { //nolint:errorlint // walks the chain of wrapped errors itself, to match each by its message
+	case interface{ Unwrap() error }:
+		return hasTLSMessage(u.Unwrap())
+	case interface{ Unwrap() []error }:
+		return slices.ContainsFunc(u.Unwrap(), hasTLSMessage)
+	}
+	return false
 }
 
 // checkRedirect decides whether a redirect from cur to next may be followed.

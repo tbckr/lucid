@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -724,7 +725,7 @@ func TestErrorClass(t *testing.T) {
 	}{
 		{"dns", &net.DNSError{Err: "no such host", Name: "x.test"}, "dns"},
 		{"dns in a url error", fmt.Errorf("Get x: %w", &net.DNSError{Err: "no such host", Name: "x.test"}), "dns"},
-		{"dial", &net.OpError{Op: "dial"}, "connect"},
+		{"dial", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, "connect"},
 		{"unknown authority", x509.UnknownAuthorityError{}, "tls"},
 		{"certificate verification", &tls.CertificateVerificationError{}, "tls"},
 		{"hostname mismatch", x509.HostnameError{Host: "x.test"}, "tls"},
@@ -732,6 +733,12 @@ func TestErrorClass(t *testing.T) {
 		{"not a TLS server", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "tls"},
 		{"tls alert", fmt.Errorf("Get x: %w", tls.AlertError(40)), "tls"},
 		{"ech rejected", &tls.ECHRejectionError{}, "tls"},
+		// crypto/tls reports an alert as a net.OpError, received or sent.
+		{"tls alert received", &net.OpError{Op: "remote error", Err: errors.New("x")}, "tls"},
+		{"tls alert sent", &net.OpError{Op: "local error", Err: errors.New("x")}, "tls"},
+		{"crypto/tls error", &url.Error{Op: "Get", URL: "u", Err: errors.New("tls: no supported versions satisfy MinVersion and MaxVersion")}, "tls"},
+		{"crypto/tls error among others", fmt.Errorf("%w: %w", domain.ErrUpstream, &url.Error{Op: "Get", URL: "u", Err: errors.New("tls: x")}), "tls"},
+		{"tls not at the start", errors.New("caldav: tls: x"), "other"},
 		{"connection closed in a body", fmt.Errorf("%w: %w", domain.ErrUpstream, io.ErrUnexpectedEOF), "connect"},
 		{"connection closed before an answer", fmt.Errorf("Get x: %w", io.EOF), "connect"},
 		{"context deadline", context.DeadlineExceeded, "timeout"},
@@ -1006,5 +1013,50 @@ func TestProviderPseudonymizer(t *testing.T) {
 	first := buf.Snapshot().Exchanges[0]
 	if want := e.p.Pseudonymizer().Path(diag.Names{Username: traceUser}, "/zz-pasted/"); first.Path != want || !strings.HasPrefix(want, "/seg-") {
 		t.Errorf("first discovery path = %q; want %q, a placeholder, from Pseudonymizer", first.Path, want)
+	}
+}
+
+// A real handshake that fails, as with a server that requires TLS 1.3 and a
+// client that offers at most 1.2, or a client that offers nothing, is a "tls"
+// exchange: crypto/tls reports the first as an alert in a net.OpError, the
+// second by an error of its own.
+func TestTraceTLSHandshakeFailure(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name     string
+		min, max uint16
+	}{
+		{"no version in common", 0, tls.VersionTLS12},
+		{"no version at all", tls.VersionTLS13, tls.VersionTLS12},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ts := httptest.NewUnstartedServer(caldavtest.New(caldavtest.Options{}))
+			ts.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+			ts.Config.ErrorLog = log.New(io.Discard, "", 0) // the server's log of the failed handshake
+			ts.StartTLS()
+			t.Cleanup(ts.Close)
+			client := ts.Client()
+			tr := client.Transport.(*http.Transport).Clone()
+			tr.TLSClientConfig.MinVersion, tr.TLSClientConfig.MaxVersion = tt.min, tt.max
+			client.Transport = tr
+			p := newProvider(t, client)
+			buf := diag.NewBuffer(diag.SessionLimits)
+
+			_, err := p.Connect(scopedCtx(t.Context(), buf, "req-1"), domain.Credentials{ServerURL: ts.URL, Username: "user", Password: "pass"})
+
+			if err == nil {
+				t.Fatal("Connect succeeded; want the handshake to fail")
+			}
+			exchanges := buf.Snapshot().Exchanges
+			if len(exchanges) == 0 {
+				t.Fatal("no exchanges; want the failed ones")
+			}
+			for _, ex := range exchanges {
+				if ex.Error != "tls" {
+					t.Errorf("exchange %s %s: Error = %q; want tls", ex.Method, ex.Path, ex.Error)
+				}
+			}
+		})
 	}
 }
