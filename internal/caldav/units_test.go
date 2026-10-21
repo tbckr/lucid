@@ -1,8 +1,10 @@
 package caldav
 
 import (
+	"encoding/binary"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,27 +75,43 @@ func TestDecodeIDs(t *testing.T) {
 
 func TestVTimezone(t *testing.T) {
 	t.Parallel()
+	berlin := []string{
+		"BEGIN:DAYLIGHT", "DTSTART:20240331T020000", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0200", "TZNAME:CEST",
+		"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+		"BEGIN:STANDARD", "DTSTART:20241027T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+	}
 	tests := []struct {
 		tz   string
+		rule string // if set, the zone is known by this POSIX TZ rule only
 		want []string
 	}{
-		{"Europe/Berlin", []string{
-			"BEGIN:DAYLIGHT", "DTSTART:20240331T020000", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0200", "TZNAME:CEST",
-			"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
-			"BEGIN:STANDARD", "DTSTART:20241027T030000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
-		}},
-		{"America/New_York", []string{
+		{tz: "Europe/Berlin", want: berlin},
+		{tz: "America/New_York", want: []string{
 			"RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU", "TZOFFSETTO:-0400",
 		}},
-		{"Asia/Tokyo", []string{"BEGIN:STANDARD", "DTSTART:20250101T000000", "TZOFFSETFROM:+0900", "TZOFFSETTO:+0900"}},
-		{"Asia/Kolkata", []string{"TZOFFSETTO:+0530"}},
-		{"UTC", []string{"TZOFFSETTO:+0000"}},
+		{tz: "Asia/Tokyo", want: []string{"BEGIN:STANDARD", "DTSTART:20250101T000000", "TZOFFSETFROM:+0900", "TZOFFSETTO:+0900"}},
+		{tz: "Asia/Kolkata", want: []string{"TZOFFSETTO:+0530"}},
+		{tz: "UTC", want: []string{"TZOFFSETTO:+0000"}},
+		// Slim tzdata, such as Go's embedded copy that Windows uses, describes
+		// current years by the rule alone.
+		{tz: "Europe/Berlin", rule: "CET-1CEST,M3.5.0,M10.5.0/3", want: berlin},
+		{tz: "Australia/Sydney", rule: "AEST-10AEDT,M10.1.0,M4.1.0/3", want: []string{
+			"BEGIN:STANDARD", "DTSTART:20240407T030000", "RRULE:FREQ=YEARLY;BYMONTH=4;BYDAY=1SU", "TZOFFSETTO:+1000",
+			"BEGIN:DAYLIGHT", "DTSTART:20241006T020000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=1SU", "TZNAME:AEDT",
+		}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.tz, func(t *testing.T) {
+		name := tt.tz
+		if tt.rule != "" {
+			name += " rule only"
+		}
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			loc, err := time.LoadLocation(tt.tz)
 			mustNoErr(t, err)
+			if tt.rule != "" {
+				loc = ruleOnlyZone(t, tt.tz, tt.rule)
+			}
 			cal := newCalendar()
 			cal.Children = append(cal.Children, vtimezone(loc, 2025))
 			var b strings.Builder
@@ -105,6 +123,45 @@ func TestVTimezone(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTransitions(t *testing.T) {
+	t.Parallel()
+	// UTC+1, with summer time from January 1st, 02:00 to July 1st (day 182),
+	// 02:00: the first day of the year has a transition, and so has the
+	// first one after it.
+	loc := ruleOnlyZone(t, "Test/NewYear", "AAA-1BBB,J1/2,J182")
+	got := transitions(loc, 2025)
+	want := []transition{
+		{at: time.Date(2025, time.January, 1, 1, 0, 0, 0, time.UTC), from: 3600, to: 7200, name: "BBB", dst: true},
+		{at: time.Date(2025, time.July, 1, 0, 0, 0, 0, time.UTC), from: 7200, to: 3600, name: "AAA"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("transitions = %v; want %v", got, want)
+	}
+	for i := range want {
+		g, w := got[i], want[i]
+		if !g.at.Equal(w.at) || g.from != w.from || g.to != w.to || g.name != w.name || g.dst != w.dst {
+			t.Errorf("transitions[%d] = %+v; want %+v", i, g, w)
+		}
+	}
+}
+
+// ruleOnlyZone returns a zone without transitions, known only by the POSIX
+// TZ rule that TZif data carries for the instants after its last
+// transition, such as the current years in slim tzdata.
+func ruleOnlyZone(t *testing.T, name, rule string) *time.Location {
+	t.Helper()
+	// Header and data, for version 1 and again for version 2: no
+	// transitions, one local time type (UTC) and its empty designation.
+	block := append([]byte("TZif2"), make([]byte, 15)...)
+	for _, n := range []uint32{0, 0, 0, 0, 1, 1} { // isut, isstd, leap, time, type, char counts
+		block = binary.BigEndian.AppendUint32(block, n)
+	}
+	block = append(block, 0, 0, 0, 0, 0, 0, 0)
+	loc, err := time.LoadLocationFromTZData(name, slices.Concat(block, block, []byte("\n"+rule+"\n")))
+	mustNoErr(t, err)
+	return loc
 }
 
 func TestEnsureVTimezoneOnce(t *testing.T) {

@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/emersion/go-ical"
@@ -71,22 +72,31 @@ func vtimezone(loc *time.Location, year int) *ical.Component {
 	return tz
 }
 
-// transitions returns the offset changes of loc during year.
+// transitions returns the offset changes of loc during year. It compares the
+// offset from day to day and bisects each change to the second, assuming at
+// most one change per day. Time.ZoneBounds cannot be used: for instants that
+// only the zone's POSIX TZ rule describes, which in slim tzdata such as Go's
+// embedded copy (the only one on Windows) includes the current years, Go
+// returns the start and end of the UTC year as bounds, in leap years with an
+// end a day early that the next call returns again.
 func transitions(loc *time.Location, year int) []transition {
-	t := time.Date(year, time.January, 1, 0, 0, 0, 0, loc)
+	const day = 24 * time.Hour
 	endOfYear := time.Date(year+1, time.January, 1, 0, 0, 0, 0, loc)
 	var out []transition
-	for range 16 {
-		_, end := t.ZoneBounds()
-		if end.IsZero() || !end.Before(endOfYear) {
-			break
-		}
+	for t := time.Date(year, time.January, 1, 0, 0, 0, 0, loc); t.Before(endOfYear); t = t.Add(day) {
 		_, from := t.Zone()
-		name, to := end.Zone()
-		if from != to {
-			out = append(out, transition{at: end, from: from, to: to, name: name, dst: end.IsDST()})
+		if _, to := t.Add(day).Zone(); to == from {
+			continue
 		}
-		t = end
+		i := sort.Search(int(day/time.Second), func(i int) bool {
+			_, off := t.Add(time.Duration(i+1) * time.Second).Zone()
+			return off != from
+		})
+		at := t.Add(time.Duration(i+1) * time.Second)
+		if at.Before(endOfYear) {
+			name, to := at.Zone()
+			out = append(out, transition{at: at, from: from, to: to, name: name, dst: at.IsDST()})
+		}
 	}
 	return out
 }
