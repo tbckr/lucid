@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Self-hostable web client for your CalDAV calendars and tasks that actually looks good.</strong><br>
-  Works with Nextcloud, Synology, Radicale, Baïkal, iCloud and more.
+  Tested with Nextcloud, made for any CalDAV server.
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="#features">Features</a> ·
+  <a href="#status-and-limits">Status</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#security">Security</a> ·
@@ -73,6 +74,39 @@ and Lucid keeps the comfort you're used to from Google Calendar.
   a single static binary, a distroless container or a NixOS module on a
   server, with JSON logs, Prometheus metrics and health endpoints. NixOS and
   Home Manager modules cover both.
+
+## Status and limits
+
+Lucid is young: this is its first release series (0.x), made for early
+adopters. It reads and writes your real calendars, so try it with a test
+calendar first. Until 1.0, a release may change settings or behavior; its
+release notes say what changed.
+
+**Tested with Nextcloud.** Lucid speaks plain CalDAV, so other servers such
+as Radicale, Baïkal, SOGo or Synology should work, but none has been tried
+yet. If yours doesn't, please [report it](#reporting-problems): the problem
+report is made for exactly that. Lucid signs in with a user name and
+password; iCloud needs an app-specific password, and Google Calendar, which
+only offers OAuth, doesn't work.
+
+Not there yet:
+
+- **Reminders:** Lucid doesn't show or set alarms. Alarms set in other apps
+  stay when you edit an event or task in Lucid.
+- **Invitations:** attendees aren't shown, and you can't answer an
+  invitation. They stay when you edit, and your server may send them the
+  change.
+- **Calendars:** no creating, renaming or deleting calendars, no
+  subscriptions to calendar feeds (webcal), no import or export of `.ics`
+  files, and one account at a time. Calendars shared with you show if your
+  server puts them in your calendar home, as Nextcloud does.
+- **Events and tasks:** no search, no moving to another calendar, no
+  subtasks, and no time zone per event: Lucid shows times in your browser's
+  time zone, and saving a single event stores its time without the zone
+  another app may have given it.
+- **Touch screens:** drag and drop is made for mouse and keyboard and
+  untested on touch screens; the editor works everywhere.
+- **Sessions** live in memory only, so restarting Lucid signs everybody out.
 
 ## Screenshots
 
@@ -636,10 +670,6 @@ document Lucid could not read.
   production builds.
 - **Supply chain.** Signed releases and images, SBOMs and daily vulnerability
   scans; see [Supply chain](SECURITY.md#supply-chain).
-
-> [!NOTE]
-> **Known limitation:** sessions live only in memory, so restarting Lucid logs
-> everybody out.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
