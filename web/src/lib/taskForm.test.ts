@@ -7,6 +7,7 @@ import {
   formToTodoInput,
   formWithDate,
   seriesEditInput,
+  shownTaskRule,
   taskFormSchema,
   taskToForm,
   withDue,
@@ -270,11 +271,11 @@ describe('taskForm', () => {
       // client can read); an edit that leaves its rule alone must still be savable.
       const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
       const v = { ...taskToForm(dateless, TZ), title: 'Other' }
-      expect(buildTaskFormSchema(dateless).safeParse(v).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse(v).success).toBe(true)
       // Removing the rule needs no date either.
-      expect(buildTaskFormSchema(dateless).safeParse({ ...v, recurrence: 'none' as const }).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse({ ...v, recurrence: 'none' as const }).success).toBe(true)
       // Giving it a rule the editor actually writes does.
-      const issues = buildTaskFormSchema(dateless)
+      const issues = buildTaskFormSchema({ original: dateless, timeZone: TZ })
         .safeParse({ ...v, recurrence: 'daily' as const })
         .error?.issues.map((i) => [i.path.join('.'), i.message])
       expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
@@ -285,7 +286,7 @@ describe('taskForm', () => {
       // state as changing the rule: the backend rejects a kept rule without a date either
       // way, so the form must ask before it tries (FR-17).
       const v = { ...taskToForm(series, TZ), startDate: '', startTime: '', dueDate: '', dueTime: '' }
-      const issues = buildTaskFormSchema(series)
+      const issues = buildTaskFormSchema({ original: series, timeZone: TZ })
         .safeParse(v)
         .error?.issues.map((i) => [i.path.join('.'), i.message])
       expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
@@ -295,7 +296,7 @@ describe('taskForm', () => {
       const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
       const v = { ...taskToForm(dateless, TZ), title: 'Other' }
       expect(v).toMatchObject({ startDate: '', dueDate: '' })
-      expect(buildTaskFormSchema(dateless).safeParse(v).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse(v).success).toBe(true)
     })
   })
 
@@ -390,5 +391,75 @@ describe('taskForm', () => {
       const spaced = { ...opened, title: ' Own  ', checklist: [{ text: 'Can ', done: false }] }
       expect(editedFields(opened, spaced)).toMatchObject({ title: false, checklist: false })
     })
+  })
+})
+
+// A task in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+describe('a repeat in another time zone', () => {
+  const ny = todo({
+    start: '2026-11-10T23:00:00Z',
+    due: '2026-11-10T23:00:00Z',
+    timezone: 'America/New_York',
+    rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+    recurring: true,
+    fixedDays: true,
+    recurrenceId: '2026-11-10T23:00:00Z',
+  })
+  const issues = (original: typeof ny, v: unknown) =>
+    buildTaskFormSchema({ original, timeZone: TZ })
+      .safeParse(v)
+      .error?.issues.map((i) => [i.path.join('.'), i.message])
+
+  it('opens on the days it shows on', () => {
+    expect(taskToForm(ny, TZ)).toMatchObject({ startDate: '2026-11-11', startTime: '00:00', recurrence: 'custom', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
+  })
+
+  it('keeps the stored rule while the repeat is untouched', () => {
+    expect(formToTodoInput({ ...taskToForm(ny, TZ), title: 'Other' }, TZ, ny)).not.toHaveProperty('rrule')
+  })
+
+  it('writes a changed rule on the wall clock of the zone the task keeps', () => {
+    const v = { ...taskToForm(ny, TZ), customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
+    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH' })
+    // A plain weekly series, changed in the repeat editor, which names the weekday shown.
+    const weekly = { ...ny, rrule: 'FREQ=WEEKLY', fixedDays: false }
+    const every2 = { ...taskToForm(weekly, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE' }
+    expect(formToTodoInput(every2, TZ, weekly)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+  })
+
+  it('writes the rule of a task given dates as built, as dates are the same everywhere', () => {
+    const v = { ...taskToForm(ny, TZ), startTime: '', dueTime: '', customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
+    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' })
+  })
+
+  it('writes the rule a single task with a zone of its own is given in that zone', () => {
+    const single = todo({ due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' })
+    const v = { ...taskToForm(single, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' }
+    expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY;BYDAY=TU,TH' })
+  })
+
+  // In March 2027 New York is on summer time two weeks before Berlin: 18:00 there is 23:00 here, on the same day.
+  it('reads the rule at the series, also when the editor opens at a later repeat', () => {
+    const later = taskToForm({ ...ny, start: '2027-03-16T22:00:00Z', due: '2027-03-16T22:00:00Z' }, TZ, ny)
+    expect(later).toMatchObject({ startDate: '2027-03-16', startTime: '23:00', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
+    expect(formToTodoInput(later, TZ, ny)).not.toHaveProperty('rrule')
+    expect(issues(ny, later)).toBeUndefined()
+  })
+
+  it("refuses a changed rule that doesn't read the same in the task's zone", () => {
+    const monthly = { ...taskToForm(ny, TZ), customRule: 'FREQ=MONTHLY;BYMONTHDAY=11' }
+    expect(issues(ny, monthly)).toContainEqual(['recurrence', 'validation.repeatOtherZone'])
+    expect(formToTodoInput(monthly, TZ, ny)).not.toHaveProperty('rrule')
+    // A preset reads the same anywhere: the series keeps its own day.
+    expect(issues(ny, { ...monthly, recurrence: 'monthly' })).toBeUndefined()
+    expect(formToTodoInput({ ...monthly, recurrence: 'monthly' }, TZ, ny)).toMatchObject({ rrule: 'FREQ=MONTHLY' })
+  })
+
+  it("keeps a rule that doesn't read the same here as it is", () => {
+    const tenth = { ...ny, rrule: 'FREQ=MONTHLY;BYMONTHDAY=10' }
+    expect(shownTaskRule(tenth, TZ)).toBeNull()
+    expect(taskToForm(tenth, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=MONTHLY;BYMONTHDAY=10' })
+    expect(formToTodoInput(taskToForm(tenth, TZ), TZ, tenth)).not.toHaveProperty('rrule')
+    expect(issues(tenth, taskToForm(tenth, TZ))).toBeUndefined()
   })
 })

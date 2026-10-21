@@ -434,6 +434,66 @@ describe('TaskEditor', () => {
       expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every day at 9:30 AM and 5:30 PM')
     })
 
+    // A task in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+    const newYork = (rrule: string) =>
+      todo({
+        title: 'Report',
+        due: '2026-11-10T23:00:00Z',
+        timezone: 'America/New_York',
+        rrule,
+        recurring: true,
+        recurrenceId: '2026-11-10T23:00:00Z',
+      })
+
+    it('edits the repeat of a series in another zone on the days it shows on, and saves it in its zone', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(newYork('FREQ=WEEKLY'))
+      const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      expect(select).toHaveTextContent('Every week on Wednesday')
+
+      await user.click(select)
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      expect(within(repeat).getByRole('button', { name: 'Wednesday' })).toHaveAttribute('aria-pressed', 'true')
+      const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+      await user.clear(interval)
+      await user.type(interval, '2')
+      await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+      expect(select).toHaveTextContent('Every 2 weeks on Wednesday')
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      // Tuesday at 18:00 in New York, which the task keeps.
+      expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+    })
+
+    it("refuses a repeat that doesn't read the same in the series' zone, and saves nothing", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(newYork('FREQ=WEEKLY'))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      await user.click(within(repeat).getByRole('combobox', { name: 'Days, weeks, months or years' }))
+      await user.click(screen.getByRole('option', { name: 'month' }))
+      await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(
+        await within(dialog).findByText('The task repeats in another time zone, where these days fall on other dates. Choose another repeat.'),
+      ).toBeInTheDocument()
+      expect(puts(fetch)).toHaveLength(0)
+    })
+
+    it("offers no custom repeat for a rule that doesn't read the same here", async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(newYork('FREQ=MONTHLY;BYMONTHDAY=10'))
+      const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      expect(select).toHaveTextContent('Every month on day 10 (America/New_York)')
+
+      await user.click(select)
+      expect(screen.getByRole('option', { name: 'Every month on day 11' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Custom…' })).toBeNull()
+    })
+
     it('asks for a date before a task repeats', async () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(todo({ title: 'Slides' }))

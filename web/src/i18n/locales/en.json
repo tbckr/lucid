@@ -551,7 +551,8 @@
     "dateForTime": "Choose a date for this time.",
     "startDueType": "Give both dates a time, or neither.",
     "startAfterDue": "The start can't be after the due date.",
-    "repeatNeedsDate": "A repeating task needs a date."
+    "repeatNeedsDate": "A repeating task needs a date.",
+    "repeatOtherZone": "The task repeats in another time zone, where these days fall on other dates. Choose another repeat."
   },
   "diagnostics": {
     "reference": "Reference: {{ref}}",

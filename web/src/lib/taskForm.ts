@@ -4,6 +4,7 @@ import { type Todo, type TodoInput } from './api/schemas'
 import { anchorOf } from './calendarTasks'
 import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
+import { ruleInZone, taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
 
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
@@ -27,22 +28,30 @@ const taskFormShape = {
 
 /**
  * Task editor form; limits mirror domain.TodoInput.Validate. Messages are i18n keys.
- * `original` lets `validation.repeatNeedsDate` (FR-17) see whether the repeat itself
- * changes: a new task needs a date only if it is given a repeat, and an existing task
- * needs one only when its repeat changes, or when it had a date and both are cleared
- * while the rule stays (the backend rejects a kept rule without a date either way).
- * Not for edits that leave both the rule and an already-dateless series alone (a
- * `ruleUnsupported` series can be dateless, and its title must still be editable).
+ * `edit.original`, the task edited, lets `validation.repeatNeedsDate` (FR-17) see whether
+ * the repeat itself changes, read on the browser's wall clock in `edit.timeZone`: a new
+ * task needs a date only if it is given a repeat, and an existing task needs one only
+ * when its repeat changes, or when it had a date and both are cleared while the rule
+ * stays (the backend rejects a kept rule without a date either way). Not for edits that
+ * leave both the rule and an already-dateless series alone (a `ruleUnsupported` series
+ * can be dateless, and its title must still be editable). A changed repeat that doesn't
+ * read the same on the wall clock the task keeps its rule on is
+ * `validation.repeatOtherZone` (FR-18, see `writtenRule`).
  */
-export function buildTaskFormSchema(original?: Todo) {
+export function buildTaskFormSchema(edit?: { original: Todo; timeZone: string }) {
+  const original = edit?.original
   return z.object(taskFormShape).superRefine((v, ctx) => {
     // A rule recurs from the start, else the due date (FR-17). Removing a rule needs
     // no date, so this only fires while a rule stays set, and only when the rule is
     // the one being set, or a dated series just lost both its dates: an untouched
     // rule, kept on a task whose dates were never there, does not need one to be saved.
     const clearedDatedSeries = original !== undefined && anchorOf(original) !== null
-    if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '' && (repeatChanged(v, original) || clearedDatedSeries)) {
+    // A new task's repeat is new whatever it is.
+    const changed = edit ? repeatChanged(v, edit.timeZone, edit.original) : v.recurrence !== 'none'
+    if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '' && (changed || clearedDatedSeries)) {
       ctx.addIssue({ code: 'custom', message: 'validation.repeatNeedsDate', path: ['recurrence'] })
+    } else if (edit && changed && writtenRule(v, edit.timeZone, edit.original) === null) {
+      ctx.addIssue({ code: 'custom', message: 'validation.repeatOtherZone', path: ['recurrence'] })
     }
     if (v.dueTime !== '' && v.dueDate === '') {
       ctx.addIssue({ code: 'custom', message: 'validation.dateForTime', path: ['dueDate'] })
@@ -82,30 +91,67 @@ function fromFields(date: string, time: string, timeZone: string): { value: stri
 type RepeatFields = Pick<TaskFormValues, 'recurrence' | 'customRule'>
 
 /**
- * The repeat of a todo as the editor shows it (FR-17): a preset where the
- * rule is one, else "custom" with the rule kept verbatim. A rule Lucid can't
- * read, or a series of dates without a rule, is custom too: it can only be
- * kept or removed.
+ * The repeat rule of `todo` as the task editor shows and builds it (FR-17,
+ * FR-18): on the browser's wall clock in `timeZone`, read at the task's
+ * anchor on the wall clock the task keeps its rule on (`taskRuleClock`, see
+ * `ruleInZone`). `null` where it doesn't read the same there: the editor can
+ * only keep it, replace it by a preset, or remove it. A rule Lucid can't read
+ * stays as it is.
  */
-function repeatOf(todo: Todo | undefined): RepeatFields {
+export function shownTaskRule(todo: Todo, timeZone: string): string | null {
+  const clock = todo.ruleUnsupported ? null : taskRuleClock(todo)
+  return clock ? ruleInZone(todo.rrule, clock.at, clock.zone, timeZone) : todo.rrule
+}
+
+/**
+ * The repeat of a todo as the editor shows it (FR-17): a preset where the
+ * rule is one, else "custom" with the rule kept verbatim, as it reads in
+ * `timeZone` (`shownTaskRule`, FR-18). A rule Lucid can't read, one that
+ * doesn't read the same in `timeZone`, or a series of dates without a rule,
+ * is custom too: it can only be kept or removed.
+ */
+function repeatOf(todo: Todo | undefined, timeZone: string): RepeatFields {
   if (!todo) return { recurrence: 'none', customRule: '' }
-  const custom = todo.ruleUnsupported || (todo.recurring && !todo.rrule.trim())
-  const recurrence: Recurrence = custom ? 'custom' : recurrenceFromRRule(todo.rrule)
-  return { recurrence, customRule: recurrence === 'custom' ? todo.rrule : '' }
+  const rule = shownTaskRule(todo, timeZone) ?? todo.rrule
+  const custom = todo.ruleUnsupported || (todo.recurring && !rule.trim())
+  const recurrence: Recurrence = custom ? 'custom' : recurrenceFromRRule(rule)
+  return { recurrence, customRule: recurrence === 'custom' ? rule : '' }
 }
 
 /**
  * Whether `v` changes the repeat of `original`, or gives a new task one
- * (FR-17). An untouched repeat is not sent: the preset would write the stored
- * rule in its own words ("FREQ=WEEKLY" for "FREQ=WEEKLY;INTERVAL=1"), which
- * the server takes as a new rule, starting the series over.
+ * (FR-17), both read in `timeZone`. An untouched repeat is not sent: the
+ * preset would write the stored rule in its own words ("FREQ=WEEKLY" for
+ * "FREQ=WEEKLY;INTERVAL=1"), which the server takes as a new rule, starting
+ * the series over.
  */
-export function repeatChanged(v: RepeatFields, original?: Todo): boolean {
-  const before = repeatOf(original)
+export function repeatChanged(v: RepeatFields, timeZone: string, original?: Todo): boolean {
+  const before = repeatOf(original, timeZone)
   return v.recurrence !== before.recurrence || (v.recurrence === 'custom' && v.customRule !== before.customRule)
 }
 
-export function taskToForm(todo: Todo, timeZone: string): TaskFormValues {
+/**
+ * The rule a save of the repeat `v` writes for `original` (FR-17, FR-18):
+ * built on the browser's wall clock in `timeZone`, with its UNTIL in the form
+ * of the date it recurs from (`fitUntil`), and, for a time, on the wall clock
+ * the server keeps the task's rule on (`taskRuleClock`), read at the same
+ * anchor as `shownTaskRule`, so that what the editor showed goes back as it
+ * was. `null` where it doesn't read the same there (`ruleInZone`).
+ */
+function writtenRule(v: TaskFormValues, timeZone: string, original?: Todo): string | null {
+  const allDay = v.startDate ? v.startTime === '' : v.dueTime === ''
+  const rule = fitUntil(buildRRule(v.recurrence, v.customRule), allDay, timeZone)
+  const clock = original && !allDay ? taskRuleClock(original) : null
+  return clock ? ruleInZone(rule, clock.at, timeZone, clock.zone) : rule
+}
+
+/**
+ * The form of `todo` in fields of `timeZone`. Its repeat is the one of
+ * `series`, the task itself unless `todo` holds the dates of one of its
+ * repeats: it is read at the series, as a save compares and writes it
+ * (`repeatChanged`, `writtenRule`).
+ */
+export function taskToForm(todo: Todo, timeZone: string, series: Todo = todo): TaskFormValues {
   const start = toFields(todo.start, todo.startAllDay, timeZone)
   const due = toFields(todo.due, todo.dueAllDay, timeZone)
   return {
@@ -118,7 +164,7 @@ export function taskToForm(todo: Todo, timeZone: string): TaskFormValues {
     priority: todo.priority,
     completed: todo.status === 'COMPLETED',
     checklist: todo.checklist.map((c) => ({ ...c })),
-    ...repeatOf(todo),
+    ...repeatOf(series, timeZone),
   }
 }
 
@@ -126,6 +172,7 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
   const start = fromFields(v.startDate, v.startTime, timeZone)
   const due = fromFields(v.dueDate, v.dueTime, timeZone)
   const keepStatus = original && original.status !== 'COMPLETED' ? original.status : 'NEEDS-ACTION'
+  const rrule = repeatChanged(v, timeZone, original) ? writtenRule(v, timeZone, original) : null
   return {
     title: v.title.trim(),
     description: v.description,
@@ -136,11 +183,10 @@ export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: 
     dueAllDay: due.allDay,
     priority: v.priority,
     status: v.completed ? 'COMPLETED' : keepStatus,
-    // Absent keeps the stored rule, "" removes it (FR-17). The rule recurs from
-    // the start, else the due date, whose form its UNTIL takes.
-    ...(repeatChanged(v, original)
-      ? { rrule: fitUntil(buildRRule(v.recurrence, v.customRule), v.startDate ? v.startTime === '' : v.dueTime === '', timeZone) }
-      : {}),
+    // Absent keeps the stored rule, "" removes it (FR-17). One that can't be
+    // written where the task keeps its rule stays absent too: the form
+    // refuses it before it is saved (validation.repeatOtherZone).
+    ...(rrule !== null ? { rrule } : {}),
     timezone: timeZone,
   }
 }

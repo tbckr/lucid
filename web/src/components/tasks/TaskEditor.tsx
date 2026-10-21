@@ -66,12 +66,14 @@ import {
   type ScopeNotes,
   type ScopeResult,
 } from '@/lib/scope'
+import { taskRuleClock } from '@/lib/seriesShift'
 import {
   buildTaskFormSchema,
   editedFields,
   formToTodoInput,
   formWithDate,
   seriesEditInput,
+  shownTaskRule,
   taskToForm,
   type TaskFormValues,
 } from '@/lib/taskForm'
@@ -196,14 +198,14 @@ export function TaskEditor({
   const kindRef = useRef<HTMLButtonElement>(null)
 
   // The values the editor opened with: at a repeat, its dates and its own title; the notes,
-  // checklist and priority are the series' (FR-17).
+  // checklist, priority and repeat are the series' (FR-17).
   const [opened] = useState<TaskFormValues>(() =>
     state.mode === 'edit'
-      ? taskToForm(repeat ? { ...state.todo, ...repeat.shown, title: repeat.title } : state.todo, tz)
+      ? taskToForm(repeat ? { ...state.todo, ...repeat.shown, title: repeat.title } : state.todo, tz, state.todo)
       : { ...taskForm(state.draft.title, state.draft.task), description: state.draft.description },
   )
   const form = useForm<TaskFormValues>({
-    resolver: zodResolver(buildTaskFormSchema(todo)),
+    resolver: zodResolver(buildTaskFormSchema(todo && { original: todo, timeZone: tz })),
     defaultValues: opened,
   })
   const { register, control, handleSubmit, formState, setValue, getValues, setFocus, subscribe } = form
@@ -219,6 +221,8 @@ export function TaskEditor({
 
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
   const ruleUnsupported = todo?.ruleUnsupported ?? false
+  // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
+  const recursOn = todo?.recurring && shownTaskRule(todo, tz) === null ? taskRuleClock(todo) : null
   // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it.
   const anchorDay = startDate ? dayAt(startDate, startTime) : dueDate ? dayAt(dueDate, dueTime) : now
 
@@ -644,6 +648,7 @@ export function TaskEditor({
               timeZone={tz}
               presets={ruleUnsupported ? NONE : RECURRENCE_PRESETS}
               customizable={!ruleUnsupported && !readOnly}
+              recursOn={recursOn}
               explicit={todo?.recurring ?? false}
               disabled={readOnly}
               invalid={!!repeatError}
