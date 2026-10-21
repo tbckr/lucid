@@ -6,6 +6,3 @@ contact_links:
   - name: Question
     url: https://github.com/tbckr/lucid/discussions/new?category=q-a
     about: Ask how to set up or use Lucid in GitHub Discussions.
-  - name: Security vulnerability
-    url: https://github.com/tbckr/lucid/security/advisories/new
-    about: Report vulnerabilities privately. Do not open a public issue for them.
