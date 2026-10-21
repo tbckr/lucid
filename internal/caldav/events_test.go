@@ -585,6 +585,7 @@ func TestCreateEvent(t *testing.T) {
 		name      string
 		in        domain.EventInput
 		wantLines []string // substrings of the stored object
+		notLines  []string // substrings the stored object must not hold
 		wantEvent occ
 	}{
 		{
@@ -624,6 +625,18 @@ func TestCreateEvent(t *testing.T) {
 			},
 			wantEvent: occ{title: "Standup", start: date(2025, 3, 17, 8, 0), end: date(2025, 3, 17, 8, 15), rid: ptr(date(2025, 3, 17, 8, 0))},
 		},
+		{
+			// A browser that reports UTC, such as Firefox with resistFingerprinting, writes no zone
+			// of its own (FR-18).
+			name: "recurring in UTC has no TZID and no VTIMEZONE",
+			in: domain.EventInput{
+				Title: "Standup", Start: date(2025, 3, 17, 8, 0), End: date(2025, 3, 17, 8, 15),
+				Timezone: "UTC", RRule: "FREQ=WEEKLY",
+			},
+			wantLines: []string{"DTSTART:20250317T080000Z", "DTEND:20250317T081500Z", "RRULE:FREQ=WEEKLY"},
+			notLines:  []string{"TZID", "VTIMEZONE"},
+			wantEvent: occ{title: "Standup", start: date(2025, 3, 17, 8, 0), end: date(2025, 3, 17, 8, 15), rid: ptr(date(2025, 3, 17, 8, 0))},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -646,6 +659,11 @@ func TestCreateEvent(t *testing.T) {
 			for _, l := range tt.wantLines {
 				if !strings.Contains(data, l) {
 					t.Errorf("stored object lacks %q:\n%s", l, data)
+				}
+			}
+			for _, l := range tt.notLines {
+				if strings.Contains(data, l) {
+					t.Errorf("stored object holds %q:\n%s", l, data)
 				}
 			}
 		})

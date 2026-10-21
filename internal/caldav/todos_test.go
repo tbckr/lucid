@@ -5366,6 +5366,24 @@ func TestCreateTodoWithRule(t *testing.T) {
 		}, nil)
 	})
 
+	// A browser that reports UTC, such as Firefox with resistFingerprinting, writes no zone of
+	// its own (FR-18).
+	t.Run("timed in UTC has no TZID and no VTIMEZONE", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		start, due := date(2025, 3, 10, 8, 0), date(2025, 3, 10, 9, 0)
+		got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{
+			Title: "Standup", Start: &start, Due: &due, RRule: "FREQ=WEEKLY", Timezone: "UTC",
+		})
+		mustNoErr(t, err)
+		if !got.Recurring || got.Timezone != "" || !sameTime(got.Start, &start) || !sameTime(got.Due, &due) {
+			t.Errorf("created series = %+v", got)
+		}
+		checkStored(t, "series", storedObject(t, e, got.ID), []string{
+			"DTSTART:20250310T080000Z", "DUE:20250310T090000Z", "RRULE:FREQ=WEEKLY\r\n",
+		}, []string{"TZID", "VTIMEZONE"})
+	})
+
 	for _, tc := range []struct {
 		name string
 		in   domain.TodoInput
