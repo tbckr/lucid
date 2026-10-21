@@ -84,7 +84,7 @@ export async function deleteTestTasks(page: Page): Promise<void> {
  */
 export async function createTestTask(
   page: Page,
-  body: { title: string; due: string; dueAllDay: boolean; rrule?: string; start?: string | null },
+  body: { title: string; due: string; dueAllDay: boolean; rrule?: string; start?: string | null; timezone?: string },
 ): Promise<{ id: string; etag: string }> {
   if (!body.title.startsWith('E2E ')) throw new Error(`test task "${body.title}" must start with "E2E "`)
   const api = page.request
@@ -98,7 +98,7 @@ export async function createTestTask(
   const tasks = calendars.find((c) => c.name === 'Tasks')
   if (!tasks) throw new Error('calendar Tasks not found')
 
-  const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const timezone = body.timezone ?? (await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone))
   const res = await api.post(`/api/v1/calendars/${tasks.id}/todos`, {
     headers: { 'X-CSRF-Token': session.csrfToken },
     data: {
@@ -124,12 +124,12 @@ export async function createTestTask(
 /**
  * Create an event through the API in the "Work" calendar, the way the editor
  * saves one: `start` and `end` are wire dates, and a repeat recurs in the
- * browser's time zone. The title must start with "E2E ", so that
- * `deleteTestEvents` removes it again.
+ * browser's time zone, or in `timezone`, as another app's would. The title
+ * must start with "E2E ", so that `deleteTestEvents` removes it again.
  */
 export async function createTestEvent(
   page: Page,
-  body: { title: string; start: string; end: string; rrule?: string },
+  { timezone: zone, ...body }: { title: string; start: string; end: string; rrule?: string; timezone?: string },
 ): Promise<void> {
   if (!body.title.startsWith('E2E ')) throw new Error(`test event "${body.title}" must start with "E2E "`)
   const api = page.request
@@ -143,7 +143,7 @@ export async function createTestEvent(
   const work = calendars.find((c) => c.name === 'Work')
   if (!work) throw new Error('calendar Work not found')
 
-  const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const timezone = zone ?? (await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone))
   const res = await api.post(`/api/v1/calendars/${work.id}/events`, {
     headers: { 'X-CSRF-Token': session.csrfToken },
     data: { ...body, description: '', location: '', allDay: false, timezone },
