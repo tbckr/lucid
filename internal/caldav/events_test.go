@@ -1278,6 +1278,52 @@ func mustRefuseMove(t *testing.T, e *env, id string, ev domain.Event, in domain.
 	}
 }
 
+// TestUpdateSeriesWithoutZoneJudgedInUTC checks that "all events" judges a
+// series on fixed days whose DTSTART has no zone Lucid knows (UTC, floating,
+// an unknown TZID) by its days in UTC, and reports it without a zone, which
+// is what the browser's moveAllRefusal reads in UTC too, wherever it is
+// (FR-17). In Berlin, 23:30Z to 00:30Z stays on one day, and 22:30Z to
+// 23:30Z crosses midnight.
+func TestUpdateSeriesWithoutZoneJudgedInUTC(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name string
+		prop func(name, value string) string // the date property name with value in this form
+	}{
+		{"utc", func(name, v string) string { return name + ":" + v + "Z" }},
+		{"floating", func(name, v string) string { return name + ":" + v }},
+		{"unknown tzid", func(name, v string) string { return name + ";TZID=Nowhere/Land:" + v }},
+	} {
+		// series stores the monthly series on the 15th from start to end, and
+		// returns its ID and its event at rid, shown without a zone.
+		series := func(t *testing.T, e *env, start, end string, rid time.Time) (string, domain.Event) {
+			t.Helper()
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20240101T000000Z", "SUMMARY:Review",
+				tt.prop("DTSTART", start), tt.prop("DTEND", end), "RRULE:FREQ=MONTHLY;BYMONTHDAY=15", "END:VEVENT")
+			ev := shownEvent(t, e, "work", rid)
+			if ev.Timezone != "" {
+				t.Fatalf("timezone = %q, want none", ev.Timezone)
+			}
+			return id, ev
+		}
+		t.Run(tt.name+" refuses the next UTC day", func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id, ev := series(t, e, "20250315T233000", "20250316T000000", date(2025, 3, 15, 23, 30))
+			mustRefuseMove(t, e, id, ev, seriesUpdate(ev, "Review", "", date(2025, 3, 16, 0, 30), date(2025, 3, 16, 1, 0)))
+		})
+		t.Run(tt.name+" moves within the UTC day", func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id, ev := series(t, e, "20250315T223000", "20250315T230000", date(2025, 3, 15, 22, 30))
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag,
+				seriesUpdate(ev, "Review", "", date(2025, 3, 15, 23, 30), date(2025, 3, 16, 0, 0)))
+			mustNoErr(t, err)
+		})
+	}
+}
+
 // TestUpdateSeriesKeepsRefsOnWallClock is the review's first reproduction
 // as a regression test: "all events" one day later, from a January event of
 // a Saturday series in Europe/Berlin, moves its EXDATE and its exception's

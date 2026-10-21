@@ -42,27 +42,27 @@ describe('moveAllRefusal: the wall clock it judges', () => {
     const event = {
       rrule: 'FREQ=WEEKLY;BYDAY=MO',
       allDay: false,
-      timezone: '',
+      timezone: 'Europe/Berlin',
       start: '2026-03-09T08:00:00Z',
       startsAt: new Date('2026-03-09T09:00:00+01:00'), // Monday, CET
     }
     const newStart = new Date('2026-03-10T09:00:00+01:00') // Tuesday, CET
-    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
+    expect(moveAllRefusal(event, newStart)).toBeNull()
   })
 
   it('rejects a day move but allows a time-only move for BYMONTHDAY', () => {
     const event = {
       rrule: 'FREQ=MONTHLY;BYMONTHDAY=15',
       allDay: false,
-      timezone: '',
+      timezone: 'Europe/Berlin',
       start: '2026-03-15T08:00:00Z',
       startsAt: new Date('2026-03-15T09:00:00+01:00'),
     }
     const nextDay = new Date('2026-03-16T09:00:00+01:00')
-    expect(moveAllRefusal(event, nextDay, 'Europe/Berlin')).toBe('fixedDays')
+    expect(moveAllRefusal(event, nextDay)).toBe('fixedDays')
 
     const sameDayLater = new Date('2026-03-15T11:00:00+01:00')
-    expect(moveAllRefusal(event, sameDayLater, 'Europe/Berlin')).toBeNull()
+    expect(moveAllRefusal(event, sameDayLater)).toBeNull()
   })
 
   it('judges the day in the event zone, not the browser zone', () => {
@@ -75,8 +75,33 @@ describe('moveAllRefusal: the wall clock it judges', () => {
     }
     // 23:30Z is 00:30 Tuesday in Berlin, but 19:30 Monday in New York.
     const newStart = new Date('2026-03-09T23:30:00Z')
-    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
+    expect(moveAllRefusal(event, newStart)).toBeNull()
   })
+
+  // The server reads a time in UTC ("Z"), a floating one and one in a zone it can't resolve in UTC, and reports no
+  // zone for them: the browser's zone must not decide what it allows.
+  it.each(['Europe/Berlin', 'America/New_York', 'Asia/Tokyo'])(
+    'counts the days of a series without a zone in UTC, with the browser in %s',
+    (browserZone) => {
+      const originalTz = process.env.TZ
+      process.env.TZ = browserZone
+      try {
+        const at = (start: string) => ({
+          rrule: 'FREQ=MONTHLY;BYMONTHDAY=9',
+          allDay: false,
+          timezone: '',
+          start,
+          startsAt: new Date(start),
+        })
+        // 23:30 UTC on Monday, 9 March: 00:30 UTC is Tuesday, wherever the browser is.
+        expect(moveAllRefusal(at('2026-03-09T23:30:00Z'), new Date('2026-03-10T00:30:00Z'))).toBe('fixedDays')
+        // 22:30 to 23:15 UTC stays on Monday, though in Berlin it crosses midnight.
+        expect(moveAllRefusal(at('2026-03-09T22:30:00Z'), new Date('2026-03-09T23:15:00Z'))).toBeNull()
+      } finally {
+        process.env.TZ = originalTz
+      }
+    },
+  )
 
   it('derives all-day wall clocks from the UTC calendar date', () => {
     const event = {
@@ -87,7 +112,7 @@ describe('moveAllRefusal: the wall clock it judges', () => {
       startsAt: new Date(2026, 2, 9),
     }
     const newStart = new Date('2026-03-10T00:00:00Z') // Tuesday
-    expect(moveAllRefusal(event, newStart, 'Europe/Berlin')).toBeNull()
+    expect(moveAllRefusal(event, newStart)).toBeNull()
   })
 
   // FR-17: all-day events are date-only on the wire (UTC midnight). Reading
@@ -105,8 +130,8 @@ describe('moveAllRefusal: the wall clock it judges', () => {
         start: '2026-09-25T00:00:00Z',
         startsAt: new Date(2026, 8, 25),
       }
-      expect(moveAllRefusal(event, new Date('2026-09-25T00:00:00Z'), 'Europe/Berlin')).toBeNull()
-      expect(moveAllRefusal(event, new Date('2026-09-26T00:00:00Z'), 'Europe/Berlin')).toBe('fixedDays')
+      expect(moveAllRefusal(event, new Date('2026-09-25T00:00:00Z'))).toBeNull()
+      expect(moveAllRefusal(event, new Date('2026-09-26T00:00:00Z'))).toBe('fixedDays')
     } finally {
       process.env.TZ = originalTz
     }
@@ -116,39 +141,45 @@ describe('moveAllRefusal: the wall clock it judges', () => {
 describe('moveAllRefusal', () => {
   /** A timed Berlin series whose shown occurrence starts at `startsAt`. */
   function series(rrule: string, startsAt: string) {
-    return { rrule, allDay: false, timezone: '', start: new Date(startsAt).toISOString(), startsAt: new Date(startsAt) }
+    return {
+      rrule,
+      allDay: false,
+      timezone: 'Europe/Berlin',
+      start: new Date(startsAt).toISOString(),
+      startsAt: new Date(startsAt),
+    }
   }
 
   it('allows a move the series can follow', () => {
     const event = series('FREQ=WEEKLY;BYDAY=MO', '2026-03-09T09:00:00+01:00') // Monday
     const tuesday = new Date('2026-03-10T09:00:00+01:00')
-    expect(moveAllRefusal(event, tuesday, 'Europe/Berlin')).toBeNull()
+    expect(moveAllRefusal(event, tuesday)).toBeNull()
   })
 
   it('refuses another day of a monthly series on fixed days', () => {
     const event = series('FREQ=MONTHLY;BYMONTHDAY=15', '2026-03-15T09:00:00+01:00')
     const nextDay = new Date('2026-03-16T09:00:00+01:00')
-    expect(moveAllRefusal(event, nextDay, 'Europe/Berlin')).toBe('fixedDays')
+    expect(moveAllRefusal(event, nextDay)).toBe('fixedDays')
   })
 
   it('refuses another time when the rule fixes the hour', () => {
     const event = series('FREQ=DAILY;BYHOUR=9', '2026-03-09T09:00:00+01:00')
     const later = new Date('2026-03-09T10:00:00+01:00')
-    expect(moveAllRefusal(event, later, 'Europe/Berlin')).toBe('fixedTimes')
+    expect(moveAllRefusal(event, later)).toBe('fixedTimes')
   })
 
   it('refuses another day even when the rule fixes the hour', () => {
     // BYHOUR is another BY part: no rotation, so Monday -> Wednesday is refused.
     const event = series('FREQ=WEEKLY;BYDAY=MO;BYHOUR=9', '2026-03-09T09:00:00+01:00')
     const wednesday = new Date('2026-03-11T09:00:00+01:00')
-    expect(moveAllRefusal(event, wednesday, 'Europe/Berlin')).toBe('fixedDays')
+    expect(moveAllRefusal(event, wednesday)).toBe('fixedDays')
   })
 
   it('blames the time when only the time keeps the series from following', () => {
     // Every day at 09:00: the day is not what the rule fixes, the hour is.
     const event = series('FREQ=DAILY;BYHOUR=9', '2026-03-09T09:00:00+01:00')
     const nextDayLater = new Date('2026-03-10T10:00:00+01:00')
-    expect(moveAllRefusal(event, nextDayLater, 'Europe/Berlin')).toBe('fixedTimes')
+    expect(moveAllRefusal(event, nextDayLater)).toBe('fixedTimes')
   })
 
   it('always blames the days for an all-day event', () => {
@@ -159,7 +190,7 @@ describe('moveAllRefusal', () => {
       start: '2026-03-15T00:00:00Z',
       startsAt: new Date(2026, 2, 15),
     }
-    expect(moveAllRefusal(event, new Date('2026-03-16T00:00:00Z'), 'Europe/Berlin')).toBe('fixedDays')
+    expect(moveAllRefusal(event, new Date('2026-03-16T00:00:00Z'))).toBe('fixedDays')
   })
 })
 

@@ -21,8 +21,6 @@ import {
 } from './scope'
 import { apiEvent, todo } from '@/test/fixtures'
 
-const tz = 'Europe/Berlin'
-
 /** One shown occurrence of a series, starting Monday 2026-03-09 09:00 Berlin. */
 function occurrence(rrule: string, flags: { first?: boolean; hasAttendees?: boolean } = {}) {
   return toCalEvent(
@@ -188,7 +186,7 @@ describe('scopeOptions for events', () => {
   ]
 
   it.each(rows)('$name', ({ action, item, to, want }) => {
-    expect(scopeOptions({ kind: 'event', action, item, to, tz })).toStrictEqual(want)
+    expect(scopeOptions({ kind: 'event', action, item, to })).toStrictEqual(want)
   })
 })
 

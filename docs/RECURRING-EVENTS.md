@@ -860,7 +860,10 @@ event, and the refusal comes as a toast.
   times." when the rule fixes the clock (`BYHOUR`, `BYMINUTE` or
   `BYSECOND`) and the move changes it, and "Only this event. The series
   stays on its days." otherwise. The server check is the safety net, not
-  the primary guard.
+  the primary guard. Both read the move on the series' wall clock: in its
+  `TZID`, else in UTC, as the server reads a time in UTC, a floating one
+  and one with a `TZID` it can't resolve, and never in the browser's zone,
+  where an event can fall on another date than in the series' own.
 - **A `MONTHLY` or `YEARLY` rule without `BY` parts** is refused too, with
   the same `400 series_move_unsupported` and nothing written, where months
   and days can't keep every value on its day (see Limits). The server

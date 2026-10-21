@@ -68,7 +68,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
   const inZone = zoneTimes(event, tz, prefs, now)
   const hasDetails = [event.recurring, inZone, event.location, event.description].some(Boolean)
   // An event of a series asks which events to delete (FR-17); a single event only whether.
-  const deleteScopes = scopeOptions({ kind: 'event', action: 'delete', item: event, tz })
+  const deleteScopes = scopeOptions({ kind: 'event', action: 'delete', item: event })
   const deleteOptions = deleteScopes.options
   // "This and following events" ends the series before this event (FR-17).
   const deleteScoped = (scope: Scope) => {

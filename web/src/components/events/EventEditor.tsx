@@ -236,7 +236,7 @@ function EditorForm({
   // series can't follow only this event's. Empty for anything but an occurrence of a series.
   const saveScopes = (values: EventFormValues, input: EventInput): ScopeResult =>
     occurrence
-      ? scopeOptions({ kind: 'event', action: saveAction(values), item: occurrence, to: new Date(input.start), tz })
+      ? scopeOptions({ kind: 'event', action: saveAction(values), item: occurrence, to: new Date(input.start) })
       : { options: [] }
 
   // A refused save says so, and the next one goes with the ETag the event has now: it replaces the

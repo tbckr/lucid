@@ -124,13 +124,12 @@ interface TaskMove {
  * Which events of a series a drop of the dragged event onto `result` can reach (FR-17): a
  * resize changes the event, anything else moves it.
  */
-function dropScopes(d: DragData, result: Extract<DropResult, { kind: 'event' }>, tz: string): ScopeResult {
+function dropScopes(d: DragData, result: Extract<DropResult, { kind: 'event' }>): ScopeResult {
   return scopeOptions({
     kind: 'event',
     action: d.type === 'resize' ? 'change' : 'move',
     item: result.event,
     to: new Date(result.times.start),
-    tz,
   })
 }
 
@@ -467,7 +466,7 @@ export function CalendarDnd({
    * reaches with one option, and, for a repeat no option moves there, why not.
    */
   const dropSays = (d: DragData, next: DropResult | null): DropSays => {
-    if (next?.kind === 'event') return { hint: eventScopeHint(t, dropScopes(d, next, tz), false), limit: null }
+    if (next?.kind === 'event') return { hint: eventScopeHint(t, dropScopes(d, next), false), limit: null }
     const drop = next?.kind === 'task' ? taskDrop(next) : null
     if (!drop) return NOTHING_SAID
     return { hint: taskScopeHint(t, drop, 'move', false, drop.repeat.at), limit: refusal(drop) }
@@ -541,7 +540,7 @@ export function CalendarDnd({
       // when there is a choice; the one thing it can do, it does right away. An invitation to one
       // event of a series (an override without its series) is a single event to Lucid.
       const change = d.type === 'resize'
-      const scopes = dropScopes(d, result, tz)
+      const scopes = dropScopes(d, result)
       const [only] = scopes.options
       if (scopes.options.length > 1) {
         latest.current.asked = true

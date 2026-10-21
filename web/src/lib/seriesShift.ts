@@ -255,8 +255,10 @@ function shiftRefusal(rule: string, from: string, to: string): ShiftReason | nul
  * `null` if it can: `seriesShift` of the event's rule from its current
  * wall-clock start to `newStart`'s. All-day events have no real zone, so
  * their day comes from the UTC-midnight wire format (`start`), read in UTC,
- * never from `startsAt` or `browserZone`; timed events use `event.timezone`
- * (the series' own zone) or, lacking one, `browserZone`, as before.
+ * never from `startsAt`; timed events are read in `event.timezone` (the
+ * series' own zone), else in UTC, as the server reads a time in UTC ("Z"),
+ * a floating one and one in a zone it cannot resolve, which it reports
+ * without `timezone`. Never in the browser's zone, as `taskMoveRefusal`.
  *
  * A refusal is `'fixedTimes'` when the rule fixes the clock itself (BYHOUR,
  * BYMINUTE or BYSECOND) and the move changes the clock — that is what the
@@ -266,7 +268,6 @@ function shiftRefusal(rule: string, from: string, to: string): ShiftReason | nul
 export function moveAllRefusal(
   event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
   newStart: Date,
-  browserZone: string,
 ): ShiftReason | null {
   let from: string
   let to: string
@@ -274,7 +275,7 @@ export function moveAllRefusal(
     from = allDayWallClock(new Date(event.start))
     to = allDayWallClock(newStart)
   } else {
-    const zone = event.timezone || browserZone
+    const zone = event.timezone || 'UTC'
     from = wallClock(event.startsAt, zone)
     to = wallClock(newStart, zone)
   }
@@ -316,7 +317,7 @@ function addWallMinutes(s: string, minutes: number): string {
  *
  * Wall clocks are read in the series' zone (`todo.timezone`), else in UTC,
  * as the server reads a time in UTC ("Z"), a floating one and one in a zone
- * it cannot resolve, which it reports without `timezone`; unlike an event's
+ * it cannot resolve, which it reports without `timezone`; as an event's
  * (`moveAllRefusal`), never in the browser's zone. A date, all-day, is read
  * by its UTC date. A time given to a repeat shown on a date of a series
  * without a zone, an all-day series, is read in the zone the write names

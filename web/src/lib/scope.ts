@@ -68,18 +68,18 @@ export interface ScopeResult {
  * this event, the following ones or all.
  *
  * `kind: 'task'` asks the same of a task series' repeat, with its new dates
- * as `to` (`taskScopeOptions`). It needs no browser zone: a task series
- * without a zone of its own is judged in UTC, as the server judges it, but
- * for a time given to an all-day series, judged in the zone the write names
- * (`to.timezone`), where the server writes it.
+ * as `to` (`taskScopeOptions`). Neither needs the browser's zone: a series
+ * without a zone of its own is judged in UTC, as the server judges it, but a
+ * task's for a time given to an all-day series, judged in the zone the write
+ * names (`to.timezone`), where the server writes it.
  */
 export function scopeOptions(
   input:
-    | { kind: 'event'; action: ScopeAction; item: CalEvent; to?: Date; tz: string }
+    | { kind: 'event'; action: ScopeAction; item: CalEvent; to?: Date }
     | { kind: 'task'; action: ScopeAction; item: TaskRepeat; to?: ZonedTaskDates },
 ): ScopeResult {
   if (input.kind === 'task') return taskScopeOptions(input.action, input.item, input.to)
-  const { action, item, to, tz } = input
+  const { action, item, to } = input
   if (!item.recurring || !item.recurrenceId) return { options: [] }
 
   switch (action) {
@@ -90,7 +90,7 @@ export function scopeOptions(
       return thisFollowingAll(item)
     case 'move':
     case 'change': {
-      const reason = moveAllRefusal(item, to ?? new Date(item.start), tz)
+      const reason = moveAllRefusal(item, to ?? new Date(item.start))
       return reason === null ? thisFollowingAll(item) : { options: ['this'], reason }
     }
   }
