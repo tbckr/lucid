@@ -1,5 +1,5 @@
 ---
-name: release-notes
+name: writing-release-notes
 description: Use when preparing a Lucid release or pre-release, before `just release` or `just prerelease`, or when asked to write or update release notes
 ---
 
