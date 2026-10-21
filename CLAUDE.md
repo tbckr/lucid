@@ -22,7 +22,8 @@ just mutation origin/main  # only the lines changed since the merge base: lists 
 just e2e            # Playwright
 just screenshots    # README screenshots -> docs/screenshots (own mockdav :5233 + backend :8081, fixed date)
 just build          # web/dist + bin/lucid with embedded SPA
-just release        # tag + push the next version from the Conventional Commits since the last release, from a clean, pushed main; release.yml publishes and then moves the `stable` branch (scripts/release.sh)
+just release-plan   # the next version, the release notes file it needs (.github/release-notes/vX.Y.Z.md) and the commits since the last release
+just release        # tag + push the next version from the Conventional Commits since the last release, from a clean, pushed main; refuses without release notes in HEAD unless the generated changelog is confirmed; release.yml publishes and then moves the `stable` branch (scripts/release.sh)
 just release 1.2.0  # same with an explicit version
 just prerelease     # same for a pre-release, vX.Y.Z-rc.N (or `just prerelease 1.2.0-rc.1`): no latest/MAJOR/MINOR image tags, `stable` stays
 just outdated       # direct deps with newer versions + platform versions (scripts/deps.sh)

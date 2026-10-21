@@ -76,9 +76,9 @@ separately, see
 ## Commit messages
 
 We use [Conventional Commits](https://www.conventionalcommits.org/). The
-release changelog and the next version are generated from them: a breaking
-change bumps MAJOR (MINOR while MAJOR is 0), `feat` bumps MINOR, and every
-other type PATCH.
+next version is computed from them, and they are the material of the
+release notes ([Releases](#releases)): a breaking change bumps MAJOR (MINOR
+while MAJOR is 0), `feat` bumps MINOR, and every other type PATCH.
 
 ```
 <type>(<optional scope>): <summary in imperative mood>
@@ -344,6 +344,26 @@ the same files as the release, plus a `.map` beside each, in which a frame's
 file, line and column can be looked up. If the files differ, the build tools
 differ from the release's. Build again without them afterwards (`pnpm --dir
 web build`), as a binary built from `web/dist` must not contain source maps.
+
+## Releases
+
+Releases are tagged from a clean `main` that is pushed:
+
+1. `just release-plan` shows the next version, computed from the
+   Conventional Commits since the last release, the notes file it needs and
+   those commits.
+2. Write the notes to `.github/release-notes/vX.Y.Z.md` and commit them as
+   `docs: write the release notes for vX.Y.Z`. They are for users, not a list
+   of commits: what is new, what to do when upgrading (required when a commit
+   is marked breaking, such as a removed `LUCID_*` variable or Nix option),
+   fixes worth knowing, and what is known to be broken or untested.
+   `.github/release-notes/v0.1.0.md` is an example. A pre-release takes its
+   version's notes unless it has its own (`vX.Y.Z-rc.N.md`), for example to
+   say what to test.
+3. Push, then run `just prerelease` for a release candidate or
+   `just release`. Both refuse a version without notes in `HEAD` unless you
+   confirm that the changelog generated from the commits takes their place,
+   an exception for, say, a patch release whose commits say enough.
 
 ## Security issues
 

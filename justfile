@@ -152,6 +152,11 @@ dev: _dev-hint mockdav dev-backend dev-web
 _dev-hint:
     @echo "Open http://localhost:5173 and log in with server http://{{ MOCKDAV_ADDR }}, user demo, password demo."
 
+# Show the next release: its version, the notes file it needs and the commits since the last release
+[group('release')]
+release-plan:
+    scripts/release.sh plan
+
 # Tag and push a release, by default the next version from the commits (or e.g. 1.2.0); release.yml builds, signs and publishes it and moves the stable branch
 [group('release')]
 release version="":

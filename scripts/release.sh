@@ -10,6 +10,8 @@
 #   pre [VERSION]     a pre-release, e.g. 1.2.0-rc.1: marked as pre-release on
 #                     GitHub, only the exact image tag is pushed (not latest,
 #                     MAJOR or MAJOR.MINOR), and the stable branch stays
+#   plan              show the next release, its notes file and the commits
+#                     since the last release; checks and tags nothing
 #   Without VERSION, the commits since the last release determine it.
 #
 # A computed version starts from the latest release reachable from HEAD.
@@ -21,6 +23,11 @@
 #
 # HEAD must be main, clean and equal to origin/main, and the tag must not exist.
 # Build metadata (+...) is rejected because Docker image tags cannot contain "+".
+#
+# Every release has hand-written notes in .github/release-notes/, which
+# release.yml uses instead of the changelog generated from the commits: those
+# of the tag (vX.Y.Z-rc.N.md), else those of its version (vX.Y.Z.md). Without
+# them in HEAD, the generated changelog takes their place only once confirmed.
 set -euo pipefail
 
 CDPATH='' cd -- "$(dirname -- "$0")/.."
@@ -85,10 +92,53 @@ next_version() {
   version="$version-rc.$((last + 1))"
 }
 
+# notes_file prints the notes in HEAD that release.yml will use for $tag,
+# nothing if there are none.
+notes_file() {
+  local f
+  for f in ".github/release-notes/$tag.md" ".github/release-notes/${tag%%-*}.md"; do
+    if git cat-file -e "HEAD:$f" 2>/dev/null; then
+      echo "$f"
+      return
+    fi
+  done
+}
+
+# show_commits lists the commits since the latest release, the material of its
+# notes.
+show_commits() {
+  local prev
+  prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' 2>/dev/null)" || prev=""
+  if [[ -n "$prev" ]]; then
+    echo "Commits since $prev ($prev..HEAD):"
+    git log --oneline --no-decorate "$prev..HEAD"
+  else
+    echo "Commits (no earlier release):"
+    git log --oneline --no-decorate HEAD
+  fi
+}
+
 [[ $# -eq 1 || $# -eq 2 ]] || usage
 kind=$1
-[[ "$kind" == stable || "$kind" == pre ]] || usage
+[[ "$kind" == stable || "$kind" == pre || "$kind" == plan ]] || usage
 version=${2-}
+
+if [[ "$kind" == plan ]]; then
+  [[ -z "$version" ]] || usage
+  git fetch --quiet --tags origin 2>/dev/null || echo "release: could not fetch tags; using the local ones" >&2
+  kind=stable
+  next_version
+  tag="v$version"
+  echo "Next release: $tag ($why)"
+  notes="$(notes_file)"
+  if [[ -n "$notes" ]]; then
+    echo "Notes: $notes"
+  else
+    echo "Notes: .github/release-notes/$tag.md (missing)"
+  fi
+  show_commits
+  exit 0
+fi
 version=${version#v}
 why=""
 
@@ -123,15 +173,18 @@ fi
 
 echo "Release $tag ($kind) at $(git log -1 --format='%h %s')"
 [[ -z "$why" ]] || echo "Computed: $why"
-prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)" || prev=""
-if [[ -n "$prev" ]]; then
-  echo "Commits since $prev:"
-  git log --oneline --no-decorate "$prev..HEAD"
-else
-  echo "No earlier release: the changelog covers the whole history."
-fi
+show_commits
 
 answer=""
+notes="$(notes_file)"
+if [[ -n "$notes" ]]; then
+  echo "Notes: $notes"
+else
+  echo "No release notes for $tag in HEAD: write .github/release-notes/${tag%%-*}.md (\`just release-plan\` shows what goes into it)."
+  read -r -p "Release $tag with the changelog generated from the commits instead? [y/N] " answer || true
+  [[ "$answer" == [yY] ]] || die "aborted, nothing was tagged"
+  answer=""
+fi
 read -r -p "Push $tag? Once published, the release cannot change. [y/N] " answer || true
 [[ "$answer" == [yY] ]] || die "aborted, nothing was tagged"
 
