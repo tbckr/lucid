@@ -593,6 +593,48 @@ function ruleWriteEtag(qc: QueryClient, event: CalEvent): string {
   return rule !== undefined && rule !== event.rrule ? event.etag : currentEtag(qc, event)
 }
 
+/* ------------------------------------------------------------------------ */
+/* After a conflict                                                         */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * The ETag `event` has on the server now, after a write of it was refused as a conflict (FR-09):
+ * the lists of its calendar that held it load again (one the refusal is already reloading is
+ * awaited, not fetched twice), and the newest list that holds it gives the ETag. `undefined` where
+ * none does any more: another app moved the event out of every loaded range, or removed it.
+ */
+export async function reloadedEventEtag(qc: QueryClient, event: CalEvent): Promise<string | undefined> {
+  const heldIn = (data: unknown) => (data as EventList | undefined)?.events.find((e) => e.id === event.id)
+  const lists = { queryKey: queryKeys.eventsOf(event.calendarId) }
+  await qc.refetchQueries({ ...lists, predicate: (q) => heldIn(q.state.data) !== undefined }, { cancelRefetch: false })
+  let etag: string | undefined
+  let loadedAt = Number.NEGATIVE_INFINITY
+  for (const query of qc.getQueryCache().findAll(lists)) {
+    const held = heldIn(query.state.data)
+    if (held && query.state.dataUpdatedAt > loadedAt) {
+      etag = held.etag
+      loadedAt = query.state.dataUpdatedAt
+    }
+  }
+  return etag
+}
+
+/**
+ * The ETag `todo` has on the server now, after a write of it was refused as a conflict (FR-09),
+ * from its list loaded again; `undefined` where the list no longer holds it, or can't be loaded.
+ */
+export async function reloadedTodoEtag(qc: QueryClient, todo: Todo): Promise<string | undefined> {
+  try {
+    const list = await qc.query({
+      queryKey: queryKeys.todos(todo.calendarId),
+      queryFn: ({ signal }) => endpoints.listTodos(todo.calendarId, signal),
+    })
+    return list.todos.find((t) => t.id === todo.id)?.etag
+  } catch {
+    return undefined
+  }
+}
+
 /** How long a toast with an action stays, so there is time to reach the action. */
 const ACTION_TOAST_MS = 8000
 

@@ -5,6 +5,7 @@
     "loading": "Loading…",
     "retry": "Try again",
     "save": "Save",
+    "saveAnyway": "Save anyway",
     "undo": "Undo"
   },
   "create": {
@@ -36,6 +37,10 @@
       "usernameRequired": "Enter your username.",
       "passwordRequired": "Enter your password."
     }
+  },
+  "conflict": {
+    "replace": "Changed elsewhere since you opened it. Saving replaces those changes with yours.",
+    "reopen": "Changed elsewhere since you opened it. Close the editor to see the current version."
   },
   "errors": {
     "invalid_credentials": "The server rejected this username or password.",

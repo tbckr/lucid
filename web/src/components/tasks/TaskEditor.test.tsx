@@ -89,6 +89,40 @@ async function wrote(fetch: Awaited<ReturnType<typeof openTask>>['fetch'], metho
   return { path: urlOf(input), body: bodyOf(init) }
 }
 
+/**
+ * Open the editor for `t`, whose list the server lists as `current` (without `t` for `null`) once it refused the
+ * first write as a conflict, as when another app changed the task since it was read (FR-09). It takes any later
+ * write.
+ */
+async function openConflicted(t: Todo, current: Todo | null) {
+  api.setCsrfToken('tok')
+  let refused = false
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const url = urlOf(input)
+    if (url.endsWith('/calendars')) return Promise.resolve(jsonResponse(200, { calendars: [calendar()] }))
+    if (url.endsWith('/calendars/c1/todos')) {
+      return Promise.resolve(jsonResponse(200, { todos: refused ? (current ? [current] : []) : [t] }))
+    }
+    if (init?.method === 'PUT' && !refused) {
+      refused = true
+      return Promise.resolve(jsonResponse(409, { error: { code: 'conflict', message: 'x' } }))
+    }
+    return Promise.resolve(jsonResponse(200, { ...t, etag: '"3"' }))
+  })
+  act(() => {
+    useUi.getState().openTaskEditor({ mode: 'edit', todo: t })
+  })
+  renderWithProviders(<EditorDialog />)
+  return { fetch, dialog: await screen.findByRole('dialog', { name: 'Edit task' }) }
+}
+
+/** The `If-Match` of each write, in order. */
+function writtenEtags(fetch: { mock: { calls: [RequestInfo | URL, RequestInit?][] } }): string[] {
+  return fetch.mock.calls
+    .filter(([, init]) => init?.method === 'PUT')
+    .map(([, init]) => (init?.headers as Record<string, string>)['If-Match'] ?? '')
+}
+
 describe('TaskEditor', () => {
   afterEach(() => {
     useUi.getState().openTaskEditor(null)
@@ -613,6 +647,25 @@ describe('TaskEditor', () => {
         })
       })
 
+      it('detaches the current repeat over a change made elsewhere, after asking again (FR-09)', async () => {
+        const user = userEvent.setup()
+        const { fetch, dialog } = await openConflicted(series, { ...series, etag: '"2"' })
+
+        await user.click(within(dialog).getByRole('radio', { name: 'High' }))
+        await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+        const only = () =>
+          within(within(dialog).getByRole('alertdialog', { name: changeQuestion })).getByRole('button', {
+            name: 'Only this repeat',
+          })
+        await user.click(only())
+        await user.click(await within(dialog).findByRole('button', { name: 'Save anyway' }))
+        await user.click(only())
+        await waitFor(() => {
+          expect(screen.queryByRole('dialog')).toBeNull()
+        })
+        expect(writtenEtags(fetch)).toEqual(['"1"', '"2"'])
+      })
+
       it('asks the same of a change of the current repeat\'s other fields', async () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(series)
@@ -1031,6 +1084,38 @@ describe('TaskEditor', () => {
 
       expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
       expect(puts(fetch)).toHaveLength(0)
+    })
+  })
+
+  describe('after a conflict (FR-09)', () => {
+    it('says the task changed elsewhere, and saves over it with the ETag it has now', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openConflicted(todo(), todo({ etag: '"2"', title: 'Theirs' }))
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const save = await within(dialog).findByRole('button', { name: 'Save anyway' })
+      expect(save).toHaveAccessibleDescription(
+        'Changed elsewhere since you opened it. Saving replaces those changes with yours.',
+      )
+      expect(within(dialog).getByDisplayValue('Task')).toBeInTheDocument()
+
+      await user.click(save)
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull()
+      })
+      expect(writtenEtags(fetch)).toEqual(['"1"', '"2"'])
+    })
+
+    it('says to close the editor when the reloaded list no longer holds the task', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openConflicted(todo(), null)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(
+        await within(dialog).findByText('Changed elsewhere since you opened it. Close the editor to see the current version.'),
+      ).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      expect(writtenEtags(fetch)).toEqual(['"1"'])
     })
   })
 })

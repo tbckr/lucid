@@ -5,6 +5,7 @@
     "loading": "Wird geladen …",
     "retry": "Erneut versuchen",
     "save": "Speichern",
+    "saveAnyway": "Trotzdem speichern",
     "undo": "Rückgängig"
   },
   "create": {
@@ -36,6 +37,10 @@
       "usernameRequired": "Gib deinen Benutzernamen ein.",
       "passwordRequired": "Gib dein Passwort ein."
     }
+  },
+  "conflict": {
+    "replace": "Seit dem Öffnen anderswo geändert. Speichern ersetzt diese Änderungen durch deine.",
+    "reopen": "Seit dem Öffnen anderswo geändert. Schließe den Editor, um den aktuellen Stand zu sehen."
   },
   "errors": {
     "invalid_credentials": "Der Server hat Benutzername oder Passwort abgelehnt.",

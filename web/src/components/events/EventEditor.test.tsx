@@ -3,8 +3,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import { type ApiEvent } from '@/lib/api/schemas'
 import { EditorDialog } from '@/components/EditorDialog'
-import { toCalEvent } from '@/lib/events'
+import { toCalEvent, type CalEvent } from '@/lib/events'
 import { draftOf } from '@/lib/quickCreate'
 import { useUi, type CreateEditorState, type EditorState } from '@/stores/ui'
 import { apiEvent, bodyOf, calendar, jsonResponse, urlOf } from '@/test/fixtures'
@@ -37,6 +39,48 @@ async function openEditor(editor: NonNullable<EditorState>) {
     useUi.getState().openEditor(editor)
   })
   return { fetch, dialog: await screen.findByRole('dialog') }
+}
+
+/**
+ * Open the editor for `event` with the events of calendar `c1` loaded beside it, as the calendar behind the editor
+ * has them (FR-09). The server refuses the first write as a conflict, as when another app changed the event since
+ * it was read, and from then on lists `current` instead of `event` (nothing for `null`). It takes any later write.
+ */
+async function openConflicted(event: CalEvent, current: ApiEvent | null) {
+  api.setCsrfToken('tok')
+  let refused = false
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const url = urlOf(input)
+    if (url.endsWith('/calendars')) return Promise.resolve(jsonResponse(200, { calendars: [calendar()] }))
+    if (url.includes('/calendars/c1/events?')) {
+      const shown = refused ? (current ? [current] : []) : [apiEvent({ id: event.id, etag: event.etag })]
+      return Promise.resolve(jsonResponse(200, { events: shown }))
+    }
+    if (init?.method === 'PUT' && !refused) {
+      refused = true
+      return Promise.resolve(jsonResponse(409, { error: { code: 'conflict', message: 'x' } }))
+    }
+    return Promise.resolve(jsonResponse(200, apiEvent({ id: event.id, etag: '"3"' })))
+  })
+  const { queryClient } = renderWithProviders(<EditorDialog />)
+  await queryClient.query({
+    queryKey: queryKeys.events('c1', 'a', 'b'),
+    queryFn: ({ signal }) => endpoints.listEvents('c1', new Date('2026-09-21'), new Date('2026-09-28'), signal),
+  })
+  await waitFor(() => {
+    expect(queryClient.getQueryData(queryKeys.calendars)).toBeDefined()
+  })
+  act(() => {
+    useUi.getState().openEditor({ mode: 'edit', event })
+  })
+  return { fetch, dialog: await screen.findByRole('dialog') }
+}
+
+/** The `If-Match` of each write, in order. */
+function writtenEtags(fetch: { mock: { calls: [RequestInfo | URL, RequestInit?][] } }): string[] {
+  return fetch.mock.calls
+    .filter(([, init]) => init?.method === 'PUT')
+    .map(([, init]) => (init?.headers as Record<string, string>)['If-Match'] ?? '')
 }
 
 describe('EventEditor', () => {
@@ -632,5 +676,52 @@ describe('EventEditor', () => {
       expect(fetch.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1)
     })
     expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+  })
+
+  describe('after a conflict (FR-09)', () => {
+    it('says the event changed elsewhere, and saves over it with the ETag it has now', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openConflicted(toCalEvent(apiEvent()), apiEvent({ etag: '"2"', title: 'Theirs' }))
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const save = await within(dialog).findByRole('button', { name: 'Save anyway' })
+      expect(save).toHaveAccessibleDescription(
+        'Changed elsewhere since you opened it. Saving replaces those changes with yours.',
+      )
+      expect(within(dialog).getByPlaceholderText('Add a title')).toHaveValue('Event')
+
+      await user.click(save)
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull()
+      })
+      expect(writtenEtags(fetch)).toEqual(['"1"', '"2"'])
+    })
+
+    it('says to close the editor when the reloaded calendar no longer holds the event', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openConflicted(toCalEvent(apiEvent()), null)
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(
+        await within(dialog).findByText('Changed elsewhere since you opened it. Close the editor to see the current version.'),
+      ).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      expect(writtenEtags(fetch)).toEqual(['"1"'])
+    })
+
+    it('saves only this event of a series over the change, after asking again', async () => {
+      const user = userEvent.setup()
+      const series = { id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z' }
+      const { fetch, dialog } = await openConflicted(toCalEvent(apiEvent(series)), apiEvent({ ...series, etag: '"2"' }))
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'Only this event' }))
+      await user.click(await within(dialog).findByRole('button', { name: 'Save anyway' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'Only this event' }))
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull()
+      })
+      expect(writtenEtags(fetch)).toEqual(['"1"', '"2"'])
+    })
   })
 })

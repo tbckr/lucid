@@ -1,8 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { ConflictNotice } from '@/components/ConflictNotice'
 import { KindSwitch } from '@/components/create/KindSwitch'
 import { RepeatField } from '@/components/recurrence/RepeatField'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
@@ -16,6 +18,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  reloadedEventEtag,
   useCreateEvent,
   useUpdateEvent,
   useUpdateFollowing,
@@ -24,6 +27,7 @@ import {
 } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
+import { isApiError } from '@/lib/api/client'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
 import { dayAt, parseDayKey } from '@/lib/dates'
 import {
@@ -122,12 +126,17 @@ function EditorForm({
   const updateOccurrence = useUpdateOccurrence(series)
   const updateFollowing = useUpdateFollowing(series)
   const id = useId()
+  const qc = useQueryClient()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
   const kindRef = useRef<HTMLButtonElement>(null)
   const saveRef = useRef<HTMLButtonElement>(null)
   const askedBefore = useRef(false)
   // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
   const initial = event ? editFormValues(event, tz) : null
+  // After a save refused as a conflict (FR-09): the ETag the event has now, `undefined` where the
+  // reloaded calendar no longer holds it. The form keeps what was entered.
+  const [conflict, setConflict] = useState<{ etag: string | undefined } | null>(null)
+  const overwrites = conflict?.etag !== undefined
   // A save of a series waiting for the answer which events change (FR-17): what it saves, the
   // options, two or more, what took "This and following events" away, and what the notes say it
   // does.
@@ -229,18 +238,31 @@ function EditorForm({
       ? scopeOptions({ kind: 'event', action: saveAction(values), item: occurrence, to: new Date(input.start), tz })
       : { options: [] }
 
+  // A refused save says so, and the next one goes with the ETag the event has now: it replaces the
+  // other change, as the footer says beforehand (FR-09).
+  const written = (e: CalEvent): CalEvent => (conflict?.etag !== undefined ? { ...e, etag: conflict.etag } : e)
+  const saved = {
+    onSuccess: onDone,
+    onError: (error: unknown) => {
+      if (!event || !isApiError(error, 'conflict')) return
+      void reloadedEventEtag(qc, event).then((etag) => {
+        setConflict({ etag })
+      })
+    },
+  }
+
   // "Only this event" saves an override of the occurrence; "This and following events" splits the
   // series there, and "All events" saves the series (FR-17).
   const saveScope = (scope: Scope, e: CalEvent, input: EventInput) => {
     switch (scope) {
       case 'this':
-        updateOccurrence.mutate({ event: e, input: occurrenceInput(input) }, { onSuccess: onDone })
+        updateOccurrence.mutate({ event: written(e), input: occurrenceInput(input) }, saved)
         break
       case 'following':
-        updateFollowing.mutate({ event: e, input }, { onSuccess: onDone })
+        updateFollowing.mutate({ event: written(e), input }, saved)
         break
       case 'all':
-        update.mutate({ event: e, input }, { onSuccess: onDone })
+        update.mutate({ event: written(e), input }, saved)
         break
     }
   }
@@ -265,7 +287,7 @@ function EditorForm({
       }
     }
     if (event) {
-      update.mutate({ event, input }, { onSuccess: onDone })
+      update.mutate({ event: written(event), input }, saved)
     } else {
       create.mutate({ calendarId: values.calendarId, input }, { onSuccess: onDone })
     }
@@ -523,7 +545,8 @@ function EditorForm({
         </EditorRow>
       </div>
 
-      <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:px-6 sm:pb-5">
+      <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:flex-wrap sm:px-6 sm:pb-5">
+        {conflict && <ConflictNotice id={`${id}-conflict`} found={overwrites} />}
         {asking && event ? (
           // Replaces Cancel/Save in place while a save asks which events of the series to
           // change (FR-17, spec §4); Escape cancels just this, not the editor dialog (NFR-27).
@@ -552,9 +575,14 @@ function EditorForm({
             <Button type="button" variant="ghost" onClick={onDone}>
               {t('common.cancel')}
             </Button>
-            <Button ref={saveRef} type="submit" disabled={pending} aria-describedby={hint ? `${id}-hint` : undefined}>
+            <Button
+              ref={saveRef}
+              type="submit"
+              disabled={pending}
+              aria-describedby={[conflict && `${id}-conflict`, hint && `${id}-hint`].filter(Boolean).join(' ') || undefined}
+            >
               {pending && <Spinner />}
-              {event ? t('common.save') : t('event.createAction')}
+              {event ? (overwrites ? t('common.saveAnyway') : t('common.save')) : t('event.createAction')}
             </Button>
           </>
         )}

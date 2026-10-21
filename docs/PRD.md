@@ -79,7 +79,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 
 * **FR-07:** Views: Month (Prio 1), Week, Day, Agenda.
 * **FR-08:** Navigation (Today, Previous, Next).
-* **FR-09:** CRUD (Create, Read, Update, Delete) Events.
+* **FR-09:** CRUD (Create, Read, Update, Delete) Events. A save the CalDAV server refuses because the event or task changed elsewhere since the editor opened keeps the editor open with what was entered, says so, and offers to save anyway, which replaces the other change; where the reloaded calendar no longer holds the item, it says to close the editor to see the current version.
 * **FR-10:** Drag & Drop (Frontend update immediate, Backend request asynchronous).
 * **FR-11:** All-day vs. time-bound events.
 

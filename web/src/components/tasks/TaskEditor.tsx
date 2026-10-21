@@ -11,10 +11,12 @@ import {
   Trash2Icon,
   XIcon,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ConflictNotice } from '@/components/ConflictNotice'
 import { KindSwitch } from '@/components/create/KindSwitch'
 import { RepeatField } from '@/components/recurrence/RepeatField'
 import { DateField } from '@/components/events/DateField'
@@ -33,6 +35,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
+  reloadedTodoEtag,
   useCreateTodo,
   useDeleteTodo,
   useDetachTodo,
@@ -45,7 +48,8 @@ import {
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
-import { type TodoInput } from '@/lib/api/schemas'
+import { isApiError } from '@/lib/api/client'
+import { type Todo, type TodoInput } from '@/lib/api/schemas'
 import { allRepeatsDates, currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
 import { dayAt, parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
@@ -173,6 +177,11 @@ export function TaskEditor({
   const del = useDeleteTodo(todo?.id)
   const skip = useSkipTodo(todo?.id)
   const end = useEndTodo(todo?.id)
+  const qc = useQueryClient()
+  // After a save refused as a conflict (FR-09): the ETag the task has now, `undefined` where its
+  // reloaded list no longer holds it. The form keeps what was entered.
+  const [conflict, setConflict] = useState<{ etag: string | undefined } | null>(null)
+  const overwrites = conflict?.etag !== undefined
   const [newItem, setNewItem] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   // A save of a series waiting for the answer which repeats it reaches (FR-17): two options or more.
@@ -299,6 +308,19 @@ export function TaskEditor({
     return { input, action, moved, result: scopeOptions({ kind: 'task', action, item: repeat, to: input }) }
   }
 
+  // A refused save says so, and the next one goes with the ETag the task has now: it replaces the
+  // other change, as the footer says beforehand (FR-09).
+  const written = (item: Todo): Todo => (conflict?.etag !== undefined ? { ...item, etag: conflict.etag } : item)
+  const saved = {
+    onSuccess: onDone,
+    onError: (error: unknown) => {
+      if (!todo || !isApiError(error, 'conflict')) return
+      void reloadedTodoEtag(qc, todo).then((etag) => {
+        setConflict({ etag })
+      })
+    },
+  }
+
   // "Only this repeat" detaches the current repeat with the changes; "This and following repeats"
   // splits the series at a later one, from its new dates; "All repeats" saves the series, which
   // from a later repeat moves as far as that repeat moved (FR-17).
@@ -306,21 +328,21 @@ export function TaskEditor({
     if (!todo || !repeat) return
     switch (scope) {
       case 'this':
-        detach.mutate({ todo, repeat, input, moved }, { onSuccess: onDone })
+        detach.mutate({ todo: written(todo), repeat, input, moved }, saved)
         break
       case 'following':
-        following.mutate({ todo, repeat, input, moved }, { onSuccess: onDone })
+        following.mutate({ todo: written(todo), repeat, input, moved }, saved)
         break
       case 'all': {
         const later = repeat.at === 'upcoming'
         update.mutate(
           {
-            todo,
+            todo: written(todo),
             input: later ? { ...input, ...allRepeatsDates(repeat, input) } : input,
             byUpcoming: later,
             look: { slots: taskGlyphSlots('all', repeat.at) },
           },
-          { onSuccess: onDone },
+          saved,
         )
         break
       }
@@ -331,7 +353,7 @@ export function TaskEditor({
     if (todo) {
       const plan = planSave(v)
       if (!plan) {
-        update.mutate({ todo, input: editInput(v) }, { onSuccess: onDone })
+        update.mutate({ todo: written(todo), input: editInput(v) }, saved)
         return
       }
       // A save that changes nothing at a repeat writes nothing: "only this repeat" would make a task
@@ -356,7 +378,7 @@ export function TaskEditor({
       // Dates the series can't follow save nothing; the date field says why.
       if (reason) return
       // The last repeat acts as a single task.
-      update.mutate({ todo, input: plan.input }, { onSuccess: onDone })
+      update.mutate({ todo: written(todo), input: plan.input }, saved)
       return
     }
     create.mutate(
@@ -770,6 +792,7 @@ export function TaskEditor({
       </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:flex-wrap sm:justify-between sm:px-6 sm:pb-5">
+        {conflict && !confirmDelete && <ConflictNotice id={`${id}-conflict`} found={overwrites} />}
         {asking && repeat ? (
           // Replaces the buttons in place while a save asks which repeats it reaches (FR-17);
           // Escape cancels just this, not the editor (NFR-27).
@@ -867,10 +890,12 @@ export function TaskEditor({
                   type="submit"
                   // Dates the series can't follow save nothing until they change (FR-17).
                   disabled={pending || !calendarId || refused !== undefined}
-                  aria-describedby={hint ? `${id}-hint` : undefined}
+                  aria-describedby={
+                    [conflict && `${id}-conflict`, hint && `${id}-hint`].filter(Boolean).join(' ') || undefined
+                  }
                 >
                   {pending && <Spinner />}
-                  {todo ? t('common.save') : t('tasks.createAction')}
+                  {todo ? (overwrites ? t('common.saveAnyway') : t('common.save')) : t('tasks.createAction')}
                 </Button>
               )}
             </div>
