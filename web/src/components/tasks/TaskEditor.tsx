@@ -170,9 +170,10 @@ export function TaskEditor({
   const list = byId.get(calendarId)
   const readOnly = todo ? (list?.readOnly ?? false) : false
   // The writes of a series wait for its other writes (FR-17, NFR-26).
-  const update = useUpdateTodo(todo?.id)
-  const detach = useDetachTodo(todo?.id)
-  const following = useTodoFollowing(todo?.id)
+  // The editor says a conflict itself, in its footer (FR-09).
+  const update = useUpdateTodo(todo?.id, { conflictNotice: true })
+  const detach = useDetachTodo(todo?.id, { conflictNotice: true })
+  const following = useTodoFollowing(todo?.id, { conflictNotice: true })
   const create = useCreateTodo()
   const del = useDeleteTodo(todo?.id)
   const skip = useSkipTodo(todo?.id)
@@ -792,7 +793,7 @@ export function TaskEditor({
       </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:flex-wrap sm:justify-between sm:px-6 sm:pb-5">
-        {conflict && !confirmDelete && <ConflictNotice id={`${id}-conflict`} found={overwrites} />}
+        <ConflictNotice id={`${id}-conflict`} state={conflict && !confirmDelete ? (overwrites ? 'replace' : 'reopen') : null} />
         {asking && repeat ? (
           // Replaces the buttons in place while a save asks which repeats it reaches (FR-17);
           // Escape cancels just this, not the editor (NFR-27).

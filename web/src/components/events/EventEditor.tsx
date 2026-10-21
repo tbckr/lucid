@@ -122,9 +122,10 @@ function EditorForm({
   // A save of a series waits for its other writes, and takes the ETag they got (FR-17).
   const series = event?.recurring ? event.id : undefined
   const create = useCreateEvent()
-  const update = useUpdateEvent(series)
-  const updateOccurrence = useUpdateOccurrence(series)
-  const updateFollowing = useUpdateFollowing(series)
+  // The editor says a conflict itself, in its footer (FR-09).
+  const update = useUpdateEvent(series, { conflictNotice: true })
+  const updateOccurrence = useUpdateOccurrence(series, { conflictNotice: true })
+  const updateFollowing = useUpdateFollowing(series, { conflictNotice: true })
   const id = useId()
   const qc = useQueryClient()
   const openTaskEditor = useUi((s) => s.openTaskEditor)
@@ -546,7 +547,7 @@ function EditorForm({
       </div>
 
       <DialogFooter className="sticky bottom-0 bg-surface px-4 pt-3 pb-4 sm:flex-wrap sm:px-6 sm:pb-5">
-        {conflict && <ConflictNotice id={`${id}-conflict`} found={overwrites} />}
+        <ConflictNotice id={`${id}-conflict`} state={conflict && (overwrites ? 'replace' : 'reopen')} />
         {asking && event ? (
           // Replaces Cancel/Save in place while a save asks which events of the series to
           // change (FR-17, spec §4); Escape cancels just this, not the editor dialog (NFR-27).

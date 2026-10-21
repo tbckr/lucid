@@ -364,10 +364,22 @@ export function useCorruptedItems(): CorruptedItem[] {
 
 type TFn = ReturnType<typeof useTranslation>['t']
 
+/** How a write's caller reports its failures. */
+export interface WriteOptions {
+  /** The caller says a conflict itself, as the editors do in their footer (FR-09): the data reloads without a toast. */
+  conflictNotice?: boolean
+}
+
 /** Toast for a failed mutation; on conflict/not found the affected data is reloaded. */
-export function reportMutationError(err: unknown, t: TFn, qc: QueryClient, invalidate: readonly unknown[]): void {
+export function reportMutationError(
+  err: unknown,
+  t: TFn,
+  qc: QueryClient,
+  invalidate: readonly unknown[],
+  { conflictNotice = false }: WriteOptions = {},
+): void {
   if (isApiError(err, 'conflict') || isApiError(err, 'not_found')) {
-    toast.warning(apiErrorMessage(t, err))
+    if (!(conflictNotice && isApiError(err, 'conflict'))) toast.warning(apiErrorMessage(t, err))
     void qc.invalidateQueries({ queryKey: invalidate })
     return
   }
@@ -756,7 +768,7 @@ function removesRule(event: CalEvent, input: EventInput): boolean {
 }
 
 /** Saves an event; with the `id` of its series, after the series' other writes (`seriesScope`). */
-export function useUpdateEvent(series?: string) {
+export function useUpdateEvent(series?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const colorsOf = useCalendarColors()
@@ -786,7 +798,7 @@ export function useUpdateEvent(series?: string) {
       return qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) })
     },
     onError: (err, { event }) => {
-      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId), options)
     },
   })
 }
@@ -996,7 +1008,7 @@ export function useMoveOccurrence(series?: string) {
  * series' ETag synced like a move; with the `id` of the series, after its
  * other writes.
  */
-export function useUpdateOccurrence(series?: string) {
+export function useUpdateOccurrence(series?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const colorsOf = useCalendarColors()
@@ -1017,7 +1029,7 @@ export function useUpdateOccurrence(series?: string) {
       )
     },
     onError: (err, { event }) => {
-      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId), options)
     },
     onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
   })
@@ -1157,7 +1169,7 @@ export function useMoveFollowing(series?: string) {
  * series now ends before it. With the `id` of the series, after its other
  * writes.
  */
-export function useUpdateFollowing(series?: string) {
+export function useUpdateFollowing(series?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const colorsOf = useCalendarColors()
@@ -1183,7 +1195,7 @@ export function useUpdateFollowing(series?: string) {
       )
     },
     onError: (err, { event }) => {
-      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId))
+      reportMutationError(err, t, qc, queryKeys.eventsOf(event.calendarId), options)
     },
     onSettled: (_d, _e, { event }) => qc.invalidateQueries({ queryKey: queryKeys.eventsOf(event.calendarId) }),
   })
@@ -1508,7 +1520,7 @@ function todoToast(
  * which repeats a change reaches says what happened, with an Undo, for every
  * caller alike; "all repeats" chosen at a repeat draws its reach (`look`).
  */
-export function useUpdateTodo(id?: string) {
+export function useUpdateTodo(id?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -1558,7 +1570,7 @@ export function useUpdateTodo(id?: string) {
     },
     onError: (err, { todo }, ctx) => {
       if (ctx?.snapshot) qc.setQueryData(queryKeys.todos(todo.calendarId), ctx.snapshot)
-      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId), options)
     },
     onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
   })
@@ -1608,7 +1620,7 @@ export const END_TODO_KEY = [...UPDATE_TODO_KEY, 'end'] as const
  * that task, which makes the server refuse the Undo, takes it away
  * (`noteSplit`). With the `id` of the series, after its other writes.
  */
-export function useDetachTodo(id?: string) {
+export function useDetachTodo(id?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -1654,7 +1666,7 @@ export function useDetachTodo(id?: string) {
       )
     },
     onError: (err, { todo }) => {
-      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId), options)
     },
     onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
   })
@@ -1713,7 +1725,7 @@ export function useSkipTodo(id?: string) {
  * view not reloaded since, it changed the whole series instead, which the
  * toast says. With the `id` of the series, after its other writes.
  */
-export function useTodoFollowing(id?: string) {
+export function useTodoFollowing(id?: string, options: WriteOptions = {}) {
   const qc = useQueryClient()
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -1753,7 +1765,7 @@ export function useTodoFollowing(id?: string) {
       )
     },
     onError: (err, { todo }) => {
-      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId))
+      reportMutationError(err, t, qc, queryKeys.todos(todo.calendarId), options)
     },
     onSettled: (_d, _e, { todo }) => qc.invalidateQueries({ queryKey: queryKeys.todos(todo.calendarId) }),
   })

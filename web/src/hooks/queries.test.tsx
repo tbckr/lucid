@@ -3916,6 +3916,20 @@ describe('reportMutationError', () => {
     reportMutationError(new ApiError(409, 'conflict', '', null, '0123456789abcdef'), t, qc, ['x'])
     expect(warning).toHaveBeenCalledWith('This item was changed elsewhere. Lucid reloaded the latest version.')
   })
+
+  it('reloads without a toast after a conflict its caller says itself (FR-09)', () => {
+    const warning = vi.spyOn(toast, 'warning')
+    const invalidate = vi.spyOn(qc, 'invalidateQueries').mockResolvedValue()
+    reportMutationError(new ApiError(409, 'conflict', ''), t, qc, ['x'], { conflictNotice: true })
+    expect(warning).not.toHaveBeenCalled()
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['x'] })
+  })
+
+  it('still toasts another error of a caller that says conflicts itself', () => {
+    const error = vi.spyOn(toast, 'error')
+    reportMutationError(new ApiError(502, 'upstream_error', 'down'), t, qc, ['x'], { conflictNotice: true })
+    expect(error).toHaveBeenCalledWith("Your calendar server didn't respond. Try again in a moment.")
+  })
 })
 
 describe('useCorruptedItems', () => {

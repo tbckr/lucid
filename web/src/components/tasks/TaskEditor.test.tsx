@@ -1089,6 +1089,7 @@ describe('TaskEditor', () => {
 
   describe('after a conflict (FR-09)', () => {
     it('says the task changed elsewhere, and saves over it with the ETag it has now', async () => {
+      toast.dismiss()
       const user = userEvent.setup()
       const { fetch, dialog } = await openConflicted(todo(), todo({ etag: '"2"', title: 'Theirs' }))
 
@@ -1097,6 +1098,11 @@ describe('TaskEditor', () => {
       expect(save).toHaveAccessibleDescription(
         'Changed elsewhere since you opened it. Saving replaces those changes with yours.',
       )
+      // Said once, by the editor, as a status; no toast besides.
+      expect(within(dialog).getAllByRole('status').map((s) => s.textContent)).toContain(
+        'Changed elsewhere since you opened it. Saving replaces those changes with yours.',
+      )
+      expect(toast.getToasts()).toEqual([])
       expect(within(dialog).getByDisplayValue('Task')).toBeInTheDocument()
 
       await user.click(save)
@@ -1111,10 +1117,11 @@ describe('TaskEditor', () => {
       const { fetch, dialog } = await openConflicted(todo(), null)
 
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-      expect(
-        await within(dialog).findByText('Changed elsewhere since you opened it. Close the editor to see the current version.'),
-      ).toBeInTheDocument()
-      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      const reopen = 'Changed elsewhere since you opened it. Close the editor to see the current version.'
+      await waitFor(() => {
+        expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(reopen)
+      })
+      expect(within(dialog).getAllByRole('status').map((s) => s.textContent)).toContain(reopen)
       expect(writtenEtags(fetch)).toEqual(['"1"'])
     })
   })
