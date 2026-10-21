@@ -43,10 +43,19 @@ type SessionStore interface {
 	Demote(id string) (session.Session, error)
 }
 
+// Provider connects to CalDAV servers (implemented by *caldav.Provider). Its
+// Pseudonymizer is the one of its logs and diagnostics: the problem report
+// shows the paths of the account with the same pseudonyms as the trace
+// (FR-36, NFR-36).
+type Provider interface {
+	domain.Provider
+	Pseudonymizer() *diag.Pseudonymizer
+}
+
 // Options configures the Server.
 type Options struct {
 	// Provider connects to CalDAV servers. Required.
-	Provider domain.Provider
+	Provider Provider
 	// Sessions stores sessions. Required.
 	Sessions SessionStore
 	// Undo stores the short-lived snapshots that undo a change of a
@@ -79,7 +88,7 @@ type Options struct {
 
 // Server is the complete HTTP handler of Lucid.
 type Server struct {
-	provider domain.Provider
+	provider Provider
 	sessions SessionStore
 	undo     *undo.Store
 	logger   *slog.Logger

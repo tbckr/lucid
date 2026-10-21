@@ -15,12 +15,10 @@ body:
         the `caldav exchange` and `caldav problem` log lines of
         `LUCID_LOG_LEVEL=debug` instead: they hold no calendar contents either.
 
-        Read what you attach before you submit it. The file names your CalDAV
-        server's host and the endpoint Lucid found, and holds the paths of your
-        principal and calendar home with only your login name replaced, so an
-        ID in them (a Nextcloud user ID, an opaque account ID) stays readable.
-        Check these and mask a private host name or an ID you would rather not
-        publish.
+        Read what you attach before you submit it. The paths in the file, those
+        of your account included, show placeholders instead of names, but it
+        names your CalDAV server's host: mask a private host name you would
+        rather not publish.
 
         Never paste passwords or session cookies. Leave out the `security event`
         lines (a login line carries the user name that was entered) and the

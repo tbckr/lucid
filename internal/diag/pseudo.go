@@ -60,12 +60,13 @@ func NewPseudonymizer(key []byte) *Pseudonymizer {
 //     "obj-<h>" (an ".ics" suffix stays) and deeper ones as "seg-<h>".
 //  2. Names.Principal, found the same way: "{principal}/", then every segment as
 //     "seg-<h>".
-//  3. Otherwise a segment that is the username is replaced, see RedactUser,
-//     and one that is a structural name (structuralNames) stays: the structure
-//     of the server is what makes a discovery path readable. A segment that
-//     ends in ".ics" is an object name and becomes "obj-<h>.ics", and every
-//     other one is a name somebody chose, a calendar the user pasted the URL
-//     of, and becomes "seg-<h>".
+//  3. Otherwise a segment that is the username is "{user}" (compared
+//     percent-decoded and case-insensitively, for an address its local part
+//     too), and one that is a structural name (structuralNames) stays: the
+//     structure of the server is what makes a discovery path readable. A
+//     segment that ends in ".ics" is an object name and becomes
+//     "obj-<h>.ics", and every other one is a name somebody chose, a calendar
+//     the user pasted the URL of, and becomes "seg-<h>".
 //
 // Of the home and the principal the one whose run starts first applies, the
 // home if both start at the same segment: what is below the one that starts
@@ -98,17 +99,10 @@ func (p *Pseudonymizer) URL(n Names, u *url.URL) string {
 	return u.Scheme + "://" + u.Host + path
 }
 
-// RedactUser replaces every path segment that is the username with "{user}".
-// A segment is compared percent-decoded and case-insensitively, and for a
-// username with an "@" its local part counts as well. Whole segments only, so
-// the username "cal" leaves "/caldav/" alone. Other segments stay as sent.
-func RedactUser(username, path string) string {
-	segs := strings.Split(path, "/")
-	redactUser(username, segs)
-	return strings.Join(segs, "/")
-}
-
-// redactUser is RedactUser on segments, in place.
+// redactUser replaces every segment that is the username with "{user}", in
+// place. A segment is compared percent-decoded and case-insensitively, and for
+// a username with an "@" its local part counts as well. Whole segments only, so
+// the username "cal" leaves "caldav" alone.
 func redactUser(username string, segs []string) {
 	if username == "" {
 		return

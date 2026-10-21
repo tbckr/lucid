@@ -67,7 +67,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		info := accountInfo(a)
+		info := accountInfo(s.provider.Pseudonymizer(), a)
 		acct = &info
 	}
 	mode := "server"
@@ -80,25 +80,29 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 // accountInfo is where the account's calendars live, for the report: the
 // endpoint's origin and path, and the paths of the principal and the calendar
-// home, each with the user name left out of the path (diag.RedactUser). Never
-// credentials, query or fragment (NFR-36). A URL that does not parse is left
-// out.
-func accountInfo(acct domain.Account) diag.AccountInfo {
+// home, pseudonymised by p as the trace's paths are, with only the user name
+// known (FR-36, NFR-36): it becomes "{user}", structural names such as
+// "remote.php" stay, so the layout of the server shows, and every other
+// segment is a placeholder, a calendar the endpoint was pasted as or an ID
+// that differs from the login name too. Only the host stays readable. Never
+// credentials, query or fragment. A URL that does not parse is left out.
+func accountInfo(p *diag.Pseudonymizer, acct domain.Account) diag.AccountInfo {
+	names := diag.Names{Username: acct.Username}
 	return diag.AccountInfo{
-		Endpoint:  redactedURL(acct.Username, acct.EndpointURL, true),
-		Principal: redactedURL(acct.Username, acct.PrincipalURL, false),
-		Home:      redactedURL(acct.Username, acct.CalendarHomeURL, false),
+		Endpoint:  pseudonymousURL(p, names, acct.EndpointURL, true),
+		Principal: pseudonymousURL(p, names, acct.PrincipalURL, false),
+		Home:      pseudonymousURL(p, names, acct.CalendarHomeURL, false),
 	}
 }
 
-// redactedURL returns the path of raw without the user name, with the scheme and
-// host in front if withOrigin is set and raw has them.
-func redactedURL(username, raw string, withOrigin bool) string {
+// pseudonymousURL returns the path of raw pseudonymised by p, with the scheme
+// and host in front if withOrigin is set and raw has them.
+func pseudonymousURL(p *diag.Pseudonymizer, names diag.Names, raw string, withOrigin bool) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
-	out := diag.RedactUser(username, u.EscapedPath())
+	out := p.Path(names, u.EscapedPath())
 	if withOrigin && u.Host != "" {
 		out = u.Scheme + "://" + u.Host + out
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -176,6 +177,12 @@ func TestDiagnosticsShowsTheTrace(t *testing.T) {
 	}
 }
 
+// placeholder is the pseudonym of a single path segment that is neither
+// structural nor the user name, as the trace has it.
+func placeholder(name string) string {
+	return testPseudonymizer.Path(diag.Names{}, name)
+}
+
 func TestAccountInfo(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -203,9 +210,29 @@ func TestAccountInfo(t *testing.T) {
 			"local part of an address",
 			domain.Account{
 				Username: "tim@example.com", EndpointURL: "https://dav.example.com/",
-				PrincipalURL: "https://dav.example.com/p/tim/", CalendarHomeURL: "https://dav.example.com/c/tim%40example.com/",
+				PrincipalURL: "https://dav.example.com/principals/tim/", CalendarHomeURL: "https://dav.example.com/calendars/tim%40example.com/",
 			},
-			diag.AccountInfo{Endpoint: "https://dav.example.com/", Principal: "/p/{user}/", Home: "/c/{user}/"},
+			diag.AccountInfo{Endpoint: "https://dav.example.com/", Principal: "/principals/{user}/", Home: "/calendars/{user}/"},
+		},
+		{
+			// A calendar's URL pasted at login is the endpoint, and a server can
+			// name the principal by an ID other than the login name.
+			"names other than the user's",
+			domain.Account{
+				Username: "tim", EndpointURL: "https://dav.example.com/remote.php/dav/calendars/tim/zz-therapy/",
+				PrincipalURL:    "https://dav.example.com/remote.php/dav/principals/users/8f3a2b1c/",
+				CalendarHomeURL: "https://dav.example.com/remote.php/dav/calendars/8f3a2b1c/",
+			},
+			diag.AccountInfo{
+				Endpoint:  "https://dav.example.com/remote.php/dav/calendars/{user}/" + placeholder("zz-therapy") + "/",
+				Principal: "/remote.php/dav/principals/users/" + placeholder("8f3a2b1c") + "/",
+				Home:      "/remote.php/dav/calendars/" + placeholder("8f3a2b1c") + "/",
+			},
+		},
+		{
+			"an object's URL",
+			domain.Account{Username: "tim", EndpointURL: "https://dav.example.com/cal/tim/zz-dentist.ics"},
+			diag.AccountInfo{Endpoint: "https://dav.example.com/" + placeholder("cal") + "/{user}/" + placeholder("zz-dentist.ics")},
 		},
 		{
 			"unknown parts stay empty",
@@ -217,10 +244,58 @@ func TestAccountInfo(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := accountInfo(tt.acct); got != tt.want {
+			if got := accountInfo(testPseudonymizer, tt.acct); got != tt.want {
 				t.Errorf("accountInfo = %+v; want %+v", got, tt.want)
 			}
 		})
+	}
+	// The placeholders are the trace's, for a name and for an object.
+	for name, want := range map[string]*regexp.Regexp{
+		"zz-therapy":     regexp.MustCompile(`^seg-[0-9a-f]{8}$`),
+		"zz-dentist.ics": regexp.MustCompile(`^obj-[0-9a-f]{8}\.ics$`),
+	} {
+		if got := placeholder(name); !want.MatchString(got) {
+			t.Errorf("placeholder(%q) = %q; want it to match %s", name, got, want)
+		}
+	}
+}
+
+// The report shows a calendar URL pasted at login and a principal named by an
+// ID with placeholders, as the trace does: the layout of the server, not its
+// names (FR-36, NFR-36).
+func TestDiagnosticsAccountPseudonymised(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	h.prov.connect = func(creds domain.Credentials) (domain.Account, error) {
+		return domain.Account{
+			Username: creds.Username, Password: creds.Password, ServerURL: creds.ServerURL,
+			EndpointURL:     "https://dav.example.com/remote.php/dav/calendars/" + creds.Username + "/zz-therapy/",
+			PrincipalURL:    "https://dav.example.com/remote.php/dav/principals/users/zz-8f3a2b1c/",
+			CalendarHomeURL: "https://dav.example.com/remote.php/dav/calendars/zz-8f3a2b1c/",
+		}, nil
+	}
+	c := h.login(t)
+
+	w := h.do(t, c, req{method: http.MethodGet, path: "/api/v1/diagnostics"})
+	var rep diag.Report
+	decode(t, w, http.StatusOK, &rep)
+
+	for _, name := range []string{"zz-therapy", "zz-8f3a2b1c", "zz-"} {
+		if strings.Contains(w.Body.String(), name) {
+			t.Errorf("report names %q:\n%s", name, w.Body.String())
+		}
+	}
+	names := diag.Names{Username: "tim"}
+	want := diag.AccountInfo{
+		Endpoint:  "https://dav.example.com" + testPseudonymizer.Path(names, "/remote.php/dav/calendars/tim/zz-therapy/"),
+		Principal: testPseudonymizer.Path(names, "/remote.php/dav/principals/users/zz-8f3a2b1c/"),
+		Home:      testPseudonymizer.Path(names, "/remote.php/dav/calendars/zz-8f3a2b1c/"),
+	}
+	if rep.Account == nil || *rep.Account != want {
+		t.Errorf("Account = %+v; want %+v", rep.Account, want)
+	}
+	if rep.Account != nil && !strings.HasPrefix(rep.Account.Home, "/remote.php/dav/calendars/seg-") {
+		t.Errorf("Home = %q; want the layout with a placeholder for the ID", rep.Account.Home)
 	}
 }
 

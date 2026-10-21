@@ -222,16 +222,6 @@ func TestURL(t *testing.T) {
 	}
 }
 
-func TestRedactUser(t *testing.T) {
-	t.Parallel()
-	if got, want := RedactUser("alice", "/remote.php/dav/calendars/alice/"), "/remote.php/dav/calendars/{user}/"; got != want {
-		t.Errorf("RedactUser = %q, want %q", got, want)
-	}
-	if got := RedactUser("", "/a/b/"); got != "/a/b/" {
-		t.Errorf("RedactUser with no username = %q, want it unchanged", got)
-	}
-}
-
 func TestPathHomeBehindAPrefix(t *testing.T) {
 	t.Parallel()
 	p := NewPseudonymizer(testKey)

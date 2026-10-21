@@ -1077,8 +1077,12 @@ server.
   `GOOS` and `GOARCH`.
 - `authenticated` is whether the session is logged in. `account` is only there
   then: the CalDAV endpoint (origin and path), the principal and the calendar
-  home (paths), each with the user name replaced by `{user}` in its path
-  segments, and no credentials, query or fragment.
+  home (paths), pseudonymised like the `path` of an exchange, with the user
+  name as the one name known: it is `{user}`, structural names such as
+  `remote.php` stay, so the layout of the server shows, and every other
+  segment is a placeholder (`seg-<h>`, `obj-<h>.ics`, with the trace's `<h>`),
+  a calendar whose URL was the endpoint or an account ID too. Only the host
+  stays readable. No credentials, query or fragment.
 - `server` is what the CalDAV server said about itself: `host` and `product`
   (its `Server` header) of the newest exchange that has one, `dav` the newest
   `DAV` header; empty strings while unknown.

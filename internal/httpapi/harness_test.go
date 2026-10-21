@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 	"github.com/tbckr/lucid/internal/middleware"
 	"github.com/tbckr/lucid/internal/session"
@@ -40,6 +41,11 @@ func (p *fakeProvider) Connect(_ context.Context, creds domain.Credentials) (dom
 		EndpointURL: "https://dav.example.com/",
 	}, nil
 }
+
+// testPseudonymizer is the pseudonymiser of every fakeProvider.
+var testPseudonymizer = diag.NewPseudonymizer([]byte("httpapi test key"))
+
+func (p *fakeProvider) Pseudonymizer() *diag.Pseudonymizer { return testPseudonymizer }
 
 func (p *fakeProvider) Service(acct domain.Account) domain.CalendarService {
 	p.mu.Lock()

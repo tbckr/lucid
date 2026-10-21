@@ -161,6 +161,13 @@ func NewProvider(opts Options) (*Provider, error) {
 	}, nil
 }
 
+// Pseudonymizer returns the pseudonymiser of the provider's logs and
+// diagnostics, so that what else goes into a problem report, the paths of the
+// account, carries the same pseudonyms as the trace (FR-36, NFR-36).
+func (p *Provider) Pseudonymizer() *diag.Pseudonymizer {
+	return p.pseudo
+}
+
 // deriveKey derives the 32-byte key for the purpose info from the provider
 // key (HKDF-SHA256, RFC 5869), so that each use gets a key of its own.
 func deriveKey(key []byte, info string) ([]byte, error) {

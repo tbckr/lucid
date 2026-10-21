@@ -990,3 +990,21 @@ func TestPseudonymKey(t *testing.T) {
 		t.Errorf("a random key gives the same pseudonym %q", got)
 	}
 }
+
+// The pseudonymiser the provider hands out is the one of its trace, so the
+// report's account paths carry the trace's pseudonyms (FR-36).
+func TestProviderPseudonymizer(t *testing.T) {
+	t.Parallel()
+	e := newTraceEnv(t, caldavtest.Options{})
+	buf := diag.NewBuffer(diag.SessionLimits)
+	if _, err := e.p.Connect(scopedCtx(t.Context(), buf, "req-1"), domain.Credentials{
+		ServerURL: e.ts.URL + "/zz-pasted/", Username: traceUser, Password: tracePass,
+	}); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	first := buf.Snapshot().Exchanges[0]
+	if want := e.p.Pseudonymizer().Path(diag.Names{Username: traceUser}, "/zz-pasted/"); first.Path != want || !strings.HasPrefix(want, "/seg-") {
+		t.Errorf("first discovery path = %q; want %q, a placeholder, from Pseudonymizer", first.Path, want)
+	}
+}

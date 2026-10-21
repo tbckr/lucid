@@ -517,8 +517,8 @@ The dialog shows the file exactly as it is downloaded. By default it holds:
 
 - the Lucid version, its mode and the operating system,
 - the product and host of your CalDAV server, the endpoint Lucid found, and
-  the paths of your principal and calendar home, with only your login name
-  replaced by `{user}`,
+  the paths of your principal and calendar home, with placeholders for the
+  names in them, as in the CalDAV calls,
 - what each calendar supports and how many items it holds, never its name,
 - your recent CalDAV calls (up to 100, 30 before you sign in): method, path,
   status, duration and a few response headers, without any request or response
@@ -529,13 +529,13 @@ The dialog shows the file exactly as it is downloaded. By default it holds:
   in them),
 - the field names that failed in items Lucid could not read.
 
-In the CalDAV calls, user and calendar names in paths are replaced by
-placeholders, and no title, description, place or attendee is in the file. The
-host, the endpoint and the paths of your principal and calendar home are shown
-as your server has them, apart from your login name, so another ID in them (a
-user ID that differs from your login, an opaque account ID) stays readable.
-Read them in the dialog and mask a private host name or an ID you would rather
-not publish before you post the file. For an event or task you add, the file
+In every path in the file, your login name is replaced by `{user}` and every
+other name, of a calendar, an item or an account ID, by a placeholder; only
+names that make up how CalDAV servers are laid out, such as `remote.php` or
+`calendars`, stay. No title, description, place or attendee is in the file.
+The host of your CalDAV server is the one name that stays readable: mask it
+before you post the file if you would rather not publish it. For an event or
+task you add, the file
 holds its structure. Its **content** is added only if you choose **Show
 content**, read it, and tick the box **Add this content to the report**, which
 starts unticked, for that one item. Closing the dialog forgets what was shown

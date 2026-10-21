@@ -21,8 +21,8 @@ type ServerInfo struct {
 	DAV     string `json:"dav"`
 }
 
-// AccountInfo is where the account's calendars live. The caller redacts the
-// user name from the paths (NFR-36).
+// AccountInfo is where the account's calendars live. The caller pseudonymises
+// the paths (NFR-36).
 type AccountInfo struct {
 	Endpoint  string `json:"endpoint"`
 	Principal string `json:"principal"`
