@@ -253,13 +253,17 @@ function shiftRefusal(rule: string, from: string, to: string): ShiftReason | nul
 
 /**
  * Why a series cannot follow its event all the way to `newStart` (FR-17), or
- * `null` if it can: `seriesShift` of the event's rule from its current
- * wall-clock start to `newStart`'s. All-day events have no real zone, so
- * their day comes from the UTC-midnight wire format (`start`), read in UTC,
- * never from `startsAt`; timed events are read in `event.timezone` (the
- * series' own zone), else in UTC, as the server reads a time in UTC ("Z"),
- * a floating one and one in a zone it cannot resolve, which it reports
- * without `timezone`. Never in the browser's zone, as `taskMoveRefusal`.
+ * `null` if it can: `seriesShift` of the event's rule from its RECURRENCE-ID
+ * (`recurrenceId`, else its start) by the distance the event moves, from its
+ * current wall-clock start to `newStart`'s, in days and minutes on the wall
+ * clock. That is how far the server moves the series, and an exception at
+ * another time of day than its series can cross midnight where the series
+ * does not (#6). All-day events have no real zone, so their day comes from
+ * the UTC-midnight wire format (`start`), read in UTC, never from
+ * `startsAt`; timed events are read in `event.timezone` (the series' own
+ * zone), else in UTC, as the server reads a time in UTC ("Z"), a floating
+ * one and one in a zone it cannot resolve, which it reports without
+ * `timezone`. Never in the browser's zone, as `taskMoveRefusal`.
  *
  * A refusal is `'fixedTimes'` when the rule fixes the clock itself (BYHOUR,
  * BYMINUTE or BYSECOND) and the move changes the clock — that is what the
@@ -267,20 +271,24 @@ function shiftRefusal(rule: string, from: string, to: string): ShiftReason | nul
  * clock, so theirs is always `'fixedDays'`.
  */
 export function moveAllRefusal(
-  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start'>,
+  event: Pick<CalEvent, 'rrule' | 'allDay' | 'timezone' | 'startsAt' | 'start' | 'recurrenceId'>,
   newStart: Date,
 ): ShiftReason | null {
+  const rid = new Date(event.recurrenceId ?? event.start)
+  let ridWall: string
   let from: string
   let to: string
   if (event.allDay) {
+    ridWall = allDayWallClock(rid)
     from = allDayWallClock(new Date(event.start))
     to = allDayWallClock(newStart)
   } else {
     const zone = event.timezone || 'UTC'
+    ridWall = wallClock(rid, zone)
     from = wallClock(event.startsAt, zone)
     to = wallClock(newStart, zone)
   }
-  return shiftRefusal(event.rrule, from, to)
+  return shiftRefusal(event.rrule, ridWall, addWallMinutes(ridWall, wallMinutes(to) - wallMinutes(from)))
 }
 
 /** Where a series' rule recurs: on the wall clock of `zone`, read at its event `at` (FR-17, FR-18). */

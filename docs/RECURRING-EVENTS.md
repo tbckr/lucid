@@ -905,7 +905,15 @@ event, and the refusal comes as a toast.
   the primary guard. Both read the move on the series' wall clock: in its
   `TZID`, else in UTC, as the server reads a time in UTC, a floating one
   and one with a `TZID` it can't resolve, and never in the browser's zone,
-  where an event can fall on another date than in the series' own.
+  where an event can fall on another date than in the series' own. And
+  both judge the series' move, not the dragged event's: the series moves
+  from the event's place in the rule, its `RECURRENCE-ID`, by the distance
+  the event moves, which for an exception at another time of day can cross
+  midnight where the exception's own move does not, or the other way
+  round. Moving the exception of a series on the 15th at 09:30 from 23:30
+  to 00:30 the next day puts the series at 10:30 on the 15th, which it can
+  follow; from 00:30 on the 16th to 23:30 that day, it would go to 08:30
+  on the 16th, which it can't.
 - **A `MONTHLY` or `YEARLY` rule without `BY` parts** is refused too, with
   the same `400 series_move_unsupported` and nothing written, where months
   and days can't keep every value on its day (see Limits). The server

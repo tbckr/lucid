@@ -192,6 +192,27 @@ describe('moveAllRefusal', () => {
     }
     expect(moveAllRefusal(event, new Date('2026-03-16T00:00:00Z'))).toBe('fixedDays')
   })
+
+  // The server moves the series by the distance the exception moves, from its place in the rule: an exception at
+  // another time of day than its series crosses midnight where the series does not, or the other way round (#6).
+  describe('of an exception at another time of day', () => {
+    /** The April event of a series at 09:30 in Berlin on the 15th, moved to `startsAt`. */
+    function exception(startsAt: string) {
+      return { ...series('FREQ=MONTHLY;BYMONTHDAY=15', startsAt), recurrenceId: '2025-04-15T07:30:00Z' }
+    }
+
+    it('allows a move that keeps the series on its day', () => {
+      // 23:30 to 00:30 the next day moves the series from 09:30 to 10:30 on the 15th.
+      const event = exception('2025-04-15T23:30:00+02:00')
+      expect(moveAllRefusal(event, new Date('2025-04-16T00:30:00+02:00'))).toBeNull()
+    })
+
+    it('refuses a move that takes the series to another day', () => {
+      // 00:30 to 23:30 on the 16th moves the series by 23 hours, from 09:30 on the 15th to 08:30 on the 16th.
+      const event = exception('2025-04-16T00:30:00+02:00')
+      expect(moveAllRefusal(event, new Date('2025-04-16T23:30:00+02:00'))).toBe('fixedDays')
+    })
+  })
 })
 
 // FR-17: the shift check of a task series is the events' `seriesShift`, measured from a repeat's RECURRENCE-ID by
