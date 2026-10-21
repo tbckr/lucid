@@ -169,19 +169,22 @@ jobs:
 
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
-      # Hand-written notes replace the generated changelog where they exist,
-      # for a release and its pre-releases alike (vX.Y.Z-rc.N reads
-      # vX.Y.Z.md), so a pre-release shows them as the release will.
-      # release.header and release.footer still frame them.
+      # Hand-written notes replace the generated changelog where they exist:
+      # those of the tag itself (vX.Y.Z-rc.N.md), else those of its version
+      # (vX.Y.Z.md), so a pre-release without notes of its own shows the
+      # release's as the release will. release.header and release.footer
+      # still frame them.
       - name: Find hand-written release notes
         id: notes
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          notes=".github/release-notes/${TAG%%-*}.md"
-          if [[ -f "$notes" ]]; then
-            echo "args=--release-notes=$notes" >> "$GITHUB_OUTPUT"
-          fi
+          for notes in ".github/release-notes/$TAG.md" ".github/release-notes/${TAG%%-*}.md"; do
+            if [[ -f "$notes" ]]; then
+              echo "args=--release-notes=$notes" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
 
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
