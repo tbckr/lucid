@@ -1,0 +1,24 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Discussions on GitHub are **public**: anyone can read what you write
+        here and everything you attach.
+
+        Never paste passwords or session cookies. Screenshots show your
+        calendar: take them with a test calendar, or black out titles, names
+        and places first. If you paste log lines, leave out the
+        `security event` and `http request` lines; they carry IP addresses and
+        the user name that was entered.
+
+        Found a bug? The [issue forms](https://github.com/tbckr/lucid/issues/new/choose)
+        ask for what it takes to fix it. **Security vulnerabilities do not
+        belong here.** Report them privately through
+        [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you want to do and what you tried. For a question about setting Lucid up, say how you installed it, its version and its mode.
+    validations:
+      required: true

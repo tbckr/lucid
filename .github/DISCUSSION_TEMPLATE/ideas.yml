@@ -1,0 +1,22 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Discussions on GitHub are **public**: anyone can read what you write
+        here and everything you attach. Screenshots show your calendar: take
+        them with a test calendar, or black out titles, names and places
+        first.
+
+        An idea becomes an issue once it is planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The situation the idea is about, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How Lucid could help. If another calendar app does it well, name it.
