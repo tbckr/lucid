@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api/client'
+import { useSettings } from '@/stores/settings'
 import { useUi } from '@/stores/ui'
 import { jsonResponse, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -10,7 +11,9 @@ import { LoginPage } from './LoginPage'
 afterEach(() => {
   api.setCsrfToken(null)
   window.history.replaceState(null, '', '/')
-  useUi.setState({ report: { open: false, candidates: [] } })
+  useUi.setState({ report: { open: false, candidates: [] }, signedOut: false })
+  // A sign-in remembers its server, which the next test's form would start with.
+  useSettings.setState({ lastServerUrl: '' })
 })
 
 async function fill(user: ReturnType<typeof userEvent.setup>, server: string, name: string, pass: string) {
@@ -130,6 +133,68 @@ describe('LoginPage', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Too many attempts')
     })
     expect(screen.getByRole('alert')).not.toHaveTextContent('Reference')
+  })
+
+  it('says that a session ended unasked and offers the problem report (FR-36)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' })),
+    )
+    useUi.setState({ signedOut: true })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+
+    const notice = screen.getByRole('status')
+    expect(notice).toHaveTextContent('You were signed out. If that was unexpected, you can report the problem.')
+    // A notice, not an error: no alert, and the icon of information.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(notice.querySelector('svg.lucide-info')).not.toBeNull()
+    const link = within(notice).getByRole('button', { name: 'Report a problem' })
+    expect(link.querySelector('svg.lucide-life-buoy')).not.toBeNull()
+    await user.click(link)
+    expect(useUi.getState().report.open).toBe(true)
+  })
+
+  it('says nothing of a sign-out the user chose', () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' })),
+    )
+    renderWithProviders(<LoginPage />)
+    expect(screen.queryByText(/You were signed out/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Report a problem' })).toBeNull()
+  })
+
+  it('forgets that the session ended once the user signs in again', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) =>
+      Promise.resolve(
+        urlOf(input).endsWith('/session')
+          ? jsonResponse(200, { authenticated: false, csrfToken: 'anon' })
+          : jsonResponse(200, { authenticated: true, csrfToken: 'r' }),
+      ),
+    )
+    window.history.replaceState(null, '', '/login')
+    useUi.setState({ signedOut: true })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    await fill(user, 'example.com', 'tim', 'pw')
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/')
+    })
+    expect(useUi.getState().signedOut).toBe(false)
+  })
+
+  it('keeps the notice when the sign-in fails', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = urlOf(input)
+      if (url.endsWith('/session')) return Promise.resolve(jsonResponse(200, { authenticated: false, csrfToken: 't' }))
+      return Promise.resolve(jsonResponse(401, { error: { code: 'invalid_credentials', message: 'no' } }))
+    })
+    useUi.setState({ signedOut: true })
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage />)
+    await fill(user, 'example.com', 'tim', 'wrong')
+    expect(await screen.findByRole('alert')).toHaveTextContent('The server rejected this username or password.')
+    expect(screen.getByRole('status')).toHaveTextContent('You were signed out.')
+    expect(useUi.getState().signedOut).toBe(true)
   })
 
   it('logs in with the CSRF token and follows a safe redirect only', async () => {

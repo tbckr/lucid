@@ -1,4 +1,4 @@
-import { QueryClientProvider, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { RefreshCwIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -8,15 +8,14 @@ import { Logo } from '@/components/Logo'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { queryKeys, useSession } from '@/hooks/queries'
+import { useSession } from '@/hooks/queries'
 import { useTheme } from '@/hooks/useTheme'
+import { useUnauthenticatedRedirect } from '@/hooks/useUnauthenticatedRedirect'
 import i18n from '@/i18n'
-import { api } from '@/lib/api/client'
 import { apiErrorMessage } from '@/lib/errors'
 import { loginPathFor, safeRedirect } from '@/lib/redirect'
 import { navigate, useLocation } from '@/lib/router'
 import { useSettings } from '@/stores/settings'
-import { useUi } from '@/stores/ui'
 
 // Split the two screens: first-time visitors only download the login page.
 const CalendarPage = lazy(() => import('@/pages/CalendarPage').then((m) => ({ default: m.CalendarPage })))
@@ -54,25 +53,12 @@ function useLanguageSync() {
 /** Session gate: loads /session and routes between login and the calendar. */
 function Root() {
   const { t } = useTranslation()
-  const qc = useQueryClient()
   const { href, pathname, search } = useLocation()
   const session = useSession()
   const authenticated = session.data?.authenticated === true
   useLanguageSync()
-
   // 401 unauthenticated anywhere → back to login, remembering where we were.
-  useEffect(
-    () =>
-      api.onUnauthenticated(() => {
-        const current = window.location.pathname + window.location.search
-        qc.removeQueries({ predicate: (q) => q.queryKey[0] !== queryKeys.session[0] })
-        void qc.invalidateQueries({ queryKey: queryKeys.session })
-        // The items added to the problem report carry titles of the account that is gone (FR-36).
-        useUi.getState().clearReport()
-        if (window.location.pathname !== '/login') navigate(loginPathFor(current), { replace: true })
-      }),
-    [qc],
-  )
+  useUnauthenticatedRedirect()
 
   useEffect(() => {
     if (!session.data) return

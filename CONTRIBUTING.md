@@ -29,7 +29,9 @@ just dev
 starts three processes:
 
 1. `cmd/lucid-mockdav` — an in-memory CalDAV server with demo data on
-   `http://127.0.0.1:5232` (username `demo`, password `demo`),
+   `http://127.0.0.1:5232` (username `demo`, password `demo`; below
+   `/revoked/` a second account, `revoked`/`revoked`, whose server refuses to
+   read objects, for the E2E test of a forced logout),
 2. the Lucid backend on `127.0.0.1:8080` in local mode (`LUCID_LOCAL_PORT=8080`;
    no browser is opened),
 3. the Vite dev server with hot reload on `http://localhost:5173`, proxying

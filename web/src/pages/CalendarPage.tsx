@@ -126,6 +126,8 @@ export function CalendarPage() {
     qc.clear()
     // The items added to the problem report carry titles of this account (FR-36).
     useUi.getState().clearReport()
+    // Signed out by choice: the login page has nothing to report about it.
+    useUi.getState().setSignedOut(false)
     try {
       qc.setQueryData(queryKeys.session, await endpoints.getSession())
     } catch {

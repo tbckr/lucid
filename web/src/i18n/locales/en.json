@@ -543,6 +543,7 @@
   "diagnostics": {
     "reference": "Reference: {{ref}}",
     "open": "Report a problem",
+    "signedOut": "You were signed out. If that was unexpected, you can report the problem.",
     "addItem": "Add to problem report",
     "title": "Report a problem",
     "description": "Lucid puts together a file for an issue on GitHub. It is only downloaded; Lucid sends nothing itself.",

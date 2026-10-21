@@ -7,6 +7,13 @@
 // reproducible screenshots. Lucid reaches it in local mode (leave LUCID_ADDR
 // unset), which allows loopback CalDAV servers and plain-HTTP cookies; no
 // further configuration is needed.
+//
+// A second account, for a forced logout (FR-36), lives below /revoked/: server
+// URL http://127.0.0.1:5232/revoked/, user and password "revoked". Its server
+// answers every GET of an object with 403, as one does whose permissions were
+// taken away during a session, and its calendar has an event whose rule Lucid
+// cannot evaluate, a problem whose content the report offers: showing that
+// content reads the object, and the 403 signs the session out.
 package main
 
 import (
@@ -43,14 +50,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	mock := caldavtest.New(caldavtest.Options{Username: "demo", Password: "demo"})
-	if err := seed(mock, now); err != nil {
+	handler, err := newHandler(now)
+	if err != nil {
 		return err
 	}
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mock,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -72,6 +79,52 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// revokedPrefix is the path the account of a forced logout lives below.
+const revokedPrefix = "/revoked"
+
+// newHandler serves the demo account, seeded around now, and below
+// revokedPrefix the account of a forced logout.
+func newHandler(now time.Time) (http.Handler, error) {
+	demo := caldavtest.New(caldavtest.Options{Username: "demo", Password: "demo"})
+	if err := seed(demo, now); err != nil {
+		return nil, err
+	}
+	revoked, err := newRevoked(now)
+	if err != nil {
+		return nil, err
+	}
+	mux := http.NewServeMux()
+	mux.Handle(revokedPrefix+"/", revoked)
+	mux.Handle("/", demo)
+	return mux, nil
+}
+
+// newRevoked returns the account of a forced logout: a calendar with an event
+// and one whose rule Lucid cannot evaluate (it shows the first occurrence and
+// records a problem), on a server that refuses every GET with 403.
+func newRevoked(now time.Time) (*caldavtest.Server, error) {
+	m := caldavtest.New(caldavtest.Options{Username: "revoked", Password: "revoked", Prefix: revokedPrefix})
+	shared := m.AddCalendar(caldavtest.Calendar{Slug: "shared", Name: "Shared", Color: "#8B5CF6FF", Components: []string{"VEVENT"}})
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	utc := func(h int) string { return day.Add(time.Duration(h) * time.Hour).Format("20060102T150405Z") }
+	for _, o := range []struct{ name, body string }{
+		{"plan.ics", vevent("revoked-plan", "Shared plan", "DTSTART:"+utc(10), "DTEND:"+utc(11))},
+		{"rule.ics", vevent("revoked-rule", "Unknown rule", "DTSTART:"+utc(12), "DTEND:"+utc(13), "RRULE:FREQ=FORTNIGHTLY")},
+	} {
+		if _, err := m.PutObject(shared, o.name, o.body); err != nil {
+			return nil, err
+		}
+	}
+	m.SetHook(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodGet {
+			return false
+		}
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return true
+	})
+	return m, nil
 }
 
 // seedTime returns the date in value (YYYY-MM-DD), or now if value is empty.

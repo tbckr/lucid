@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { format, isSameDay, isSameMonth } from 'date-fns'
-import { CircleAlertIcon, LifeBuoyIcon } from 'lucide-react'
+import { CircleAlertIcon, InfoIcon, LifeBuoyIcon } from 'lucide-react'
 import { startTransition, useActionState, useId } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +38,7 @@ export function LoginPage() {
   const lastServerUrl = useSettings((s) => s.lastServerUrl)
   const updateSettings = useSettings((s) => s.update)
   const openReport = useUi((s) => s.openReport)
+  const signedOut = useUi((s) => s.signedOut)
   const id = useId()
 
   const form = useForm<LoginValues>({
@@ -51,6 +52,7 @@ export function LoginPage() {
     try {
       const session = await endpoints.login(values)
       updateSettings({ lastServerUrl: values.serverUrl.trim() })
+      useUi.getState().setSignedOut(false)
       qc.setQueryData(queryKeys.session, session)
       navigate(safeRedirect(search.get('redirect')) ?? '/', { replace: true })
       return { error: null, reference: null }
@@ -85,6 +87,28 @@ export function LoginPage() {
           <p className="mt-2 text-sm text-muted-foreground">{t('login.subtitle')}</p>
 
           <form onSubmit={(e) => void onSubmit(e)} noValidate className="mt-8 grid gap-5" aria-describedby={state.error ? `${id}-error` : undefined}>
+            {/* FR-36: a session that ended unasked, such as a forced logout, can be reported with what led to it. */}
+            {signedOut && (
+              <div
+                role="status"
+                className="flex items-start gap-2.5 rounded-lg border bg-background px-3.5 py-3 text-sm text-foreground"
+              >
+                <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="grid gap-1">
+                  <p>{t('diagnostics.signedOut')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openReport()
+                    }}
+                    className="inline-flex items-center gap-1.5 justify-self-start rounded-sm text-xs font-medium underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground"
+                  >
+                    <LifeBuoyIcon className="size-3.5 shrink-0" aria-hidden />
+                    {t('diagnostics.open')}
+                  </button>
+                </div>
+              </div>
+            )}
             {state.error && (
               <div
                 id={`${id}-error`}

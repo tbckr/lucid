@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/tbckr/lucid/internal/caldav"
 	"github.com/tbckr/lucid/internal/caldav/caldavtest"
+	"github.com/tbckr/lucid/internal/diag"
 	"github.com/tbckr/lucid/internal/domain"
 )
 
@@ -105,5 +107,49 @@ func TestSeed(t *testing.T) {
 	// The override completed this Monday's repeat; the series goes on with the next one (FR-17).
 	if states[domain.OccurrenceDone] < 1 || states[domain.OccurrenceCurrent] < 1 {
 		t.Fatalf("occurrences of Water the flowers by state = %v, want a done and a current one", states)
+	}
+}
+
+// TestHandler serves both accounts: the demo one at the root, and the one of a
+// forced logout below /revoked/, whose problem's content Lucid cannot read.
+func TestHandler(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	handler, err := newHandler(now)
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	p, err := caldav.NewProvider(caldav.Options{HTTPClient: ts.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+
+	if _, err := p.Connect(ctx, domain.Credentials{ServerURL: ts.URL, Username: "demo", Password: "demo"}); err != nil {
+		t.Fatalf("Connect(demo): %v", err)
+	}
+
+	acct, err := p.Connect(ctx, domain.Credentials{ServerURL: ts.URL + "/revoked/", Username: "revoked", Password: "revoked"})
+	if err != nil {
+		t.Fatalf("Connect(revoked): %v", err)
+	}
+	svc := p.Service(acct)
+	cals, err := svc.ListCalendars(ctx)
+	if err != nil || len(cals) != 1 || cals[0].Name != "Shared" {
+		t.Fatalf("ListCalendars = %+v, %v; want Shared", cals, err)
+	}
+	buf := diag.NewBuffer(diag.SessionLimits)
+	if _, err := svc.ListEvents(diag.WithScope(ctx, diag.Scope{Buffer: buf}), cals[0].ID, now.AddDate(0, 0, -7), now.AddDate(0, 0, 7)); err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	problems := buf.Snapshot().Problems
+	if len(problems) != 1 || problems[0].Kind != diag.ProblemInvalidObject || problems[0].ObjectID == "" {
+		t.Fatalf("problems = %+v; want the event with the unknown rule", problems)
+	}
+	// Reading its content is what signs the session out.
+	if _, err := svc.ObjectData(ctx, problems[0].ObjectID); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("ObjectData error = %v; want ErrUnauthorized for the server's 403", err)
 	}
 }

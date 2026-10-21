@@ -508,7 +508,8 @@ that without sharing your calendar.
 
 Choose **Report a problem** in the account menu. The same dialog opens from an
 error message that shows a reference such as `Reference: 3f9a1c2b` (also on the
-login screen), from the placeholder of an item Lucid could not read, and from
+login screen), from the login screen after Lucid signed you out without you
+asking, from the placeholder of an item Lucid could not read, and from
 the life-buoy button **Add to problem report** in the details of any event or
 task, because the likeliest bugs, a wrong time or a missing repeat, leave no
 error behind.

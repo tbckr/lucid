@@ -21,6 +21,7 @@ interface Report {
   format: number
   authenticated: boolean
   exchanges: { method: string; status?: number }[]
+  problems: { kind: string; objectId?: string }[]
   client: { corrupted: unknown[]; objects: { source: string; skeleton: { text: string }; content?: string }[] }
 }
 
@@ -157,4 +158,48 @@ test('report from the login page', async ({ page }) => {
   expect(report.client.objects).toEqual([])
   // Credentials are no part of a report (NFR-36).
   expect(text).not.toContain('zz-wrong-password')
+})
+
+test('report after a forced logout, from the login page', async ({ page }) => {
+  // The mock's second account: its server refuses every read of an object with 403, as one does whose permissions
+  // were taken away, and one of its events has a rule Lucid cannot evaluate.
+  await page.goto('/login')
+  await page.getByLabel('Server address').fill(`${MOCKDAV_URL}revoked/`)
+  await page.getByLabel('Username').fill('revoked')
+  await page.getByLabel('Password').fill('revoked')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+
+  // Signed in, the problem of that event offers its content, which Lucid reads from the server again.
+  await page.getByRole('button', { name: /^Account/ }).click()
+  await page.getByRole('menuitem', { name: 'Report a problem' }).click()
+  const dialog = reportDialog(page)
+  const problem = dialog.getByRole('listitem', { name: "An item Lucid couldn't show" })
+  await problem.getByRole('button', { name: 'Show content' }).click()
+
+  // The server answers the read with 403, which Lucid takes for rejected credentials: the session ends.
+  await expect(page).toHaveURL(/\/login(\?|$)/)
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(dialog).toBeHidden()
+  const notice = page.getByRole('status').filter({ hasText: 'You were signed out.' })
+  await expect(notice).toContainText('If that was unexpected, you can report the problem.')
+  await notice.getByRole('button', { name: 'Report a problem' }).click()
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Sign in to add events or tasks.')).toBeVisible()
+
+  // The report of the anonymous session the server put in place keeps what led to the logout, without object IDs.
+  const { report } = await downloadReport(page)
+  expect(report.authenticated).toBe(false)
+  expect(report.exchanges.length).toBeGreaterThan(0)
+  expect(report.exchanges.some((e) => e.method === 'GET' && e.status === 403)).toBe(true)
+  expect(report.problems.map((p) => p.kind)).toContain('invalid_object')
+  for (const p of report.problems) expect(p).not.toHaveProperty('objectId')
+
+  // Signing in again leaves the notice behind.
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await login(page)
+  await page.getByRole('button', { name: /^Account/ }).click()
+  await page.getByRole('menuitem', { name: 'Sign out' }).click()
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
+  await expect(page.getByText('You were signed out.')).toHaveCount(0)
 })

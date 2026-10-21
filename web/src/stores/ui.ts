@@ -76,6 +76,11 @@ interface UiState {
    * so several can be added one after the other; what the dialog showed of them is its own state.
    */
   report: { open: boolean; candidates: ReportCandidate[] }
+  /**
+   * The session ended without the user signing out: an `unauthenticated` answer while signed in, such as a forced
+   * logout (FR-36). The login page then says so and offers the problem report; signing in clears it.
+   */
+  signedOut: boolean
 
   setView: (view: ViewKind) => void
   setDate: (date: Date) => void
@@ -97,6 +102,7 @@ interface UiState {
   removeReportCandidate: (objectId: string) => void
   /** Forgets the added items: after a download and on sign-out. */
   clearReport: () => void
+  setSignedOut: (signedOut: boolean) => void
 }
 
 const noCreate = { create: null, createWhen: null, createPreview: null }
@@ -117,6 +123,7 @@ export const useUi = create<UiState>()((set) => ({
   shortcutsOpen: false,
   backendReachable: true,
   report: { open: false, candidates: [] },
+  signedOut: false,
 
   setView: (view) => {
     set({ view, detail: null, ...noCreate })
@@ -176,6 +183,9 @@ export const useUi = create<UiState>()((set) => ({
   },
   clearReport: () => {
     set((s) => ({ report: { ...s.report, candidates: [] } }))
+  },
+  setSignedOut: (signedOut) => {
+    set({ signedOut })
   },
 }))
 
