@@ -1088,7 +1088,8 @@ server.
   stays readable. No credentials, query or fragment.
 - `server` is what the CalDAV server said about itself: `host` and `product`
   (its `Server` header) of the newest exchange that has one, `dav` the newest
-  `DAV` header; empty strings while unknown.
+  `DAV` header; empty strings while unknown. If no response had a `Server`
+  header, `host` is that of the newest exchange and `product` is empty.
 - `calendars` has a note per calendar (capped at 50), sorted by `path`: what
   it supports and how many objects the largest listing returned (`objects`).
   Never its name, description or color.

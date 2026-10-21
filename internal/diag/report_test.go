@@ -80,12 +80,14 @@ func TestBuildReport(t *testing.T) {
 		t.Errorf("Server = %+v, want %+v", r.Server, want)
 	}
 
-	// No exchange names a server: Host and Product stay empty, DAV is still seen.
-	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "h", DAV: "1"}}}, lucid, nil, false, now)
-	if want := (ServerInfo{DAV: "1"}); r.Server != want {
+	// No exchange names a server: Host is the newest exchange's that has one,
+	// Product stays empty, and DAV is still seen.
+	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "old", DAV: "1"}, {Host: "h"}, {Error: "dns"}}}, lucid, nil, false, now)
+	if want := (ServerInfo{Host: "h", DAV: "1"}); r.Server != want {
 		t.Errorf("Server = %+v, want %+v", r.Server, want)
 	}
-	r = BuildReport(Snapshot{Exchanges: []Exchange{{Host: "h"}}}, lucid, nil, false, now)
+	// An exchange without a host is no fallback.
+	r = BuildReport(Snapshot{Exchanges: []Exchange{{Error: "dns"}}}, lucid, nil, false, now)
 	if r.Server != (ServerInfo{}) {
 		t.Errorf("Server = %+v, want none", r.Server)
 	}

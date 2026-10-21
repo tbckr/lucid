@@ -46,7 +46,9 @@ type Report struct {
 
 // BuildReport assembles the report of a session from a snapshot of its Buffer.
 // Server.Product and Server.Host are those of the newest exchange that has a
-// Server header, and Server.DAV is the newest non-empty DAV header of any
+// Server header; with no such exchange, Server.Host is that of the newest
+// exchange that has a host, and Server.Product stays empty, as many servers
+// send no Server header. Server.DAV is the newest non-empty DAV header of any
 // exchange: servers often send it only on some responses. CreatedAt is now in
 // UTC. The report shares the snapshot's slices. Empty ones are empty, not nil,
 // so they marshal as [].
@@ -80,6 +82,12 @@ func BuildReport(s Snapshot, lucid LucidInfo, acct *AccountInfo, authenticated b
 		if !haveDAV && e.DAV != "" {
 			r.Server.DAV = e.DAV
 			haveDAV = true
+		}
+	}
+	for i := len(s.Exchanges) - 1; i >= 0 && !haveServer; i-- {
+		if host := s.Exchanges[i].Host; host != "" {
+			r.Server.Host = host
+			haveServer = true
 		}
 	}
 	return r
