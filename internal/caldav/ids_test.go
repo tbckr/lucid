@@ -189,6 +189,9 @@ func TestIDTampered(t *testing.T) {
 		"truncated":                 enc(raw[:len(raw)-1]),
 		"extended":                  enc(append(bytes.Clone(raw), 'x')),
 		"non-canonical base64":      nonCanonical,
+		"CR inside":                 id[:5] + "\r" + id[5:],
+		"LF inside":                 id[:5] + "\n" + id[5:],
+		"CR LF at the end":          id + "\r\n",
 		"not base64":                "*/*",
 		"padded":                    base64.URLEncoding.EncodeToString(raw),
 		"empty":                     "",
@@ -342,5 +345,21 @@ func TestNewIDCodecKeyLength(t *testing.T) {
 		if _, err := newIDCodec(keys[0], keys[1]); err == nil {
 			t.Errorf("%s: no error", name)
 		}
+	}
+}
+
+// An ID of maxIDLength characters is still worked on; the work is bounded only
+// past it.
+func TestIDLongest(t *testing.T) {
+	t.Parallel()
+	c := newTestCodec(t)
+	prefix := idHome + "work/"
+	objPath := prefix + strings.Repeat("a", base64.RawURLEncoding.DecodedLen(maxIDLength)-sivSize-len(prefix)-len(".ics")) + ".ics"
+	id := c.encode(objPath)
+	if len(id) != maxIDLength {
+		t.Fatalf("ID has %d characters; want %d", len(id), maxIDLength)
+	}
+	if got, _, err := c.decodeObjectID(idHome, id); err != nil || got != objPath {
+		t.Errorf("decodeObjectID = %q, %v; want the path back", got, err)
 	}
 }

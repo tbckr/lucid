@@ -106,16 +106,17 @@ The session ID is rotated. Response `200`: same shape as `GET /session`
 
 ### Forced logout
 
-If the CalDAV server rejects the stored credentials during a request (for
-example after a password change), that request answers `401 unauthenticated`
-and the session ends. It is not simply destroyed: it is replaced by a new
-*anonymous* session, and the response sets its `lucid_session` cookie (new
-session ID and CSRF token; `GET /api/v1/session` returns the token). The new
-session holds none of the credentials, but keeps the pseudonymised part of the
-diagnostics buffer, so the problem report can still be downloaded from the
-login screen and shows what led to the logout. Object IDs of problems are not
-kept (`objectId` is gone), since they name real paths, and the content routes
-answer `401` for an anonymous session.
+If the CalDAV server rejects the stored credentials during a request, that is
+answers it with `401` or a read with `403` (for example after a password
+change, or for an account whose rights were taken away), that request answers
+`401 unauthenticated` and the session ends. It is not simply destroyed: it is
+replaced by a new *anonymous* session, and the response sets its
+`lucid_session` cookie (new session ID and CSRF token; `GET /api/v1/session`
+returns the token). The new session holds none of the credentials, but keeps
+the pseudonymised part of the diagnostics buffer, so the problem report can
+still be downloaded from the login screen and shows what led to the logout.
+Object IDs of problems are not kept (`objectId` is gone), since they identify
+real paths, and the content routes answer `401` for an anonymous session.
 
 When several requests of one session fail like this at the same time, only one
 response sets the new cookie, and the others set no cookie at all: a cookie
@@ -1119,13 +1120,14 @@ server.
 ### `GET /api/v1/diagnostics/objects/{objectId}` → `200` `{ "id", "skeleton" }`
 
 ```json
-{ "id": "...", "skeleton": { "text": "BEGIN:VCALENDAR\n...", "truncated": false } }
+{ "id": "...", "skeleton": { "text": "BEGIN:VCALENDAR\n..." } }
 ```
 
 The skeleton of a calendar object as the CalDAV server sends it now: one `GET`
 to the server (traced like any other call), then the shape of the data without
 its values, as in `problems[].skeleton` (`truncated` is omitted when `false`).
-What the user sees before deciding to add the content. Needs an authenticated
+What the report holds of an object the user adds, unless the user adds its
+content too. Needs an authenticated
 session: `401 unauthenticated` for an anonymous one. `404 not_found` for an ID
 that is no object of the account's calendar homes (a calendar's, another
 account's, a malformed one; the server is not asked) or an object that is gone;
@@ -1143,7 +1145,7 @@ an object Lucid cannot read (bytes that are not valid UTF-8 become U+FFFD, as
 JSON has no other way). The one answer of Lucid that returns calendar contents
 for the report. It is for the user's own session only, on the request of the
 user for that object, and is never logged (NFR-36); the frontend adds it to
-the downloaded file only after the user viewed the skeleton and ticked a box
+the downloaded file only after the user viewed the content and ticked a box
 for this object. Same authentication and errors as the skeleton route.
 
 ## Operations (outside `/api`)

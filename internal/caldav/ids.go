@@ -74,9 +74,10 @@ func (c *idCodec) open(id string) (string, bool) {
 	if len(id) > maxIDLength {
 		return "", false
 	}
-	// Strict: one ID per path, no variants in the unused bits.
+	// One ID per path: Strict refuses variants in the unused bits, and the
+	// length the line breaks that the decoder skips anywhere in its input.
 	b, err := base64.RawURLEncoding.Strict().DecodeString(id)
-	if err != nil || len(b) <= sivSize {
+	if err != nil || len(b) <= sivSize || len(id) != base64.RawURLEncoding.EncodedLen(len(b)) {
 		return "", false
 	}
 	siv, ct := b[:sivSize], b[sivSize:]
