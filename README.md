@@ -629,7 +629,9 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Bug reports, feature ideas and pull requests are welcome.
+Bug reports, feature ideas and pull requests are welcome. Report bugs through
+the [issue forms](https://github.com/tbckr/lucid/issues/new/choose), and bring
+ideas and questions to [Discussions](https://github.com/tbckr/lucid/discussions).
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the development setup
 (`just dev` starts Lucid with a demo CalDAV server) and the project's
 conventions.

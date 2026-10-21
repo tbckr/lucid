@@ -1,7 +1,11 @@
 # Contributing to Lucid
 
 Thanks for your interest in Lucid! Bug reports, feature ideas and pull
-requests are welcome.
+requests are welcome. Bugs go through the
+[issue forms](https://github.com/tbckr/lucid/issues/new/choose), one for
+Lucid itself and one for problems with a CalDAV server; ideas and questions go
+to [GitHub Discussions](https://github.com/tbckr/lucid/discussions), and an
+idea becomes an issue once it is planned.
 
 ## Language
 

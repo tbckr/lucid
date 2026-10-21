@@ -1,0 +1,68 @@
+name: Bug in Lucid
+description: Something in Lucid itself does not work, whatever CalDAV server you use
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues on GitHub are **public**: anyone can read what you write here and
+        everything you attach.
+
+        If the problem shows only with your CalDAV server, for example an event
+        that is missing, a wrong time or an error on sign-in, use the
+        [CalDAV server form](https://github.com/tbckr/lucid/issues/new?template=caldav-server.yml)
+        instead.
+
+        Screenshots show your calendar: take them with a test calendar, or
+        black out titles, names and places first. Never paste passwords or
+        session cookies, and leave out the `security event` and `http request`
+        log lines; they carry IP addresses and the user name that was entered.
+
+        **Security vulnerabilities do not belong here.** Report them privately
+        through [GitHub security advisories](https://github.com/tbckr/lucid/security/advisories/new).
+  - type: input
+    id: lucid-version
+    attributes:
+      label: Lucid version
+      description: Shown on the sign-in page and in the settings, or run `lucid --version`.
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation
+      options:
+        - Binary from the release archive
+        - Container image (Docker, Podman)
+        - deb, rpm or Arch package
+        - Nix (package, NixOS or Home Manager module)
+        - Built from source
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: Leave it empty if Lucid does not start.
+      options:
+        - Local (started without LUCID_ADDR)
+        - Server (started with LUCID_ADDR)
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+      description: With their versions, if you know them.
+      placeholder: Firefox on Windows 11
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead, including an error message and its reference.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: Lines from Lucid's output, with `LUCID_LOG_LEVEL=debug` if you can repeat the problem. Leave this empty if you have none.

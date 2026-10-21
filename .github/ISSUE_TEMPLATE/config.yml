@@ -1,5 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
+  - name: Idea or feature request
+    url: https://github.com/tbckr/lucid/discussions/new?category=ideas
+    about: Suggest a feature or a change in GitHub Discussions.
+  - name: Question
+    url: https://github.com/tbckr/lucid/discussions/new?category=q-a
+    about: Ask how to set up or use Lucid in GitHub Discussions.
   - name: Security vulnerability
     url: https://github.com/tbckr/lucid/security/advisories/new
     about: Report vulnerabilities privately. Do not open a public issue for them.
