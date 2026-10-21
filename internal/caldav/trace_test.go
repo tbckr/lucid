@@ -1060,3 +1060,42 @@ func TestTraceTLSHandshakeFailure(t *testing.T) {
 		})
 	}
 }
+
+// What a calendar offers is noted as soon as its tags are read: a REPORT that
+// fails after them leaves the note of its CTag and sync-token in the report,
+// which tells what the server offers (FR-36).
+func TestCalendarNotesWhenTheReportFails(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name        string
+		opts        caldavtest.Options
+		ctag, token bool
+	}{
+		{"both", caldavtest.Options{}, true, true},
+		{"CTag only", caldavtest.Options{DisableSyncToken: true}, true, false},
+		{"sync-token only", caldavtest.Options{DisableCTag: true}, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newTraceEnv(t, tt.opts)
+			svc := e.p.Service(e.connect(t.Context(), t))
+			id := e.calendarID(t, svc, "Personal")
+			e.hook(func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != "REPORT" {
+					return false
+				}
+				w.WriteHeader(http.StatusInternalServerError)
+				return true
+			})
+			buf := diag.NewBuffer(diag.SessionLimits)
+
+			_, err := svc.ListEvents(scopedCtx(t.Context(), buf, "req-1"), id, date(2025, 3, 1, 0, 0), date(2025, 3, 8, 0, 0))
+
+			mustErr(t, err, domain.ErrUpstream)
+			notes := buf.Snapshot().Calendars
+			if len(notes) != 1 || notes[0].CTag != tt.ctag || notes[0].SyncToken != tt.token || notes[0].Objects != 0 {
+				t.Errorf("notes = %+v; want one with CTag %v and SyncToken %v, and no objects", notes, tt.ctag, tt.token)
+			}
+		})
+	}
+}

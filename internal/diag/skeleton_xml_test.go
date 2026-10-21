@@ -448,6 +448,29 @@ func TestXMLSkeletonCapBoundary(t *testing.T) {
 	}
 }
 
+// The header line a line brings along counts towards the cap with its line
+// break, like any line: a line whose namespace is new to the text fits only if
+// both do.
+func TestXMLSkeletonCapCountsTheHeaderOfANewNamespace(t *testing.T) {
+	t.Parallel()
+	const header, head, tail = "# x1=urn:z\n", "d:a\n  d:", "\n  x1:b"
+	doc := func(nameLen int) []byte {
+		return []byte(`<d:a xmlns:d="DAV:" xmlns:z="urn:z"><d:` + strings.Repeat("c", nameLen) + `/><z:b/></d:a>`)
+	}
+	nameLen := MaxSkeleton - len(header+head+tail)
+	sk := XMLSkeleton(doc(nameLen), NewPseudonymizer(testKey), xmlTestNames)
+	if want := header + head + strings.Repeat("c", nameLen) + tail; sk.Text != want || sk.Truncated {
+		t.Errorf("exact fit: len = %d, Truncated = %v, want %d, false", len(sk.Text), sk.Truncated, len(want))
+	}
+	for _, over := range []int{1, 2} {
+		sk = XMLSkeleton(doc(nameLen+over), NewPseudonymizer(testKey), xmlTestNames)
+		if want := head + strings.Repeat("c", nameLen+over); sk.Text != want || !sk.Truncated {
+			t.Errorf("%d bytes over: len = %d, Truncated = %v, want %d without the last line and its header, true",
+				over, len(sk.Text), sk.Truncated, len(want))
+		}
+	}
+}
+
 func TestXMLSkeletonDeepNesting(t *testing.T) {
 	t.Parallel()
 	doc := `<d:a xmlns:d="DAV:">` + strings.Repeat("<d:a>", 1<<18)

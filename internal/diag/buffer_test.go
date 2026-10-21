@@ -798,3 +798,24 @@ func TestBufferConcurrent(t *testing.T) {
 		t.Errorf("%d calendars, want %d", len(snap.Calendars), MaxCalendarNotes)
 	}
 }
+
+// A skeleton made another way is cut after its last line that fits, and a line
+// that ends right at the cap fits: its line break is not part of the text.
+func TestCapSkeletonBoundary(t *testing.T) {
+	t.Parallel()
+	first := strings.Repeat("a", 10)
+	fits := first + "\n" + strings.Repeat("b", MaxSkeleton-len(first)-1)
+	if len(fits) != MaxSkeleton {
+		t.Fatalf("fixture has %d bytes", len(fits))
+	}
+	if got := capSkeleton(Skeleton{Text: fits + "\n" + "c"}); got.Text != fits || !got.Truncated {
+		t.Errorf("line ending at the cap: %d bytes, Truncated = %v, want %d, true", len(got.Text), got.Truncated, len(fits))
+	}
+	// One byte longer, that line no longer fits, and the cut is after the one before.
+	if got := capSkeleton(Skeleton{Text: fits + "b\n" + "c"}); got.Text != first || !got.Truncated {
+		t.Errorf("line one byte over the cap: %d bytes, Truncated = %v, want %d, true", len(got.Text), got.Truncated, len(first))
+	}
+	if got := capSkeleton(Skeleton{Text: fits}); got.Text != fits || got.Truncated {
+		t.Errorf("text of exactly the cap: %d bytes, Truncated = %v, want it whole", len(got.Text), got.Truncated)
+	}
+}
