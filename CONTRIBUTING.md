@@ -221,7 +221,9 @@ security fixes. `just outdated` lists what to review on every upgrade:
   publishes starts only once all three pass and only consumes the frontend
   build. After a release (not a pre-release) is published, a job that runs no
   dependency code fast-forwards the `stable` branch, which Nix users and the
-  `compose.yaml` download in the README follow.
+  `compose.yaml` download in the README follow. Where
+  `.github/release-notes/vX.Y.Z.md` exists, its text replaces the changelog
+  generated from the commits, for that release and its pre-releases.
 - `latest-deps.yml`, weekly: tests against the newest direct dependencies,
   upgraded exactly like `just upgrade` does, inside a gVisor sandbox. It
   commits nothing; a failure means the next upgrade needs work.
