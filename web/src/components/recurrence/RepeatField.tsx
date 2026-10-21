@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { usePrefs } from '@/hooks/usePrefs'
-import { buildRRule, describeRRule, recurrenceFromRRule, type Recurrence } from '@/lib/rrule'
+import { buildRRule, describeRRule, describeRRuleIn, recurrenceFromRRule, type Recurrence } from '@/lib/rrule'
+import { type RuleClock } from '@/lib/seriesShift'
 import { RecurrenceDialog } from './RecurrenceDialog'
 
 export interface RepeatValue {
@@ -28,6 +29,7 @@ export function RepeatField({
   timeZone,
   presets,
   customizable,
+  recursOn,
   explicit,
   disabled,
   invalid,
@@ -41,6 +43,11 @@ export function RepeatField({
   presets: readonly Recurrence[]
   /** Offers "Custom…"; not for a rule Lucid can't read, which can only be kept or removed. */
   customizable: boolean
+  /**
+   * The wall clock the custom rule recurs on, where it doesn't read the same on the browser's (FR-18, see
+   * `ruleInZone`): said there, naming its zone, it can only be kept, replaced by a preset, or removed.
+   */
+  recursOn?: RuleClock | null
   /** An existing series: the repeat editor writes every day part (see `RecurrenceDialog`). */
   explicit?: boolean
   disabled?: boolean
@@ -86,11 +93,15 @@ export function RepeatField({
             </SelectItem>
           ))}
           {/* A series of dates without a rule has no words of its own. */}
-          {custom && <SelectItem value="custom">{dates ? t('recurrence.dates') : words(value.customRule)}</SelectItem>}
-          {customizable && <SelectItem value={CUSTOMIZE}>{t('recurrence.editor.customize')}</SelectItem>}
+          {custom && (
+            <SelectItem value="custom">
+              {dates ? t('recurrence.dates') : recursOn ? describeRRuleIn(value.customRule, recursOn, prefs, now, t) : words(value.customRule)}
+            </SelectItem>
+          )}
+          {customizable && !recursOn && <SelectItem value={CUSTOMIZE}>{t('recurrence.editor.customize')}</SelectItem>}
         </SelectContent>
       </Select>
-      {customizable && (
+      {customizable && !recursOn && (
         <RecurrenceDialog
           open={editing}
           onOpenChange={setEditing}

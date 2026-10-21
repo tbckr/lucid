@@ -5,6 +5,7 @@ import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
+import { eventRuleClock, ruleInZone } from './seriesShift'
 
 const dateRe = /^\d{4}-\d{2}-\d{2}$/
 const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -62,17 +63,31 @@ export function createFormValues(
   }
 }
 
+/**
+ * The repeat rule of `event` as the editor shows and builds it (FR-17, FR-18):
+ * on the browser's wall clock in `timeZone` (see `ruleInZone`), where a
+ * changed rule recurs, as saving moves the series into that zone. `null`
+ * where the rule doesn't read the same there: the editor can only keep it,
+ * replace it by a preset, or remove it.
+ */
+export function shownRule(event: CalEvent, timeZone: string): string | null {
+  const clock = eventRuleClock(event)
+  return clock ? ruleInZone(event.rrule, clock.at, clock.zone, timeZone) : event.rrule
+}
+
 /** Values for editing an existing occurrence (shown in the browser time zone). */
 export function editFormValues(event: CalEvent, timeZone: string): EventFormValues {
+  // A rule that doesn't read the same here stays as it is, see shownRule.
+  const rule = shownRule(event, timeZone) ?? event.rrule
   // A series of dates without a rule repeats too: "custom" without a rule, kept as it is (FR-17).
-  const recurrence: Recurrence = event.recurring && !event.rrule.trim() ? 'custom' : recurrenceFromRRule(event.rrule)
+  const recurrence: Recurrence = event.recurring && !rule.trim() ? 'custom' : recurrenceFromRRule(rule)
   const base = {
     title: event.title,
     calendarId: event.calendarId,
     location: event.location,
     description: event.description,
     recurrence,
-    customRule: recurrence === 'custom' ? event.rrule : '',
+    customRule: recurrence === 'custom' ? rule : '',
   }
   if (event.allDay) {
     const lastDay = addDays(event.endsAt, -1)

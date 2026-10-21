@@ -450,9 +450,8 @@ export function describeRRule(rule: string, start: Date, p: FormatPrefs, now: Da
  * its wall clock in `timeZone`, the environment's own, read at the event of
  * `clock`, the wall clock the rule recurs on (see `ruleInZone`), and filled
  * in from `start` as `describeRRule` does. A rule that doesn't read the same
- * there is said on its own wall clock, filled in from its event there, and
- * names its zone. Without `clock` the rule recurs on dates, the same
- * everywhere.
+ * there is said on its own wall clock (`describeRRuleIn`). Without `clock`
+ * the rule recurs on dates, the same everywhere.
  */
 export function describeSeriesRule(
   rule: string,
@@ -465,7 +464,15 @@ export function describeSeriesRule(
 ): string {
   if (!clock) return describeRRule(rule, start, p, now, t)
   const shown = ruleInZone(rule, clock.at, clock.zone, timeZone)
-  if (shown !== null) return describeRRule(shown, start, p, now, t)
+  return shown === null ? describeRRuleIn(rule, clock, p, now, t) : describeRRule(shown, start, p, now, t)
+}
+
+/**
+ * A rule in words on the wall clock it recurs on, `clock`'s, which it names
+ * (FR-17, FR-18): for a rule that doesn't read the same on the browser's
+ * (see `ruleInZone`). What it leaves out comes from its event there.
+ */
+export function describeRRuleIn(rule: string, clock: RuleClock, p: FormatPrefs, now: Date, t: TFunction): string {
   const there = utcToZoned(clock.at, clock.zone)
   return t('recurrence.inZone', { rule: describeRRule(rule, dayAt(there.date, there.time), p, now, t), zone: clock.zone })
 }

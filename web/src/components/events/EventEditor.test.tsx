@@ -184,6 +184,58 @@ describe('EventEditor', () => {
     expect(dialog).not.toHaveTextContent(/FREQ/)
   })
 
+  // A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+  const newYork = (rrule: string) =>
+    toCalEvent(
+      apiEvent({
+        recurring: true,
+        rrule,
+        timezone: 'America/New_York',
+        start: '2026-11-10T23:00:00Z',
+        end: '2026-11-11T00:00:00Z',
+        recurrenceId: '2026-11-10T23:00:00Z',
+      }),
+    )
+
+  it('edits the repeat of a series in another zone on the days it shows on', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event: newYork('FREQ=WEEKLY;BYDAY=TU,TH') })
+    const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+    expect(select).toHaveTextContent('Every week on Wednesday and Friday')
+
+    await user.click(select)
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    expect(within(repeat).getByRole('button', { name: 'Wednesday' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(repeat).getByRole('button', { name: 'Friday' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'false')
+    const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+    await user.clear(interval)
+    await user.type(interval, '2')
+    await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All events' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'PUT')!
+    const body = bodyOf(init)
+    expect(body.timezone).toBe('Europe/Berlin')
+    expect(body.rrule).toMatch(/^FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR(;|$)/)
+  })
+
+  it("offers no custom repeat for a rule that doesn't read the same here", async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork('FREQ=MONTHLY;BYMONTHDAY=10') })
+    const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+    expect(select).toHaveTextContent('Every month on day 10 (America/New_York)')
+
+    await user.click(select)
+    expect(screen.getByRole('option', { name: 'Every month on day 11' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Custom…' })).toBeNull()
+  })
+
   // FR-17: the hours of a rule from another app repeat at the start's minute, 10:30 in Berlin here.
   it('names the times of a rule after the start time', async () => {
     const event = toCalEvent(

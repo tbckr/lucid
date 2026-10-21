@@ -10,6 +10,7 @@ import {
   occurrenceInput,
   ruleChanged,
   shiftEnd,
+  shownRule,
   timeOptions,
   type EventFormValues,
 } from './eventForm'
@@ -181,6 +182,48 @@ describe('initial values', () => {
     })
     const allDay = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-27T00:00:00Z' }))
     expect(editFormValues(allDay, TZ)).toMatchObject({ allDay: true, startDate: '2026-09-25', endDate: '2026-09-26' })
+  })
+})
+
+// A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+describe('a series in another time zone', () => {
+  const ny = (rrule: string) =>
+    toCalEvent(
+      apiEvent({
+        start: '2026-11-10T23:00:00Z',
+        end: '2026-11-11T00:00:00Z',
+        timezone: 'America/New_York',
+        recurring: true,
+        rrule,
+        recurrenceId: '2026-11-10T23:00:00Z',
+      }),
+    )
+
+  it('opens on the days it shows on', () => {
+    expect(editFormValues(ny('FREQ=WEEKLY;BYDAY=TU,TH'), TZ)).toMatchObject({
+      startDate: '2026-11-11',
+      startTime: '00:00',
+      recurrence: 'custom',
+      customRule: 'FREQ=WEEKLY;BYDAY=WE,FR',
+    })
+  })
+
+  // A changed rule moves the series into the zone the write names (spec section 4), where the rule is built.
+  it('sends the stored rule while it stays, and a changed one as built here', () => {
+    const series = ny('FREQ=WEEKLY;BYDAY=TU,TH')
+    const v = editFormValues(series, TZ)
+    expect(formToInput(v, TZ, series).rrule).toBe('FREQ=WEEKLY;BYDAY=TU,TH')
+    expect(formToInput({ ...v, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }, TZ, series)).toMatchObject({
+      rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR',
+      timezone: TZ,
+    })
+  })
+
+  it("keeps a rule that doesn't read the same here as it is", () => {
+    const series = ny('FREQ=MONTHLY;BYMONTHDAY=10')
+    expect(shownRule(series, TZ)).toBeNull()
+    expect(editFormValues(series, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=MONTHLY;BYMONTHDAY=10' })
+    expect(formToInput(editFormValues(series, TZ), TZ, series).rrule).toBe('FREQ=MONTHLY;BYMONTHDAY=10')
   })
 })
 
