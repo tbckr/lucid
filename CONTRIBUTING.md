@@ -332,6 +332,16 @@ Even when a report holds an object's content, do not commit it as it is: it
 is the reporter's data and may name other people. Reduce it to the smallest
 fixture that still fails, with neutral values.
 
+A crash in the browser comes as the error details of the crash screen
+(FR-19), whose frames point into that release's minified bundle. To read
+them, check out the release's tag and build the frontend with source maps
+that the bundle does not reference: `pnpm --dir web exec vite build
+--sourcemap hidden`. The build is deterministic, so the same commit gives
+the same files as the release, plus a `.map` beside each, in which a frame's
+file, line and column can be looked up. If the files differ, the build tools
+differ from the release's. Build again without them afterwards (`pnpm --dir
+web build`), as a binary built from `web/dist` must not contain source maps.
+
 ## Security issues
 
 Please do **not** open public issues for vulnerabilities — see

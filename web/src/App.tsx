@@ -2,6 +2,7 @@ import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { RefreshCwIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CrashDetails } from '@/components/CrashDetails'
 import { ReportDialogMount } from '@/components/diagnostics/ReportDialogMount'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Logo } from '@/components/Logo'
@@ -110,14 +111,16 @@ function FullScreenMessage({
   body,
   action,
   onAction,
+  children,
 }: {
   title: string
   body: string
   action: string
   onAction: () => void
+  children?: React.ReactNode
 }) {
   return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-4 p-8 text-center" role="alert">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 p-8 text-center" role="alert">
       <Logo className="size-10" />
       <h1 className="font-display text-2xl font-semibold">{title}</h1>
       <p className="max-w-md text-sm text-muted-foreground">{body}</p>
@@ -125,19 +128,20 @@ function FullScreenMessage({
         <RefreshCwIcon aria-hidden />
         {action}
       </Button>
+      {children}
     </div>
   )
 }
 
-/** Last line of defence (FR-19): never show a blank page. */
-function AppErrorBoundary({ children }: { children: React.ReactNode }) {
+/** Last line of defence (FR-19): never show a blank page, and fold below it what a bug report needs. */
+export function AppErrorBoundary({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation()
   return (
     <ErrorBoundary
       onError={(error) => {
         console.error('unhandled render error', error)
       }}
-      fallback={(_error, reset) => (
+      fallback={(error, reset) => (
         <FullScreenMessage
           title={t('boot.crashTitle')}
           body={t('boot.crashBody')}
@@ -146,7 +150,9 @@ function AppErrorBoundary({ children }: { children: React.ReactNode }) {
             reset()
             window.location.reload()
           }}
-        />
+        >
+          <CrashDetails error={error} />
+        </FullScreenMessage>
       )}
     >
       {children}

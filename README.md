@@ -558,6 +558,12 @@ in a new tab, with Lucid's version and mode and your server product filled
 in, and you attach the file there (if GitHub refuses the `.json` file, rename
 it to `.txt` or paste its content). Issues on GitHub are public, so read the
 file first. Report security problems privately, see [SECURITY.md](SECURITY.md).
+
+If Lucid shows **Something broke** and reloading doesn't help, open **Error
+details** below the button: copy them with **Copy details** and paste them into
+the [bug form](https://github.com/tbckr/lucid/issues/new?template=bug.yml).
+They hold Lucid's version, your browser's time zone, language and user agent,
+and the error; read them first, as an error can name an item of your calendar.
 Lucid keeps the calls and problems in memory only, for as long as your
 session lasts.
 

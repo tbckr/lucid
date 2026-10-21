@@ -5,8 +5,10 @@ import { diagnosticsReport } from '@/test/fixtures'
 import { parseList, type CorruptedItem } from './api/schemas'
 import {
   assembleReport,
+  bugIssueUrl,
   clientContext,
   corruptedForReport,
+  crashDetails,
   type ClientContext,
   type ContextInput,
   ISSUE_TEMPLATE,
@@ -319,5 +321,66 @@ describe('reportFileName', () => {
 
   it('pads every field to its width', () => {
     expect(reportFileName(new Date('2026-01-02T03:04:05.678Z'))).toBe('lucid-report-20260102-030405Z.json')
+  })
+})
+
+describe('crashDetails', () => {
+  const env = {
+    timeZone: 'Europe/Berlin',
+    locale: 'de-DE',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0',
+    origin: 'https://lucid.example.com',
+  }
+
+  function errorWith(name: string, message: string, stack: string | undefined): Error {
+    const error = new Error(message)
+    error.name = name
+    error.stack = stack
+    return error
+  }
+
+  it('names the version and the browser, then the error with its frames, without the host', () => {
+    const error = errorWith(
+      'TypeError',
+      "Cannot read properties of undefined (reading 'rrule')",
+      "TypeError: Cannot read properties of undefined (reading 'rrule')\n" +
+        '    at Xy (https://lucid.example.com/assets/index-abc.js:1:2345)\n' +
+        '    at https://lucid.example.com/assets/vendor-def.js:2:10',
+    )
+    expect(crashDetails({ ...env, error, version: '0.1.0' })).toBe(
+      'Lucid 0.1.0\n' +
+        'Europe/Berlin, de-DE\n' +
+        'Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0\n' +
+        '\n' +
+        "TypeError: Cannot read properties of undefined (reading 'rrule')\n" +
+        '    at Xy (/assets/index-abc.js:1:2345)\n' +
+        '    at /assets/vendor-def.js:2:10',
+    )
+  })
+
+  it('puts the error before frames that do not name it, as Firefox and Safari write them', () => {
+    const error = errorWith('RangeError', 'Invalid time value', 'Xy@https://lucid.example.com/assets/index-abc.js:1:2345\n')
+    expect(crashDetails({ ...env, error, version: '0.1.0' }).split('\n').slice(4)).toEqual([
+      'RangeError: Invalid time value',
+      'Xy@/assets/index-abc.js:1:2345',
+    ])
+  })
+
+  it('says so where the version is unknown, and where the error has no message and no frames', () => {
+    const lines = crashDetails({ ...env, error: errorWith('Error', '', undefined) }).split('\n')
+    expect(lines[0]).toBe('Lucid (version unknown)')
+    expect(lines.slice(4)).toEqual(['Error'])
+  })
+})
+
+describe('bugIssueUrl', () => {
+  it('opens the bug form with the version filled in', () => {
+    expect(bugIssueUrl('0.1.0-rc.1+a')).toBe(
+      'https://github.com/tbckr/lucid/issues/new?template=bug.yml&lucid-version=0.1.0-rc.1%2Ba',
+    )
+  })
+
+  it('leaves the version out where it is unknown', () => {
+    expect(bugIssueUrl(undefined)).toBe('https://github.com/tbckr/lucid/issues/new?template=bug.yml')
   })
 })

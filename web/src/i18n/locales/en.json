@@ -19,7 +19,12 @@
     "unreachableTitle": "Lucid can't be reached",
     "crashTitle": "Something broke",
     "crashBody": "Lucid hit an unexpected error while drawing this page. Reloading usually fixes it; your calendars are safe on your server.",
-    "reload": "Reload Lucid"
+    "reload": "Reload Lucid",
+    "crashDetails": "Error details",
+    "crashHint": "If reloading doesn't help, report the problem with these details. They can name items of your calendar: read them before you post them.",
+    "copyDetails": "Copy details",
+    "copied": "Copied",
+    "copyFailed": "Couldn't copy. Select the text and copy it."
   },
   "login": {
     "title": "Sign in",

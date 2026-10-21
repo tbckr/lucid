@@ -19,7 +19,12 @@
     "unreachableTitle": "Lucid ist nicht erreichbar",
     "crashTitle": "Etwas ist kaputtgegangen",
     "crashBody": "Beim Anzeigen dieser Seite ist ein unerwarteter Fehler aufgetreten. Neu laden hilft meistens; deine Kalender liegen sicher auf deinem Server.",
-    "reload": "Lucid neu laden"
+    "reload": "Lucid neu laden",
+    "crashDetails": "Fehlerdetails",
+    "crashHint": "Hilft Neuladen nicht, melde das Problem mit diesen Details. Sie können Einträge deines Kalenders nennen: lies sie, bevor du sie veröffentlichst.",
+    "copyDetails": "Details kopieren",
+    "copied": "Kopiert",
+    "copyFailed": "Kopieren ging nicht. Markiere den Text und kopiere ihn."
   },
   "login": {
     "title": "Anmelden",

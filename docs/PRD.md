@@ -107,7 +107,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 
 ### **4.6 Frontend Resilience, UX & i18n**
 
-* **FR-19:** **Global Error Boundaries:** App must not crash on rendering errors of a single event. Faulty events displayed as "Corrupted Event" placeholders.
+* **FR-19:** **Global Error Boundaries:** App must not crash on rendering errors of a single event. Faulty events displayed as "Corrupted Event" placeholders; the placeholder of an event or task that failed to render adds it to the problem report (FR-36). An error that breaks the whole page shows a crash screen whose folded error details (Lucid's version, the browser's time zone, locale and user agent, the error and its frames without the host) can be copied into the bug form; nothing is kept or sent.
 * **FR-20:** **Offline Indicator:** Visual feedback when backend connection is lost (React Query networkMode).
 * **FR-21:** **Internationalization (i18n):** The UI must support multiple languages (English as default). Translations stored in JSON files.
 * **FR-22:** **Localization (l10n):** Date and time formats (24h vs AM/PM, Week start Mon vs Sun) must automatically adapt to the browser's navigator.language / locale settings by default, **but must be manually overridable by the user via a settings menu**.

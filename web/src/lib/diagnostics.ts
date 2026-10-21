@@ -159,6 +159,40 @@ export function issueUrl(report: DiagnosticsReport): string {
   return `${REPO_URL}/issues/new?${params.map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&')}`
 }
 
+/** The bug form in `.github/ISSUE_TEMPLATE/`, with Lucid's version filled in where it is known. */
+export function bugIssueUrl(version: string | undefined): string {
+  const params = version === undefined ? '' : `&lucid-version=${encodeURIComponent(version)}`
+  return `${REPO_URL}/issues/new?template=bug.yml${params}`
+}
+
+/**
+ * What the crash screen shows and copies (FR-19): Lucid's version, the browser's zone, locale and user agent, and
+ * the error with its frames, all of it before the user's eyes; nothing is kept or sent. The frames name paths of
+ * Lucid's own host without the host, which is the operator's. Chrome's stack starts with the error, Firefox's and
+ * Safari's with the first frame.
+ */
+export function crashDetails(input: {
+  error: Error
+  version?: string
+  timeZone: string
+  locale: string
+  userAgent: string
+  origin: string
+}): string {
+  const { error } = input
+  const heading = error.message ? `${error.name}: ${error.message}` : error.name
+  const stack = (error.stack ?? '').trimEnd()
+  const frames = stack.startsWith(heading) ? stack.slice(heading.length).replace(/^\n/, '') : stack
+  return [
+    input.version === undefined ? 'Lucid (version unknown)' : `Lucid ${input.version}`,
+    `${input.timeZone}, ${input.locale}`,
+    input.userAgent,
+    '',
+    heading,
+    ...(frames ? [frames.replaceAll(input.origin, '')] : []),
+  ].join('\n')
+}
+
 /** `lucid-report-YYYYMMDD-HHMMSSZ.json`, in UTC whatever the zone of the browser. */
 export function reportFileName(now: Date): string {
   const stamp = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
