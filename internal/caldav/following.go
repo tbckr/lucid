@@ -228,7 +228,7 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	nm.Props.Set(seriesDateProp(n, ical.PropDateTimeStart, start, tm.start.form()))
 	if p := nm.Props.Get(ical.PropDateTimeEnd); p != nil {
 		end := tm.dur.addTo(start)
-		shiftDatePropBy(p, func(dateValue) time.Time { return end })
+		shiftDatePropBy(p, func(dateValue) dateValue { return dateValue{t: end} })
 	}
 	if offRule && !isRecurring(nm) {
 		if !ruleRemoved && showsOverrideAfter(n, nm, rid) {

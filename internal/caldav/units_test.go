@@ -389,8 +389,8 @@ func TestLoadLocation(t *testing.T) {
 func TestShiftDateProp(t *testing.T) {
 	t.Parallel()
 	st := dateValue{t: date(2025, 3, 3, 10, 0)}
-	by := func(d time.Duration) func(dateValue) time.Time {
-		mv, err := wallShift("FREQ=WEEKLY", st, date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0), date(2025, 3, 3, 10, 0).Add(d))
+	by := func(d time.Duration) func(dateValue) dateValue {
+		mv, err := wallShift("FREQ=WEEKLY", st, date(2025, 3, 3, 10, 0), dateValue{t: date(2025, 3, 3, 10, 0)}, dateValue{t: date(2025, 3, 3, 10, 0).Add(d)})
 		mustNoErr(t, err)
 		return mv.shift
 	}
@@ -450,7 +450,7 @@ func TestWallShift(t *testing.T) {
 			t.Parallel()
 			// Shown on Friday 03-27, moved to Saturday 03-28, both 09:00 CET: one
 			// day later, which takes values on 03-28 into summer time.
-			mv, err := wallShift("FREQ=WEEKLY;BYDAY=FR", st, date(2026, 3, 27, 8, 0), date(2026, 3, 27, 8, 0), date(2026, 3, 28, 8, 0))
+			mv, err := wallShift("FREQ=WEEKLY;BYDAY=FR", st, date(2026, 3, 27, 8, 0), dateValue{t: date(2026, 3, 27, 8, 0)}, dateValue{t: date(2026, 3, 28, 8, 0)})
 			mustNoErr(t, err)
 			p := ical.Prop{Value: tt.value, Params: ical.Params{}}
 			if tt.param != "" {
@@ -579,7 +579,7 @@ func TestSeriesMoveLost(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mv := &seriesMove{loc: time.UTC, date: tt.mv, day: 15}
-			if got := mv.shift(dateValue{t: tt.value}); !got.Equal(tt.want) || mv.lost != tt.lost {
+			if got := mv.shift(dateValue{t: tt.value}).t; !got.Equal(tt.want) || mv.lost != tt.lost {
 				t.Errorf("shift(%s) = %s, lost %v; want %s, %v", tt.value, got, mv.lost, tt.want, tt.lost)
 			}
 		})
@@ -666,7 +666,8 @@ func TestToggledStart(t *testing.T) {
 				rid = tt.from
 			}
 			in := domain.EventInput{Start: tt.start, AllDay: !tt.st.allDay}
-			got, err := toggledStart(tt.rule, tt.st, rid, tt.from, in, tt.tz)
+			at, err := toggledStart(tt.rule, tt.st, rid, dateValue{t: tt.from}, in, tt.tz)
+			got := at.t
 			if !got.Equal(tt.want) || got.Location().String() != tt.want.Location().String() ||
 				!errors.Is(err, tt.err) || (err == nil) != (tt.err == nil) {
 				t.Errorf("toggledStart = %s, %v; want %s, %v", got, err, tt.want, tt.err)

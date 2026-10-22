@@ -721,7 +721,7 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 		dropExdates(c, func(d dateValue) bool { return stays(d) && notBefore(d, to) })
 	}
 	writeSeriesDates(cal, c, in, true)
-	var shift func(dateValue) time.Time
+	var shift func(dateValue) dateValue
 	if evaluable && !last {
 		shift = s.refShift(rid, to)
 		p.Value = movedRule(rule, before, rid, shift)
@@ -804,7 +804,7 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	}
 	to := prev.In(loc)
 	if shift != nil {
-		to = shift(dateValue{t: to, allDay: s.anchor.allDay})
+		to = shift(dateValue{t: to, allDay: s.anchor.allDay}).t
 	}
 	// The master's new DTSTART, as written: to, or, retyped, in's start
 	// (else due) on to's date.
@@ -1126,7 +1126,7 @@ func (s *todoSeries) lastBefore(t time.Time) (prev time.Time, before int, err er
 // refShift returns how moving the occurrence rid to to, the new anchor as
 // written, moves the references to later occurrences, see shiftBetween
 // (FR-17).
-func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) time.Time {
+func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) dateValue {
 	return s.shiftBetween(dateValue{t: rid.In(s.anchor.loc()), allDay: s.anchor.allDay}, to)
 }
 
@@ -1143,7 +1143,7 @@ func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) time.
 // from from's date to to's, each in its own zone: the series' for a time of
 // the series. They keep their value type, which retypeRefs changes
 // afterwards, setting the time of day.
-func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) time.Time {
+func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue {
 	loc := s.anchor.loc()
 	start, dest := from.t.In(from.loc()), to.t.In(to.loc())
 	var months, days, secs int
@@ -1160,13 +1160,13 @@ func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) time.Time 
 	if months == 0 && days == 0 && secs == 0 {
 		return nil
 	}
-	return func(d dateValue) time.Time {
+	return func(d dateValue) dateValue {
 		if d.allDay {
-			return d.t.AddDate(0, months, days)
+			return dateValue{t: d.t.AddDate(0, months, days)}
 		}
 		w := d.t.In(loc)
-		return time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
-			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)
+		return dateValue{t: time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
+			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)}
 	}
 }
 
@@ -1186,16 +1186,16 @@ func secondOfDay(t time.Time) int {
 // lowerCount); its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
 // on rid itself makes the moved occurrence the last one, and it stays the
 // last wherever it moves.
-func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) time.Time) string {
+func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) dateValue) string {
 	rrule = lowerCount(rrule, before)
 	if shift == nil {
 		return rrule
 	}
 	return mapRulePart(rrule, "UNTIL", func(v string) string {
 		p := ical.Prop{Value: v}
-		shiftDatePropBy(&p, func(d dateValue) time.Time {
+		shiftDatePropBy(&p, func(d dateValue) dateValue {
 			if d.t.Before(rid) {
-				return d.t
+				return d
 			}
 			return shift(d)
 		})
@@ -1241,11 +1241,11 @@ func untilBefore(rrule string, to time.Time, loc *time.Location) bool {
 func untilAt(rrule string, to time.Time, loc *time.Location) string {
 	return mapRulePart(rrule, "UNTIL", func(v string) string {
 		p := ical.Prop{Value: v}
-		shiftDatePropBy(&p, func(d dateValue) time.Time {
+		shiftDatePropBy(&p, func(d dateValue) dateValue {
 			if d.allDay {
-				return civilDate(to.In(loc))
+				return dateValue{t: civilDate(to.In(loc))}
 			}
-			return to
+			return dateValue{t: to}
 		})
 		return p.Value
 	})
@@ -1270,7 +1270,7 @@ func mapRulePart(rrule, key string, f func(string) string) string {
 // shiftRefs moves the references of the master of s in cal that moves
 // reports, placed by placeRef, by shift (FR-17): the RECURRENCE-ID, DTSTART
 // and DUE of their overrides, by their RECURRENCE-ID, and EXDATE values.
-func (s *todoSeries) shiftRefs(cal *ical.Calendar, moves func(dateValue) bool, shift func(dateValue) time.Time) {
+func (s *todoSeries) shiftRefs(cal *ical.Calendar, moves func(dateValue) bool, shift func(dateValue) dateValue) {
 	master := s.master
 	for _, o := range cal.Children {
 		if o == master || o.Name != master.Name {
@@ -1288,9 +1288,9 @@ func (s *todoSeries) shiftRefs(cal *ical.Calendar, moves func(dateValue) bool, s
 	}
 	vals := master.Props[ical.PropExceptionDates]
 	for i := range vals {
-		shiftDatePropBy(&vals[i], func(d dateValue) time.Time {
+		shiftDatePropBy(&vals[i], func(d dateValue) dateValue {
 			if !moves(d) {
-				return d.t
+				return d
 			}
 			return shift(d)
 		})
@@ -1552,6 +1552,13 @@ func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.T
 // seriesDateProp returns the date property name at t in the form f, see
 // setSeriesDate, which also says when it adds a VTIMEZONE to cal (FR-17).
 func seriesDateProp(cal *ical.Calendar, name string, t time.Time, f dateForm) *ical.Prop {
+	return seriesValueProp(cal, name, dateValue{t: t}, f)
+}
+
+// seriesValueProp is seriesDateProp for the value d: a local DATE-TIME takes
+// d's wall clock in the zone it is written in, which can be one the zone
+// skips (see wallIn, #8).
+func seriesValueProp(cal *ical.Calendar, name string, d dateValue, f dateForm) *ical.Prop {
 	tzid := cmp.Or(f.param, f.tzid)
 	var loc *time.Location
 	if tzid != "" {
@@ -1559,11 +1566,11 @@ func seriesDateProp(cal *ical.Calendar, name string, t time.Time, f dateForm) *i
 	}
 	switch {
 	case f.allDay:
-		return newDateProp(name, t, true, nil)
+		return newDateProp(name, d.t, true, nil)
 	case f.param != "" || (loc != nil && loc != time.UTC):
-		wall := t.UTC()
+		wall := d.wallIn(time.UTC)
 		if loc != nil {
-			wall = t.In(loc)
+			wall = d.wallIn(loc)
 		}
 		p := ical.NewProp(name)
 		p.Params.Set(ical.ParamTimezoneID, tzid)
@@ -1574,10 +1581,10 @@ func seriesDateProp(cal *ical.Calendar, name string, t time.Time, f dateForm) *i
 		return p
 	case f.floating:
 		p := ical.NewProp(name)
-		p.Value = t.UTC().Truncate(time.Second).Format(icalDateTime)
+		p.Value = d.wallIn(time.UTC).Truncate(time.Second).Format(icalDateTime)
 		return p
 	default:
-		return newDateProp(name, t, false, nil)
+		return newDateProp(name, d.t, false, nil)
 	}
 }
 

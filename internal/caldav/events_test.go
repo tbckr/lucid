@@ -2387,6 +2387,133 @@ func TestUpdateSeriesMadeTimedAcrossDSTChange(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesMovedIntoSkippedTime is issue #8's first case: "All
+// events" an hour later from the 03-30 event of a daily Berlin series at
+// 01:30 whose DTSTART is the night of the change to summer time puts DTSTART
+// at 02:30, the time Berlin skips that night, as written, and the series
+// keeps 02:30 on every other day. Written from its instant, 03:30, it moved
+// every event to 03:30 (FR-17, FR-18).
+func TestUpdateSeriesMovedIntoSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Night",
+		"DTSTART;TZID=Europe/Berlin:20260329T013000", "DURATION:PT30M", "RRULE:FREQ=DAILY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 29, 23, 0), date(2026, 3, 30, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-03-30; want 1", len(evs))
+	}
+
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Night", "", date(2026, 3, 30, 0, 30), date(2026, 3, 30, 1, 0)))
+	mustNoErr(t, err)
+
+	edited := occ{title: "Night", start: date(2026, 3, 30, 0, 30), end: date(2026, 3, 30, 1, 0), rid: ptr(date(2026, 3, 30, 0, 30))}
+	checkOccurrences(t, []domain.Event{up}, []occ{edited})
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{"DTSTART;TZID=Europe/Berlin:20260329T023000"}, []string{"T033000"})
+	// 03:30 CEST on the night of the change, 02:30 after it.
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 28, 0, 0), date(2026, 4, 1, 0, 0)), []occ{
+		{title: "Night", start: date(2026, 3, 29, 1, 30), end: date(2026, 3, 29, 2, 0), rid: ptr(date(2026, 3, 29, 1, 30))},
+		edited,
+		{title: "Night", start: date(2026, 3, 31, 0, 30), end: date(2026, 3, 31, 1, 0), rid: ptr(date(2026, 3, 31, 0, 30))},
+	})
+}
+
+// TestUpdateSeriesMadeTimedAtSkippedTime is issue #8's second case: a
+// weekly all-day series from the night of the change to summer time, made
+// timed at 02:30 Berlin time from its 04-05 event, gets DTSTART at 02:30,
+// the time Berlin skips that night, as written (FR-17, FR-18).
+func TestUpdateSeriesMadeTimedAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Gym",
+		"DTSTART;VALUE=DATE:20260329", "DTEND;VALUE=DATE:20260330", "RRULE:FREQ=WEEKLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 4, 5, 0, 0), date(2026, 4, 6, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-04-05; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Gym", "", date(2026, 4, 5, 0, 30), date(2026, 4, 5, 1, 30))
+	in.Timezone = "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{"DTSTART;TZID=Europe/Berlin:20260329T023000"}, []string{"T033000"})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 28, 0, 0), date(2026, 4, 13, 0, 0)), []occ{
+		{title: "Gym", start: date(2026, 3, 29, 1, 30), end: date(2026, 3, 29, 2, 30), rid: ptr(date(2026, 3, 29, 1, 30))},
+		{title: "Gym", start: date(2026, 4, 5, 0, 30), end: date(2026, 4, 5, 1, 30), rid: ptr(date(2026, 4, 5, 0, 30))},
+		{title: "Gym", start: date(2026, 4, 12, 0, 30), end: date(2026, 4, 12, 1, 30), rid: ptr(date(2026, 4, 12, 0, 30))},
+	})
+}
+
+// TestUpdateSeriesNewRuleIntoSkippedTime is issue #8's third case: a weekly
+// New York series from Saturday 2026-03-28 at 20:30, 02:30 in Berlin, whose
+// repeat is changed in Berlin from its December event at 02:30, goes to
+// Berlin by date (#5) with DTSTART at 02:30 on 03-29, the time Berlin skips
+// that night, as written; the edited event stays at 02:30 (FR-17, FR-18).
+func TestUpdateSeriesNewRuleIntoSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Call",
+		"DTSTART;TZID=America/New_York:20260328T203000", "DTEND;TZID=America/New_York:20260328T213000",
+		"RRULE:FREQ=WEEKLY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 12, 6, 0, 0), date(2026, 12, 7, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-12-06; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Call", "", date(2026, 12, 6, 1, 30), date(2026, 12, 6, 2, 30))
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2", "Europe/Berlin"
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	edited := occ{title: "Call", start: date(2026, 12, 6, 1, 30), end: date(2026, 12, 6, 2, 30), rid: ptr(date(2026, 12, 6, 1, 30))}
+	checkOccurrences(t, []domain.Event{up}, []occ{edited})
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{"DTSTART;TZID=Europe/Berlin:20260329T023000"}, []string{"T033000"})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 12, 1, 0, 0), date(2026, 12, 8, 0, 0)), []occ{edited})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 28, 0, 0), date(2026, 4, 1, 0, 0)), []occ{
+		{title: "Call", start: date(2026, 3, 29, 1, 30), end: date(2026, 3, 29, 2, 30), rid: ptr(date(2026, 3, 29, 1, 30))},
+	})
+}
+
+// TestUpdateSeriesNewRuleCarriesSkippedExdate is issue #8's carried
+// reference: the EXDATE of a daily New York series at 02:30 on the night New
+// York skips that time goes to Berlin with the series by its wall clock as
+// written, 02:30, to 08:30, where the new series' event of that day is, so
+// the deleted event stays deleted. Carried from its instant, it went to 07:30
+// (FR-17, FR-18).
+func TestUpdateSeriesNewRuleCarriesSkippedExdate(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Pill",
+		"DTSTART;TZID=America/New_York:20260301T023000", "DURATION:PT1H", "RRULE:FREQ=DAILY",
+		"EXDATE;TZID=America/New_York:20260308T023000",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 12, 1, 0, 0), date(2026, 12, 2, 0, 0))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events on 2026-12-01; want 1", len(evs))
+	}
+
+	in := seriesUpdate(evs[0], "Pill", "", date(2026, 12, 1, 7, 30), date(2026, 12, 1, 8, 30))
+	in.RRule, in.Timezone = "FREQ=DAILY;INTERVAL=1", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"),
+		[]string{"DTSTART;TZID=Europe/Berlin:20260301T083000", "EXDATE;TZID=Europe/Berlin:20260308T083000"},
+		[]string{"EXDATE;TZID=Europe/Berlin:20260308T073000", "EXDATE;TZID=Europe/Berlin:20260308T093000"})
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 7, 0, 0), date(2026, 3, 10, 0, 0)), []occ{
+		{title: "Pill", start: date(2026, 3, 7, 7, 30), end: date(2026, 3, 7, 8, 30), rid: ptr(date(2026, 3, 7, 7, 30))},
+		{title: "Pill", start: date(2026, 3, 9, 7, 30), end: date(2026, 3, 9, 8, 30), rid: ptr(date(2026, 3, 9, 7, 30))},
+	})
+}
+
 func TestUpdateAndDeleteErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

@@ -656,14 +656,17 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
 		ov, shown := shownOccurrence(cal, master, oldTm, rid)
-		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start.t, in.Start)
+		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start, dateValue{t: in.Start})
 		if err != nil {
 			return nil, nil, err
 		}
+		// DTSTART moves on its wall clock as written, which can be one its
+		// zone skips (#8), in the series' zone whatever its form.
+		at := dateValue{t: oldTm.start.t, wall: oldTm.start.wall}
 		if in.AllDay == oldTm.start.allDay {
-			start = mv.shift(dateValue{t: oldTm.start.t})
+			at = mv.shift(at)
 		} else {
-			start, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start.t, in, tz)
+			at, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start, in, tz)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -674,12 +677,12 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		}
 		if loc := seriesZone(tz); !in.AllDay && !oldTm.start.allDay && !writtenIn(oldTm.start.form(), loc) {
 			zm := newZoneMove(oldTm.start.loc(), loc, rid, shown.start.t, in.Start)
-			start = zm.at(start)
+			at = zm.at(at)
 			rezoneRecurrenceRefs(cal, master, zm)
 		}
-		end = start.Add(in.End.Sub(in.Start))
+		end = at.t.Add(in.End.Sub(in.Start))
 		instance = &in.Start
-		applyEventSchedule(cal, master, in, rr, start, end, tz)
+		applyEventSchedule(cal, master, in, rr, at, end, tz)
 		if applyChangedEventFields(master, ov, in) {
 			bumpChangeProps(ov, now)
 		}
@@ -738,15 +741,17 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
 	oldRule := rruleString(master)
-	mv, err := wallShift(oldRule, tm.start, rid, shown.start.t, in.Start)
+	mv, err := wallShift(oldRule, tm.start, rid, shown.start, dateValue{t: in.Start})
 	if err != nil {
 		return time.Time{}, err
 	}
 	dur := in.End.Sub(in.Start)
 	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
 
-	newStart := mv.shift(tm.start) // in the series' zone, as seriesShift wants
-	rule, ok := seriesShift(oldRule, tm.start.t, newStart)
+	// In the series' zone, on its wall clock as written, which can be one
+	// the zone skips (#8), as seriesShift wants.
+	newStart := mv.shift(tm.start)
+	rule, ok := seriesShift(oldRule, tm.start.wallIn(mv.loc), newStart.wallIn(mv.loc))
 	if !ok {
 		return time.Time{}, errMoveFixedDays
 	}
@@ -767,15 +772,15 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 	}
 
 	f := tm.start.form()
-	master.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, newStart, f))
+	master.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, newStart, f))
 	if durChanged {
 		master.Props.Del(ical.PropDuration)
-		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.Add(dur), f))
+		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.t.Add(dur), f))
 	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
 		// DTEND moves as DTSTART did, so the series keeps its duration, also
 		// where a move by months puts the two in months of other lengths.
 		// Without a rule the move counts days, which cannot fail.
-		asStart, _ := wallShift("", tm.start, tm.start.t, tm.start.t, newStart)
+		asStart, _ := wallShift("", tm.start, tm.start.t, tm.start, newStart)
 		shiftDatePropBy(p, asStart.shift)
 	}
 
@@ -787,7 +792,7 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		ov.Props.Del(ical.PropDuration)
 		bumpChangeProps(ov, now)
 	}
-	return mv.shift(dateValue{t: rid, allDay: tm.start.allDay}), nil
+	return mv.shift(dateValue{t: rid, allDay: tm.start.allDay}).t, nil
 }
 
 // applyChangedEventFields writes the title, description and location of in
@@ -836,15 +841,16 @@ var (
 // shown start, both measured in the series' zone. The series repeats on that
 // wall clock, so a move by the absolute time in between would put EXDATEs,
 // RECURRENCE-IDs and DTSTART itself an hour off across a daylight-saving
-// change. It fails where dateShift does.
-func wallShift(rule string, st dateValue, rid, from, to time.Time) (*seriesMove, error) {
+// change. Each value is read on the wall clock it is written with, which can
+// be one its zone skips (#8). It fails where dateShift does.
+func wallShift(rule string, st dateValue, rid time.Time, from, to dateValue) (*seriesMove, error) {
 	loc := st.loc()
-	f, t := from.In(loc), to.In(loc)
-	change, err := dateShift(rule, st.t.In(loc), rid.In(loc), f, t)
+	f, t := from.wallIn(loc), to.wallIn(loc)
+	change, err := dateShift(rule, st.wallIn(loc), wallClock(rid, loc), f, t)
 	if err != nil {
 		return nil, err
 	}
-	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.t.In(loc).Day()}, nil
+	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.wallIn(loc).Day()}, nil
 }
 
 // seriesMove is how "all events" moves the values of a series, see
@@ -862,18 +868,19 @@ type seriesMove struct {
 // shift returns the value d moved, and sets lost where its date leaves the
 // month the move counts it into (see at, FR-17). A DATE moves by the change
 // of date only. A UTC or TZID value names an instant, which moves with the
-// series' wall clock and is then written in its own form again; a floating
-// value, or one with a TZID Lucid cannot resolve, moves on its own wall
-// clock.
-func (mv *seriesMove) shift(d dateValue) time.Time {
+// series' wall clock, from the one it is written with where that is the
+// series' zone, which can be one the zone skips (#8), and is then written in
+// its own form again; a floating value, or one with a TZID Lucid cannot
+// resolve, moves on its own wall clock.
+func (mv *seriesMove) shift(d dateValue) dateValue {
 	if d.allDay {
-		return mv.at(d.t, 0)
+		return mv.at(d.t, 0, time.UTC)
 	}
 	zone := mv.loc
 	if d.floating || d.tzid == "" && d.param != "" {
 		zone = d.t.Location() // its wall clock, read as UTC
 	}
-	return mv.at(d.t.In(zone), mv.secs)
+	return mv.at(d.wallIn(zone), mv.secs, zone)
 }
 
 // at returns w moved by the change of date and then by secs seconds on its
@@ -883,13 +890,14 @@ func (mv *seriesMove) shift(d dateValue) time.Time {
 // put the value elsewhere than the events. A value on another day, such as
 // an UNTIL at the end of a month or an RDATE on the 31st, that a move of
 // days alone carries into the next month moves exactly as by calendar
-// days, which keeps it with the events.
-func (mv *seriesMove) at(w time.Time, secs int) time.Time {
+// days, which keeps it with the events. w is a wall clock, read as UTC, in
+// loc, and so is the result, also one loc skips (see atWall, #8).
+func (mv *seriesMove) at(w time.Time, secs int, loc *time.Location) dateValue {
 	y, m, d, ok := mv.date.date(w)
 	if !ok && (mv.date.months != 0 || w.Day() == mv.day) {
 		mv.lost = true
 	}
-	return time.Date(y, m, d, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), w.Location())
+	return atWall(time.Date(y, m, d, w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), time.UTC), loc)
 }
 
 // eventsChecked is how many events of a series shiftEvents moves (FR-17).
@@ -987,27 +995,29 @@ func dateShift(rule string, start, rid, from, to time.Time) (dateMove, error) {
 //     request's zone tz, at in.Start's clock time there, so the series shows
 //     the time entered on both sides of a daylight-saving change.
 //
-// It fails where dateShift does, and where DTSTART's date would land on a
-// day its month lacks (errMoveOffMonth).
-func toggledStart(rule string, st dateValue, rid, from time.Time, in domain.EventInput, tz string) (time.Time, error) {
+// The timed DTSTART is that wall clock, also one the zone skips, as written
+// (#8). It fails where dateShift does, and where DTSTART's date would land on
+// a day its month lacks (errMoveOffMonth).
+func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in domain.EventInput, tz string) (dateValue, error) {
 	loc := st.loc() // the series' zone, UTC for an all-day series
 	to := in.Start.UTC()
 	if !in.AllDay {
 		to = in.Start.In(seriesZone(tz))
 	}
-	start := st.t.In(loc)
-	change, err := dateShift(rule, start, rid.In(loc), from.In(loc), to)
+	start := st.wallIn(loc)
+	change, err := dateShift(rule, start, wallClock(rid, loc), from.wallIn(loc), to)
 	if err != nil {
-		return time.Time{}, err
+		return dateValue{}, err
 	}
 	y, m, d, ok := change.date(start)
 	if !ok {
-		return time.Time{}, errMoveOffMonth
+		return dateValue{}, errMoveOffMonth
 	}
 	if in.AllDay {
-		return time.Date(y, m, d, 0, 0, 0, 0, time.UTC), nil
+		day := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+		return dateValue{t: day, wall: day, allDay: true}, nil
 	}
-	return time.Date(y, m, d, to.Hour(), to.Minute(), to.Second(), 0, to.Location()), nil
+	return atWall(time.Date(y, m, d, to.Hour(), to.Minute(), to.Second(), 0, time.UTC), to.Location()), nil
 }
 
 // seriesZone returns the zone applyEventSchedule writes a timed series in
@@ -1062,11 +1072,12 @@ func newZoneMove(from, to *time.Location, rid, shown, entered time.Time) zoneMov
 	return zoneMove{from: from, to: to, secs: apart(rid) + apart(entered) - apart(shown)}
 }
 
-// at returns the instant t, read on z.from's wall clock, carried into z.to
-// (see zoneMove).
-func (z zoneMove) at(t time.Time) time.Time {
-	w := t.In(z.from)
-	return time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second()+z.secs, w.Nanosecond(), z.to)
+// at returns the value d, read on z.from's wall clock, carried into z.to
+// (see zoneMove): from the wall clock it is written with where that is
+// z.from's, which can be one z.from skips, to one z.to may skip (#8).
+func (z zoneMove) at(d dateValue) dateValue {
+	w := d.wallIn(z.from)
+	return atWall(time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second()+z.secs, w.Nanosecond(), time.UTC), z.to)
 }
 
 // rezoneRecurrenceRefs carries the DATE-TIME values of EXDATE, RDATE and
@@ -1107,11 +1118,11 @@ func rezoneDateProp(p *ical.Prop, zm zoneMove) {
 		if err != nil || d.allDay {
 			return
 		}
-		t := zm.at(d.t)
+		t := zm.at(d)
 		if zm.to == time.UTC {
-			parts[i] = t.UTC().Format(icalDateTimeUTC)
+			parts[i] = t.t.UTC().Format(icalDateTimeUTC)
 		} else {
-			parts[i] = t.Format(icalDateTime)
+			parts[i] = t.wallIn(zm.to).Format(icalDateTime)
 		}
 	}
 	if zm.to == time.UTC {
@@ -1166,13 +1177,14 @@ func applyEventFields(cal *ical.Calendar, c *ical.Component, in domain.EventInpu
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, in.Description)
 	setText(c.Props, ical.PropLocation, in.Location)
-	applyEventSchedule(cal, c, in, rr, start, end, tz)
+	applyEventSchedule(cal, c, in, rr, dateValue{t: start}, end, tz)
 }
 
 // applyEventSchedule writes the rule rr (unless empty) and the dates of
 // applyEventFields into c, and leaves its title, description and location
-// alone (FR-17).
-func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start, end time.Time, tz string) {
+// alone (FR-17). A timed DTSTART in a zone is written with start's wall
+// clock there, which can be one the zone skips (#8).
+func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start dateValue, end time.Time, tz string) {
 	if rr != "" {
 		p := ical.NewProp(ical.PropRecurrenceRule)
 		p.Value = rr
@@ -1187,7 +1199,7 @@ func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventIn
 	}
 	c.Props.Del(ical.PropDuration)
 	if in.AllDay {
-		sd, ed := dateOnly(start), dateOnly(end)
+		sd, ed := dateOnly(start.t), dateOnly(end)
 		if !end.UTC().Equal(ed) {
 			ed = ed.AddDate(0, 0, 1) // round a partial last day up
 		}
@@ -1198,10 +1210,14 @@ func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventIn
 		c.Props.Set(newDateProp(ical.PropDateTimeEnd, ed, true, nil))
 		return
 	}
-	c.Props.Set(newDateProp(ical.PropDateTimeStart, start, false, loc))
+	dtstart := newDateProp(ical.PropDateTimeStart, start.t, false, loc)
+	if loc != nil && loc != time.UTC {
+		dtstart.Value = start.wallIn(loc).Truncate(time.Second).Format(icalDateTime)
+	}
+	c.Props.Set(dtstart)
 	c.Props.Set(newDateProp(ical.PropDateTimeEnd, end, false, loc))
 	if loc != nil && loc != time.UTC {
-		ensureVTimezone(cal, loc, start.In(loc).Year())
+		ensureVTimezone(cal, loc, start.wallIn(loc).Year())
 	}
 }
 
@@ -1218,7 +1234,7 @@ func removeRecurrence(cal *ical.Calendar, master *ical.Component) {
 // shiftRecurrenceRefs moves EXDATE, RDATE and RECURRENCE-ID values by shift
 // (see wallShift) so that exceptions and overrides stay attached to the
 // shifted series (FR-17).
-func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, shift func(dateValue) time.Time) {
+func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, shift func(dateValue) dateValue) {
 	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
 		vals := master.Props[name]
 		for i := range vals {
@@ -1237,8 +1253,9 @@ func shiftRecurrenceRefs(cal *ical.Calendar, master *ical.Component, shift func(
 }
 
 // shiftDatePropBy replaces each DATE or DATE-TIME value of p by shift's
-// result, written in the value's own form (FR-17).
-func shiftDatePropBy(p *ical.Prop, shift func(dateValue) time.Time) {
+// result, written in the value's own form (FR-17): a local one with the
+// result's wall clock in its zone, which can be one the zone skips (#8).
+func shiftDatePropBy(p *ical.Prop, shift func(dateValue) dateValue) {
 	parts := strings.Split(p.Value, ",")
 	for i, v := range parts {
 		if strings.Contains(v, "/") {
@@ -1248,17 +1265,18 @@ func shiftDatePropBy(p *ical.Prop, shift func(dateValue) time.Time) {
 		if err != nil {
 			continue
 		}
-		t := shift(d)
-		if t.Equal(d.t) {
+		r := shift(d)
+		loc := d.t.Location()
+		if r.t.Equal(d.t) && r.wallIn(loc).Equal(d.wallIn(loc)) {
 			continue // kept verbatim
 		}
 		switch {
 		case d.allDay:
-			parts[i] = t.UTC().Format(icalDate)
+			parts[i] = r.t.UTC().Format(icalDate)
 		case strings.HasSuffix(strings.TrimSpace(v), "Z"):
-			parts[i] = t.UTC().Format(icalDateTimeUTC)
+			parts[i] = r.t.UTC().Format(icalDateTimeUTC)
 		default:
-			parts[i] = t.In(d.t.Location()).Format(icalDateTime)
+			parts[i] = r.wallIn(loc).Format(icalDateTime)
 		}
 	}
 	p.Value = strings.Join(parts, ",")
