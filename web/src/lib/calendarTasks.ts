@@ -1,7 +1,7 @@
 import { addDays, addMinutes, differenceInCalendarDays, startOfDay } from 'date-fns'
 import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
-import { localDateToUtc, utcDateToLocal } from './dates'
+import { localDateToUtc, movedAs, utcDateToLocal } from './dates'
 import { type FormatPrefs } from './format'
 import { describeSeriesRule } from './rrule'
 import { taskRuleClock } from './seriesShift'
@@ -70,16 +70,36 @@ function anchorDate(d: TaskDates): TaskDate | null {
 }
 
 /**
+ * Where the rule of a task series places its repeat `repeat` on the browser's
+ * wall clock once it moves to the dates `to`, by default where it is shown
+ * (FR-17): at its RECURRENCE-ID, not where an override moved it, moved as far
+ * as `to` lies from the shown dates, each anchored on its start, else its
+ * due, as a save that keeps the rule moves the series; by dates where either
+ * is a date, an all-day repeat's read as a date. What a rule leaves to the
+ * series' start is filled in from there (`describeRRule`). `null` where
+ * either has no dates.
+ */
+export function taskRuleStart(repeat: Pick<TaskRepeat, 'recurrenceId' | 'shown'>, to: TaskDates = repeat.shown): Date | null {
+  const from = anchorDate(repeat.shown)
+  const at = anchorDate(to)
+  if (!from || !at) return null
+  const rid = from.allDay ? utcDateToLocal(repeat.recurrenceId) : new Date(repeat.recurrenceId)
+  return movedAs(at.at, from.at, rid, from.allDay || at.allDay)
+}
+
+/**
  * The rule a `RecurringMark` names, in words (FR-17): anchored on the series'
- * own dates, else `fallback` (a placed occurrence's, when the series itself
- * has none), on the browser's wall clock in `timeZone` where the series
- * recurs on another (`describeSeriesRule`, FR-18). A series of dates without
- * a rule says so; a rule without any anchor at all, which only another app
- * writes, is named as one from it.
+ * current repeat at its place in the rule (`taskRuleStart`), else on the
+ * series' own dates, else `fallback` (a placed occurrence's, when the series
+ * itself has none), on the browser's wall clock in `timeZone` where the
+ * series recurs on another (`describeSeriesRule`, FR-18). A series of dates
+ * without a rule says so; a rule without any anchor at all, which only
+ * another app writes, is named as one from it.
  */
 export function recurringLabel(t: TFunction, todo: Todo, fallback: Date | null, prefs: FormatPrefs, now: Date, timeZone: string): string {
   if (!todo.rrule.trim()) return todo.recurring ? t('recurrence.dates') : t('recurrence.none')
-  const anchor = anchorOf(todo) ?? fallback
+  const current = currentRepeat(todo)
+  const anchor = (current ? taskRuleStart(current) : anchorOf(todo)) ?? fallback
   if (!anchor) return t('recurrence.foreign')
   return describeSeriesRule(todo.rrule, anchor, taskRuleClock(todo), timeZone, prefs, now, t)
 }

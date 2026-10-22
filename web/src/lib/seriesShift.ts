@@ -1,7 +1,7 @@
 import { formatInTimeZone } from 'date-fns-tz'
 import { type Todo } from './api/schemas'
 import { type TaskDates, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
-import { utcToZoned } from './dates'
+import { movedAs, utcDateToLocal, utcToZoned } from './dates'
 import { type CalEvent } from './events'
 
 /**
@@ -340,6 +340,26 @@ export function ruleInZone(rule: string, at: Date, from: string, to: string): st
 export function eventRuleClock(event: Pick<CalEvent, 'allDay' | 'timezone' | 'startsAt' | 'recurrenceId'>): RuleClock | null {
   if (event.allDay) return null
   return readableClock(event.recurrenceId ? new Date(event.recurrenceId) : event.startsAt, event.timezone || 'UTC')
+}
+
+/**
+ * Where the rule of the series of `event` places it on the browser's wall
+ * clock once it starts at `start`, by default where it is shown (FR-17): at
+ * its RECURRENCE-ID, not where an exception moved it, moved as far as
+ * `start` lies from the shown start, as a save moves the series; by dates
+ * where either is all-day, an all-day event's read as a date. What a rule
+ * leaves to the series' start, the weekday of `FREQ=WEEKLY` or the day of
+ * `FREQ=MONTHLY`, is filled in from there (`describeRRule`). A single event
+ * is at `start`.
+ */
+export function eventRuleStart(
+  event: Pick<CalEvent, 'allDay' | 'startsAt' | 'recurrenceId'>,
+  start: Date = event.startsAt,
+  allDay: boolean = event.allDay,
+): Date {
+  if (!event.recurrenceId) return start
+  const rid = event.allDay ? utcDateToLocal(event.recurrenceId) : new Date(event.recurrenceId)
+  return movedAs(start, event.startsAt, rid, allDay || event.allDay)
 }
 
 /**

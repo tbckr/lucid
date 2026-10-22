@@ -225,6 +225,62 @@ describe('EventEditor', () => {
     expect(body.rrule).toMatch(/^FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR(;|$)/)
   })
 
+  // A weekly series on Tuesdays at 10:00 whose event of 10 November is moved to Monday, 9 November (FR-17).
+  it("names the repeat of an exception moved off the series' days after the series", async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({
+        recurring: true,
+        modified: true,
+        rrule: 'FREQ=WEEKLY',
+        start: '2026-11-09T09:00:00Z',
+        end: '2026-11-09T10:00:00Z',
+        recurrenceId: '2026-11-10T09:00:00Z',
+      }),
+    )
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+    expect(select).toHaveTextContent('Every week on Tuesday')
+
+    await user.click(select)
+    expect(screen.getByRole('option', { name: 'Every month on day 10' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(repeat).getByRole('button', { name: 'Monday' })).toHaveAttribute('aria-pressed', 'false')
+    const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+    await user.clear(interval)
+    await user.type(interval, '2')
+    await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+    expect(select).toHaveTextContent('Every 2 weeks on Tuesday')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All events' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'PUT')!
+    expect(bodyOf(init).rrule).toMatch(/^FREQ=WEEKLY;INTERVAL=2;BYDAY=TU(;|$)/)
+  })
+
+  it("moves the series' days with the exception's new date", async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({
+        recurring: true,
+        modified: true,
+        rrule: 'FREQ=WEEKLY',
+        start: '2026-11-09T09:00:00Z',
+        end: '2026-11-09T10:00:00Z',
+        recurrenceId: '2026-11-10T09:00:00Z',
+      }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    await user.click(within(dialog).getByRole('button', { name: /^Start Mon, Nov 9/ }))
+    await user.click(screen.getByRole('button', { name: 'Tuesday, November 10th, 2026' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Wednesday')
+  })
+
   it("offers no custom repeat for a rule that doesn't read the same here", async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor({ mode: 'edit', event: newYork('FREQ=MONTHLY;BYMONTHDAY=10') })

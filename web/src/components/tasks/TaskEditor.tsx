@@ -50,11 +50,11 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
-import { allRepeatsDates, currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
+import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskRepeat } from '@/lib/calendarTasks'
 import { dayAt, parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
-import { RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
+import { buildRRule, RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
 import {
   scopeOptions,
   taskGlyphSlots,
@@ -216,7 +216,8 @@ export function TaskEditor({
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
   // Overdue as the task list will show it once saved (FR-14).
-  const overdue = isOverdue(formToTodoInput({ ...getValues(), completed, dueDate, dueTime }, tz), now)
+  const entered = formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz)
+  const overdue = isOverdue(entered, now)
   const setOpts = { shouldDirty: true, shouldValidate: formState.isSubmitted }
 
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
@@ -225,6 +226,12 @@ export function TaskEditor({
   const recursOn = todo?.recurring && shownTaskRule(todo, tz) === null ? taskRuleClock(todo) : null
   // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it.
   const anchorDay = startDate ? dayAt(startDate, startTime) : dueDate ? dayAt(dueDate, dueTime) : now
+  // The series' rule as it opened recurs from the repeat's place in the rule instead, as far from there as the
+  // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override
+  // moved it; a changed rule starts over at the dates entered (FR-17), as does one for a series of dates.
+  const keptRule = buildRRule(opened.recurrence, opened.customRule)
+  const keptStart = repeat && keptRule ? taskRuleStart(repeat, entered) : null
+  const kept = keptStart ? { rule: keptRule, start: keptStart } : undefined
 
   useEffect(() => {
     // The footer asks in place: focus its "Cancel", and "Delete task" again once it is back (NFR-27).
@@ -649,6 +656,7 @@ export function TaskEditor({
               presets={ruleUnsupported ? NONE : RECURRENCE_PRESETS}
               customizable={!ruleUnsupported && !readOnly}
               recursOn={recursOn}
+              kept={kept}
               explicit={todo?.recurring ?? false}
               disabled={readOnly}
               invalid={!!repeatError}

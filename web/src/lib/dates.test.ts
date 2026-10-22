@@ -9,6 +9,7 @@ import {
   localDateToUtc,
   minutesOfDay,
   monthGrid,
+  movedAs,
   parseDayKey,
   shiftInterval,
   snapMinutes,
@@ -130,6 +131,27 @@ describe('small helpers', () => {
     expect(at.getHours()).toBe(9)
     expect(at.getMinutes()).toBe(30)
     expect(dayKey(at)).toBe('2026-03-29')
+  })
+})
+
+describe('movedAs', () => {
+  // From Monday 23:30 to Tuesday 09:00: a day on, nine and a half hours back.
+  const from = new Date(2026, 10, 9, 23, 30)
+  const to = new Date(2026, 10, 10, 9)
+
+  it('moves a date as far as another moved, in days and on the clock', () => {
+    expect(movedAs(from, from, to)).toEqual(to)
+    expect(movedAs(new Date(2026, 10, 11, 10), from, to)).toEqual(new Date(2026, 10, 11, 19, 30))
+  })
+
+  it('moves by days only where asked, keeping the time of day', () => {
+    expect(movedAs(new Date(2026, 10, 9), from, to, true)).toEqual(new Date(2026, 10, 10))
+    expect(movedAs(new Date(2026, 10, 9, 8, 15), from, to, true)).toEqual(new Date(2026, 10, 10, 8, 15))
+  })
+
+  // Summer time ends on 25 October: the wall clock moves, not the instant.
+  it('moves on the wall clock across a change of summer time', () => {
+    expect(movedAs(new Date(2026, 9, 24, 10), new Date(2026, 9, 24, 10), new Date(2026, 9, 26, 10))).toEqual(new Date(2026, 9, 26, 10))
   })
 })
 

@@ -35,6 +35,11 @@ export interface RecurrenceDialogProps {
   rule: string
   /** The series' start: an event's, a task's start, else its due date. */
   start: Date
+  /**
+   * Where `rule` recurs from, if not from `start`: the series' own rule, which a task series keeps on its days,
+   * while it starts a changed one over at `start` (FR-17). The editor opens on the days it falls on there.
+   */
+  opensFrom?: Date
   timeZone: string
   /** The rule on Done; the dialog closes after it. */
   onDone: (rule: string) => void
@@ -89,12 +94,21 @@ export function RecurrenceDialog(props: RecurrenceDialogProps) {
   )
 }
 
-function RecurrenceForm({ rule, start, timeZone, onDone, onOpenChange, explicit = false, foreign = false }: RecurrenceDialogProps) {
+function RecurrenceForm({
+  rule,
+  start,
+  opensFrom,
+  timeZone,
+  onDone,
+  onOpenChange,
+  explicit = false,
+  foreign = false,
+}: RecurrenceDialogProps) {
   const { t } = useTranslation()
   const prefs = usePrefs()
   const id = useId()
   const now = useMemo(() => new Date(), [])
-  const [opened] = useState(() => modelFromRule(rule, start, timeZone))
+  const [opened] = useState(() => modelFromRule(rule, opensFrom ?? start, timeZone))
   const initial = opened.model
 
   const [freq, setFreq] = useState(initial.freq)

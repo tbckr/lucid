@@ -466,6 +466,82 @@ describe('TaskEditor', () => {
       expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
     })
 
+    // A weekly series on Tuesdays at 10:00 whose current repeat of 10 November is moved to Monday, 9 November.
+    const movedRepeat = todo({
+      due: '2026-11-09T09:00:00Z',
+      timezone: 'Europe/Berlin',
+      rrule: 'FREQ=WEEKLY',
+      recurring: true,
+      recurrenceId: '2026-11-10T09:00:00Z',
+    })
+
+    // A changed rule starts the series over at the repeat's dates, which another preset is named after (FR-17).
+    it("names the series' rule after its days, and another after the repeat's dates", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(movedRepeat)
+      const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      expect(select).toHaveTextContent('Every week on Tuesday')
+
+      await user.click(select)
+      expect(screen.getByRole('option', { name: 'Every month on day 9' })).toBeInTheDocument()
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'true')
+      expect(within(repeat).getByRole('button', { name: 'Monday' })).toHaveAttribute('aria-pressed', 'false')
+      const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
+      await user.clear(interval)
+      await user.type(interval, '2')
+      // The series starts over at the repeat, Monday, which counts as its first date, then goes on on Tuesdays.
+      const next = within(within(repeat).getByRole('region', { name: 'Next dates' })).getAllByRole('listitem')
+      expect(next.slice(0, 3).map((li) => li.textContent)).toEqual(['Mon, Nov 9', 'Tue, Nov 10', 'Tue, Nov 24'])
+      expect(repeat).toHaveTextContent(/counts as the first date/)
+      await user.click(within(repeat).getByRole('button', { name: 'Done' }))
+      expect(select).toHaveTextContent('Every 2 weeks on Tuesday')
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+    })
+
+    it("moves the series' rule with the repeat's new date, and another starts there", async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(movedRepeat)
+      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Nov 9' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      await user.click(within(month).getByRole('button', { name: 'Tuesday, November 10th, 2026' }))
+      const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      expect(select).toHaveTextContent('Every week on Wednesday')
+
+      await user.click(select)
+      expect(screen.getByRole('option', { name: 'Every month on day 10' })).toBeInTheDocument()
+    })
+
+    it("keeps the series' rule when the repeat editor opened on it is left untouched", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(movedRepeat)
+      const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      await user.click(select)
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      await user.click(within(screen.getByRole('dialog', { name: 'Custom repeat' })).getByRole('button', { name: 'Done' }))
+      expect(select).toHaveTextContent('Every week on Tuesday')
+
+      await user.type(within(dialog).getByPlaceholderText('Add a title'), ' now')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const { body } = await wrote(fetch, 'PUT')
+      expect(body).toMatchObject({ title: 'Task now' })
+      expect(body).not.toHaveProperty('rrule')
+    })
+
+    // A series of dates has no rule of its own to keep: a new one starts at the repeat's dates (FR-17).
+    it('opens the repeat editor of a series of dates on the date its repeat is on', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask({ ...movedRepeat, rrule: '' })
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      expect(within(repeat).getByRole('button', { name: 'Monday' })).toHaveAttribute('aria-pressed', 'true')
+      expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'false')
+    })
+
     it("refuses a repeat that doesn't read the same in the series' zone, and saves nothing", async () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(newYork('FREQ=WEEKLY'))

@@ -881,6 +881,14 @@ event, and the refusal comes as a toast.
   the year only (New York changes to summer time weeks before Berlin), so
   the rule is read at the edited event's place in the rule, its
   `RECURRENCE-ID`, not where an exception moved it.
+- What a rule leaves to the series' start, the weekday of `FREQ=WEEKLY` or
+  the day of `FREQ=MONTHLY` (RFC 5545 section 3.3.10), is read at that place
+  too (`eventRuleStart`, `web/src/lib/seriesShift.ts`): in the details as it
+  is, and in the editor as far from there as the form moves the event, as
+  the save moves the series. An exception of a series on Tuesdays moved to
+  Monday says "Every week on Tuesday", and the repeat editor opens on
+  Tuesday, so that the day parts it writes for an existing series keep the
+  series there; it used to open on Monday and move the series there.
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,

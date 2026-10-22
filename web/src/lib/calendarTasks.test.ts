@@ -14,6 +14,7 @@ import {
   recurringLabel,
   repeatOf,
   shiftedTask,
+  taskRuleStart,
   toCalTask,
   type TaskDates,
   type TaskRepeat,
@@ -226,9 +227,54 @@ describe('recurringLabel', () => {
     expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Every week on Wednesday and Friday')
   })
 
+  // A weekly series whose current repeat of Tuesday, 10 November, is moved to Monday, 9 November.
+  it("says the series' days, not those its current repeat moved to", () => {
+    const weekly = todo({
+      rrule: 'FREQ=WEEKLY',
+      recurring: true,
+      due: '2026-11-09T09:00:00Z',
+      timezone: 'Europe/Berlin',
+      recurrenceId: '2026-11-10T09:00:00Z',
+    })
+    expect(recurringLabel(t, weekly, null, prefs, now, 'Europe/Berlin')).toBe('Every week on Tuesday')
+    const monthly = todo({
+      rrule: 'FREQ=MONTHLY',
+      recurring: true,
+      due: allDay('2026-11-09'),
+      dueAllDay: true,
+      recurrenceId: allDay('2026-11-10'),
+    })
+    expect(recurringLabel(t, monthly, null, prefs, now, 'Europe/Berlin')).toBe('Every month on day 10')
+  })
+
   it('names a series of dates without a rule', () => {
     const series = todo({ rrule: '', recurring: true, due: '2026-10-08T00:00:00Z', dueAllDay: true })
     expect(recurringLabel(t, series, null, prefs, now, 'Europe/Berlin')).toBe('Repeats on set dates')
+  })
+})
+
+// A repeat of Tuesday, 10 November, at 10:00 in Berlin, moved to Monday, 9 November.
+describe('taskRuleStart', () => {
+  const dates = (p: Partial<TaskDates>): TaskDates => ({ start: null, startAllDay: false, due: null, dueAllDay: false, ...p })
+  const moved = { recurrenceId: '2026-11-10T09:00:00Z', shown: dates({ due: '2026-11-09T09:00:00Z' }) }
+
+  it('places a repeat at its place in the rule, not where it moved', () => {
+    expect(taskRuleStart(moved)).toEqual(new Date(2026, 10, 10, 10))
+  })
+
+  it('moves that place as far as its dates move, from its start, else its due', () => {
+    expect(taskRuleStart(moved, dates({ due: '2026-11-10T10:00:00Z' }))).toEqual(new Date(2026, 10, 11, 11))
+    expect(taskRuleStart(moved, dates({ due: allDay('2026-11-10'), dueAllDay: true }))).toEqual(new Date(2026, 10, 11))
+  })
+
+  it('reads an all-day repeat by its date', () => {
+    const allDayRepeat = { recurrenceId: allDay('2026-11-10'), shown: dates({ start: allDay('2026-11-09'), startAllDay: true }) }
+    expect(taskRuleStart(allDayRepeat)).toEqual(new Date(2026, 10, 10))
+  })
+
+  it('has none without dates', () => {
+    expect(taskRuleStart(moved, dates({}))).toBeNull()
+    expect(taskRuleStart({ ...moved, shown: dates({}) })).toBeNull()
   })
 })
 

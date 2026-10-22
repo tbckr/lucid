@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { type TaskDates, type TaskRepeat } from './calendarTasks'
-import { eventRuleClock, moveAllRefusal, ruleInZone, seriesShift, taskMoveRefusal, taskRuleClock } from './seriesShift'
+import { eventRuleClock, eventRuleStart, moveAllRefusal, ruleInZone, seriesShift, taskMoveRefusal, taskRuleClock } from './seriesShift'
 import { todo } from '@/test/fixtures'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
@@ -529,6 +529,33 @@ describe('eventRuleClock', () => {
   it("reads an event at its place in the rule, not where an exception moved it", () => {
     const moved = { allDay: false, timezone: 'America/New_York', startsAt: new Date('2026-11-10T15:00:00Z'), recurrenceId: '2026-11-10T23:00:00Z' }
     expect(eventRuleClock(moved)).toEqual({ at, zone: 'America/New_York' })
+  })
+})
+
+// A weekly series at 10:00 in Berlin whose event of Tuesday, 10 November, is moved to Monday, 9 November.
+describe('eventRuleStart', () => {
+  const moved = { allDay: false, startsAt: new Date(2026, 10, 9, 10), recurrenceId: '2026-11-10T09:00:00Z' }
+
+  it('places an exception at its place in the rule, not where it moved', () => {
+    expect(eventRuleStart(moved)).toEqual(new Date(2026, 10, 10, 10))
+  })
+
+  it('moves that place as far as a save moves the event from where it is shown', () => {
+    expect(eventRuleStart(moved, new Date(2026, 10, 10, 11), false)).toEqual(new Date(2026, 10, 11, 11))
+    // A save that makes it all-day moves it by dates.
+    expect(eventRuleStart(moved, new Date(2026, 10, 10), true)).toEqual(new Date(2026, 10, 11))
+  })
+
+  it('reads an all-day event by its date', () => {
+    const allDay = { allDay: true, startsAt: new Date(2026, 10, 9), recurrenceId: '2026-11-10T00:00:00Z' }
+    expect(eventRuleStart(allDay)).toEqual(new Date(2026, 10, 10))
+    expect(eventRuleStart(allDay, new Date(2026, 10, 9, 9, 30), false)).toEqual(new Date(2026, 10, 10, 9, 30))
+  })
+
+  it('is where a single event is saved', () => {
+    expect(eventRuleStart({ allDay: false, startsAt: new Date(2026, 10, 9, 10) }, new Date(2026, 10, 12, 8), false)).toEqual(
+      new Date(2026, 10, 12, 8),
+    )
   })
 })
 

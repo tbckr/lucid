@@ -129,6 +129,16 @@ export function atMinutes(day: Date, minutes: number): Date {
   return d
 }
 
+/**
+ * `date` moved as far as `to` lies from `from`, on the local wall clock: by
+ * calendar days, and by the time of day too unless `byDays` (FR-17).
+ */
+export function movedAs(date: Date, from: Date, to: Date, byDays = false): Date {
+  const days = differenceInCalendarDays(to, from)
+  const minutes = byDays ? 0 : minutesOfDay(to) - minutesOfDay(from)
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days, date.getHours(), date.getMinutes() + minutes)
+}
+
 /** A form's "yyyy-MM-dd" date at its "HH:mm" time, as local time; midnight without a valid time. */
 export function dayAt(date: string, time: string): Date {
   const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time)

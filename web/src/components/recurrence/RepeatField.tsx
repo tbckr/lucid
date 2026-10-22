@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { usePrefs } from '@/hooks/usePrefs'
-import { buildRRule, describeRRule, describeRRuleIn, recurrenceFromRRule, type Recurrence } from '@/lib/rrule'
+import { buildRRule, describeRRule, describeRRuleIn, normalizeRRule, recurrenceFromRRule, type Recurrence } from '@/lib/rrule'
 import { type RuleClock } from '@/lib/seriesShift'
 import { RecurrenceDialog } from './RecurrenceDialog'
 
@@ -30,6 +30,7 @@ export function RepeatField({
   presets,
   customizable,
   recursOn,
+  kept,
   explicit,
   disabled,
   invalid,
@@ -48,6 +49,12 @@ export function RepeatField({
    * `ruleInZone`): said there, naming its zone, it can only be kept, replaced by a preset, or removed.
    */
   recursOn?: RuleClock | null
+  /**
+   * The series' rule as the editor opened it, and where it recurs from, where that lies elsewhere than `start`: a
+   * task series keeps its days with its rule, but starts a changed one over at its repeat's dates (FR-17). The rule
+   * is named, and the repeat editor opens on it, from there.
+   */
+  kept?: { rule: string; start: Date } | undefined
   /** An existing series: the repeat editor writes every day part (see `RecurrenceDialog`). */
   explicit?: boolean
   disabled?: boolean
@@ -62,7 +69,9 @@ export function RepeatField({
   // The rule the repeat editor opens on; a series of dates has none, which Done replaces.
   const opened = buildRRule(value.recurrence, value.customRule)
   const dates = value.recurrence === 'custom' && !value.customRule.trim()
-  const words = (rule: string) => describeRRule(rule, start, prefs, now, t)
+  // What a rule leaves to its start comes from where it recurs from (FR-17).
+  const from = (rule: string) => (kept && normalizeRRule(rule) === normalizeRRule(kept.rule) ? kept.start : start)
+  const words = (rule: string) => describeRRule(rule, from(rule), prefs, now, t)
   const custom = value.recurrence === 'custom' || value.customRule.trim() !== ''
 
   return (
@@ -107,6 +116,7 @@ export function RepeatField({
           onOpenChange={setEditing}
           rule={opened}
           start={start}
+          opensFrom={from(opened)}
           timeZone={timeZone}
           explicit={explicit}
           foreign={dates}

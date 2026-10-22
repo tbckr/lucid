@@ -1240,6 +1240,20 @@ start or due date. The editor only sends a rule the user changed: a preset
 writes a stored rule in its own words, which would count as a new rule and
 start the series over.
 
+What a rule leaves to the series' start, the weekday of `FREQ=WEEKLY` or the
+day of `FREQ=MONTHLY` (RFC 5545 section 3.3.10), comes from where it recurs
+from. For the rule the series has, that is the repeat's place in the rule,
+its `RECURRENCE-ID`, not where an override moved it (`taskRuleStart` in
+`web/src/lib/calendarTasks.ts`), in the editor as far from there as the form
+moves the repeat; for a rule the editor would change, and for a series of
+dates without one, the dates entered, where the series starts over. A
+current repeat of a series on Tuesdays moved to Monday shows "Every week on
+Tuesday" in the list, the details and the repeat field, which offers "Every
+month on day 9" for its date, and the repeat editor opens on Tuesday. Every
+two weeks from there starts over on Monday, which counts as the first date
+though the repeat doesn't fall on it, as the editor says, followed by
+Tuesday, the next day.
+
 The editor shows and builds a rule on the browser's wall clock, as for events
 (`ruleInZone`, see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)), but a task
 keeps its zone when its rule changes: the series' `TZID`, else UTC, and a

@@ -46,7 +46,7 @@ import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { RECURRENCE_PRESETS } from '@/lib/rrule'
-import { eventRuleClock } from '@/lib/seriesShift'
+import { eventRuleClock, eventRuleStart } from '@/lib/seriesShift'
 import {
   eventScopeHint,
   eventScopeItems,
@@ -170,8 +170,11 @@ function EditorForm({
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
-  // The start as the form shows it, with its time: a rule's hours repeat at its minute (FR-17).
-  const start = allDay ? parseDayKey(startDate) : dayAt(startDate, startTime)
+  // Where the repeat recurs from, with its time: a rule's hours repeat at its minute (FR-17). For an
+  // occurrence its place in the rule, as far from there as the form moves it, where a save moves the
+  // series (`eventRuleStart`), not where an exception moved it; else the start as the form shows it.
+  const entered = allDay ? parseDayKey(startDate) : dayAt(startDate, startTime)
+  const start = occurrence ? eventRuleStart(occurrence, entered, allDay) : entered
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
   useEffect(() => {

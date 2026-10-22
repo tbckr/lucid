@@ -73,6 +73,23 @@ describe('EventDetailsPopover', () => {
     expect(dialog).not.toHaveTextContent(/FREQ/)
   })
 
+  // A series on Tuesdays whose event of 10 November is moved to Monday, 9 November (FR-17).
+  it.each([
+    [
+      'FREQ=WEEKLY',
+      { start: '2026-11-09T09:00:00Z', end: '2026-11-09T10:00:00Z', recurrenceId: '2026-11-10T09:00:00Z' },
+      'Every week on Tuesday',
+    ],
+    [
+      'FREQ=MONTHLY',
+      { allDay: true, start: '2026-11-09T00:00:00Z', end: '2026-11-10T00:00:00Z', recurrenceId: '2026-11-10T00:00:00Z' },
+      'Every month on day 10',
+    ],
+  ])("says the series' days for an exception moved off them (%s)", async (rrule, p, text) => {
+    const { dialog } = await openDetails({ recurring: true, modified: true, rrule, ...p })
+    expect(within(dialog).getByText(text)).toBeInTheDocument()
+  })
+
   it.each([
     [true, true],
     [false, false],
