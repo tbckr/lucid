@@ -798,6 +798,55 @@ func TestDeleteOccurrence(t *testing.T) {
 
 // TestDeleteOccurrenceErrors checks the error cases of DeleteOccurrence
 // (spec section 2 steps 1-2, FR-17).
+// TestOccurrenceAtSkippedTime deletes and changes the event of a daily
+// Berlin series at 02:30 on the night Berlin skips that time, shown at
+// 03:30: its EXDATE and RECURRENCE-ID take 02:30, as its rule has that event
+// (RFC 5545 sections 3.3.5 and 3.8.4.4), so a later move of the series by its
+// wall clock keeps them with it (#8, FR-17).
+func TestOccurrenceAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	series := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Night",
+		"DTSTART;TZID=Europe/Berlin:20260325T023000", "DTEND;TZID=Europe/Berlin:20260325T033000", "RRULE:FREQ=DAILY",
+		"END:VEVENT",
+	}
+	rid := date(2026, 3, 29, 1, 30)
+	seed := func(t *testing.T) (*env, string, domain.Event) {
+		t.Helper()
+		e := newEnv(t, caldavtest.Options{})
+		id := e.put(t, "work", "series.ics", series...)
+		evs := listed(t, e, "work", rid, rid.Add(time.Second))
+		if len(evs) != 1 || !evs[0].Start.Equal(rid) {
+			t.Fatalf("events at %v = %+v; want one", rid, evs)
+		}
+		return e, id, evs[0]
+	}
+	t.Run("deleted", func(t *testing.T) {
+		t.Parallel()
+		e, id, ev := seed(t)
+		_, _, err := e.svc.DeleteOccurrence(t.Context(), id, ev.ETag, rid)
+		mustNoErr(t, err)
+		checkStored(t, "series", stored(t, e, "work", "series.ics"),
+			[]string{"EXDATE;TZID=Europe/Berlin:20260329T023000"}, []string{"EXDATE;TZID=Europe/Berlin:20260329T033000"})
+		if evs := listed(t, e, "work", rid, rid.Add(time.Second)); len(evs) != 0 {
+			t.Errorf("events at %v = %+v; want none", rid, evs)
+		}
+	})
+	t.Run("changed", func(t *testing.T) {
+		t.Parallel()
+		e, id, ev := seed(t)
+		_, _, err := e.svc.UpdateOccurrence(t.Context(), id, ev.ETag, rid,
+			domain.OccurrenceInput{Title: "Moved", Start: rid, End: rid.Add(time.Hour)})
+		mustNoErr(t, err)
+		checkStored(t, "series", stored(t, e, "work", "series.ics"),
+			[]string{"RECURRENCE-ID;TZID=Europe/Berlin:20260329T023000"}, []string{"RECURRENCE-ID;TZID=Europe/Berlin:20260329T033000"})
+		evs := listed(t, e, "work", rid, rid.Add(time.Second))
+		if len(evs) != 1 || evs[0].Title != "Moved" {
+			t.Errorf("events at %v = %+v; want the changed one", rid, evs)
+		}
+	})
+}
+
 func TestDeleteOccurrenceErrors(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

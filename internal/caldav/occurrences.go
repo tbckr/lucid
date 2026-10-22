@@ -64,7 +64,7 @@ func isInstance(master *ical.Component, tm timing, rid time.Time) bool {
 // untitled in Thunderbird and DAVx⁵, and a copy that keeps
 // RRULE/RDATE/EXDATE is rejected by Radicale or duplicated by older DAVx⁵
 // versions (spec section 2, FR-17).
-func newOverride(cal *ical.Calendar, master *ical.Component, rid time.Time, f dateForm) *ical.Component {
+func newOverride(cal *ical.Calendar, master *ical.Component, rid dateValue, f dateForm) *ical.Component {
 	c := ical.NewComponent(master.Name)
 	for name, props := range master.Props {
 		c.Props[name] = cloneProps(props)
@@ -73,7 +73,7 @@ func newOverride(cal *ical.Calendar, master *ical.Component, rid time.Time, f da
 	for _, name := range []string{ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates, propExRule} {
 		c.Props.Del(name)
 	}
-	c.Props.Set(seriesDateProp(cal, ical.PropRecurrenceID, rid, f))
+	c.Props.Set(seriesValueProp(cal, ical.PropRecurrenceID, rid, f))
 	return c
 }
 
@@ -187,7 +187,9 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	// form (spec section 2 steps 4-5).
 	f := tm.start.form()
 	if override == nil {
-		override = newOverride(cal, master, rid, f)
+		// At the wall clock the rule gives the event, which can be one its
+		// zone skips (see ruleEvent, #8).
+		override = newOverride(cal, master, ruleEvent(rruleString(master), tm.start, rid), f)
 		cal.Children = append(cal.Children, override)
 	}
 	setTextKept(override.Props, ical.PropSummary, in.Title)
@@ -237,19 +239,19 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 // existing EXDATE value already excludes the same instant, in any form:
 // otherwise Nextcloud Calendar ignores every later EXDATE (spec section 2
 // "DeleteOccurrence", FR-17).
-func addExdate(cal *ical.Calendar, master *ical.Component, rid time.Time, f dateForm) {
+func addExdate(cal *ical.Calendar, master *ical.Component, rid dateValue, f dateForm) {
 	for _, p := range master.Props.Values(ical.PropExceptionDates) {
 		dvs, err := parseDateList(&p)
 		if err != nil {
 			continue
 		}
 		for _, d := range dvs {
-			if d.t.Equal(rid) {
+			if d.t.Equal(rid.t) {
 				return
 			}
 		}
 	}
-	master.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, rid, f))
+	master.Props.Add(seriesValueProp(cal, ical.PropExceptionDates, rid, f))
 }
 
 // hasEventsLeft reports whether the series of master still has an occurrence
@@ -328,7 +330,7 @@ func (s *service) DeleteOccurrence(ctx context.Context, eventID, etag string, re
 	// with an EXDATE of its own (Outlook CalDAV Synchronizer drops such an
 	// override). STATUS:CANCELLED is never written: Baïkal and Nextcloud <=
 	// 33 cancel the whole meeting for attendees with it.
-	addExdate(cal, master, rid, tm.start.form())
+	addExdate(cal, master, ruleEvent(rruleString(master), tm.start, rid), tm.start.form())
 	if override != nil {
 		cal.Children = slices.DeleteFunc(cal.Children, func(c *ical.Component) bool { return c == override })
 	}

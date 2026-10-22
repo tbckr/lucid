@@ -98,23 +98,23 @@ func firstOccurrence(cal *ical.Calendar, master *ical.Component, tm timing) time
 // none. It fails, as domain.ErrSeriesSplitUnsupported (see unsplittable),
 // for a rule ruleInstances cannot read, and for one that does not reach rid
 // within maxRRuleIterations occurrences.
-func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, from time.Time, err error) {
+func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, from dateValue, err error) {
 	next, err := ruleInstances(rruleString(master), tm.start)
 	if err != nil {
-		return 0, time.Time{}, unsplittable(err)
+		return 0, dateValue{}, unsplittable(err)
 	}
 	for range maxRRuleIterations {
 		ev, ok := next()
 		switch {
 		case !ok:
-			return before, time.Time{}, nil
+			return before, dateValue{}, nil
 		case ev.t.Before(rid):
 			before++
 		default:
-			return before, ev.t, nil
+			return before, ev, nil
 		}
 	}
-	return 0, time.Time{}, unsplittable(errRRuleCap)
+	return 0, dateValue{}, unsplittable(errRRuleCap)
 }
 
 // endBefore ends the series master in cal, whose timing is tm, just before
@@ -149,7 +149,7 @@ func endBefore(cal *ical.Calendar, master *ical.Component, tm timing, rid time.T
 	if before == 0 {
 		return errSplitAtStart
 	}
-	if p := master.Props.Get(ical.PropRecurrenceRule); p != nil && !from.IsZero() {
+	if p := master.Props.Get(ical.PropRecurrenceRule); p != nil && !from.t.IsZero() {
 		// The rule as if its COUNT had always counted only the occurrences
 		// before rid; in a zone Lucid knows, that COUNT becomes an UNTIL.
 		rule := withCount(rruleString(master), before)
@@ -215,9 +215,9 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	keepDates(nm, ical.PropExceptionDates, later, true)
 	keepDates(nm, ical.PropRecurrenceDates, later, false)
 
-	offRule := start.IsZero()
+	offRule := start.t.IsZero()
 	if offRule {
-		start = rid
+		start = dateValue{t: rid}
 		nm.Props.Del(ical.PropRecurrenceRule)
 		// DTSTART is rid now.
 		keepDates(nm, ical.PropRecurrenceDates, func(t time.Time) bool { return t.After(rid) }, false)
@@ -225,9 +225,11 @@ func splitOff(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Ti
 	if p := nm.Props.Get(ical.PropRecurrenceRule); p != nil {
 		p.Value = lowerCount(rruleString(nm), before)
 	}
-	nm.Props.Set(seriesDateProp(n, ical.PropDateTimeStart, start, tm.start.form()))
+	// At the wall clock the rule gives that event, which can be one its zone
+	// skips (see ruleEvent, #8).
+	nm.Props.Set(seriesValueProp(n, ical.PropDateTimeStart, start, tm.start.form()))
 	if p := nm.Props.Get(ical.PropDateTimeEnd); p != nil {
-		end := tm.dur.addTo(start)
+		end := tm.dur.addTo(start.t)
 		shiftDatePropBy(p, func(dateValue) dateValue { return dateValue{t: end} })
 	}
 	if offRule && !isRecurring(nm) {

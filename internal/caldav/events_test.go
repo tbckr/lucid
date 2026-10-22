@@ -2420,6 +2420,39 @@ func TestUpdateSeriesMovedIntoSkippedTime(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesFromSkippedTime moves a daily Berlin series at 02:30 with
+// "All events" from its event on the night Berlin skips that time, shown at
+// 03:30, to 04:30: the move counts from the series' 02:30, as its rule has
+// that event, so the series goes to 04:30 and the event lands where it was
+// dropped, as the answer says. Counted from the 03:30 it shows at, the series
+// went to 03:30, and the answer named an event the list did not have (#8,
+// FR-17).
+func TestUpdateSeriesFromSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Night",
+		"DTSTART;TZID=Europe/Berlin:20260325T023000", "DTEND;TZID=Europe/Berlin:20260325T033000", "RRULE:FREQ=DAILY",
+		"END:VEVENT")
+	evs := listed(t, e, "work", date(2026, 3, 29, 0, 0), date(2026, 3, 29, 12, 0))
+	if len(evs) != 1 || !evs[0].Start.Equal(date(2026, 3, 29, 1, 30)) {
+		t.Fatalf("events on 2026-03-29 = %+v; want one at 01:30Z", evs)
+	}
+
+	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag,
+		seriesUpdate(evs[0], "Night", "", date(2026, 3, 29, 2, 30), date(2026, 3, 29, 3, 30)))
+	mustNoErr(t, err)
+
+	edited := occ{title: "Night", start: date(2026, 3, 29, 2, 30), end: date(2026, 3, 29, 3, 30), rid: ptr(date(2026, 3, 29, 2, 30))}
+	checkOccurrences(t, []domain.Event{up}, []occ{edited})
+	wantStored(t, e, "work", "series.ics",
+		"DTSTART;TZID=Europe/Berlin:20260325T043000", "DTEND;TZID=Europe/Berlin:20260325T053000")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 29, 0, 0), date(2026, 3, 31, 0, 0)), []occ{
+		edited,
+		{title: "Night", start: date(2026, 3, 30, 2, 30), end: date(2026, 3, 30, 3, 30), rid: ptr(date(2026, 3, 30, 2, 30))},
+	})
+}
+
 // TestUpdateSeriesMadeTimedAtSkippedTime is issue #8's second case: a
 // weekly all-day series from the night of the change to summer time, made
 // timed at 02:30 Berlin time from its 04-05 event, gets DTSTART at 02:30,

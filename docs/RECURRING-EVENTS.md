@@ -843,6 +843,17 @@ event, and the refusal comes as a toast.
   its 11-06 event gets `DTSTART;VALUE=DATE:20260904`; a weekly all-day
   series from 2026-01-02 made timed from its 04-03 event at 09:00 Berlin
   time gets `DTSTART;TZID=Europe/Berlin:20260102T090000`.
+- **A time the series' zone skips**: on the night Berlin changes to summer
+  time, the event of a series at 02:30 shows at 03:30, as RFC 5545 reads
+  that time (see "What the standards say"). Its rule still has it at 02:30,
+  so Lucid writes it there wherever it writes it as a value, its
+  `RECURRENCE-ID` and `EXDATE` and the `DTSTART` of the new series of "This
+  and following events", and moves the series from there (`ruleEvent`):
+  dragged from 03:30 to 04:30 with "All events", the series goes to 04:30
+  and the event lands where it was dropped. A value that a move, a change
+  to timed or a change of zone puts at such a time, such as a `DTSTART`
+  moved from 01:30 to 02:30 on that night, is written as computed, 02:30,
+  so every other event stays at that time.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and
@@ -1243,6 +1254,18 @@ would refuse it; a later change of the old series keeps its own Undo.
   any other changed-rule save. They can then stop matching the series'
   events: a deleted event can come back, and an exception can show next to
   the event it replaces.
+- On the night of a change to summer time, an `EXDATE` or `RECURRENCE-ID`
+  in UTC on an event at a time its zone skips moves, when "All events"
+  moves the series to another date, with the time that event shows at
+  (03:30), not with its series' time (02:30): a UTC value carries no wall
+  clock. The deleted event can then come back, or the exception show next
+  to the event it replaces. Lucid writes its own in the series' zone.
+- For an `RDATE` event at a time its zone skips, Lucid writes the
+  `RECURRENCE-ID` or `EXDATE` at the time the event shows (03:30), which
+  names the same instant, not at the `RDATE`'s own 02:30.
+- A rule that repeats within a day (`HOURLY`, `MINUTELY`, `SECONDLY`) puts
+  two of its times on one instant on the night of a change to summer time,
+  such as 02:00 and 03:00 in Berlin; Lucid shows that event once.
 - Lucid cannot prevent what other clients do to the overrides and `EXDATE`s
   it writes. From the reports: a Nextcloud Calendar series move from the
   first occurrence leaves `EXDATE`/`UNTIL` unshifted and a weekday move

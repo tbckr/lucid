@@ -429,6 +429,28 @@ func ruleInstances(rule string, start dateValue) (next func() (dateValue, bool),
 	}, nil
 }
 
+// ruleEvent returns the event of the series from DTSTART start with the RRULE
+// value rule at the instant t, as ruleInstances yields it: with the wall clock
+// its rule gives it, also one its zone skips, where it shows an hour later,
+// so that Lucid writes it, and moves the series from it, at the series' time
+// (#8, FR-17). An instant that is no event of the rule, such as an RDATE or an
+// override off it, or one of a rule Lucid cannot read, is t on its own wall
+// clock, in start's zone and form.
+func ruleEvent(rule string, start dateValue, t time.Time) dateValue {
+	if next, err := ruleInstances(rule, start); err == nil {
+		for range maxRRuleIterations {
+			ev, ok := next()
+			if !ok || ev.t.After(t) {
+				break
+			}
+			if ev.t.Equal(t) {
+				return ev
+			}
+		}
+	}
+	return dateValue{t: t.In(start.loc()), allDay: start.allDay, tzid: start.tzid, param: start.param, floating: start.floating}
+}
+
 // normalizeEventInput validates in and returns the normalized RRULE.
 func normalizeEventInput(in domain.EventInput) (string, error) {
 	if err := in.Validate(); err != nil {
@@ -698,7 +720,8 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 // shownOccurrence returns the override of the series master at the
 // occurrence rid, nil if there is none, and the timing ListEvents shows that
 // event with: the override's own, else the series' at rid, as expandObject
-// does (spec section 3 item 1, FR-17).
+// does (spec section 3 item 1, FR-17), with the wall clock its rule gives it,
+// which can be one its zone skips (see ruleEvent, #8).
 func shownOccurrence(cal *ical.Calendar, master *ical.Component, tm timing, rid time.Time) (*ical.Component, timing) {
 	ov := findOverride(cal, master, rid)
 	if ov != nil {
@@ -706,7 +729,7 @@ func shownOccurrence(cal *ical.Calendar, master *ical.Component, tm timing, rid 
 			return ov, otm
 		}
 	}
-	return ov, instanceTiming(tm, rid)
+	return ov, timing{start: ruleEvent(rruleString(master), tm.start, rid), dur: tm.dur}
 }
 
 // instanceTiming returns the timing of the series tm at its occurrence rid.
@@ -792,7 +815,7 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		ov.Props.Del(ical.PropDuration)
 		bumpChangeProps(ov, now)
 	}
-	return mv.shift(dateValue{t: rid, allDay: tm.start.allDay}).t, nil
+	return mv.shift(ruleEvent(oldRule, tm.start, rid)).t, nil
 }
 
 // applyChangedEventFields writes the title, description and location of in

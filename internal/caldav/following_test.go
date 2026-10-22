@@ -433,6 +433,34 @@ func TestSplitCountsExcludedInstances(t *testing.T) {
 // TestSplitAcrossDST splits a Berlin series that started in winter at an
 // event in summer (FR-17): S's UNTIL is R - 1 s in UTC, so S keeps the event
 // a week before R and not R itself, and N starts at R's summer wall clock.
+// TestSplitAtSkippedTime splits a daily Berlin series at 02:30 at its event
+// on the night Berlin skips that time, shown at 03:30: N starts at 02:30, as
+// its rule has that event, so its later events stay at 02:30, and its DTEND
+// keeps the hour's exact duration from that night's instant, 04:30 (RFC 5545
+// section 3.3.5, #8, FR-17). From the instant's 03:30, every event of N went
+// to 03:30.
+func TestSplitAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	raw := seriesICS([]string{
+		"DTSTART;TZID=Europe/Berlin:20250326T023000", "DTEND;TZID=Europe/Berlin:20250326T033000", "RRULE:FREQ=DAILY;COUNT=7",
+	})
+	s, n := splitAt(t, mustParse(t, raw), date(2025, 3, 30, 1, 30))
+	nm := mainComponent(n, ical.CompEvent)
+	if got, want := propLine(nm, ical.PropDateTimeStart), "DTSTART;TZID=Europe/Berlin:20250330T023000"; got != want {
+		t.Errorf("N's DTSTART = %s; want %s", got, want)
+	}
+	if got, want := propLine(nm, ical.PropDateTimeEnd), "DTEND;TZID=Europe/Berlin:20250330T043000"; got != want {
+		t.Errorf("N's DTEND = %s; want %s", got, want)
+	}
+	if got, want := shownIn(t, n), []string{
+		"2025-03-30T01:30:00Z/2025-03-30T02:30:00Z Series", "2025-03-31T00:30:00Z/2025-03-31T01:30:00Z Series",
+		"2025-04-01T00:30:00Z/2025-04-01T01:30:00Z Series",
+	}; !slices.Equal(got, want) {
+		t.Errorf("N shows %v; want %v", got, want)
+	}
+	checkShownAsBefore(t, raw, s, n)
+}
+
 func TestSplitAcrossDST(t *testing.T) {
 	t.Parallel()
 	berlin, err := time.LoadLocation("Europe/Berlin")
