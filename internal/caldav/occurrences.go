@@ -264,7 +264,7 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 	if rr != "" && rulePart(rr, "COUNT") == "" && rulePart(rr, "UNTIL") == "" {
 		return true
 	}
-	next, err := ruleInstances(rr, tm.start.t)
+	next, err := ruleInstances(rr, tm.start)
 	if err != nil {
 		// A rule ruleInstances cannot parse, such as one with the RFC 7529
 		// parts RSCALE or SKIP: ListEvents shows only its DTSTART event (see
@@ -275,11 +275,11 @@ func hasEventsLeft(cal *ical.Calendar, master *ical.Component, tm timing) bool {
 	}
 	exdates := exceptionDates(master)
 	for range maxRRuleIterations {
-		t, ok := next()
+		ev, ok := next()
 		if !ok {
 			break
 		}
-		if !exdates[t.Unix()] {
+		if !exdates[ev.t.Unix()] {
 			return true
 		}
 	}

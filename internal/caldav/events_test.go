@@ -219,6 +219,81 @@ func TestListEventsExpansion(t *testing.T) {
 	}
 }
 
+// TestListEventsSkippedAndRepeatedTimes checks how a series shows its events
+// at a time a daylight-saving change skips or repeats, as RFC 5545 section
+// 3.3.5 reads such a time and section 3.3.10, as erratum 4271 corrects it,
+// reads such an event: kept and counted, a skipped time an hour later that
+// night, a repeated one the first; the series keeps its clock on every other
+// day, and an EXDATE or UNTIL compares by that instant (#8, FR-17, FR-18).
+func TestListEventsSkippedAndRepeatedTimes(t *testing.T) {
+	t.Parallel()
+	series := func(lines ...string) []string {
+		return append(append([]string{"BEGIN:VEVENT", "UID:1", "DTSTAMP:20250101T000000Z", "SUMMARY:S", "DURATION:PT1H"}, lines...), "END:VEVENT")
+	}
+	events := func(starts ...time.Time) []occ {
+		var out []occ
+		for _, s := range starts {
+			out = append(out, occ{title: "S", start: s, end: s.Add(time.Hour), rid: ptr(s)})
+		}
+		return out
+	}
+	const ny = "DTSTART;TZID=America/New_York:20260306T023000"
+	tests := []struct {
+		name  string
+		lines []string
+		want  []occ
+	}{
+		{
+			name:  "a New York series shows its event on the night of the change at 03:30 EDT",
+			lines: series(ny, "RRULE:FREQ=DAILY;COUNT=4"),
+			want: events(date(2026, 3, 6, 7, 30), date(2026, 3, 7, 7, 30), date(2026, 3, 8, 7, 30),
+				date(2026, 3, 9, 6, 30)),
+		},
+		{
+			name:  "a Berlin series from a skipped time keeps its clock",
+			lines: series("DTSTART;TZID=Europe/Berlin:20260329T023000", "RRULE:FREQ=DAILY;COUNT=3"),
+			want:  events(date(2026, 3, 29, 1, 30), date(2026, 3, 30, 0, 30), date(2026, 3, 31, 0, 30)),
+		},
+		{
+			name:  "an EXDATE in UTC at that instant deletes the event",
+			lines: series(ny, "RRULE:FREQ=DAILY;COUNT=4", "EXDATE:20260308T073000Z"),
+			want:  events(date(2026, 3, 6, 7, 30), date(2026, 3, 7, 7, 30), date(2026, 3, 9, 6, 30)),
+		},
+		{
+			name:  "an EXDATE in the series' zone deletes it too",
+			lines: series(ny, "RRULE:FREQ=DAILY;COUNT=4", "EXDATE;TZID=America/New_York:20260308T023000"),
+			want:  events(date(2026, 3, 6, 7, 30), date(2026, 3, 7, 7, 30), date(2026, 3, 9, 6, 30)),
+		},
+		{
+			name:  "a UTC UNTIL bounds by instant",
+			lines: series(ny, "RRULE:FREQ=DAILY;UNTIL=20260308T070000Z"),
+			want:  events(date(2026, 3, 6, 7, 30), date(2026, 3, 7, 7, 30)),
+		},
+		{
+			name:  "a repeated time is the first",
+			lines: series("DTSTART;TZID=Europe/Berlin:20261023T023000", "RRULE:FREQ=DAILY;COUNT=3"),
+			want:  events(date(2026, 10, 23, 0, 30), date(2026, 10, 24, 0, 30), date(2026, 10, 25, 0, 30)),
+		},
+		{
+			// 02:00 and 03:00 are the same instant that night.
+			name:  "an hourly rule shows each instant once",
+			lines: series("DTSTART;TZID=Europe/Berlin:20260329T000000", "RRULE:FREQ=HOURLY;COUNT=5"),
+			want: events(date(2026, 3, 28, 23, 0), date(2026, 3, 29, 0, 0), date(2026, 3, 29, 1, 0),
+				date(2026, 3, 29, 2, 0)),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
+			got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, date(2026, 1, 1, 0, 0), date(2027, 1, 1, 0, 0))
+			mustNoErr(t, err)
+			sortEvents(got)
+			checkOccurrences(t, got, tt.want)
+		})
+	}
+}
+
 // TestListEventsOverrideFields checks that a present-but-empty override
 // property is shown empty, while an absent one still falls back to the
 // master (spec section 2 "Leere Felder", FR-17).

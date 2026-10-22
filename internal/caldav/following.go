@@ -60,17 +60,17 @@ func firstOccurrence(cal *ical.Calendar, master *ical.Component, tm timing) time
 		}
 	}
 
-	next, err := ruleInstances(rruleString(master), tm.start.t)
+	next, err := ruleInstances(rruleString(master), tm.start)
 	if err != nil {
 		consider(tm.start.t)
 	} else {
 		for range maxRRuleIterations {
-			t, ok := next()
+			ev, ok := next()
 			if !ok {
 				break
 			}
-			if shown(t) {
-				consider(t)
+			if shown(ev.t) {
+				consider(ev.t)
 				break
 			}
 		}
@@ -99,19 +99,19 @@ func firstOccurrence(cal *ical.Calendar, master *ical.Component, tm timing) time
 // for a rule ruleInstances cannot read, and for one that does not reach rid
 // within maxRRuleIterations occurrences.
 func placeInRule(master *ical.Component, tm timing, rid time.Time) (before int, from time.Time, err error) {
-	next, err := ruleInstances(rruleString(master), tm.start.t)
+	next, err := ruleInstances(rruleString(master), tm.start)
 	if err != nil {
 		return 0, time.Time{}, unsplittable(err)
 	}
 	for range maxRRuleIterations {
-		t, ok := next()
+		ev, ok := next()
 		switch {
 		case !ok:
 			return before, time.Time{}, nil
-		case t.Before(rid):
+		case ev.t.Before(rid):
 			before++
 		default:
-			return before, t, nil
+			return before, ev.t, nil
 		}
 	}
 	return 0, time.Time{}, unsplittable(errRRuleCap)
@@ -451,7 +451,7 @@ func (s *service) loadFollowing(ctx context.Context, eventID, etag string, recur
 	if len(ls.master.Props[ical.PropRecurrenceRule]) > 1 {
 		return followingSeries{}, fmt.Errorf("%w: the series has more than one RRULE", domain.ErrSeriesSplitUnsupported)
 	}
-	if _, err := ruleInstances(rruleString(ls.master), ls.tm.start.t); err != nil {
+	if _, err := ruleInstances(rruleString(ls.master), ls.tm.start); err != nil {
 		return followingSeries{}, unsplittable(err)
 	}
 	return followingSeries{loadedSeries: ls, first: ls.rid.Equal(firstOccurrence(ls.cal, ls.master, ls.tm))}, nil

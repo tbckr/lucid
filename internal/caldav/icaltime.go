@@ -24,6 +24,11 @@ type dateValue struct {
 	tzid     string // IANA name if the value had a resolvable TZID
 	param    string // the TZID parameter as written, "" if none
 	floating bool   // a DATE-TIME without TZID or "Z", read as UTC
+	// wall is the date and clock time the value is written with, read as
+	// UTC, also one its zone skips, which no instant has (see zoned); zero
+	// for a UTC value ("Z") and for one Lucid built from an instant, whose
+	// wall clock is its instant's (see wallIn, #8).
+	wall time.Time
 }
 
 // dateForm is how a date property is written, so that a rewritten value can
@@ -76,7 +81,9 @@ func parseDateList(p *ical.Prop) ([]dateValue, error) {
 }
 
 // parseDateValue parses a single value. Floating times are treated as UTC,
-// unknown TZIDs fall back to UTC.
+// unknown TZIDs fall back to UTC. A TZID value is the instant zoned reads
+// its wall clock as, and every value but a UTC one keeps the wall clock it is
+// written with (#8).
 func parseDateValue(v string, params ical.Params) (dateValue, error) {
 	v = strings.TrimSpace(v)
 	if strings.EqualFold(params.Get(ical.ParamValue), string(ical.ValueDate)) || len(v) == len(icalDate) {
@@ -84,7 +91,7 @@ func parseDateValue(v string, params ical.Params) (dateValue, error) {
 		if err != nil {
 			return dateValue{}, fmt.Errorf("invalid date %q: %w", v, err)
 		}
-		return dateValue{t: t, allDay: true}, nil
+		return dateValue{t: t, allDay: true, wall: t}, nil
 	}
 	if strings.HasSuffix(v, "Z") {
 		t, err := time.ParseInLocation(icalDateTimeUTC, v, time.UTC)
@@ -100,11 +107,65 @@ func parseDateValue(v string, params ical.Params) (dateValue, error) {
 			loc, tzid = l, l.String()
 		}
 	}
-	t, err := time.ParseInLocation(icalDateTime, v, loc)
+	w, err := time.ParseInLocation(icalDateTime, v, time.UTC)
 	if err != nil {
 		return dateValue{}, fmt.Errorf("invalid date-time %q: %w", v, err)
 	}
-	return dateValue{t: t, tzid: tzid, param: raw, floating: raw == ""}, nil
+	return dateValue{t: zoned(w, loc), wall: w, tzid: tzid, param: raw, floating: raw == ""}, nil
+}
+
+// zoned returns the instant of the wall clock w, its date and clock time
+// whatever its location, in loc, as RFC 5545 section 3.3.5 reads a
+// DATE-TIME with a TZID: a time a change of loc's UTC offset skips takes the
+// offset before the change, so 02:30 on the night Berlin changes to summer
+// time is 03:30 CEST, and a time a change back repeats is the first of the
+// two. Section 3.3.10, as erratum 4271 corrects it, reads an event of a rule
+// at such a time the same way. time.Date leaves both choices open and takes
+// them one way east of UTC and the other west of it (#8, FR-18).
+func zoned(w time.Time, loc *time.Location) time.Time {
+	u := time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
+	offAt := func(t time.Time) int {
+		_, off := t.In(loc).Zone()
+		return off
+	}
+	// The offsets a day before and after, which no zone changes twice in
+	// between: the instant at each, and whether loc has that offset there.
+	at := func(off int) (time.Time, bool) {
+		t := u.Add(-time.Duration(off) * time.Second)
+		return t, offAt(t) == off
+	}
+	before, beforeOK := at(offAt(u.Add(-24 * time.Hour)))
+	after, afterOK := at(offAt(u.Add(24 * time.Hour)))
+	if afterOK && (!beforeOK || after.Before(before)) {
+		return after.In(loc)
+	}
+	return before.In(loc) // the time itself, the first of two, or a skipped one
+}
+
+// wallClock returns the date and clock time of t in loc, read as UTC (#8).
+func wallClock(t time.Time, loc *time.Location) time.Time {
+	w := t.In(loc)
+	return time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
+}
+
+// atWall returns the value at the wall clock w, its date and clock time read
+// as UTC, in loc: its instant there, see zoned, and w itself as the wall
+// clock it is written with, also one loc skips (#8, FR-18).
+func atWall(w time.Time, loc *time.Location) dateValue {
+	w = time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
+	return dateValue{t: zoned(w, loc), wall: w}
+}
+
+// wallIn returns the wall clock of d in loc, read as UTC: the one d is
+// written with where it is written on loc's wall clock (a TZID that
+// resolves to loc, or a DATE, a floating value or one with a TZID Lucid
+// cannot resolve, for UTC), which can be one loc skips, else its instant's
+// there (#8, FR-18).
+func (d dateValue) wallIn(loc *time.Location) time.Time {
+	if !d.wall.IsZero() && d.t.Location().String() == loc.String() {
+		return d.wall
+	}
+	return wallClock(d.t, loc)
 }
 
 var locCache sync.Map // TZID -> *time.Location (nil if unknown)
@@ -149,8 +210,11 @@ type span struct {
 	exact time.Duration
 }
 
+// addTo returns t plus the span: its days on t's wall clock, read as zoned
+// reads a time the zone skips or repeats (#8), then its exact duration.
 func (s span) addTo(t time.Time) time.Time {
-	return t.AddDate(0, 0, s.days).Add(s.exact)
+	loc := t.Location()
+	return zoned(wallClock(t, loc).AddDate(0, 0, s.days), loc).Add(s.exact)
 }
 
 // approx returns an upper bound of the span as a time.Duration.

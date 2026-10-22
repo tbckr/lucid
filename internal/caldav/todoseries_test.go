@@ -65,6 +65,26 @@ func TestNewTodoSeriesNeedsRecurrence(t *testing.T) {
 	}
 }
 
+// TestTodoSeriesSkippedTime checks that a task series reads a repeat at a
+// time a change to summer time skips as an event series does, an hour later
+// that night (RFC 5545 section 3.3.5), also the repeat a date
+// RECURRENCE-ID stands for (A-11, #8, FR-18).
+func TestTodoSeriesSkippedTime(t *testing.T) {
+	t.Parallel()
+	s, _ := testSeries(t, []string{"DTSTART;TZID=America/New_York:20260306T023000", "RRULE:FREQ=DAILY"},
+		[]string{"RECURRENCE-ID;VALUE=DATE:20260308", "SUMMARY:Dated"})
+	next, err := s.ruleIterator()
+	mustNoErr(t, err)
+	for _, want := range []time.Time{date(2026, 3, 6, 7, 30), date(2026, 3, 7, 7, 30), date(2026, 3, 8, 7, 30), date(2026, 3, 9, 6, 30)} {
+		if got, ok := next(); !ok || !got.Equal(want) {
+			t.Errorf("repeat = %v, %v; want %v", got, ok, want)
+		}
+	}
+	if len(s.overrides) != 1 || !s.overrides[0].rid.Equal(date(2026, 3, 8, 7, 30)) {
+		t.Errorf("overrides = %+v; want the dated one at 2026-03-08T07:30Z", s.overrides)
+	}
+}
+
 func TestTodoSeriesWalk(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

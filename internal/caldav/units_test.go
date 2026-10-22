@@ -185,6 +185,17 @@ func TestFormatOffset(t *testing.T) {
 	}
 }
 
+// TestSpanAddToSkippedTime checks that a duration in days ends on the wall
+// clock, read as RFC 5545 section 3.3.5 reads it where the zone skips that
+// time: an hour later that night, also west of UTC (#8, FR-18).
+func TestSpanAddToSkippedTime(t *testing.T) {
+	t.Parallel()
+	ny := loadLocation("America/New_York")
+	if got := (span{days: 1, exact: time.Minute}).addTo(time.Date(2026, 3, 7, 2, 30, 0, 0, ny)); !got.Equal(date(2026, 3, 8, 7, 31)) {
+		t.Errorf("addTo = %v; want 2026-03-08T07:31Z", got)
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -269,6 +280,83 @@ func TestParseDateValue(t *testing.T) {
 	p.Value = "20250101T000000Z/PT1H,bad"
 	if _, err := parseDateList(p); err == nil {
 		t.Fatal("expected error for invalid list")
+	}
+}
+
+// TestZoned checks that a wall clock reads as RFC 5545 section 3.3.5 says:
+// a time a change to summer time skips takes the UTC offset before the
+// change, so it shows an hour later; one a change back repeats is the
+// first of the two; and the zone's own offsets count, also a change by half
+// an hour (#8, FR-18).
+func TestZoned(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, zone string
+		wall, want time.Time
+	}{
+		{"skipped in Berlin", "Europe/Berlin", date(2026, 3, 29, 2, 30), date(2026, 3, 29, 1, 30)},
+		{"just after the change in Berlin", "Europe/Berlin", date(2026, 3, 29, 3, 30), date(2026, 3, 29, 1, 30)},
+		{"just before the change in Berlin", "Europe/Berlin", date(2026, 3, 29, 1, 30), date(2026, 3, 29, 0, 30)},
+		{"skipped in New York", "America/New_York", date(2026, 3, 8, 2, 30), date(2026, 3, 8, 7, 30)},
+		{"repeated in Berlin", "Europe/Berlin", date(2026, 10, 25, 2, 30), date(2026, 10, 25, 0, 30)},
+		{"repeated in New York", "America/New_York", date(2026, 11, 1, 1, 30), date(2026, 11, 1, 5, 30)},
+		{"skipped on Lord Howe, by half an hour", "Australia/Lord_Howe", date(2026, 10, 4, 2, 15), date(2026, 10, 3, 15, 45)},
+		{"summer in Berlin", "Europe/Berlin", date(2026, 7, 1, 9, 0), date(2026, 7, 1, 7, 0)},
+		{"UTC", "UTC", date(2026, 3, 29, 2, 30), date(2026, 3, 29, 2, 30)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			loc := loadLocation(tt.zone)
+			got := zoned(tt.wall, loc)
+			if !got.Equal(tt.want) || got.Location() != loc {
+				t.Errorf("zoned(%s, %s) = %v; want %v in %s", tt.wall.Format(icalDateTime), tt.zone, got, tt.want, tt.zone)
+			}
+		})
+	}
+}
+
+// TestParseDateValueSkippedAndRepeated checks that a value keeps the wall
+// clock it is written with, also one its zone skips, and reads its instant
+// as RFC 5545 section 3.3.5 says; a UTC value has no wall clock of its own
+// (#8, FR-18).
+func TestParseDateValueSkippedAndRepeated(t *testing.T) {
+	t.Parallel()
+	ny, berlin := loadLocation("America/New_York"), loadLocation("Europe/Berlin")
+	parse := func(v, tzid string) dateValue {
+		t.Helper()
+		params := ical.Params{}
+		if tzid != "" {
+			params.Set(ical.ParamTimezoneID, tzid)
+		}
+		d, err := parseDateValue(v, params)
+		mustNoErr(t, err)
+		return d
+	}
+	tests := []struct {
+		name       string
+		d          dateValue
+		want, wall time.Time
+	}{
+		{"skipped", parse("20260308T023000", "America/New_York"), date(2026, 3, 8, 7, 30), date(2026, 3, 8, 2, 30)},
+		{"repeated", parse("20261025T023000", "Europe/Berlin"), date(2026, 10, 25, 0, 30), date(2026, 10, 25, 2, 30)},
+		{"floating", parse("20260308T023000", ""), date(2026, 3, 8, 2, 30), date(2026, 3, 8, 2, 30)},
+		{"date", parse("20260308", ""), date(2026, 3, 8, 0, 0), date(2026, 3, 8, 0, 0)},
+		{"utc", parse("20260308T073000Z", ""), date(2026, 3, 8, 7, 30), time.Time{}},
+	}
+	for _, tt := range tests {
+		if !tt.d.t.Equal(tt.want) || !tt.d.wall.Equal(tt.wall) {
+			t.Errorf("%s: t = %v, wall = %v; want %v, %v", tt.name, tt.d.t, tt.d.wall, tt.want, tt.wall)
+		}
+	}
+	skipped := tests[0].d
+	for _, c := range []struct {
+		loc  *time.Location
+		want time.Time
+	}{{ny, date(2026, 3, 8, 2, 30)}, {time.UTC, date(2026, 3, 8, 7, 30)}, {berlin, date(2026, 3, 8, 8, 30)}} {
+		if got := skipped.wallIn(c.loc); !got.Equal(c.want) || got.Location() != time.UTC {
+			t.Errorf("wallIn(%s) = %v; want %v", c.loc, got, c.want)
+		}
 	}
 }
 

@@ -325,16 +325,16 @@ func expandSeries(c *ical.Component, st dateValue, from, to time.Time) ([]time.T
 		}
 	}
 
-	next, err := ruleInstances(rruleString(c), st.t)
+	next, err := ruleInstances(rruleString(c), st)
 	if err != nil {
 		add(st.t)
 	} else {
 		for range maxRRuleIterations {
-			t, ok := next()
-			if !ok || !t.Before(to) || len(out) >= maxInstancesPerSeries {
+			ev, ok := next()
+			if !ok || !ev.t.Before(to) || len(out) >= maxInstancesPerSeries {
 				break
 			}
-			add(t)
+			add(ev.t)
 		}
 	}
 	for _, p := range c.Props.Values(ical.PropRecurrenceDates) {
@@ -350,34 +350,51 @@ func expandSeries(c *ical.Component, st dateValue, from, to time.Time) ([]time.T
 	return out, err
 }
 
-// newRRule parses an RRULE value for a series starting at dtstart.
-func newRRule(value string, dtstart time.Time) (*rrule.RRule, error) {
-	opt, err := rrule.StrToROptionInLocation(value, dtstart.Location())
-	if err != nil {
-		return nil, fmt.Errorf("invalid RRULE: %w", err)
-	}
-	opt.Dtstart = dtstart
-	r, err := rrule.NewRRule(*opt)
-	if err != nil {
-		return nil, fmt.Errorf("invalid RRULE: %w", err)
-	}
-	return r, nil
-}
-
 // ruleInstances returns an iterator over the occurrences of a series from
-// dtstart with the RRULE value rule ("" for none), in order: dtstart, then
-// the rule's instances after it (FR-17). DTSTART is the first occurrence also
-// where the rule does not match it, and it counts against a COUNT (RFC 5545
-// 3.3.10), so a COUNT rule yields COUNT occurrences in all. rrule-go leaves
-// such a DTSTART out and yields COUNT instances besides it, so after it at
-// most COUNT − 1 follow. A series without a rule yields dtstart only.
-func ruleInstances(rule string, dtstart time.Time) (next func() (time.Time, bool), err error) {
+// DTSTART start with the RRULE value rule ("" for none), in order: start,
+// then the rule's instances after it (FR-17). DTSTART is the first occurrence
+// also where the rule does not match it, and it counts against a COUNT (RFC
+// 5545 3.3.10), so a COUNT rule yields COUNT occurrences in all. rrule-go
+// leaves such a DTSTART out and yields COUNT instances besides it, so after
+// it at most COUNT − 1 follow. A series without a rule yields start only.
+//
+// The rule recurs on start's wall clock: rrule-go runs on that clock read as
+// UTC, which no daylight-saving change moves, and each event is the instant
+// zoned reads its wall clock as, also one the zone skips, which is kept,
+// counted and shows an hour later (RFC 5545 3.3.10 as erratum 4271 corrects
+// it). In start's zone, rrule-go would build them with time.Date, which reads
+// such a time one way east of UTC and the other west of it, and a DTSTART at
+// a skipped time would put every event an hour off. UNTIL bounds the events
+// by instant: one in UTC as it is, any other read on the series' wall clock
+// as zoned reads it. Each event comes with its wall clock and start's form
+// (#8, FR-18).
+func ruleInstances(rule string, start dateValue) (next func() (dateValue, bool), err error) {
+	loc := start.loc()
+	dtstart := start.wallIn(loc)
+	event := func(w time.Time) dateValue {
+		ev := atWall(w, loc)
+		ev.allDay, ev.tzid, ev.param, ev.floating = start.allDay, start.tzid, start.param, start.floating
+		return ev
+	}
 	var ruleNext func() (time.Time, bool)
-	left := -1 // instances still allowed after dtstart; < 0: no COUNT
+	var until time.Time // the last instant an event may have; zero: none
+	left := -1          // instances still allowed after dtstart; < 0: no COUNT
 	if rule != "" {
-		r, err := newRRule(rule, dtstart)
+		opt, err := rrule.StrToROptionInLocation(rule, time.UTC)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("invalid RRULE: %w", err)
+		}
+		if !opt.Until.IsZero() {
+			until = opt.Until
+			if !strings.HasSuffix(strings.ToUpper(rulePart(rule, "UNTIL")), "Z") {
+				until = zoned(opt.Until, loc)
+			}
+			opt.Until = time.Time{}
+		}
+		opt.Dtstart = dtstart
+		r, err := rrule.NewRRule(*opt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid RRULE: %w", err)
 		}
 		ruleNext = r.Iterator()
 		if n := r.OrigOptions.Count; n > 0 {
@@ -385,25 +402,30 @@ func ruleInstances(rule string, dtstart time.Time) (next func() (time.Time, bool
 		}
 	}
 	started := false
-	return func() (time.Time, bool) {
+	return func() (dateValue, bool) {
 		if !started {
 			started = true
-			return dtstart, true
+			return event(dtstart), true
 		}
 		if ruleNext == nil || left == 0 {
-			return time.Time{}, false
+			return dateValue{}, false
 		}
-		t, ok := ruleNext()
-		if ok && t.Equal(dtstart) { // the rule's first instance: DTSTART on the rule
-			t, ok = ruleNext()
+		w, ok := ruleNext()
+		if ok && w.Equal(dtstart) { // the rule's first instance: DTSTART on the rule
+			w, ok = ruleNext()
 		}
-		if !ok {
-			return time.Time{}, false
+		var ev dateValue
+		if ok {
+			ev = event(w)
+		}
+		if !ok || !until.IsZero() && ev.t.After(until) {
+			ruleNext = nil
+			return dateValue{}, false
 		}
 		if left > 0 {
 			left--
 		}
-		return t, true
+		return ev, true
 	}, nil
 }
 
@@ -434,7 +456,7 @@ func normalizeRRule(raw string, dtstart time.Time) (string, error) {
 	if strings.ContainsAny(rr, "\r\n") {
 		return "", &domain.ValidationError{Msg: "invalid rrule"}
 	}
-	if _, err := newRRule(rr, dtstart); err != nil {
+	if _, err := ruleInstances(rr, dateValue{t: dtstart}); err != nil {
 		return "", &domain.ValidationError{Msg: "invalid rrule"}
 	}
 	return rr, nil
@@ -887,17 +909,15 @@ func (mv *seriesMove) shiftEvents(rule string, st dateValue) {
 	if !mv.date.byMonth {
 		return
 	}
-	next, err := ruleInstances(rule, st.t)
+	next, err := ruleInstances(rule, st)
 	if err != nil {
 		return
 	}
 	for range eventsChecked {
-		t, ok := next()
+		ev, ok := next()
 		if !ok {
 			return
 		}
-		ev := st
-		ev.t = t
 		mv.shift(ev)
 	}
 }

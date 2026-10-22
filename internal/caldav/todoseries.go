@@ -144,7 +144,7 @@ func newTodoSeries(cal *ical.Calendar, master *ical.Component) *todoSeries {
 	case master.Props.Get(ical.PropRecurrenceDates) != nil:
 		s.err = errRDate
 	case rr != "":
-		_, s.err = newRRule(rr, s.anchor.t)
+		_, s.err = ruleInstances(rr, s.anchor)
 	}
 
 	for _, c := range cal.Children {
@@ -215,9 +215,9 @@ func (s *todoSeries) ridOn(day time.Time) time.Time {
 		return day
 	}
 	loc := s.anchor.loc()
-	a := s.anchor.t.In(loc)
+	a := s.anchor.wallIn(loc)
 	y, m, d := day.Date()
-	return time.Date(y, m, d, a.Hour(), a.Minute(), a.Second(), 0, loc)
+	return zoned(time.Date(y, m, d, a.Hour(), a.Minute(), a.Second(), 0, time.UTC), loc)
 }
 
 // place compares where the override o lies with the rule instance t: by
@@ -309,7 +309,14 @@ func (s *todoSeries) ruleIterator() (next func() (time.Time, bool), err error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	return ruleInstances(s.rrule, s.anchor.t)
+	events, err := ruleInstances(s.rrule, s.anchor)
+	if err != nil {
+		return nil, err
+	}
+	return func() (time.Time, bool) {
+		ev, ok := events()
+		return ev.t, ok
+	}, nil
 }
 
 // walk calls fn for the occurrences with rid >= from, in order, until fn

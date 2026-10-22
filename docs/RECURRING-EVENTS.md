@@ -86,6 +86,21 @@ none of their claims is **code** about the product itself.
   ([§3.8.5.1](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.5.1)).
   Unlike `RECURRENCE-ID`, no rule requires `EXDATE` to share `DTSTART`'s
   value type.
+- A local time a daylight-saving change skips, such as 02:30 on the night
+  Berlin changes to summer time, *"is interpreted using the UTC offset
+  before the gap in local times"*, so it shows an hour later that night;
+  one a change back repeats *"refers to the first occurrence of the
+  referenced time"*
+  ([§3.3.5](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.5)). An
+  event a rule puts at such a time is read the same way and counts against
+  `COUNT`: §3.3.10 also says such events *"MUST be ignored"*, against its
+  own closing paragraph, and
+  [erratum 4271](https://www.rfc-editor.org/errata/eid4271), verified in
+  2019, corrects it to §3.3.5, which its report names as what Apple's and
+  Google's calendars do. sabre/vobject (Nextcloud, Baïkal) keeps such an
+  event at that instant; ical.js (Thunderbird, Nextcloud Calendar) reads a
+  skipped time with the offset after the change, an hour earlier; both take
+  the second of a repeated time.
 - `RANGE=THISANDFUTURE` lets an override apply to *"the given recurrence
   instance and all subsequent instances"*, rescheduled together
   ([§3.8.4.4](https://www.rfc-editor.org/rfc/rfc5545#section-3.8.4.4)), but
