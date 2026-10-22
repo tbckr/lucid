@@ -706,7 +706,10 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 		return s.moveShown(cal, occ, in)
 	}
 	rid := occ.rid
-	to, _ := parseDateProp(seriesDateProp(nil, ical.PropDateTimeStart, *start, form)) // as writeSeriesDates writes it
+	// As writeSeriesDates writes it: at the series' wall clock where it keeps
+	// the time of day of the repeat moved (see enteredAt, #8).
+	at := enteredAt(s.event(rid), *start, s.anchor.loc())
+	to, _ := parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, at, form))
 	rule, before := s.rrule, 0
 	if evaluable && !last {
 		var ok bool
@@ -728,7 +731,7 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 		stayed = s.overridesWhere(cal, stays)
 		dropExdates(c, func(d dateValue) bool { return stays(d) && notBefore(d, to) })
 	}
-	writeSeriesDates(cal, c, in, true)
+	writeSeriesDates(cal, c, in, true, &at)
 	var shift func(dateValue) dateValue
 	if evaluable && !last {
 		shift = s.refShift(rid, to)
@@ -822,11 +825,10 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	start := to
 	var dates domain.TodoInput
 	var startAt dateValue
-	var startForm dateForm
 	if retype {
 		dates, startAt = datesOn(in, civilDate(to.wallIn(loc)))
-		_, startForm = seriesStart(s.master, dates, true)
-		start, _ = parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, startAt, startForm))
+		_, form := seriesStart(s.master, dates, true)
+		start, _ = parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, startAt, form))
 	}
 	rule, ok := seriesShift(s.rrule, from.wallIn(loc), start.wallIn(start.loc()))
 	if !ok {
@@ -845,10 +847,7 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, to))
 	})
 	if retype {
-		writeSeriesDates(cal, c, dates, true)
-		// At the wall clock datesOn moved it to, which can be one its zone
-		// skips (#8).
-		c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, startAt, startForm))
+		writeSeriesDates(cal, c, dates, true, &startAt)
 	} else {
 		s.anchorAt(cal, to)
 	}
@@ -1583,7 +1582,7 @@ func seriesDateProp(cal *ical.Calendar, name string, t time.Time, f dateForm) *i
 
 // seriesValueProp is seriesDateProp for the value d: a local DATE-TIME takes
 // d's wall clock in the zone it is written in, which can be one the zone
-// skips (see wallIn, #8).
+// skips (see wallIn, #8, FR-17, FR-18).
 func seriesValueProp(cal *ical.Calendar, name string, d dateValue, f dateForm) *ical.Prop {
 	tzid := cmp.Or(f.param, f.tzid)
 	var loc *time.Location
@@ -1650,12 +1649,23 @@ func seriesForm(f dateForm, allDay, keep bool, tz string) dateForm {
 // recurring todo c (FR-10, FR-17). Without a start, DTSTART = DUE, as RFC
 // 5545 wants DTSTART with RRULE; DUE replaces a DURATION. keep keeps the
 // form of the dates c has, else only a TZID stays and timed dates take the
-// zone of in (see seriesForm).
-func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool) {
+// zone of in (see seriesForm). at, if set, is in's start, else its due, at
+// the wall clock it is written with, which can be one its zone skips (see
+// enteredAt and datesOn, #8).
+func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool, at *dateValue) {
 	start, startForm := seriesStart(c, in, keep)
 	_, dueForm, ok := storedForms(c)
-	setSeriesDate(cal, c, ical.PropDateTimeStart, start, startForm)
-	setSeriesDate(cal, c, ical.PropDue, in.Due, seriesForm(dueForm, in.DueAllDay, keep && ok, in.Timezone))
+	dueForm = seriesForm(dueForm, in.DueAllDay, keep && ok, in.Timezone)
+	if at != nil && start != nil {
+		c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, *at, startForm))
+	} else {
+		setSeriesDate(cal, c, ical.PropDateTimeStart, start, startForm)
+	}
+	if at != nil && in.Start == nil && in.Due != nil {
+		c.Props.Set(seriesValueProp(cal, ical.PropDue, *at, dueForm))
+	} else {
+		setSeriesDate(cal, c, ical.PropDue, in.Due, dueForm)
+	}
 	c.Props.Del(ical.PropDuration)
 }
 

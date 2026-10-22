@@ -27,7 +27,7 @@ type dateValue struct {
 	// wall is the date and clock time the value is written with, read as
 	// UTC, also one its zone skips, which no instant has (see zoned); zero
 	// for a UTC value ("Z") and for one Lucid built from an instant, whose
-	// wall clock is its instant's (see wallIn, #8).
+	// wall clock is its instant's (see wallIn, #8, FR-18).
 	wall time.Time
 }
 
@@ -83,7 +83,7 @@ func parseDateList(p *ical.Prop) ([]dateValue, error) {
 // parseDateValue parses a single value. Floating times are treated as UTC,
 // unknown TZIDs fall back to UTC. A TZID value is the instant zoned reads
 // its wall clock as, and every value but a UTC one keeps the wall clock it is
-// written with (#8).
+// written with (#8, FR-18).
 func parseDateValue(v string, params ical.Params) (dateValue, error) {
 	v = strings.TrimSpace(v)
 	if strings.EqualFold(params.Get(ical.ParamValue), string(ical.ValueDate)) || len(v) == len(icalDate) {
@@ -142,7 +142,8 @@ func zoned(w time.Time, loc *time.Location) time.Time {
 	return before.In(loc) // the time itself, the first of two, or a skipped one
 }
 
-// wallClock returns the date and clock time of t in loc, read as UTC (#8).
+// wallClock returns the date and clock time of t in loc, read as UTC (#8,
+// FR-18).
 func wallClock(t time.Time, loc *time.Location) time.Time {
 	w := t.In(loc)
 	return time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), w.Nanosecond(), time.UTC)
@@ -211,7 +212,8 @@ type span struct {
 }
 
 // addTo returns t plus the span: its days on t's wall clock, read as zoned
-// reads a time the zone skips or repeats (#8), then its exact duration.
+// reads a time the zone skips or repeats, then its exact duration (#8,
+// FR-18).
 func (s span) addTo(t time.Time) time.Time {
 	loc := t.Location()
 	return zoned(wallClock(t, loc).AddDate(0, 0, s.days), loc).Add(s.exact)

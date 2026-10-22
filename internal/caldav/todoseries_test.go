@@ -770,6 +770,19 @@ func TestMoveAtSkippedTime(t *testing.T) {
 			states: []string{current},
 		},
 		{
+			// Its start saved as shown, 03:30, the only time a browser can send
+			// for it: the series keeps 02:30, and only its due changes.
+			name:   "a due changed at the repeat at a skipped time",
+			master: []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "DUE;TZID=Europe/Berlin:20250330T050000", "RRULE:FREQ=DAILY"},
+			start:  date(2025, 3, 30, 1, 30),
+			due:    date(2025, 3, 30, 4, 0),
+			stored: []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "DUE;TZID=Europe/Berlin:20250330T060000"},
+			lacks:  []string{"T033000"},
+			next:   date(2025, 3, 31, 0, 30),
+			dates:  []time.Time{date(2025, 3, 30, 1, 30), date(2025, 3, 31, 0, 30)},
+			states: []string{current, upcoming},
+		},
+		{
 			// Shown on Wednesday, saved on Friday at 02:30: two days later, from
 			// Friday's repeat to Sunday, at 02:30.
 			name:      "a dated repeat shown elsewhere made timed onto a skipped time",
@@ -788,6 +801,23 @@ func TestMoveAtSkippedTime(t *testing.T) {
 			checkMoveShown(t, tc)
 		})
 	}
+}
+
+// TestRuleChangedAtSkippedTime changes the rule of a daily Berlin task
+// series at 02:30 from its repeat on the night Berlin skips that time, saved
+// at the time it shows, 03:30: the series starts over there at 02:30 (#8,
+// FR-17, FR-18).
+func TestRuleChangedAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RRULE:FREQ=DAILY"})
+	f := listedTodo(t, e, id)
+	in := editInput(&f)
+	in.RRule, in.RRuleOmitted, in.Timezone = "FREQ=DAILY;INTERVAL=2", false, "Europe/Berlin"
+	_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+	mustNoErr(t, err)
+	checkStored(t, "series", storedObject(t, e, id),
+		[]string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RRULE:FREQ=DAILY;INTERVAL=2"}, []string{"T033000"})
 }
 
 // TestExcludeAtSkippedTime excludes the repeat of a daily Berlin task series

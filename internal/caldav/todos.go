@@ -332,7 +332,7 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 		// A series is written like an event's: timed dates in the browser's
 		// zone, so that it recurs at the same wall-clock time (FR-17).
 		c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
-		writeSeriesDates(cal, c, in, false)
+		writeSeriesDates(cal, c, in, false, nil)
 	}
 	applyTodoFields(c, in, now)
 
@@ -713,7 +713,14 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 	}
 	c.Props.Del(ical.PropExceptionDates)
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
-	writeSeriesDates(cal, c, in, s != nil)
+	// A start (else due) saved at the time of day the occurrence shows keeps
+	// the series' wall clock, also one its zone skips (see enteredAt, #8).
+	var at *dateValue
+	if start := cmp.Or(in.Start, in.Due); s != nil && start != nil {
+		v := enteredAt(s.event(from.rid), *start, s.anchor.loc())
+		at = &v
+	}
+	writeSeriesDates(cal, c, in, s != nil, at)
 	c.Props.Del(propKDEPending)
 	// With a rule the todo is a series of its own, no longer the copy of a
 	// repeat of another one.

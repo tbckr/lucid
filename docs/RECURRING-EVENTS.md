@@ -850,10 +850,13 @@ event, and the refusal comes as a toast.
   `RECURRENCE-ID` and `EXDATE` and the `DTSTART` of the new series of "This
   and following events", and moves the series from there (`ruleEvent`):
   dragged from 03:30 to 04:30 with "All events", the series goes to 04:30
-  and the event lands where it was dropped. A value that a move, a change
-  to timed or a change of zone puts at such a time, such as a `DTSTART`
-  moved from 01:30 to 02:30 on that night, is written as computed, 02:30,
-  so every other event stays at that time.
+  and the event lands where it was dropped. Saved at the 03:30 it shows,
+  the only time a browser can send for it, with a new title, rule or end,
+  also for "This and following events", the series keeps 02:30, and so
+  does an event dropped there from another day (`enteredAt`). A value that
+  a move, a change to timed or a change of zone puts at such a time, such
+  as a `DTSTART` moved from 01:30 to 02:30 on that night, is written as
+  computed, 02:30, so every other event stays at that time.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and
@@ -1263,6 +1266,12 @@ would refuse it; a later change of the old series keeps its own Undo.
 - For an `RDATE` event at a time its zone skips, Lucid writes the
   `RECURRENCE-ID` or `EXDATE` at the time the event shows (03:30), which
   names the same instant, not at the `RDATE`'s own 02:30.
+- On the night of a change back from summer time, Lucid reads a repeated
+  time, such as 02:30 in Berlin, as the first of the two, as RFC 5545 says,
+  while sabre/vobject and ical.js read it as the second: an `EXDATE` or
+  `RECURRENCE-ID` in UTC that such a client wrote for an event at that time
+  matches no event in Lucid, and an `UNTIL` that Lucid writes at such an
+  event ends the series before it for them.
 - A rule that repeats within a day (`HOURLY`, `MINUTELY`, `SECONDLY`) puts
   two of its times on one instant on the night of a change to summer time,
   such as 02:00 and 03:00 in Berlin; Lucid shows that event once.

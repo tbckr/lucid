@@ -339,10 +339,6 @@ func TestSplitTodoDropsMarkers(t *testing.T) {
 	checkOpenAsBefore(t, raw, s, n)
 }
 
-// TestSplitTodoRefusesOffRule refuses to split a task series at a repeat
-// that is no instance of its rule after its anchor, or that its rule cannot
-// be walked to, with ErrSeriesSplitUnsupported, from splitTodoOff and
-// endTodoBefore alike, and leaves the series as it was (FR-17).
 // TestSplitTodoAtSkippedTime splits a daily Berlin task series at 02:30 at
 // its repeat on the night Berlin skips that time, shown at 03:30: N starts at
 // 02:30, as the rule has that repeat, so its later repeats stay at 02:30, and
@@ -363,6 +359,10 @@ func TestSplitTodoAtSkippedTime(t *testing.T) {
 	checkOpenAsBefore(t, raw, s, n)
 }
 
+// TestSplitTodoRefusesOffRule refuses to split a task series at a repeat
+// that is no instance of its rule after its anchor, or that its rule cannot
+// be walked to, with ErrSeriesSplitUnsupported, from splitTodoOff and
+// endTodoBefore alike, and leaves the series as it was (FR-17).
 func TestSplitTodoRefusesOffRule(t *testing.T) {
 	t.Parallel()
 	weekly := []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY"}

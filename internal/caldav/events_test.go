@@ -2453,6 +2453,86 @@ func TestUpdateSeriesFromSkippedTime(t *testing.T) {
 	})
 }
 
+// TestUpdateSeriesKeepsSkippedTime saves the event of a daily Berlin series
+// at 02:30 on the night Berlin skips that time, shown at 03:30, at the time
+// it shows, which is the only one a browser can send for it: the series keeps
+// 02:30, whether the title or the rule changes, the edit goes to this and the
+// following events, or the rule fixes the time; so does a drop from the day
+// before into that skipped hour, sent as the hour after it. Measured from
+// 02:30, each of them moved the series to 03:30 (#8, FR-17, FR-18).
+func TestUpdateSeriesKeepsSkippedTime(t *testing.T) {
+	t.Parallel()
+	night := date(2026, 3, 29, 1, 30) // 02:30 on 03-29, shown at 03:30 CEST
+	tests := []struct {
+		name      string
+		rule      string
+		on        time.Time // the event edited
+		edit      func(in *domain.EventInput)
+		following bool
+		start     string    // the series' DTSTART as stored, or N's
+		shown     time.Time // an event of the series, or of N, after the save
+	}{
+		{
+			name: "a new title", rule: "FREQ=DAILY", on: night,
+			edit:  func(in *domain.EventInput) { in.Title = "Renamed" },
+			start: "DTSTART;TZID=Europe/Berlin:20260325T023000", shown: date(2026, 3, 30, 0, 30),
+		},
+		{
+			name: "a new rule", rule: "FREQ=DAILY", on: night,
+			edit:  func(in *domain.EventInput) { in.RRule = "FREQ=DAILY;INTERVAL=2" },
+			start: "DTSTART;TZID=Europe/Berlin:20260325T023000", shown: date(2026, 3, 31, 0, 30),
+		},
+		{
+			name: "a new title for this and the following events", rule: "FREQ=DAILY", on: night, following: true,
+			edit:  func(in *domain.EventInput) { in.Title = "Renamed" },
+			start: "DTSTART;TZID=Europe/Berlin:20260329T023000", shown: date(2026, 3, 30, 0, 30),
+		},
+		{
+			name: "a new title of a rule that fixes its time", rule: "FREQ=DAILY;BYHOUR=2;BYMINUTE=30", on: night,
+			edit:  func(in *domain.EventInput) { in.Title = "Renamed" },
+			start: "DTSTART;TZID=Europe/Berlin:20260325T023000", shown: date(2026, 3, 30, 0, 30),
+		},
+		{
+			name: "a drop from the day before into the skipped hour", rule: "FREQ=DAILY", on: date(2026, 3, 28, 1, 30),
+			edit: func(in *domain.EventInput) {
+				in.Start, in.End = night, night.Add(time.Hour)
+			},
+			start: "DTSTART;TZID=Europe/Berlin:20260326T023000", shown: date(2026, 3, 30, 0, 30),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Night",
+				"DTSTART;TZID=Europe/Berlin:20260325T023000", "DTEND;TZID=Europe/Berlin:20260325T033000", "RRULE:"+tt.rule,
+				"END:VEVENT")
+			evs := listed(t, e, "work", tt.on, tt.on.Add(time.Second))
+			if len(evs) != 1 {
+				t.Fatalf("got %d events at %v; want 1", len(evs), tt.on)
+			}
+			in := seriesUpdate(evs[0], "Night", "", evs[0].Start, evs[0].End)
+			tt.edit(&in)
+			var data string
+			if tt.following {
+				_, _, err := e.svc.UpdateFollowing(t.Context(), id, evs[0].ETag, tt.on, in)
+				mustNoErr(t, err)
+				_, data = newSeriesIn(t, e, id)
+			} else {
+				_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
+				mustNoErr(t, err)
+				data = stored(t, e, "work", "series.ics")
+			}
+			checkStored(t, "series", data, []string{tt.start}, []string{"DTSTART;TZID=Europe/Berlin:20260325T033000", "DTSTART;TZID=Europe/Berlin:20260329T033000"})
+			got := listed(t, e, "work", tt.shown, tt.shown.Add(time.Second))
+			if len(got) != 1 || !got[0].Start.Equal(tt.shown) {
+				t.Errorf("events at %v = %+v; want one starting there", tt.shown, got)
+			}
+		})
+	}
+}
+
 // TestUpdateSeriesMadeTimedAtSkippedTime is issue #8's second case: a
 // weekly all-day series from the night of the change to summer time, made
 // timed at 02:30 Berlin time from its 04-05 event, gets DTSTART at 02:30,

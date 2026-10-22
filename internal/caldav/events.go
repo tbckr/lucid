@@ -678,7 +678,7 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
 		ov, shown := shownOccurrence(cal, master, oldTm, rid)
-		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start, dateValue{t: in.Start})
+		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start, enteredAt(shown.start, in.Start, oldTm.start.loc()))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -764,7 +764,7 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
 	oldRule := rruleString(master)
-	mv, err := wallShift(oldRule, tm.start, rid, shown.start, dateValue{t: in.Start})
+	mv, err := wallShift(oldRule, tm.start, rid, shown.start, enteredAt(shown.start, in.Start, tm.start.loc()))
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -874,6 +874,24 @@ func wallShift(rule string, st dateValue, rid time.Time, from, to dateValue) (*s
 		return nil, err
 	}
 	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.wallIn(loc).Day()}, nil
+}
+
+// enteredAt returns the start at entered for the event shown from, as the
+// value at its wall clock in the series' zone loc (#8, FR-17, FR-18): from's
+// own wall clock on at's date where at is that wall clock's instant there,
+// else at's. An event at a time its zone skips shows an hour later, 03:30 for
+// a series at 02:30 on the night Berlin changes to summer time, and a browser
+// can enter that time only as the one it shows: saved there, by an edit of
+// its title, its rule or its end, or dropped there from another day, it
+// keeps the series' 02:30, while any other time moves the series from 02:30
+// (see ruleEvent).
+func enteredAt(from dateValue, at time.Time, loc *time.Location) dateValue {
+	fw, aw := from.wallIn(loc), wallClock(at, loc)
+	kept := time.Date(aw.Year(), aw.Month(), aw.Day(), fw.Hour(), fw.Minute(), fw.Second(), fw.Nanosecond(), time.UTC)
+	if zoned(kept, loc).Equal(at) {
+		return atWall(kept, loc)
+	}
+	return atWall(aw, loc)
 }
 
 // seriesMove is how "all events" moves the values of a series, see
@@ -1097,7 +1115,8 @@ func newZoneMove(from, to *time.Location, rid, shown, entered time.Time) zoneMov
 
 // at returns the value d, read on z.from's wall clock, carried into z.to
 // (see zoneMove): from the wall clock it is written with where that is
-// z.from's, which can be one z.from skips, to one z.to may skip (#8).
+// z.from's, which can be one z.from skips, to one z.to may skip (#8, FR-17,
+// FR-18).
 func (z zoneMove) at(d dateValue) dateValue {
 	w := d.wallIn(z.from)
 	return atWall(time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second()+z.secs, w.Nanosecond(), time.UTC), z.to)
