@@ -343,6 +343,26 @@ func TestSplitTodoDropsMarkers(t *testing.T) {
 // that is no instance of its rule after its anchor, or that its rule cannot
 // be walked to, with ErrSeriesSplitUnsupported, from splitTodoOff and
 // endTodoBefore alike, and leaves the series as it was (FR-17).
+// TestSplitTodoAtSkippedTime splits a daily Berlin task series at 02:30 at
+// its repeat on the night Berlin skips that time, shown at 03:30: N starts at
+// 02:30, as the rule has that repeat, so its later repeats stay at 02:30, and
+// its DUE keeps its distance from that night's instant (#8, FR-17).
+func TestSplitTodoAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	raw := todoSeriesICS([]string{
+		"DTSTART;TZID=Europe/Berlin:20250327T023000", "DUE;TZID=Europe/Berlin:20250327T033000", "RRULE:FREQ=DAILY;COUNT=7",
+	})
+	s, n := splitTodoAt(t, mustParse(t, raw), date(2025, 3, 30, 1, 30))
+	nm := mainComponent(n, ical.CompToDo)
+	if got, want := propLine(nm, ical.PropDateTimeStart), "DTSTART;TZID=Europe/Berlin:20250330T023000"; got != want {
+		t.Errorf("N's DTSTART = %s; want %s", got, want)
+	}
+	if got, want := propLine(nm, ical.PropDue), "DUE;TZID=Europe/Berlin:20250330T043000"; got != want {
+		t.Errorf("N's DUE = %s; want %s", got, want)
+	}
+	checkOpenAsBefore(t, raw, s, n)
+}
+
 func TestSplitTodoRefusesOffRule(t *testing.T) {
 	t.Parallel()
 	weekly := []string{"DTSTART:20250309T090000Z", "RRULE:FREQ=WEEKLY"}

@@ -1218,6 +1218,25 @@ func TestCompleteTodoOccurrence(t *testing.T) {
 		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20261026T090000"}, nil)
 	})
 
+	// A repeat at a time Berlin skips on the night of the change to summer
+	// time shows an hour later; the series rolls onto it at its own time,
+	// as its rule has it, and keeps that time (#8, FR-17, FR-18).
+	t.Run("a roll onto a skipped time keeps the series' time", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t, caldavtest.Options{})
+		id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20250329T023000", "RRULE:FREQ=DAILY"})
+		got := completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2025, 3, 30, 1, 30))) {
+			t.Errorf("start = %v; want 2025-03-30T01:30Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20250330T023000"}, []string{"T033000"})
+		got = completeListed(t, e, id)
+		if !sameTime(got.Start, ptr(date(2025, 3, 31, 0, 30))) {
+			t.Errorf("start = %v; want 2025-03-31T00:30Z", got.Start)
+		}
+		checkStored(t, "master", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20250331T023000"}, []string{"T033000"})
+	})
+
 	t.Run("due only", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t, caldavtest.Options{})

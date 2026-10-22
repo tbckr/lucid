@@ -139,7 +139,7 @@ func splitTodoOff(cal *ical.Calendar, series *todoSeries, rid time.Time, uid str
 	reopen(nm)
 	dropChildLinks(nm)
 	// N's series, as copied, has the forms and the distance of DUE of s.
-	newTodoSeries(n, nm).anchorAt(n, rid)
+	newTodoSeries(n, nm).anchorAt(n, series.event(rid))
 	nm.Props.Get(ical.PropRecurrenceRule).Value = lowerCount(series.rrule, before)
 	masterFirst(n, nm)
 	return n, nil

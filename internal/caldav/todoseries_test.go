@@ -726,6 +726,93 @@ func TestMoveShownRetypes(t *testing.T) {
 // date, and keep excluding and changing that repeat; and the series keeps
 // its days far from UTC, counted on the wall clock of the zone it takes
 // (FR-17).
+// TestMoveAtSkippedTime saves the current repeat of task series around the
+// night Berlin skips 02:00 to 03:00, 2025-03-30 (#8, FR-17, FR-18). A
+// repeat at 02:30 shows at 03:30; the series moves from its own 02:30, as
+// its rule has that repeat, so a drag to 04:30 puts it and its EXDATEs at
+// 04:30. A new DTSTART or a reference a move puts at 02:30 that night is
+// written at 02:30, as computed, and the series keeps that time.
+func TestMoveAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent
+	for _, tc := range []moveShownCase{
+		{
+			name:   "from the repeat at a skipped time",
+			master: []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RRULE:FREQ=DAILY", "EXDATE;TZID=Europe/Berlin:20250331T023000"},
+			start:  date(2025, 3, 30, 2, 30),
+			stored: []string{"DTSTART;TZID=Europe/Berlin:20250330T043000", "EXDATE;TZID=Europe/Berlin:20250331T043000"},
+			lacks:  []string{"T033000"},
+			next:   date(2025, 4, 1, 2, 30),
+			dates:  []time.Time{date(2025, 3, 30, 2, 30)},
+			states: []string{current},
+		},
+		{
+			// Shown on Friday at 05:00, saved on Sunday at 06:00: two days and
+			// an hour later, from 01:30 to 02:30 on Sunday.
+			name:      "a repeat shown elsewhere moves the series onto a skipped time",
+			master:    []string{"DTSTART;TZID=Europe/Berlin:20250328T013000", "RRULE:FREQ=DAILY"},
+			overrides: [][]string{{"RECURRENCE-ID;TZID=Europe/Berlin:20250328T013000", "DTSTART;TZID=Europe/Berlin:20250328T050000", "SUMMARY:Moved"}},
+			start:     date(2025, 3, 30, 4, 0),
+			stored:    []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RECURRENCE-ID;TZID=Europe/Berlin:20250330T023000"},
+			lacks:     []string{"T033000"},
+			next:      date(2025, 3, 31, 0, 30),
+			dates:     []time.Time{date(2025, 3, 30, 4, 0), date(2025, 3, 31, 0, 30)},
+			states:    []string{current, upcoming},
+		},
+		{
+			name:   "dates made timed onto a skipped time",
+			master: []string{"DTSTART;VALUE=DATE:20250323", "RRULE:FREQ=WEEKLY", "EXDATE;VALUE=DATE:20250330"},
+			start:  date(2025, 3, 23, 1, 30),
+			stored: []string{"DTSTART;TZID=Europe/Berlin:20250323T023000", "EXDATE;TZID=Europe/Berlin:20250330T023000"},
+			lacks:  []string{"VALUE=DATE", "T033000"},
+			next:   date(2025, 4, 6, 0, 30),
+			dates:  []time.Time{date(2025, 3, 23, 1, 30)},
+			states: []string{current},
+		},
+		{
+			// Shown on Wednesday, saved on Friday at 02:30: two days later, from
+			// Friday's repeat to Sunday, at 02:30.
+			name:      "a dated repeat shown elsewhere made timed onto a skipped time",
+			master:    []string{"DTSTART;VALUE=DATE:20250328", "RRULE:FREQ=WEEKLY"},
+			overrides: [][]string{{"RECURRENCE-ID;VALUE=DATE:20250328", "DTSTART;VALUE=DATE:20250326", "SUMMARY:Shown"}},
+			start:     date(2025, 3, 28, 1, 30),
+			stored:    []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RECURRENCE-ID;TZID=Europe/Berlin:20250330T023000"},
+			lacks:     []string{"T033000"},
+			next:      date(2025, 4, 6, 0, 30),
+			dates:     []time.Time{date(2025, 3, 28, 1, 30)},
+			states:    []string{current},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkMoveShown(t, tc)
+		})
+	}
+}
+
+// TestExcludeAtSkippedTime excludes the repeat of a daily Berlin task series
+// at 02:30 on the night Berlin skips that time: its EXDATE takes 02:30, as
+// the rule has that repeat (#8, FR-17).
+func TestExcludeAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	s, cal := testSeries(t, []string{"DTSTART;TZID=Europe/Berlin:20250327T023000", "RRULE:FREQ=DAILY"})
+	s.exclude(cal, todoOcc{rid: date(2025, 3, 30, 1, 30)})
+	if got, want := propLine(s.master, ical.PropExceptionDates), "EXDATE;TZID=Europe/Berlin:20250330T023000"; got != want {
+		t.Errorf("EXDATE = %s; want %s", got, want)
+	}
+}
+
+// TestDatesOnSkippedTime moves the dates of a save onto the night Berlin
+// skips 02:00 to 03:00: the start keeps its 02:30 there as its wall clock,
+// at the instant RFC 5545 section 3.3.5 reads it as (#8, FR-17, FR-18).
+func TestDatesOnSkippedTime(t *testing.T) {
+	t.Parallel()
+	moved, at := datesOn(domain.TodoInput{Start: ptr(date(2025, 3, 28, 1, 30)), Timezone: "Europe/Berlin"}, date(2025, 3, 30, 0, 0))
+	if !at.wall.Equal(date(2025, 3, 30, 2, 30)) || !at.t.Equal(date(2025, 3, 30, 1, 30)) || !sameTime(moved.Start, ptr(date(2025, 3, 30, 1, 30))) {
+		t.Errorf("datesOn = %v, %+v; want the start at 02:30 Berlin time, 2025-03-30T01:30Z", moved.Start, at)
+	}
+}
+
 func TestMoveRetypesDatedRefs(t *testing.T) {
 	t.Parallel()
 	upcoming, current := domain.OccurrenceUpcoming, domain.OccurrenceCurrent

@@ -1155,6 +1155,15 @@ its date (see Reading), so it takes the new time of day on that date too,
 and keeps excluding or changing that occurrence. The later ones first move
 by the change in date.
 
+A repeat at a time its zone skips, such as 02:30 on the night Berlin
+changes to summer time, shows an hour later, at 03:30, as RFC 5545 reads
+that time (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md), "What the
+standards say"). Its rule still has it at 02:30, so the series rolls, splits
+and is excluded there at 02:30, and a move from it counts from 02:30: dragged
+from 03:30 to 04:30, the series and its later references go to 04:30, as an
+event series does. A date a move or a change to timed dates puts at such a
+time is written as computed, 02:30, so every other repeat keeps that time.
+
 `DTSTART` stays on the rule, so a `COUNT` stays a `COUNT`, without the
 occurrences before the moved one, which the new `DTSTART` leaves behind. An
 `UNTIL` that would end before the new date moves onto it: clients built on
@@ -1383,6 +1392,9 @@ keeps the properties and components Lucid does not know.
 - Changing only the due date, without the start, changes it for every
   repeat alike: RFC 5545 keeps one offset between `DTSTART` and `DUE` for
   the whole series (§3.8.5.3).
+- A repeat another app moved with a `DTSTART` at a time its zone skips
+  moves the series from the time it shows at (03:30), not from the 02:30 it
+  is written with.
 - An absolute alarm trigger (`VALARM` with `TRIGGER;VALUE=DATE-TIME`) stays
   at its instant when the master rolls or moves; only a relative trigger
   follows, as with Tasks.org and Evolution.

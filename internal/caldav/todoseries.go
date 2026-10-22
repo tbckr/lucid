@@ -573,7 +573,7 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 			p.Value = countToUntil(s.rrule, last, s.startForm)
 		}
 	}
-	s.anchorAt(cal, next.rid)
+	s.anchorAt(cal, s.event(next.rid))
 	dropOccurrence(cal, c, cur)
 	c.Props.Del(propKDEPending)
 	return nil
@@ -607,25 +607,33 @@ func (s *todoSeries) rollPast(cal *ical.Calendar, cur, next todoOcc) error {
 // The first later completion whose next occurrence is an instance rolls the
 // master past it.
 func (s *todoSeries) exclude(cal *ical.Calendar, occ todoOcc) {
-	s.master.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, occ.rid, s.startForm))
+	s.master.Props.Add(seriesValueProp(cal, ical.PropExceptionDates, s.event(occ.rid), s.startForm))
 	dropOccurrence(cal, s.master, occ)
 }
 
 // anchorAt writes the master's DTSTART and DUE for the rule date t, in the
-// form they are written in (FR-17): DUE keeps its distance to DTSTART, and
-// a series anchored on DUE gets DTSTART = DUE, as RFC 5545 wants DTSTART
-// with RRULE.
-func (s *todoSeries) anchorAt(cal *ical.Calendar, t time.Time) {
+// form they are written in (FR-17), at t's wall clock, which can be one its
+// zone skips (see ruleEvent, #8): DUE keeps its distance to DTSTART, and a
+// series anchored on DUE gets DTSTART = DUE, as RFC 5545 wants DTSTART with
+// RRULE.
+func (s *todoSeries) anchorAt(cal *ical.Calendar, t dateValue) {
 	c := s.master
-	setSeriesDate(cal, c, ical.PropDateTimeStart, &t, s.startForm)
+	c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, t, s.startForm))
 	if s.onDue {
-		setSeriesDate(cal, c, ical.PropDue, &t, s.dueForm)
+		c.Props.Set(seriesValueProp(cal, ical.PropDue, t, s.dueForm))
 		c.Props.Del(ical.PropDuration) // invalid without DTSTART; DUE stands
 	} else if c.Props.Get(ical.PropDue) != nil && s.dueOffset != nil {
 		// A DURATION stays: it is relative to DTSTART.
-		due := t.Add(*s.dueOffset)
+		due := t.t.Add(*s.dueOffset)
 		setSeriesDate(cal, c, ical.PropDue, &due, s.dueForm)
 	}
+}
+
+// event returns the repeat of the rule of s at the instant t, with the wall
+// clock the rule gives it, also one its zone skips, where it shows an hour
+// later (see ruleEvent, #8, FR-17).
+func (s *todoSeries) event(t time.Time) dateValue {
+	return ruleEvent(s.rrule, s.anchor, t)
 }
 
 // move moves the series s from the occurrence a todo with the given status
@@ -702,7 +710,7 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 	rule, before := s.rrule, 0
 	if evaluable && !last {
 		var ok bool
-		if rule, ok = seriesShift(rule, rid.In(s.anchor.loc()), to.t.In(to.loc())); !ok {
+		if rule, ok = seriesShift(rule, s.event(rid).wallIn(s.anchor.loc()), to.wallIn(to.loc())); !ok {
 			return nil, errMoveFixedDays
 		}
 		var err error
@@ -802,20 +810,25 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	if err != nil {
 		return nil, errRuleUnsupported
 	}
-	to := prev.In(loc)
+	// From prev at the wall clock the rule gives it, which can be one its
+	// zone skips (see ruleEvent, #8).
+	from := s.event(prev)
+	to := from
 	if shift != nil {
-		to = shift(dateValue{t: to, allDay: s.anchor.allDay}).t
+		to = shift(from)
 	}
 	// The master's new DTSTART, as written: to, or, retyped, in's start
 	// (else due) on to's date.
-	start := dateValue{t: to.In(loc), allDay: s.anchor.allDay}
+	start := to
 	var dates domain.TodoInput
+	var startAt dateValue
+	var startForm dateForm
 	if retype {
-		dates = datesOn(in, civilDate(to.In(loc)))
-		t, form := seriesStart(s.master, dates, true)
-		start, _ = parseDateProp(seriesDateProp(nil, ical.PropDateTimeStart, *t, form))
+		dates, startAt = datesOn(in, civilDate(to.wallIn(loc)))
+		_, startForm = seriesStart(s.master, dates, true)
+		start, _ = parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, startAt, startForm))
 	}
-	rule, ok := seriesShift(s.rrule, prev.In(loc), start.t.In(start.loc()))
+	rule, ok := seriesShift(s.rrule, from.wallIn(loc), start.wallIn(start.loc()))
 	if !ok {
 		return nil, errMoveFixedDays
 	}
@@ -828,12 +841,14 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	}
 	stays := func(d dateValue) bool { return !moves(d) }
 	stayed := s.overridesWhere(cal, stays)
-	anchor := dateValue{t: to, allDay: s.anchor.allDay}
 	dropExdates(c, func(d dateValue) bool {
-		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, anchor))
+		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, to))
 	})
 	if retype {
 		writeSeriesDates(cal, c, dates, true)
+		// At the wall clock datesOn moved it to, which can be one its zone
+		// skips (#8).
+		c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, startAt, startForm))
 	} else {
 		s.anchorAt(cal, to)
 	}
@@ -843,7 +858,7 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		s.shiftRefs(cal, moves, shift)
 	}
 	if occ.offGrid {
-		c.Props.Add(seriesDateProp(cal, ical.PropExceptionDates, to, s.startForm))
+		c.Props.Add(seriesValueProp(cal, ical.PropExceptionDates, to, s.startForm))
 	}
 	entry := s
 	if retype {
@@ -869,7 +884,9 @@ func zoneOf(tz string) *time.Location {
 // for a series retyped from an occurrence shown on another day (FR-17): its
 // start, else its due, falls on day at its own wall-clock time in the zone of
 // in (UTC for a date, see seriesForm), and the due keeps its distance to it.
-func datesOn(in domain.TodoInput, day time.Time) domain.TodoInput {
+// It also returns that start, else due, as written there: on its wall clock,
+// also one the zone skips on day (#8).
+func datesOn(in domain.TodoInput, day time.Time) (domain.TodoInput, dateValue) {
 	anchor, allDay := in.Start, in.StartAllDay
 	if anchor == nil {
 		anchor, allDay = in.Due, in.DueAllDay
@@ -879,15 +896,20 @@ func datesOn(in domain.TodoInput, day time.Time) domain.TodoInput {
 		zone = zoneOf(in.Timezone)
 	}
 	days := int(day.Sub(civilDate(anchor.In(zone))) / (24 * time.Hour))
+	moved := func(t time.Time) dateValue {
+		return atWall(wallClock(t, zone).AddDate(0, 0, days), zone)
+	}
 	move := func(t *time.Time) *time.Time {
 		if t == nil {
 			return nil
 		}
-		m := t.In(zone).AddDate(0, 0, days)
+		m := moved(*t).t
 		return &m
 	}
+	at := moved(*anchor)
+	at.allDay = allDay
 	in.Start, in.Due = move(in.Start), move(in.Due)
-	return in
+	return in, at
 }
 
 // movedFrom returns the instance of the rule of s that moveShown moves the
@@ -1127,7 +1149,7 @@ func (s *todoSeries) lastBefore(t time.Time) (prev time.Time, before int, err er
 // written, moves the references to later occurrences, see shiftBetween
 // (FR-17).
 func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) dateValue {
-	return s.shiftBetween(dateValue{t: rid.In(s.anchor.loc()), allDay: s.anchor.allDay}, to)
+	return s.shiftBetween(s.event(rid), to)
 }
 
 // shiftBetween returns how a move from `from` to `to` moves the values of
@@ -1145,7 +1167,7 @@ func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) dateV
 // afterwards, setting the time of day.
 func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue {
 	loc := s.anchor.loc()
-	start, dest := from.t.In(from.loc()), to.t.In(to.loc())
+	start, dest := from.wallIn(from.loc()), to.wallIn(to.loc())
 	var months, days, secs int
 	switch strings.ToUpper(rulePart(s.rrule, "FREQ")) {
 	case "MONTHLY", "YEARLY":
@@ -1162,11 +1184,12 @@ func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue 
 	}
 	return func(d dateValue) dateValue {
 		if d.allDay {
-			return dateValue{t: d.t.AddDate(0, months, days)}
+			day := d.t.AddDate(0, months, days)
+			return dateValue{t: day, wall: day, allDay: true}
 		}
-		w := d.t.In(loc)
-		return dateValue{t: time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
-			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), loc)}
+		w := d.wallIn(loc)
+		return atWall(time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
+			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), time.UTC), loc)
 	}
 }
 
@@ -1308,7 +1331,7 @@ func (s *todoSeries) retypeRefs(cal *ical.Calendar, to dateValue) {
 	case to.allDay:
 		s.convertRefs(cal, true, 0, s.anchor.loc(), to.form())
 	default:
-		s.convertRefs(cal, false, time.Duration(secondOfDay(to.t))*time.Second, to.loc(), to.form())
+		s.convertRefs(cal, false, time.Duration(secondOfDay(to.wallIn(to.loc())))*time.Second, to.loc(), to.form())
 	}
 }
 
@@ -1338,14 +1361,16 @@ func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay ti
 			dated[o.c] = true
 		}
 	}
-	conv := func(d dateValue) time.Time {
+	conv := func(d dateValue) dateValue {
 		if toAllDay {
-			return civilDate(d.t.In(loc))
+			day := civilDate(d.wallIn(loc))
+			return dateValue{t: day, wall: day, allDay: true}
 		}
 		// A DATE is midnight UTC of its day; the time of day is on the wall
-		// clock, also on a day the zone changes its offset.
+		// clock, also on a day the zone changes its offset, and written so
+		// where the zone skips it (#8).
 		y, m, day := d.t.Date()
-		return time.Date(y, m, day, 0, 0, int(timeOfDay/time.Second), 0, loc)
+		return atWall(time.Date(y, m, day, 0, 0, int(timeOfDay/time.Second), 0, time.UTC), loc)
 	}
 	if p := c.Props.Get(ical.PropRecurrenceRule); p != nil {
 		p.Value = mapRulePart(p.Value, "UNTIL", func(v string) string {
@@ -1354,11 +1379,11 @@ func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay ti
 			case err != nil || d.allDay == toAllDay:
 				return v
 			case toAllDay:
-				return conv(d).Format(icalDate)
+				return conv(d).t.Format(icalDate)
 			case f.floating:
-				return conv(d).UTC().Format(icalDateTime)
+				return conv(d).t.UTC().Format(icalDateTime)
 			default:
-				return conv(d).UTC().Format(icalDateTimeUTC)
+				return conv(d).t.UTC().Format(icalDateTimeUTC)
 			}
 		})
 	}
@@ -1382,9 +1407,10 @@ func (s *todoSeries) convertRefs(cal *ical.Calendar, toAllDay bool, timeOfDay ti
 
 // retypeDateProp rewrites the date property p in the form f when one of its
 // values is not of the value type toAllDay, or for all (FR-17): such values,
-// or all of them, by conv, the others at their own instant. Its parameters
+// or all of them, by conv, the others at their own instant, on the wall clock
+// they are written with where f writes them in its zone (#8). Its parameters
 // other than VALUE and TZID stay; one that cannot be read stays as written.
-func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay, all bool, f dateForm, conv func(dateValue) time.Time) {
+func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay, all bool, f dateForm, conv func(dateValue) dateValue) {
 	converts := func(d dateValue) bool { return all || d.allDay != toAllDay }
 	dvs, err := parseDateList(p)
 	if err != nil || !slices.ContainsFunc(dvs, converts) {
@@ -1393,11 +1419,11 @@ func retypeDateProp(cal *ical.Calendar, p *ical.Prop, toAllDay, all bool, f date
 	var np *ical.Prop
 	vals := make([]string, len(dvs))
 	for i, d := range dvs {
-		t := d.t
+		v := d
 		if converts(d) {
-			t = conv(d)
+			v = conv(d)
 		}
-		np = seriesDateProp(cal, p.Name, t, f)
+		np = seriesValueProp(cal, p.Name, v, f)
 		vals[i] = np.Value
 	}
 	if p.Params == nil {
