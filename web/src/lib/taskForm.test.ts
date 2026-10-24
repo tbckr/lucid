@@ -89,6 +89,11 @@ describe('taskForm', () => {
       expect(issues(timed)).toContainEqual(['startDate', 'validation.startAfterDue'])
     })
 
+    it('judges a start after the due date at the times saved on the night summer time starts', () => {
+      const x = { ...v, startDate: '2026-03-29', startTime: '02:45', dueDate: '2026-03-29', dueTime: '03:15' }
+      expect(issues(x)).toEqual([['startDate', 'validation.startAfterDue']])
+    })
+
     it('accepts a start equal to the due date', () => {
       const x = { ...v, startDate: '2026-09-25', startTime: '10:00', dueDate: '2026-09-25', dueTime: '10:00' }
       expect(taskFormSchema.safeParse(x).success).toBe(true)

@@ -2,7 +2,7 @@ import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
 import { anchorOf, type TaskDates } from './calendarTasks'
-import { dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayAt, dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { ruleInZone, taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
@@ -60,10 +60,12 @@ export function buildTaskFormSchema(edit?: { original: Todo; timeZone: string })
       ctx.addIssue({ code: 'custom', message: 'validation.dateForTime', path: ['startDate'] })
     }
     if (v.startDate === '' || v.dueDate === '') return
-    // RFC 5545: DTSTART and DUE share a value type, and DUE is not before DTSTART (FR-16).
+    // RFC 5545: DTSTART and DUE share a value type, and DUE is not before DTSTART (FR-16). Times
+    // compare at the times saved, in the browser's zone, which the editors convert in: one summer
+    // time skips counts where it is saved, an hour later (#10, FR-18).
     if ((v.startTime === '') !== (v.dueTime === '')) {
       ctx.addIssue({ code: 'custom', message: 'validation.startDueType', path: ['startDate'] })
-    } else if (`${v.startDate}T${v.startTime}` > `${v.dueDate}T${v.dueTime}`) {
+    } else if (v.startTime === '' ? v.startDate > v.dueDate : dayAt(v.startDate, v.startTime) > dayAt(v.dueDate, v.dueTime)) {
       ctx.addIssue({ code: 'custom', message: 'validation.startAfterDue', path: ['startDate'] })
     }
   })

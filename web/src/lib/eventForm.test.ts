@@ -41,6 +41,15 @@ describe('eventFormSchema', () => {
     expect(r.error?.issues[0]).toMatchObject({ message: 'validation.endBeforeStart', path: ['endDate'] })
   })
 
+  it('judges the end at the times saved on the night summer time starts', () => {
+    const night = { ...base, startDate: '2026-03-29', endDate: '2026-03-29' }
+    // 02:45 is saved as 03:45, after 03:15.
+    const r = eventFormSchema.safeParse({ ...night, startTime: '02:45', endTime: '03:15' })
+    expect(r.error?.issues.map((i) => [i.message, i.path[0]])).toEqual([['validation.endBeforeStart', 'endDate']])
+    // 02:15 and 03:15 are the same time: allowed, as on the server.
+    expect(eventFormSchema.safeParse({ ...night, startTime: '02:15', endTime: '03:15' }).success).toBe(true)
+  })
+
   it('compares dates only for all-day events', () => {
     expect(eventFormSchema.safeParse({ ...base, allDay: true, endTime: '08:00' }).success).toBe(true)
     expect(eventFormSchema.safeParse({ ...base, allDay: true, endDate: '2026-03-27' }).success).toBe(false)

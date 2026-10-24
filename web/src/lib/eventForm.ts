@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays, format } from 'date-fns'
 import { z } from 'zod'
 import { type EventInput, type OccurrenceInput } from './api/schemas'
-import { localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayAt, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
@@ -30,9 +30,11 @@ export const eventFormSchema = z
   })
   .superRefine((v, ctx) => {
     if (!dateRe.test(v.startDate) || !dateRe.test(v.endDate)) return
+    // At the times saved, in the browser's zone, which the editors convert in: a time summer
+    // time skips counts where it is saved, an hour later (#10, FR-18).
     const endBeforeStart = v.allDay
       ? v.endDate < v.startDate
-      : `${v.endDate}T${v.endTime}` < `${v.startDate}T${v.startTime}`
+      : timeRe.test(v.startTime) && timeRe.test(v.endTime) && dayAt(v.endDate, v.endTime) < dayAt(v.startDate, v.startTime)
     if (endBeforeStart) {
       ctx.addIssue({ code: 'custom', message: 'validation.endBeforeStart', path: ['endDate'] })
     }
