@@ -918,6 +918,27 @@ event, and the refusal comes as a toast.
   Monday says "Every week on Tuesday", and the repeat editor opens on
   Tuesday, so that the day parts it writes for an existing series keep the
   series there; it used to open on Monday and move the series there.
+- **A changed rule is read where the editor built it**, at the edited
+  event's place in the rule, moved as the series moved (`startOnRule`):
+  what it leaves to its start, the weekday, the day of the month, the month
+  and the clock time, and the periods its `INTERVAL` counts. `DTSTART` goes
+  to that rule's first event from where the series started, moved as the
+  event moved, and the rule is written as sent: a `DTSTART` on the edited
+  event's weekday, day and time implies the same parts. A weekly series from
+  Tuesday 2026-10-06 changed to "Every month on day 10" from its event of
+  11-10 gets `DTSTART` on 10-10 and repeats on the 10th; changed to "Every 2
+  weeks on Tuesday", it gets 10-13, so 11-10 stays one of its events. Kept
+  at its old start, as before, the series repeated on the 6th, and a rule
+  with its day parts written out had 10-06 as an event off the rule, which
+  RFC 5545 leaves undefined (section 3.8.5.3) and clients read differently.
+  From the series' first event nothing moves. Nor does a `DTSTART` that was
+  no event of the old rule, a start set off the rule, as the repeat editor
+  lets a new series start and other clients write it, or the start of a
+  series of dates without a rule (`startsOnRule`): ended after 10 events, a
+  series from a Tuesday that repeats on Fridays keeps its Tuesday as the
+  first of them. Nor, either, for a rule the edited event is no event of,
+  such as "Every week on Friday" from a Tuesday, which the repeat editor
+  can build (#11).
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,

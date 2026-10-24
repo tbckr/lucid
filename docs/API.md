@@ -226,6 +226,18 @@ attendees. A single event gets none.
   all-day or timed moves its start by the change of date only, a timed
   event's date read in the series' zone and an all-day date as sent; a
   series made timed starts at the clock time of `start` in `timezone`.
+- **Changed rule:** read at the occurrence, at `instanceStart` moved as far
+  as the occurrence moves: what it leaves to its start (the weekday of
+  `FREQ=WEEKLY`, the day of `FREQ=MONTHLY`, the month and day of
+  `FREQ=YEARLY`, the clock time) and the periods its `INTERVAL` counts. The
+  series' first event goes to the rule's first event from where the series
+  started, moved as above, so the occurrence stays one of its rule's events
+  (a `COUNT`, counted from the series' first event, or an `UNTIL` can still
+  end the series before it); the rule is written as sent. A weekly series from Tuesday 2026-10-06 sent
+  `FREQ=MONTHLY` from its occurrence of 11-10 starts on 10-10. The first
+  event stays where the series moved where it was no event of the old rule
+  (a start set off the rule, or a series of dates without one) or the
+  occurrence is no event of the new rule.
 - **Edited exception:** with the rule and `allDay` unchanged, the edited
   exception, if there is one, takes `start` and `end`. A save that changes
   the rule or `allDay` leaves it at its own start and end (only its

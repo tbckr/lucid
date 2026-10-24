@@ -636,8 +636,8 @@ func editedEvent(o calObject, ref objRef, master *ical.Component, instance, move
 //     moves it, instance is in.Start and moved the occurrence's recurrence ID
 //     after the move;
 //   - from such an occurrence with a changed rule or all-day flag: the series
-//     moves as the edited event moved and takes the rule rr, and instance is
-//     in.Start;
+//     moves as the edited event moved and takes the rule rr, read at the
+//     edited event (see startOnRule), and instance is in.Start;
 //   - otherwise, for a single event and a series whose rule goes (rr == ""):
 //     the fields and dates of in, as entered, and both are nil.
 //
@@ -673,8 +673,11 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// its new form (see rezoneRecurrenceRefs, FR-18). A move the series
 		// cannot follow is refused as in moveSeries, judged on DTSTART and
 		// the references, since the rule is the one entered, and nothing is
-		// written. Of title, description and location only what changed from
-		// the event as shown goes into the series, see
+		// written. A changed rule is read at the edited event, where the
+		// editor built it, and DTSTART goes to its first event from where it
+		// moved, see startOnRule, unless it was set off the old rule (see
+		// startsOnRule, #9). Of title, description and location only what
+		// changed from the event as shown goes into the series, see
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
 		ov, shown := shownOccurrence(cal, master, oldTm, rid)
@@ -684,23 +687,33 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		}
 		// DTSTART moves on its wall clock as written, which can be one its
 		// zone skips (#8), in the series' zone whatever its form.
-		at := dateValue{t: oldTm.start.t, wall: oldTm.start.wall}
-		if in.AllDay == oldTm.start.allDay {
-			at = mv.shift(at)
-		} else {
-			at, err = toggledStart(rruleString(master), oldTm.start, rid, shown.start, in, tz)
-			if err != nil {
-				return nil, nil, err
+		shifted := func(v dateValue) (dateValue, error) {
+			if in.AllDay == oldTm.start.allDay {
+				return mv.shift(dateValue{t: v.t, wall: v.wall}), nil
 			}
+			return toggledStart(rruleString(master), v, rid, shown.start, in, tz)
+		}
+		at, err := shifted(oldTm.start)
+		if err != nil {
+			return nil, nil, err
 		}
 		shiftRecurrenceRefs(cal, master, mv.shift)
 		if mv.lost {
 			return nil, nil, errMoveOffMonth
 		}
+		// The edited event's place in the rule, moved as DTSTART moved, where
+		// the editor reads and builds the rule (#7, #9).
+		edited, err := shifted(ruleEvent(rruleString(master), oldTm.start, rid))
+		if err != nil {
+			return nil, nil, err
+		}
 		if loc := seriesZone(tz); !in.AllDay && !oldTm.start.allDay && !writtenIn(oldTm.start.form(), loc) {
 			zm := newZoneMove(oldTm.start.loc(), loc, rid, shown.start.t, in.Start)
-			at = zm.at(at)
+			at, edited = zm.at(at), zm.at(edited)
 			rezoneRecurrenceRefs(cal, master, zm)
+		}
+		if rr != rruleString(master) && startsOnRule(rruleString(master), oldTm.start) {
+			at = startOnRule(rr, at, edited)
 		}
 		end = at.t.Add(in.End.Sub(in.Start))
 		instance = &in.Start
@@ -1059,6 +1072,174 @@ func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in d
 		return dateValue{t: day, wall: day, allDay: true}, nil
 	}
 	return atWall(time.Date(y, m, d, to.Hour(), to.Minute(), to.Second(), 0, time.UTC), to.Location()), nil
+}
+
+// startOnRule returns the DTSTART of a series whose rule changes to rule
+// from its event edited, after the series moved to start (#9, FR-17): the
+// first event of rule from start on, with rule read at edited, as the editor
+// builds it there. What the rule leaves to its start, the weekday of
+// FREQ=WEEKLY, the day of FREQ=MONTHLY, the month and day of FREQ=YEARLY and
+// the clock time, comes from edited, and the periods its INTERVAL counts
+// are edited's, so edited stays an event of the rule, and DTSTART is one,
+// as RFC 5545 section 3.8.5.3 asks. A COUNT, counted from DTSTART, or an
+// UNTIL can still end the series before edited. The rule itself stays as it
+// is: a DTSTART on edited's weekday, day and clock implies the same parts.
+// Kept at start, a weekly series from Tuesday 10-06 changed to "Every month"
+// from its event of 11-10 repeats on the 6th, and a rule with every part
+// written out has start as an event off the rule, which RFC 5545 leaves
+// undefined and clients read differently: Lucid counts it, as section 3.3.10
+// does for COUNT (see ruleInstances), rrule-go leaves it out.
+//
+// Both are read on their wall clock in start's zone, and so is the result,
+// also a time that zone skips (#8). It is start from the series' first
+// event, for a rule edited is no event of (#11), also by its hours,
+// minutes or seconds (see onClock), for one Lucid cannot read, and where
+// edited lies more than maxRRuleIterations of the rule's events after
+// start, such as a rule every minute over months.
+func startOnRule(rule string, start, edited dateValue) dateValue {
+	loc := start.loc()
+	s, a := start.wallIn(loc), edited.wallIn(loc)
+	if !a.After(s) {
+		return start
+	}
+	opt, err := rrule.StrToROptionInLocation(rule, time.UTC)
+	if err != nil {
+		return start
+	}
+	readAt(opt, a)
+	if !onClock(opt, a) {
+		return start
+	}
+	// Counted from DTSTART, they would end the search early.
+	opt.Count, opt.Until = 0, time.Time{}
+	opt.Dtstart = periodsBefore(opt, a, s)
+	r, err := rrule.NewRRule(*opt)
+	if err != nil {
+		return start
+	}
+	next := r.Iterator()
+	var first time.Time
+	for range maxRRuleIterations {
+		w, ok := next()
+		if !ok || w.After(a) {
+			break
+		}
+		if w.Before(s) {
+			continue
+		}
+		if first.IsZero() {
+			first = w
+		}
+		if w.Equal(a) {
+			return atWall(first, loc)
+		}
+	}
+	return start
+}
+
+// readAt fills in what the rule opt leaves to its start from the wall clock
+// w, as rrule-go fills it in from DTSTART (RFC 5545 section 3.3.10), so that
+// opt recurs as it does from w, from a start at the beginning of any of w's
+// periods (see periodsBefore, #9, FR-17).
+func readAt(opt *rrule.ROption, w time.Time) {
+	if len(opt.Byweekno)+len(opt.Byyearday)+len(opt.Bymonthday)+len(opt.Byweekday)+len(opt.Byeaster) == 0 {
+		switch opt.Freq {
+		case rrule.YEARLY:
+			if len(opt.Bymonth) == 0 {
+				opt.Bymonth = []int{int(w.Month())}
+			}
+			opt.Bymonthday = []int{w.Day()}
+		case rrule.MONTHLY:
+			opt.Bymonthday = []int{w.Day()}
+		case rrule.WEEKLY:
+			opt.Byweekday = []rrule.Weekday{[...]rrule.Weekday{
+				rrule.SU, rrule.MO, rrule.TU, rrule.WE, rrule.TH, rrule.FR, rrule.SA,
+			}[w.Weekday()]}
+		default: // a daily or shorter rule leaves no day to its start
+		}
+	}
+	if len(opt.Byhour) == 0 && opt.Freq < rrule.HOURLY {
+		opt.Byhour = []int{w.Hour()}
+	}
+	if len(opt.Byminute) == 0 && opt.Freq < rrule.MINUTELY {
+		opt.Byminute = []int{w.Minute()}
+	}
+	if len(opt.Bysecond) == 0 && opt.Freq < rrule.SECONDLY {
+		opt.Bysecond = []int{w.Second()}
+	}
+}
+
+// startsOnRule reports whether the DTSTART start of a series with the RRULE
+// value rule is an event of that rule, not only the first event RFC 5545
+// counts it as (#9, FR-17). Only such a start follows a changed rule to its
+// first event (see startOnRule): one off the rule was set there, as the
+// repeat editor lets a new series start and other clients write it, and
+// stays. A series without a rule, or with one Lucid cannot read, has none.
+func startsOnRule(rule string, start dateValue) bool {
+	opt, err := rrule.StrToROptionInLocation(rule, time.UTC)
+	if err != nil {
+		return false
+	}
+	opt.Count, opt.Until = 0, time.Time{}
+	opt.Dtstart = start.wallIn(start.loc())
+	if !onClock(opt, opt.Dtstart) {
+		return false
+	}
+	r, err := rrule.NewRRule(*opt)
+	if err != nil {
+		return false
+	}
+	first, ok := r.Iterator()()
+	return ok && first.Equal(opt.Dtstart)
+}
+
+// onClock reports whether the wall clock w is on the hours, minutes and
+// seconds the rule opt steps through below a day, BYHOUR for an hourly or
+// shorter rule, BYMINUTE for a minutely or shorter one, BYSECOND for a
+// secondly one (#9, FR-17). rrule-go steps by INTERVAL from DTSTART until it
+// meets one of them, forever if the steps from w's phase never do, such as
+// 09:00 for every 4 hours from 10:00. From a start in w's phase, it meets w's.
+func onClock(opt *rrule.ROption, w time.Time) bool {
+	return (opt.Freq < rrule.HOURLY || len(opt.Byhour) == 0 || slices.Contains(opt.Byhour, w.Hour())) &&
+		(opt.Freq < rrule.MINUTELY || len(opt.Byminute) == 0 || slices.Contains(opt.Byminute, w.Minute())) &&
+		(opt.Freq < rrule.SECONDLY || len(opt.Bysecond) == 0 || slices.Contains(opt.Bysecond, w.Second()))
+}
+
+// periodsBefore returns a start, at or before the wall clock s, of the rule
+// opt whose periods, every INTERVAL, are those of the wall clock a (#9,
+// FR-17): a whole number of intervals before a's period, at its start, the
+// start of a year, a month, a week or a day, or a's own minute and second
+// for an hourly rule, its second for a minutely one. A week starts on the
+// rule's WKST: rrule-go applies BYSETPOS to the days of DTSTART's week from
+// DTSTART on, so a start within the week would count positions among fewer
+// days and yield days off the rule.
+func periodsBefore(opt *rrule.ROption, a, s time.Time) time.Time {
+	n := max(opt.Interval, 1)
+	// The periods to go back by: at least periods, in whole intervals.
+	back := func(periods int) int { return (periods + n - 1) / n * n }
+	// The time to go back by in periods of length d.
+	backBy := func(d time.Duration) time.Duration { return time.Duration(back(int((a.Sub(s)+d-1)/d))) * d }
+	days := dateDays(a) - dateDays(s)
+	day := time.Date(a.Year(), a.Month(), a.Day(), 0, 0, 0, 0, time.UTC)
+	switch opt.Freq {
+	case rrule.YEARLY:
+		return time.Date(a.Year()-back(a.Year()-s.Year()), time.January, 1, 0, 0, 0, 0, time.UTC)
+	case rrule.MONTHLY:
+		months := (a.Year()-s.Year())*12 + int(a.Month()) - int(s.Month())
+		return time.Date(a.Year(), a.Month()-time.Month(back(months)), 1, 0, 0, 0, 0, time.UTC)
+	case rrule.WEEKLY:
+		// Back to the start of the week, Monday 0 as in rrule-go.
+		weekday := (int(a.Weekday()) + 6) % 7
+		return day.AddDate(0, 0, -7*back((days+6)/7)-(weekday-opt.Wkst.Day()+7)%7)
+	case rrule.DAILY:
+		return day.AddDate(0, 0, -back(days))
+	case rrule.HOURLY:
+		return a.Add(-backBy(time.Hour))
+	case rrule.MINUTELY:
+		return a.Add(-backBy(time.Minute))
+	default: // SECONDLY
+		return a.Add(-backBy(time.Second))
+	}
 }
 
 // seriesZone returns the zone applyEventSchedule writes a timed series in

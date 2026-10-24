@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -1572,6 +1573,427 @@ func TestUpdateSeriesNewRuleAcrossDSTChange(t *testing.T) {
 		{title: "Review", start: date(2026, 3, 30, 7, 0), end: date(2026, 3, 30, 7, 30), rid: ptr(date(2026, 3, 30, 7, 0))},
 		{title: "Review", start: date(2026, 4, 6, 7, 0), end: date(2026, 4, 6, 7, 30), rid: ptr(date(2026, 4, 6, 7, 0))},
 	})
+}
+
+// reviewSeries is a series at 10:00 Berlin time from Tuesday 2026-10-06 with
+// the rule rule, and the VEVENTs of exceptions after it. Berlin changes back
+// from summer time on 10-25, so its events are at 08:00 UTC before and at
+// 09:00 UTC after.
+func reviewSeries(rule string, exceptions ...string) []string {
+	return slices.Concat([]string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20261006T100000", "DTEND;TZID=Europe/Berlin:20261006T110000",
+		"RRULE:" + rule, "END:VEVENT",
+	}, exceptions)
+}
+
+// listedAt returns the event of slug's calendar with the recurrence ID rid,
+// listed in [from, to).
+func listedAt(t *testing.T, e *env, slug string, rid, from, to time.Time) domain.Event {
+	t.Helper()
+	evs := listed(t, e, slug, from, to)
+	for i := range evs {
+		if evs[i].RecurrenceID != nil && evs[i].RecurrenceID.Equal(rid) {
+			return evs[i]
+		}
+	}
+	t.Fatalf("no event with recurrence ID %v in [%v, %v)", rid, from, to)
+	return domain.Event{}
+}
+
+// seriesEvents returns the events titled title an hour long from starts, each
+// an event of its series' rule.
+func seriesEvents(title string, starts ...time.Time) []occ {
+	out := make([]occ, len(starts))
+	for i, s := range starts {
+		out[i] = occ{title: title, start: s, end: s.Add(time.Hour), rid: ptr(s)}
+	}
+	return out
+}
+
+// TestUpdateSeriesNewRuleReadAtEditedEvent is the reproduction of issue #9
+// as a regression test: "All events" with a changed rule from a later event
+// reads the rule where the editor builds it, at that event, as far from its
+// place in the rule as the form moves it: what the rule leaves to its start,
+// the weekday of FREQ=WEEKLY, the day of FREQ=MONTHLY, the month and day of
+// FREQ=YEARLY and the clock time, and the periods its INTERVAL counts.
+// DTSTART goes to the rule's first event from where the series started,
+// moved as the event moved, with the rule as sent, so the edited event stays
+// an event of the series, and DTSTART one of its rule, as RFC 5545 section
+// 3.8.5.3 asks. A weekly series from Tuesday 10-06 changed to "Every month on
+// day 10" from its 11-10 event repeated on the 6th instead, and with the day
+// written out, kept 10-06 as an event off the rule (FR-17).
+func TestUpdateSeriesNewRuleReadAtEditedEvent(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, rule string
+		rid, start time.Time // the edited event, and where it is entered
+		newRule    string
+		dtstart    string
+		from, to   time.Time
+		events     []time.Time // the series' events listed in [from, to)
+	}{
+		{
+			name: "weekly to monthly", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 9, 0), newRule: "FREQ=MONTHLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261010T100000", from: date(2026, 10, 1, 0, 0), to: date(2027, 1, 1, 0, 0),
+			events: []time.Time{date(2026, 10, 10, 8, 0), date(2026, 11, 10, 9, 0), date(2026, 12, 10, 9, 0)},
+		},
+		{
+			name: "monthly to weekly", rule: "FREQ=MONTHLY",
+			rid: date(2026, 11, 6, 9, 0), start: date(2026, 11, 6, 9, 0), newRule: "FREQ=WEEKLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261009T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 10, 31, 0, 0),
+			events: []time.Time{date(2026, 10, 9, 8, 0), date(2026, 10, 16, 8, 0), date(2026, 10, 23, 8, 0), date(2026, 10, 30, 9, 0)},
+		},
+		{
+			name: "weekly to yearly", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 9, 0), newRule: "FREQ=YEARLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261110T100000", from: date(2026, 10, 1, 0, 0), to: date(2027, 1, 1, 0, 0),
+			events: []time.Time{date(2026, 11, 10, 9, 0)},
+		},
+		{
+			name: "two weekdays to weekly", rule: "FREQ=WEEKLY;BYDAY=TU,TH",
+			rid: date(2026, 11, 12, 9, 0), start: date(2026, 11, 12, 9, 0), newRule: "FREQ=WEEKLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261008T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 10, 23, 0, 0),
+			events: []time.Time{date(2026, 10, 8, 8, 0), date(2026, 10, 15, 8, 0), date(2026, 10, 22, 8, 0)},
+		},
+		{
+			name: "every other week in the edited event's weeks", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 9, 0), newRule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261013T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 11, 25, 0, 0),
+			events: []time.Time{date(2026, 10, 13, 8, 0), date(2026, 10, 27, 9, 0), date(2026, 11, 10, 9, 0), date(2026, 11, 24, 9, 0)},
+		},
+		{
+			// Counted from the new DTSTART, not from where the search starts.
+			name: "count", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 9, 0), newRule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU;COUNT=3",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261013T100000", from: date(2026, 10, 1, 0, 0), to: date(2027, 1, 1, 0, 0),
+			events: []time.Time{date(2026, 10, 13, 8, 0), date(2026, 10, 27, 9, 0), date(2026, 11, 10, 9, 0)},
+		},
+		{
+			name: "day written out", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 9, 0), newRule: "FREQ=MONTHLY;BYMONTHDAY=10",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261010T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 11, 30, 0, 0),
+			events: []time.Time{date(2026, 10, 10, 8, 0), date(2026, 11, 10, 9, 0)},
+		},
+		{
+			name: "moved to another time", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 10, 13, 0), newRule: "FREQ=MONTHLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261010T140000", from: date(2026, 10, 1, 0, 0), to: date(2026, 11, 30, 0, 0),
+			events: []time.Time{date(2026, 10, 10, 12, 0), date(2026, 11, 10, 13, 0)},
+		},
+		{
+			// The series' start moves a day too, to Wednesday 10-07.
+			name: "moved to another day", rule: "FREQ=WEEKLY",
+			rid: date(2026, 11, 10, 9, 0), start: date(2026, 11, 11, 9, 0), newRule: "FREQ=MONTHLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261011T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 11, 30, 0, 0),
+			events: []time.Time{date(2026, 10, 11, 8, 0), date(2026, 11, 11, 9, 0)},
+		},
+		{
+			name: "from the first event", rule: "FREQ=WEEKLY",
+			rid: date(2026, 10, 6, 8, 0), start: date(2026, 10, 6, 8, 0), newRule: "FREQ=MONTHLY",
+			dtstart: "DTSTART;TZID=Europe/Berlin:20261006T100000", from: date(2026, 10, 1, 0, 0), to: date(2026, 11, 30, 0, 0),
+			events: []time.Time{date(2026, 10, 6, 8, 0), date(2026, 11, 6, 9, 0)},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", reviewSeries(c.rule)...)
+			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Second))
+
+			in := seriesUpdate(ev, "Review", "", c.start, c.start.Add(time.Hour))
+			in.RRule, in.Timezone = c.newRule, "Europe/Berlin"
+			up, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			wantStored(t, e, "work", "series.ics", c.dtstart, "RRULE:"+c.newRule)
+			checkOccurrences(t, listed(t, e, "work", c.from, c.to), seriesEvents("Review", c.events...))
+			// The answer says what the list shows.
+			edited := seriesEvents("Review", c.start)
+			checkOccurrences(t, []domain.Event{up}, edited)
+			checkOccurrences(t, listed(t, e, "work", c.start, c.start.Add(time.Second)), edited)
+		})
+	}
+}
+
+// TestUpdateSeriesNewRuleReadAtExceptionsPlace checks that a changed rule
+// from an exception another client moved off its place in the rule is read
+// at that place, its RECURRENCE-ID, as the editor reads it (#7, #9, FR-17):
+// the exception of 11-10 shown on Wednesday 11-11 makes "Every month" the
+// 10th, and stays the event of 11-10.
+func TestUpdateSeriesNewRuleReadAtExceptionsPlace(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261110T100000",
+		"DTSTART;TZID=Europe/Berlin:20261111T100000", "DTEND;TZID=Europe/Berlin:20261111T110000",
+		"END:VEVENT")...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 11, 0, 0), date(2026, 11, 12, 0, 0))
+
+	in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
+	in.RRule, in.Timezone = "FREQ=MONTHLY", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20261010T100000", "RRULE:FREQ=MONTHLY")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 10, 1, 0, 0), date(2026, 11, 30, 0, 0)), []occ{
+		{title: "Review", start: date(2026, 10, 10, 8, 0), end: date(2026, 10, 10, 9, 0), rid: ptr(date(2026, 10, 10, 8, 0))},
+		{title: "Review", start: date(2026, 11, 11, 9, 0), end: date(2026, 11, 11, 10, 0), rid: ptr(date(2026, 11, 10, 9, 0))},
+	})
+}
+
+// TestUpdateSeriesNewRuleReadInTheNewZone checks that a changed rule that
+// moves a series into another zone is read at the edited event there (#9,
+// FR-17, FR-18): the New York series' event of Tuesday 11-10 at 18:00 is
+// Wednesday 11-11 at 00:00 in Berlin, so "Every month" is the 11th there,
+// from the first after the series' start, 03-17 at 18:00 New York time and
+// 03-18 at 00:00 in Berlin.
+func TestUpdateSeriesNewRuleReadInTheNewZone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", nySeries(nil)...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 23, 0), date(2026, 11, 10, 23, 0), date(2026, 11, 10, 23, 1))
+
+	in := seriesUpdate(ev, "Call", "", ev.Start, ev.End)
+	in.RRule, in.Timezone = "FREQ=MONTHLY", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20260411T000000", "RRULE:FREQ=MONTHLY")
+	checkOccurrences(t, listed(t, e, "work", date(2026, 3, 1, 0, 0), date(2026, 5, 15, 0, 0)),
+		seriesEvents("Call", date(2026, 4, 10, 22, 0), date(2026, 5, 10, 22, 0)))
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 10, 0, 0), date(2026, 11, 12, 0, 0)),
+		seriesEvents("Call", date(2026, 11, 10, 23, 0)))
+}
+
+// TestUpdateSeriesNewRuleAllDayReadAtEditedEvent checks that a changed rule
+// of a series that is or turns all-day, or turns timed, is read at the
+// edited event's date (#9, FR-17): "Every month" from the event of 11-10 is
+// the 10th, from 10-10.
+func TestUpdateSeriesNewRuleAllDayReadAtEditedEvent(t *testing.T) {
+	t.Parallel()
+	allDaySeries := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"DTSTART;VALUE=DATE:20261006", "DTEND;VALUE=DATE:20261007", "RRULE:FREQ=WEEKLY", "END:VEVENT",
+	}
+	day := func(m time.Month, d int) occ {
+		return occ{title: "Review", start: date(2026, m, d, 0, 0), end: date(2026, m, d+1, 0, 0), rid: ptr(date(2026, m, d, 0, 0)), allDay: true}
+	}
+	for _, c := range []struct {
+		name    string
+		series  []string
+		rid     time.Time
+		allDay  bool
+		start   time.Time
+		dtstart string
+		events  []occ
+	}{
+		{
+			name: "made all-day", series: reviewSeries("FREQ=WEEKLY"), rid: date(2026, 11, 10, 9, 0),
+			allDay: true, start: date(2026, 11, 10, 0, 0), dtstart: "DTSTART;VALUE=DATE:20261010",
+			events: []occ{day(10, 10), day(11, 10)},
+		},
+		{
+			name: "all-day", series: allDaySeries, rid: date(2026, 11, 10, 0, 0),
+			allDay: true, start: date(2026, 11, 10, 0, 0), dtstart: "DTSTART;VALUE=DATE:20261010",
+			events: []occ{day(10, 10), day(11, 10)},
+		},
+		{
+			name: "made timed", series: allDaySeries, rid: date(2026, 11, 10, 0, 0),
+			start: date(2026, 11, 10, 13, 0), dtstart: "DTSTART;TZID=Europe/Berlin:20261010T140000",
+			events: seriesEvents("Review", date(2026, 10, 10, 12, 0), date(2026, 11, 10, 13, 0)),
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", c.series...)
+			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Second))
+
+			end := c.start.Add(time.Hour)
+			if c.allDay {
+				end = c.start.AddDate(0, 0, 1)
+			}
+			in := seriesUpdate(ev, "Review", "", c.start, end)
+			in.AllDay, in.RRule = c.allDay, "FREQ=MONTHLY"
+			if !c.allDay {
+				in.Timezone = "Europe/Berlin"
+			}
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			wantStored(t, e, "work", "series.ics", c.dtstart, "RRULE:FREQ=MONTHLY")
+			checkOccurrences(t, listed(t, e, "work", date(2026, 10, 1, 0, 0), date(2026, 11, 30, 0, 0)), c.events)
+		})
+	}
+}
+
+// TestUpdateSeriesNewRuleStartsAtSkippedTime checks that a changed rule
+// whose first event from the series' start is at a time its zone skips
+// starts there, at the series' 02:30 on the night Berlin changes to summer
+// time, where the event shows at 03:30 (#8, #9, FR-17): a daily series at
+// 02:30 from Monday 2027-03-22 changed to "Every week on Sunday" from its
+// event of 04-04 starts on 03-28.
+func TestUpdateSeriesNewRuleStartsAtSkippedTime(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Backup",
+		"DTSTART;TZID=Europe/Berlin:20270322T023000", "DTEND;TZID=Europe/Berlin:20270322T033000",
+		"RRULE:FREQ=DAILY", "END:VEVENT")
+	ev := listedAt(t, e, "work", date(2027, 4, 4, 0, 30), date(2027, 4, 4, 0, 30), date(2027, 4, 4, 0, 31))
+
+	in := seriesUpdate(ev, "Backup", "", ev.Start, ev.End)
+	in.RRule, in.Timezone = "FREQ=WEEKLY", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20270328T023000", "RRULE:FREQ=WEEKLY")
+	checkOccurrences(t, listed(t, e, "work", date(2027, 3, 20, 0, 0), date(2027, 4, 5, 0, 0)),
+		seriesEvents("Backup", date(2027, 3, 28, 1, 30), date(2027, 4, 4, 0, 30)))
+}
+
+// TestUpdateSeriesNewRuleOffEditedEventKeepsStart checks that a changed
+// rule the edited event is no event of, as the repeat editor can build it,
+// leaves DTSTART where the series moved it (FR-17): the event of Tuesday
+// 11-10 changed to "Every week on Friday" keeps the series' start on Tuesday
+// 10-06. Where such a series starts is #11.
+func TestUpdateSeriesNewRuleOffEditedEventKeepsStart(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY")...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 1))
+
+	in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
+	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", "Europe/Berlin"
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;BYDAY=FR")
+}
+
+// TestUpdateSeriesNewRuleKeepsStartOffOldRule checks that a changed rule
+// leaves DTSTART where the series moved it where DTSTART was no event of the
+// rule before, a start set off the rule, as the repeat editor lets a new
+// series start and other clients write it (FR-17): the series from Tuesday
+// 10-06 that repeats on Fridays, ended after 10 events from its event of
+// 11-13, keeps its Tuesday, which counts as the first of the 10. Changed to a
+// preset, it keeps it too (#11).
+func TestUpdateSeriesNewRuleKeepsStartOffOldRule(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ rule, dtstart string }{
+		{"FREQ=WEEKLY;BYDAY=FR;COUNT=10", "DTSTART;TZID=Europe/Berlin:20261006T100000"},
+		{"FREQ=MONTHLY", "DTSTART;TZID=Europe/Berlin:20261006T100000"},
+	} {
+		t.Run(c.rule, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY;BYDAY=FR")...)
+			ev := listedAt(t, e, "work", date(2026, 11, 13, 9, 0), date(2026, 11, 13, 9, 0), date(2026, 11, 13, 9, 1))
+
+			in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
+			in.RRule, in.Timezone = c.rule, "Europe/Berlin"
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			wantStored(t, e, "work", "series.ics", c.dtstart, "RRULE:"+c.rule)
+		})
+	}
+}
+
+// TestStartsOnRule checks whether a series' DTSTART is an event of its rule
+// (#9, FR-17): a rule that leaves its days and times to DTSTART always has
+// it; one with other days, hours or minutes, or none Lucid can read, not.
+func TestStartsOnRule(t *testing.T) {
+	t.Parallel()
+	tuesday := atWall(date(2026, 10, 6, 10, 0), time.UTC)
+	for _, c := range []struct {
+		rule string
+		want bool
+	}{
+		{"FREQ=MONTHLY", true},
+		{"FREQ=WEEKLY;BYDAY=TU,TH", true},
+		{"FREQ=WEEKLY;BYDAY=FR", false},
+		{"FREQ=DAILY;BYHOUR=9", false},
+		// rrule-go would look for 09:00 among 10:00, 14:00, 18:00, ... forever.
+		{"FREQ=HOURLY;INTERVAL=4;BYHOUR=9", false},
+		{"FREQ=WEEKLY;UNTIL=20261001T000000Z", true},
+		{"", false},
+		{"FREQ=MONTHLY;BYMONTH=13", false},
+	} {
+		t.Run(c.rule, func(t *testing.T) {
+			t.Parallel()
+			if got := startsOnRule(c.rule, tuesday); got != c.want {
+				t.Errorf("startsOnRule(%q, %v) = %v; want %v", c.rule, tuesday.t, got, c.want)
+			}
+		})
+	}
+}
+
+// TestStartOnRule checks where a series whose rule changes from its event
+// edited starts, once moved to start (#9, FR-17): at the rule's first event
+// from start on, read at edited, of every frequency, with its INTERVAL
+// counted in edited's periods, also where the week starts on another day,
+// and with the parts it gives itself; at start for a rule edited is no event
+// of and for one Lucid cannot read.
+func TestStartOnRule(t *testing.T) {
+	t.Parallel()
+	tuesday := date(2026, 10, 6, 10, 0)
+	for _, c := range []struct {
+		name, rule string
+		edited     time.Time
+		want       time.Time
+		start      time.Time // Tuesday 2026-10-06 at 10:00 if zero
+	}{
+		{"every three days", "FREQ=DAILY;INTERVAL=3", date(2026, 10, 20, 10, 0), date(2026, 10, 8, 10, 0), time.Time{}},
+		{"daily at another time", "FREQ=DAILY", date(2026, 10, 20, 14, 0), date(2026, 10, 6, 14, 0), time.Time{}},
+		{"daily at its own hours", "FREQ=DAILY;BYHOUR=9,17", date(2026, 10, 8, 17, 0), date(2026, 10, 6, 17, 0), time.Time{}},
+		{"every five hours", "FREQ=HOURLY;INTERVAL=5", date(2026, 10, 7, 9, 30), date(2026, 10, 6, 13, 30), time.Time{}},
+		{
+			"every seven minutes", "FREQ=MINUTELY;INTERVAL=7", date(2026, 10, 6, 10, 30).Add(20 * time.Second),
+			date(2026, 10, 6, 10, 2).Add(20 * time.Second),
+			time.Time{},
+		},
+		{
+			"every thirteen seconds", "FREQ=SECONDLY;INTERVAL=13", date(2026, 10, 6, 10, 1),
+			date(2026, 10, 6, 10, 0).Add(8 * time.Second),
+			time.Time{},
+		},
+		{"every other week from Sunday", "FREQ=WEEKLY;INTERVAL=2;WKST=SU;BYDAY=SU,TU", date(2026, 11, 15, 10, 0), date(2026, 10, 6, 10, 0), time.Time{}},
+		{"every other week from Monday", "FREQ=WEEKLY;INTERVAL=2;WKST=MO;BYDAY=SU,TU", date(2026, 11, 15, 10, 0), date(2026, 10, 13, 10, 0), time.Time{}},
+		{"every three months", "FREQ=MONTHLY;INTERVAL=3", date(2027, 2, 10, 10, 0), date(2026, 11, 10, 10, 0), time.Time{}},
+		{"every other year", "FREQ=YEARLY;INTERVAL=2", date(2029, 11, 10, 10, 0), date(2027, 11, 10, 10, 0), time.Time{}},
+		{"yearly in its own months", "FREQ=YEARLY;BYMONTH=3,6", date(2027, 6, 10, 10, 0), date(2027, 3, 10, 10, 0), time.Time{}},
+		{"an end before the edited event", "FREQ=WEEKLY;INTERVAL=2;UNTIL=20261101T000000Z", date(2026, 11, 10, 10, 0), date(2026, 10, 13, 10, 0), time.Time{}},
+		// The second of Monday, Wednesday and Friday in each whole week: rrule-go
+		// counts only the days from DTSTART on in DTSTART's week.
+		{
+			"by position in the week", "FREQ=WEEKLY;WKST=SU;BYDAY=MO,WE,FR;BYSETPOS=2", date(2026, 11, 11, 10, 0),
+			date(2026, 10, 14, 10, 0), date(2026, 10, 8, 10, 0),
+		},
+		{"the last day of the month", "FREQ=MONTHLY;BYMONTHDAY=-1", date(2026, 11, 30, 10, 0), date(2026, 10, 31, 10, 0), time.Time{}},
+		{"the 31st", "FREQ=MONTHLY", date(2026, 12, 31, 10, 0), date(2026, 10, 31, 10, 0), time.Time{}},
+		{"February 29", "FREQ=YEARLY", date(2028, 2, 29, 10, 0), date(2028, 2, 29, 10, 0), time.Time{}},
+		{"from the series' start", "FREQ=MONTHLY", tuesday, tuesday, time.Time{}},
+		{"off the rule", "FREQ=WEEKLY;BYDAY=FR", date(2026, 11, 10, 10, 0), tuesday, time.Time{}},
+		// rrule-go would look for 09:00 among 02:00, 06:00, 10:00, ... forever.
+		{"hours off the rule", "FREQ=HOURLY;INTERVAL=4;BYHOUR=9", date(2026, 10, 7, 10, 0), tuesday, time.Time{}},
+		{"minutes off the rule", "FREQ=MINUTELY;INTERVAL=15;BYMINUTE=0", date(2026, 10, 6, 11, 5), tuesday, time.Time{}},
+		{"seconds off the rule", "FREQ=SECONDLY;INTERVAL=2;BYSECOND=1", date(2026, 10, 6, 10, 1), tuesday, time.Time{}},
+		{"unreadable", "FREQ=SOMETIMES", date(2026, 11, 10, 10, 0), tuesday, time.Time{}},
+		{"out of range", "FREQ=MONTHLY;BYMONTH=13", date(2026, 11, 10, 10, 0), tuesday, time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			start := cmp.Or(c.start, tuesday)
+			got := startOnRule(c.rule, atWall(start, time.UTC), atWall(c.edited, time.UTC))
+			if !got.t.Equal(c.want) || !got.wall.Equal(c.want) {
+				t.Errorf("startOnRule(%q, %v, %v) = %v (wall %v); want %v", c.rule, start, c.edited, got.t, got.wall, c.want)
+			}
+		})
+	}
 }
 
 // TestUpdateSeriesNewRuleIntoAnotherZone is the reproduction of issue #5 as
