@@ -269,6 +269,50 @@ describe('EventEditor', () => {
     expect(body.rrule).toMatch(/^FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR(;|$)/)
   })
 
+  // #11: a weekly series on Tuesdays at 10:00, changed from its event of 10 November to Fridays.
+  it('says that a changed repeat moves an event of a series it no longer falls on', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({
+        recurring: true,
+        rrule: 'FREQ=WEEKLY',
+        start: '2026-11-10T09:00:00Z',
+        end: '2026-11-10T10:00:00Z',
+        recurrenceId: '2026-11-10T09:00:00Z',
+      }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    await user.click(within(repeat).getByRole('button', { name: 'Friday' }))
+    await user.click(within(repeat).getByRole('button', { name: 'Tuesday' }))
+    expect(within(repeat).getByText("The repeat doesn't fall on Tue, Nov 10, so this event moves to Fri, Nov 13.")).toBeInTheDocument()
+  })
+
+  // #11: the exception of 10 November, moved to Monday, 9 November, stays where it is.
+  it('says that an exception stays where a changed repeat no longer falls on it', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(
+      apiEvent({
+        recurring: true,
+        modified: true,
+        override: true,
+        rrule: 'FREQ=WEEKLY',
+        start: '2026-11-09T09:00:00Z',
+        end: '2026-11-09T10:00:00Z',
+        recurrenceId: '2026-11-10T09:00:00Z',
+      }),
+    )
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Custom…' }))
+    const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+    await user.click(within(repeat).getByRole('button', { name: 'Friday' }))
+    await user.click(within(repeat).getByRole('button', { name: 'Tuesday' }))
+    expect(within(repeat).getByText("This event stays where it is, though the repeat doesn't fall on it.")).toBeInTheDocument()
+  })
+
   // A weekly series on Tuesdays at 10:00 whose event of 10 November is moved to Monday, 9 November (FR-17).
   it("names the repeat of an exception moved off the series' days after the series", async () => {
     const user = userEvent.setup()

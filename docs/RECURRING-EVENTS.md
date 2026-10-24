@@ -940,15 +940,19 @@ event, and the refusal comes as a toast.
   Tuesday 11-10, the series starts on Friday 10-09, the edited event is
   gone, and the answer is the series' next event, 11-13. An exception at the
   edited event stays where it is, as every exception does when the rule
-  changes. A `DTSTART` that was no event of the old rule, a start set off
-  the rule, as the repeat editor lets a new series start and other clients
-  write it, or the start of a series of dates without a rule, stays
-  (`startsOnRule`): ended after 10 events, a series from a Tuesday that
-  repeats on Fridays keeps its Tuesday as the first of them. What the new
-  rule leaves to its start is then written out as the edited event gives it,
-  where the start gives it otherwise (`spellOut`), so that a preset repeats
-  on the day it named: changed to "Every month on day 13" from its event of
-  Friday 11-13, that series keeps `DTSTART` on 10-06 and gets
+  changes. The repeat editor says which of the two happens before saving
+  (`eventOffRule`): "The repeat doesn't fall on Tue, Nov 10, so this event
+  moves to Fri, Nov 13", or that the event stays where it is; its next dates
+  then start at the repeat's next date, and an end before it is refused. A
+  `DTSTART` that was no event of the old rule, a start set off the rule, as
+  the repeat editor lets a new series start and other clients write it, or
+  the start of a series of dates without a rule, stays (`startsOnRule`):
+  ended after 10 events, a series from a Tuesday that repeats on Fridays
+  keeps its Tuesday as the first of them. What the new rule leaves to its
+  start is then written out as the edited event gives it, where the start
+  gives it otherwise (`spellOut`), so that a preset repeats on the day it
+  named: changed to "Every month on day 13" from its event of Friday 11-13,
+  that series keeps `DTSTART` on 10-06 and gets
   `FREQ=MONTHLY;BYMONTHDAY=13`, where it repeated on the 6th before (#11). A
   change of the end alone writes nothing more. Where the rule's `INTERVAL`
   would count from another period than the edited event's ("Every 2 weeks"

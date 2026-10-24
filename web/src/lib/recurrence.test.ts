@@ -1,8 +1,12 @@
 import { format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
+import { apiEvent } from '@/test/fixtures'
+import { type ApiEvent } from './api/schemas'
+import { toCalEvent } from './events'
 import { type WeekStart } from './locale'
 import {
   defaultModel,
+  eventOffRule,
   modelFromRule,
   nextDates,
   ruleFromModel,
@@ -143,6 +147,17 @@ describe('nextDates', () => {
     expect(r.more).toBe(more)
   })
 
+  // An event of an existing series moves to the repeat's next date where it doesn't fall on the start (#11).
+  it.each<[Partial<RuleModel>, string[], boolean]>([
+    [{ weekdays: [1, 4] }, ['2026-03-12', '2026-03-16', '2026-03-19'], true],
+    [{}, ['2026-03-11', '2026-03-18', '2026-03-25'], true],
+    [{ weekdays: [1, 4], end: { kind: 'count', count: 2 } }, ['2026-03-12', '2026-03-16'], false],
+  ])('lists %j without counting a start the rule does not fall on', (changes, want, more) => {
+    const r = nextDates(m(changes), start, 1, 3, false)
+    expect(days(r)).toEqual(want)
+    expect(r.more).toBe(more)
+  })
+
   it('keeps the time of day across a DST change', () => {
     const r = nextDates(m({ freq: 'daily' }), new Date(2026, 9, 24, 9, 30), 1, 3)
     expect(days(r)).toEqual(['2026-10-24', '2026-10-25', '2026-10-26'])
@@ -160,6 +175,32 @@ describe('startMatches', () => {
     [{ freq: 'yearly', month: 5 }, false],
   ])('%j', (changes, matches) => {
     expect(startMatches(m(changes), start, 1)).toBe(matches)
+  })
+})
+
+// #11: what a changed repeat does to the event it is edited from, where the repeat doesn't fall on it.
+describe('eventOffRule', () => {
+  // A weekly series on Tuesdays at 10:00 in Berlin; its event of 10 November.
+  const later = { recurring: true, rrule: 'FREQ=WEEKLY', start: '2026-11-10T09:00:00Z', end: '2026-11-10T10:00:00Z', recurrenceId: '2026-11-10T09:00:00Z' }
+  it.each<[string, Partial<ApiEvent> | undefined, 'counts' | 'moves' | 'stays']>([
+    ['a new event', undefined, 'counts'],
+    ['a single event', {}, 'counts'],
+    ['a later event of the rule', later, 'moves'],
+    ['the first event, on the rule', { ...later, first: true }, 'moves'],
+    ['an exception', { ...later, override: true }, 'stays'],
+    ['an event of a series of dates', { ...later, rrule: '' }, 'stays'],
+    [
+      'the first event, set off the rule',
+      { ...later, first: true, rrule: 'FREQ=WEEKLY;BYDAY=FR', start: '2026-10-06T08:00:00Z', end: '2026-10-06T09:00:00Z', recurrenceId: '2026-10-06T08:00:00Z' },
+      'stays',
+    ],
+    [
+      'an extra date off the rule',
+      { ...later, rrule: 'FREQ=WEEKLY;BYDAY=FR', start: '2026-11-11T09:00:00Z', end: '2026-11-11T10:00:00Z', recurrenceId: '2026-11-11T09:00:00Z' },
+      'stays',
+    ],
+  ])('%s: %s', (_name, event, want) => {
+    expect(eventOffRule(event && toCalEvent(apiEvent(event)), 1, TZ)).toBe(want)
   })
 })
 

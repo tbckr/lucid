@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { usePrefs } from '@/hooks/usePrefs'
+import { type OffRule } from '@/lib/recurrence'
 import { buildRRule, describeRRule, describeRRuleIn, normalizeRRule, recurrenceFromRRule, type Recurrence } from '@/lib/rrule'
 import { type RuleClock } from '@/lib/seriesShift'
 import { RecurrenceDialog } from './RecurrenceDialog'
@@ -32,6 +33,7 @@ export function RepeatField({
   recursOn,
   kept,
   explicit,
+  offRule,
   disabled,
   invalid,
   describedBy,
@@ -57,6 +59,8 @@ export function RepeatField({
   kept?: { rule: string; start: Date } | undefined
   /** An existing series: the repeat editor writes every day part (see `RecurrenceDialog`). */
   explicit?: boolean
+  /** What a repeat that doesn't fall on `start` does to it, which the repeat editor says (see `RecurrenceDialog`, #11). */
+  offRule?: OffRule | undefined
   disabled?: boolean
   invalid?: boolean
   describedBy?: string | undefined
@@ -120,6 +124,7 @@ export function RepeatField({
           timeZone={timeZone}
           explicit={explicit}
           foreign={dates}
+          {...(offRule ? { offRule } : {})}
           onCloseAutoFocus={(e) => {
             e.preventDefault()
             triggerRef.current?.focus()

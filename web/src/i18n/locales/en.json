@@ -272,9 +272,12 @@
       "skipLeapDay": "Years without February 29 are skipped.",
       "skipFifth": "Months without a fifth {{day}} are skipped.",
       "startOffRule": "The start, {{date}}, counts as the first date, though the repeat doesn't fall on it.",
+      "startMoves": "The repeat doesn't fall on {{date}}, so this event moves to {{next}}.",
+      "startStays": "This event stays where it is, though the repeat doesn't fall on it.",
       "inexact": "This repeat comes from another app and Lucid can't show all of it here. Done replaces it with the repeat above.",
       "number": "Enter a number from 1 to 999.",
       "untilBeforeStart": "The end date is before the start.",
+      "untilBeforeNext": "The end date is before the repeat's next date, {{next}}.",
       "done": "Done",
       "customize": "Custom…"
     }

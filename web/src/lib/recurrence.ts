@@ -1,7 +1,9 @@
 import { addDays, addMonths, getDaysInMonth, startOfDay } from 'date-fns'
 import { dayKey, parseDayKey, utcToZoned } from './dates'
+import { type CalEvent } from './events'
 import { type WeekStart } from './locale'
 import { parseRule, WEEKDAY_CODES, type ParsedRule } from './rrule'
+import { eventRuleStart } from './seriesShift'
 
 /**
  * The repeat editor's model (FR-17): what the editor can show, read from and
@@ -257,13 +259,22 @@ function* ruleDays(model: RuleModel, start: Date, weekStartsOn: WeekStart): Gene
  * The first `limit` dates of the series, as the server expands it (FR-17,
  * `ruleInstances`): the start, whether or not the rule falls on it, counting
  * toward COUNT, then the rule's days after the start's, at its time of day,
- * through the UNTIL day. `more` reports dates beyond them.
+ * through the UNTIL day. `more` reports dates beyond them. Without
+ * `countStart`, the start is one only where the rule falls on it, as an
+ * event of an existing series moves to the rule's next date (#11), and COUNT
+ * counts from the first date.
  */
-export function nextDates(model: RuleModel, start: Date, weekStartsOn: WeekStart, limit: number): { dates: Date[]; more: boolean } {
+export function nextDates(
+  model: RuleModel,
+  start: Date,
+  weekStartsOn: WeekStart,
+  limit: number,
+  countStart = true,
+): { dates: Date[]; more: boolean } {
   const first = startOfDay(start)
   const until = model.end.kind === 'until' ? parseDayKey(model.end.date) : null
   const total = model.end.kind === 'count' ? model.end.count : Infinity
-  const dates = [start]
+  const dates = countStart || startMatches(model, start, weekStartsOn) ? [start] : []
   for (const day of ruleDays(model, start, weekStartsOn)) {
     if (day <= first) continue
     if (dates.length >= total || (until && day > until)) break
@@ -280,6 +291,31 @@ export function startMatches(model: RuleModel, start: Date, weekStartsOn: WeekSt
     if (day >= first) return day.getTime() === first.getTime()
   }
   return false
+}
+
+/**
+ * What a changed repeat does to the event it is edited from, where the
+ * repeat doesn't fall on it (FR-17, #11): a new series or a task counts it
+ * as the first date (`counts`); an event of an existing series on its rule
+ * moves to the repeat's next date (`moves`), as the server moves the series
+ * onto its new rule; an exception, an extra date, and a start set off the
+ * old rule keep their place (`stays`).
+ */
+export type OffRule = 'counts' | 'moves' | 'stays'
+
+/**
+ * What a changed repeat does to `event` where it doesn't fall on it (see
+ * `OffRule`): `counts` for a new event (`undefined`) and a single one;
+ * `stays` for an event of a series of dates, an exception (`override`), and
+ * an event whose place in the series, its RECURRENCE-ID (`eventRuleStart`),
+ * is no date of the old rule, such as an extra date or a start set off the
+ * rule; else `moves`. The old rule is read as the repeat editor reads it.
+ */
+export function eventOffRule(event: CalEvent | undefined, weekStartsOn: WeekStart, timeZone: string): OffRule {
+  if (!event?.recurring) return 'counts'
+  if (!event.rrule || event.override) return 'stays'
+  const at = eventRuleStart(event)
+  return startMatches(modelFromRule(event.rrule, at, timeZone).model, at, weekStartsOn) ? 'moves' : 'stays'
 }
 
 export type SkipHint =

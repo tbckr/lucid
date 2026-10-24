@@ -269,9 +269,12 @@
       "skipLeapDay": "Jahre ohne 29. Februar werden übersprungen.",
       "skipFifth": "Monate ohne fünften {{day}} werden übersprungen.",
       "startOffRule": "Der Start, {{date}}, zählt als erster Termin, auch wenn die Wiederholung nicht auf ihn fällt.",
+      "startMoves": "Die Wiederholung fällt nicht auf {{date}}, daher wandert dieser Termin auf {{next}}.",
+      "startStays": "Dieser Termin bleibt, wo er ist, auch wenn die Wiederholung nicht auf ihn fällt.",
       "inexact": "Diese Wiederholung stammt aus einer anderen App und lässt sich hier nicht vollständig darstellen. „Fertig“ ersetzt sie durch die Wiederholung oben.",
       "number": "Gib eine Zahl von 1 bis 999 ein.",
       "untilBeforeStart": "Das Enddatum liegt vor dem Start.",
+      "untilBeforeNext": "Das Enddatum liegt vor dem nächsten Termin der Wiederholung, {{next}}.",
       "done": "Fertig",
       "customize": "Benutzerdefiniert …"
     }

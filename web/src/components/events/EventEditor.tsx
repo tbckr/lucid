@@ -45,6 +45,7 @@ import { type CalEvent } from '@/lib/events'
 import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
+import { eventOffRule } from '@/lib/recurrence'
 import { RECURRENCE_PRESETS } from '@/lib/rrule'
 import { eventRuleClock, eventRuleStart } from '@/lib/seriesShift'
 import {
@@ -139,6 +140,8 @@ function EditorForm({
   const initial = event ? editFormValues(event, tz) : null
   // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
   const recursOn = event?.recurring && shownRule(event, tz) === null ? eventRuleClock(event) : null
+  // What a changed repeat does to this event where it doesn't fall on it, which the repeat editor says (#11).
+  const offRule = eventOffRule(event, prefs.weekStartsOn, tz)
   // After a save refused as a conflict (FR-09): the ETag the event has now, `undefined` where the
   // reloaded calendar no longer holds it. The form keeps what was entered.
   const [conflict, setConflict] = useState<{ etag: string | undefined } | null>(null)
@@ -549,6 +552,7 @@ function EditorForm({
             customizable
             recursOn={recursOn}
             explicit={event?.recurring ?? false}
+            offRule={offRule}
           />
         </EditorRow>
 

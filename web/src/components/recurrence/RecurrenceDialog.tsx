@@ -23,6 +23,7 @@ import {
   type MonthPattern,
   type Nth,
   type NthDay,
+  type OffRule,
   type RepeatEnd,
   type RuleModel,
 } from '@/lib/recurrence'
@@ -50,6 +51,13 @@ export interface RecurrenceDialogProps {
   explicit?: boolean
   /** The repeat came from another app and is not `rule`, e.g. a series of dates: Done replaces it. */
   foreign?: boolean
+  /**
+   * What happens to `start` where the repeat doesn't fall on it (FR-17, #11): a new series or a task counts it as
+   * the first date (`counts`, the default); an event of an existing series moves to the repeat's next date
+   * (`moves`), which the preview starts at and an end may not precede; an exception, an extra date and a start set
+   * off the old repeat stay (`stays`).
+   */
+  offRule?: OffRule
   /** Where the focus goes when the dialog closes; it has no trigger of its own to go back to. */
   onCloseAutoFocus?: (event: Event) => void
 }
@@ -103,6 +111,7 @@ function RecurrenceForm({
   onOpenChange,
   explicit = false,
   foreign = false,
+  offRule = 'counts',
 }: RecurrenceDialogProps) {
   const { t } = useTranslation()
   const prefs = usePrefs()
@@ -132,11 +141,16 @@ function RecurrenceForm({
     endKind === 'count' ? { kind: 'count', count } : endKind === 'until' ? { kind: 'until', date: until } : { kind: 'never' }
   const model: RuleModel = { freq, interval: every, weekdays, monthly, month, end, ...(initial.wkst ? { wkst: initial.wkst } : {}) }
   const written = ruleFromModel(model, start, prefs.weekStartsOn, explicit)
-  const { dates, more } = nextDates(model, start, prefs.weekStartsOn, PREVIEW)
+  const lands = startMatches(model, start, prefs.weekStartsOn)
+  // Where the event moves to the repeat's next date, the dates start there (#11).
+  const moves = offRule === 'moves' && !lands
+  const { dates, more } = nextDates(model, start, prefs.weekStartsOn, PREVIEW, !moves)
+  const next = moves ? nextDates({ ...model, end: { kind: 'never' } }, start, prefs.weekStartsOn, 1, false).dates[0] : undefined
 
   const intervalInvalid = toCount(intervalText) === null
   const countInvalid = endKind === 'count' && toCount(countText) === null
-  const untilInvalid = endKind === 'until' && until < dayKey(start)
+  const untilBeforeNext = endKind === 'until' && next !== undefined && until < dayKey(next)
+  const untilInvalid = (endKind === 'until' && until < dayKey(start)) || untilBeforeNext
 
   const weekOrder = Array.from({ length: 7 }, (_, i) => (prefs.weekStartsOn + i) % 7)
   // 2023-01-01 was a Sunday.
@@ -151,8 +165,11 @@ function RecurrenceForm({
   if (skip?.kind === 'shortMonths') hints.push(t('recurrence.editor.skipShortMonths'))
   if (skip?.kind === 'leapDay') hints.push(t('recurrence.editor.skipLeapDay'))
   if (skip?.kind === 'fifth') hints.push(t('recurrence.editor.skipFifth', { day: kindName(skip.day) }))
-  if (!startMatches(model, start, prefs.weekStartsOn)) {
-    hints.push(t('recurrence.editor.startOffRule', { date: formatPickerDate(start, prefs, now) }))
+  if (!lands) {
+    const date = formatPickerDate(start, prefs, now)
+    if (offRule === 'stays') hints.push(t('recurrence.editor.startStays'))
+    else if (next) hints.push(t('recurrence.editor.startMoves', { date, next: formatPickerDate(next, prefs, now) }))
+    else hints.push(t('recurrence.editor.startOffRule', { date }))
   }
 
   const done = () => {
@@ -398,7 +415,9 @@ function RecurrenceForm({
           </div>
           {untilInvalid && (
             <p id={`${id}-until-error`} role="alert" className="ml-7 text-sm text-destructive">
-              {t('recurrence.editor.untilBeforeStart')}
+              {untilBeforeNext
+                ? t('recurrence.editor.untilBeforeNext', { next: formatPickerDate(next, prefs, now) })
+                : t('recurrence.editor.untilBeforeStart')}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">

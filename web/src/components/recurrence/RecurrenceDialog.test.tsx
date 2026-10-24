@@ -1,17 +1,26 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { type OffRule } from '@/lib/recurrence'
 import { renderWithProviders } from '@/test/render'
 import { RecurrenceDialog } from './RecurrenceDialog'
 
 // A Wednesday, the second of its month; the test locale (en-US) starts the week on Sunday.
 const start = new Date(2026, 2, 11, 9, 0)
 
-function open(rule: string) {
+function open(rule: string, offRule?: OffRule) {
   const onDone = vi.fn<(rule: string) => void>()
   const onOpenChange = vi.fn<(open: boolean) => void>()
   renderWithProviders(
-    <RecurrenceDialog open onOpenChange={onOpenChange} rule={rule} start={start} timeZone="Europe/Berlin" onDone={onDone} />,
+    <RecurrenceDialog
+      open
+      onOpenChange={onOpenChange}
+      rule={rule}
+      start={start}
+      timeZone="Europe/Berlin"
+      onDone={onDone}
+      {...(offRule ? { offRule } : {})}
+    />,
   )
   const dialog = screen.getByRole('dialog', { name: 'Custom repeat' })
   return { dialog, onDone, onOpenChange, user: userEvent.setup() }
@@ -156,6 +165,38 @@ describe('RecurrenceDialog', () => {
       within(dialog).getByText("The start, Wed, Mar 11, counts as the first date, though the repeat doesn't fall on it."),
     ).toBeInTheDocument()
     expect(preview(dialog).slice(0, 3)).toEqual(['Wed, Mar 11', 'Thu, Mar 12', 'Mon, Mar 16'])
+  })
+
+  // #11: an event of an existing series moves to the repeat's next date; an exception or an extra date stays.
+  it('says that an event of a series moves to the next date where the repeat does not fall on it', async () => {
+    const { dialog, user } = open('FREQ=WEEKLY', 'moves')
+    await user.click(within(dialog).getByRole('button', { name: 'Monday' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Thursday' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Wednesday' }))
+    expect(within(dialog).getByText("The repeat doesn't fall on Wed, Mar 11, so this event moves to Thu, Mar 12.")).toBeInTheDocument()
+    expect(within(dialog).queryByText(/counts as the first date/)).toBeNull()
+    expect(preview(dialog).slice(0, 3)).toEqual(['Thu, Mar 12', 'Mon, Mar 16', 'Thu, Mar 19'])
+  })
+
+  it('says that an event that keeps its place stays where the repeat does not fall on it', async () => {
+    const { dialog, user } = open('FREQ=WEEKLY', 'stays')
+    await user.click(within(dialog).getByRole('button', { name: 'Monday' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Thursday' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Wednesday' }))
+    expect(within(dialog).getByText("This event stays where it is, though the repeat doesn't fall on it.")).toBeInTheDocument()
+    expect(preview(dialog).slice(0, 3)).toEqual(['Wed, Mar 11', 'Thu, Mar 12', 'Mon, Mar 16'])
+  })
+
+  it("refuses an end before the repeat's next date where the event moves there", () => {
+    const { dialog } = open('FREQ=WEEKLY;BYDAY=TH;UNTIL=20260311', 'moves')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent("The end date is before the repeat's next date, Thu, Mar 12.")
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeDisabled()
+  })
+
+  it('takes an end on the start where the start counts', () => {
+    const { dialog } = open('FREQ=WEEKLY;BYDAY=TH;UNTIL=20260311')
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeEnabled()
   })
 
   it('says that short months leave out a late day', async () => {
