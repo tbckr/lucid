@@ -12,7 +12,6 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
-import { formatInTimeZone } from 'date-fns-tz'
 import { type WeekStart } from './locale'
 
 export type ViewKind = 'month' | 'week' | 'day' | 'agenda'
@@ -236,12 +235,15 @@ function wallOf(t: number, timeZone: string): number {
   return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second'))
 }
 
-/** UTC instant → wall-clock date/time strings in `timeZone`. */
+/**
+ * UTC instant → wall-clock date/time strings in `timeZone`, through Intl as
+ * `zonedToUtc` reads them (`wallOf`): a zone's wall clock that the browser's
+ * own zone skips reads right, such as London's 02:30 on the night Berlin
+ * changes to summer time (#10, FR-18). Throws for a zone Intl doesn't know.
+ */
 export function utcToZoned(instant: Date, timeZone: string): { date: string; time: string } {
-  return {
-    date: formatInTimeZone(instant, timeZone, 'yyyy-MM-dd'),
-    time: formatInTimeZone(instant, timeZone, 'HH:mm'),
-  }
+  const wall = new Date(wallOf(instant.getTime(), timeZone)).toISOString()
+  return { date: wall.slice(0, 10), time: wall.slice(11, 16) }
 }
 
 /** Shift an interval by whole local days and minutes, preserving duration. */

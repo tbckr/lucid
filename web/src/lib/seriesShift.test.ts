@@ -456,6 +456,11 @@ describe('taskMoveRefusal', () => {
 
 // A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
 describe('ruleInZone', () => {
+  it('reads the clock of a series in another zone on the night the browser skips that hour', () => {
+    // 01:30Z on 29 March 2026: 02:30 in London, 03:30 in Berlin (Vitest's zone, which skips 02:00 to 03:00).
+    expect(ruleInZone('FREQ=DAILY;BYHOUR=2;BYMINUTE=30', new Date('2026-03-29T01:30:00Z'), 'Europe/London', 'Europe/Berlin')).toBeNull()
+  })
+
   const tuesday = new Date('2026-11-10T23:00:00Z') // 18:00 EST, Wednesday 00:00 CET
   it.each([
     ['rotates plain weekdays to the dates shown', 'FREQ=WEEKLY;BYDAY=TU,TH', tuesday, 'America/New_York', 'Europe/Berlin', 'FREQ=WEEKLY;BYDAY=WE,FR'],

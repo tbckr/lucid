@@ -134,6 +134,13 @@ describe('DST safety', () => {
     expect(skippedTime('', '02:30', 'Europe/Berlin')).toBeNull()
   })
 
+  it("utcToZoned reads another zone's wall clock also where the browser's zone skips it", () => {
+    // Vitest runs in Berlin, which skips 02:00 to 03:00 on 29 March 2026.
+    expect(utcToZoned(new Date('2026-03-29T01:30:00Z'), 'Europe/London')).toEqual({ date: '2026-03-29', time: '02:30' })
+    expect(utcToZoned(new Date('2026-03-29T06:30:00Z'), 'America/New_York')).toEqual({ date: '2026-03-29', time: '02:30' })
+    expect(utcToZoned(new Date('2026-03-29T02:30:00Z'), 'UTC')).toEqual({ date: '2026-03-29', time: '02:30' })
+  })
+
   it('utcToZoned is the inverse', () => {
     expect(utcToZoned(new Date('2026-10-25T00:30:00Z'), 'Europe/Berlin')).toEqual({ date: '2026-10-25', time: '02:30' })
     expect(utcToZoned(new Date('2026-10-25T01:30:00Z'), 'Europe/Berlin')).toEqual({ date: '2026-10-25', time: '02:30' })
