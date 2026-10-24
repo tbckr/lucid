@@ -940,11 +940,21 @@ event, and the refusal comes as a toast.
   Tuesday 11-10, the series starts on Friday 10-09, the edited event is
   gone, and the answer is the series' next event, 11-13. An exception at the
   edited event stays where it is, as every exception does when the rule
-  changes. Nor does a `DTSTART` move that was no event of the old rule, a
-  start set off the rule, as the repeat editor lets a new series start and
-  other clients write it, or the start of a series of dates without a rule
+  changes. A `DTSTART` that was no event of the old rule, a start set off
+  the rule, as the repeat editor lets a new series start and other clients
+  write it, or the start of a series of dates without a rule, stays
   (`startsOnRule`): ended after 10 events, a series from a Tuesday that
-  repeats on Fridays keeps its Tuesday as the first of them.
+  repeats on Fridays keeps its Tuesday as the first of them. What the new
+  rule leaves to its start is then written out as the edited event gives it,
+  where the start gives it otherwise (`spellOut`), so that a preset repeats
+  on the day it named: changed to "Every month on day 13" from its event of
+  Friday 11-13, that series keeps `DTSTART` on 10-06 and gets
+  `FREQ=MONTHLY;BYMONTHDAY=13`, where it repeated on the 6th before (#11). A
+  change of the end alone writes nothing more. Where the rule's `INTERVAL`
+  would count from another period than the edited event's ("Every 2 weeks"
+  from 11-13, five weeks after the start's week, `inPhase`), `DTSTART` goes
+  onto the rule as above, to 10-16, and the start set off the rule stays as
+  an `RDATE`, which a `COUNT` doesn't count.
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,

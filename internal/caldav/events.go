@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -732,11 +733,32 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 			at, edited = zm.at(at), zm.at(edited)
 			rezoneRecurrenceRefs(cal, master, zm)
 		}
-		if rr != rruleString(master) && startsOnRule(rruleString(master), oldTm.start) {
-			at = startOnRule(rr, at, edited)
+		// A start set off the old rule stays, and the new rule names what it
+		// leaves to its start as the edited event gives it (see spellOut),
+		// unless its INTERVAL would count from another period than the
+		// edited event's: then the start goes onto the rule and the old one
+		// stays as an RDATE (#11).
+		var keptAsDate *dateValue
+		if old := rruleString(master); rr != old {
+			switch {
+			case startsOnRule(old, oldTm.start):
+				at = startOnRule(rr, at, edited)
+			case inPhase(rr, at, edited):
+				rr = spellOut(rr, at, edited)
+			default:
+				kept := at
+				if at = startOnRule(rr, at, edited); !at.t.Equal(kept.t) {
+					keptAsDate = &kept
+				}
+			}
 		}
 		end = at.t.Add(in.End.Sub(in.Start))
 		applyEventSchedule(cal, master, in, rr, at, end, tz)
+		if keptAsDate != nil {
+			if d, err := parseDateProp(master.Props.Get(ical.PropDateTimeStart)); err == nil {
+				master.Props.Add(seriesValueProp(cal, ical.PropRecurrenceDates, *keptAsDate, d.form()))
+			}
+		}
 		listed := shownFrom(cal, master, in.Start)
 		instance = &listed
 		if applyChangedEventFields(master, ov, in) {
@@ -1198,6 +1220,102 @@ func readAt(opt *rrule.ROption, w time.Time) {
 	if len(opt.Bysecond) == 0 && opt.Freq < rrule.SECONDLY {
 		opt.Bysecond = []int{w.Second()}
 	}
+}
+
+// spellOut returns the RRULE value rule of a series whose DTSTART start,
+// set off its old rule, stays (#11, FR-17), with what rule leaves to its
+// start written out as its event edited gives it, where start gives it
+// otherwise: the weekday of FREQ=WEEKLY, the day of FREQ=MONTHLY, the month
+// with the day of FREQ=YEARLY, as rrule-go and RFC 5545 section 3.3.10 take
+// the month from the start only without a day, and the clock time (see
+// readAt). So a preset repeats on the day it named at edited, not on
+// start's: "Every month on day 13" from 11-13 of a series from Tuesday 10-06
+// is BYMONTHDAY=13. Both are read on their wall clock in start's zone. The
+// parts are appended to rule as it is written; parts it names itself, and a
+// rule Lucid cannot read, stay as they are.
+func spellOut(rule string, start, edited dateValue) string {
+	loc := start.loc()
+	orig, err := rrule.StrToROptionInLocation(rule, time.UTC)
+	if err != nil {
+		return rule
+	}
+	from, at := *orig, *orig
+	readAt(&from, start.wallIn(loc))
+	readAt(&at, edited.wallIn(loc))
+	var parts []string
+	ints := func(key string, vs []int) {
+		s := make([]string, len(vs))
+		for i, v := range vs {
+			s[i] = strconv.Itoa(v)
+		}
+		parts = append(parts, key+"="+strings.Join(s, ","))
+	}
+	month := len(orig.Bymonth) == 0 && len(at.Bymonth) > 0 &&
+		(!slices.Equal(from.Bymonth, at.Bymonth) || !slices.Equal(from.Bymonthday, at.Bymonthday))
+	if month {
+		ints("BYMONTH", at.Bymonth)
+	}
+	if month || !slices.Equal(from.Bymonthday, at.Bymonthday) {
+		ints("BYMONTHDAY", at.Bymonthday)
+	}
+	if !slices.Equal(from.Byweekday, at.Byweekday) {
+		days := make([]string, len(at.Byweekday))
+		for i, d := range at.Byweekday {
+			days[i] = d.String()
+		}
+		parts = append(parts, "BYDAY="+strings.Join(days, ","))
+	}
+	for _, part := range []struct {
+		key      string
+		from, at []int
+	}{{"BYHOUR", from.Byhour, at.Byhour}, {"BYMINUTE", from.Byminute, at.Byminute}, {"BYSECOND", from.Bysecond, at.Bysecond}} {
+		if !slices.Equal(part.from, part.at) {
+			ints(part.key, part.at)
+		}
+	}
+	if len(parts) == 0 {
+		return rule
+	}
+	return rule + ";" + strings.Join(parts, ";")
+}
+
+// inPhase reports whether the DTSTART start of a series counts the INTERVAL
+// of the RRULE value rule in the periods of its event edited (#11, FR-17):
+// whether their years, months, weeks from the rule's WKST, days, hours,
+// minutes or seconds, read on their wall clock in start's zone, lie a whole
+// number of intervals apart. Only then does a start set off the old rule
+// stay with rule spelled out (see spellOut): every other week from Tuesday
+// 10-06 has Friday 11-06 among its events, not 11-13. It is true for an
+// INTERVAL of 1 and for a rule Lucid cannot read.
+func inPhase(rule string, start, edited dateValue) bool {
+	opt, err := rrule.StrToROptionInLocation(rule, time.UTC)
+	if err != nil || opt.Interval <= 1 {
+		return true
+	}
+	loc := start.loc()
+	s, a := start.wallIn(loc), edited.wallIn(loc)
+	// The day of t's week start, Monday 0 as in rrule-go.
+	weekStart := func(t time.Time) int { return dateDays(t) - ((int(t.Weekday())+6)%7-opt.Wkst.Day()+7)%7 }
+	units := func(d time.Duration) int { return int(a.Truncate(d).Sub(s.Truncate(d)) / d) }
+	var diff int
+	switch opt.Freq {
+	case rrule.YEARLY:
+		diff = a.Year() - s.Year()
+	case rrule.MONTHLY:
+		diff = (a.Year()-s.Year())*12 + int(a.Month()) - int(s.Month())
+	case rrule.WEEKLY:
+		diff = (weekStart(a) - weekStart(s)) / 7
+	case rrule.DAILY:
+		diff = dateDays(a) - dateDays(s)
+	case rrule.HOURLY:
+		diff = units(time.Hour)
+	case rrule.MINUTELY:
+		diff = units(time.Minute)
+	default: // SECONDLY
+		diff = units(time.Second)
+	}
+	n := opt.Interval
+	return (diff%n+n)%n == 0
 }
 
 // startsOnRule reports whether the DTSTART start of a series with the RRULE

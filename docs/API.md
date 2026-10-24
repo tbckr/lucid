@@ -241,7 +241,13 @@ attendees. A single event gets none.
   event is the series' next one, 11-13. An override at the occurrence stays
   where it is, as every override does. The first event stays where the
   series moved where it was no event of the old rule (a start set off the
-  rule, or a series of dates without one).
+  rule, or a series of dates without one), and the rule is then written with
+  what it leaves to its start spelled out as the occurrence gives it, where
+  the first event gives it otherwise: such a series from Tuesday 10-06 on
+  Fridays sent `FREQ=MONTHLY` from 11-13 gets `FREQ=MONTHLY;BYMONTHDAY=13`.
+  Where the rule's `INTERVAL` would count from another period than the
+  occurrence's, its first event goes onto the rule as above, and the old one
+  stays as an `RDATE`.
 - **Edited exception:** with the rule and `allDay` unchanged, the edited
   exception, if there is one, takes `start` and `end`. A save that changes
   the rule or `allDay` leaves it at its own start and end (only its

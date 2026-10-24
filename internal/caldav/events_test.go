@@ -1942,28 +1942,165 @@ func TestUpdateSeriesNewRuleKeepsEditedException(t *testing.T) {
 // TestUpdateSeriesNewRuleKeepsStartOffOldRule checks that a changed rule
 // leaves DTSTART where the series moved it where DTSTART was no event of the
 // rule before, a start set off the rule, as the repeat editor lets a new
-// series start and other clients write it (FR-17): the series from Tuesday
-// 10-06 that repeats on Fridays, ended after 10 events from its event of
-// 11-13, keeps its Tuesday, which counts as the first of the 10. Changed to a
-// preset, it keeps it too (#11).
+// series start and other clients write it, and the start of a series of
+// dates (FR-17): the series from Tuesday 10-06 that repeats on Fridays,
+// ended after 10 events from its event of 11-13, keeps its Tuesday, which
+// counts as the first of the 10, and so it does from that Tuesday. What a
+// preset leaves to its start is written out as the edited event gives it, so
+// it repeats on the day it named, not the start's (#11): "Every month on day
+// 13" from 11-13 is BYMONTHDAY=13. Where an INTERVAL would count from
+// another period than the edited event's, DTSTART goes onto the rule, and the
+// start set off the rule stays as an RDATE.
 func TestUpdateSeriesNewRuleKeepsStartOffOldRule(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ rule, dtstart string }{
-		{"FREQ=WEEKLY;BYDAY=FR;COUNT=10", "DTSTART;TZID=Europe/Berlin:20261006T100000"},
-		{"FREQ=MONTHLY", "DTSTART;TZID=Europe/Berlin:20261006T100000"},
+	fridays := reviewSeries("FREQ=WEEKLY;BYDAY=FR")
+	dates := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"DTSTART;TZID=Europe/Berlin:20261006T100000", "DTEND;TZID=Europe/Berlin:20261006T110000",
+		"RDATE;TZID=Europe/Berlin:20261113T100000", "END:VEVENT",
+	}
+	for _, c := range []struct {
+		name     string
+		lines    []string
+		rid      time.Time
+		rule     string
+		stored   []string // with the rule written, a whole line
+		from, to time.Time
+		listed   []time.Time // nil: not checked
+	}{
+		{
+			"end only", fridays, date(2026, 11, 13, 9, 0), "FREQ=WEEKLY;BYDAY=FR;COUNT=10",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=10"},
+			time.Time{},
+			time.Time{},
+			nil,
+		},
+		{
+			"preset", fridays, date(2026, 11, 13, 9, 0), "FREQ=MONTHLY",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=MONTHLY;BYMONTHDAY=13"},
+			date(2026, 10, 1, 0, 0), date(2027, 1, 1, 0, 0),
+			[]time.Time{date(2026, 10, 6, 8, 0), date(2026, 10, 13, 8, 0), date(2026, 11, 13, 9, 0), date(2026, 12, 13, 9, 0)},
+		},
+		{
+			"first event", fridays, date(2026, 10, 6, 8, 0), "FREQ=WEEKLY;BYDAY=MO",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;BYDAY=MO"},
+			time.Time{},
+			time.Time{},
+			nil,
+		},
+		{
+			"in phase", fridays, date(2026, 11, 6, 9, 0), "FREQ=WEEKLY;INTERVAL=2",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=FR"},
+			date(2026, 10, 1, 0, 0), date(2026, 11, 21, 0, 0),
+			[]time.Time{date(2026, 10, 6, 8, 0), date(2026, 10, 9, 8, 0), date(2026, 10, 23, 8, 0), date(2026, 11, 6, 9, 0), date(2026, 11, 20, 9, 0)},
+		},
+		{
+			"out of phase", fridays, date(2026, 11, 13, 9, 0), "FREQ=WEEKLY;INTERVAL=2",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261016T100000", "RDATE;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;INTERVAL=2"},
+			date(2026, 10, 1, 0, 0), date(2026, 11, 14, 0, 0),
+			[]time.Time{date(2026, 10, 6, 8, 0), date(2026, 10, 16, 8, 0), date(2026, 10, 30, 9, 0), date(2026, 11, 13, 9, 0)},
+		},
+		{
+			"dates", dates, date(2026, 11, 13, 9, 0), "FREQ=WEEKLY",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;BYDAY=FR", "RDATE;TZID=Europe/Berlin:20261113T100000"},
+			time.Time{},
+			time.Time{},
+			nil,
+		},
 	} {
-		t.Run(c.rule, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
-			id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY;BYDAY=FR")...)
-			ev := listedAt(t, e, "work", date(2026, 11, 13, 9, 0), date(2026, 11, 13, 9, 0), date(2026, 11, 13, 9, 1))
+			id := e.put(t, "work", "series.ics", c.lines...)
+			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Minute))
 
 			in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
 			in.RRule, in.Timezone = c.rule, "Europe/Berlin"
 			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 			mustNoErr(t, err)
 
-			wantStored(t, e, "work", "series.ics", c.dtstart, "RRULE:"+c.rule)
+			data := stored(t, e, "work", "series.ics")
+			for _, line := range c.stored {
+				if !strings.Contains(data, line+"\r\n") {
+					t.Errorf("series lacks the line %q:\n%s", line, data)
+				}
+			}
+			if c.listed != nil {
+				checkOccurrences(t, listed(t, e, "work", c.from, c.to), seriesEvents("Review", c.listed...))
+			}
+		})
+	}
+}
+
+// TestSpellOut checks the rule a series whose start was set off its old rule
+// keeps it with (#11, FR-17): what the new rule leaves to its start is
+// written out as the edited event gives it, where the start gives it
+// otherwise, the month with the day of a yearly rule, as rrule-go and RFC
+// 5545 take the month from the start only without a day; parts the rule
+// names itself, and a rule Lucid cannot read, stay as they are.
+func TestSpellOut(t *testing.T) {
+	t.Parallel()
+	start := atWall(date(2026, 10, 6, 10, 0), time.UTC)
+	day := func(t time.Time) dateValue { return dateValue{t: t, wall: t, allDay: true} }
+	for _, c := range []struct {
+		name, rule    string
+		start, edited dateValue
+		want          string
+	}{
+		{"weekly", "FREQ=WEEKLY", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=WEEKLY;BYDAY=FR"},
+		{"weekly with a count", "FREQ=WEEKLY;COUNT=5", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=WEEKLY;COUNT=5;BYDAY=FR"},
+		{"monthly", "FREQ=MONTHLY", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=MONTHLY;BYMONTHDAY=13"},
+		{"yearly", "FREQ=YEARLY", start, atWall(date(2027, 11, 13, 10, 0), time.UTC), "FREQ=YEARLY;BYMONTH=11;BYMONTHDAY=13"},
+		{"yearly in another month", "FREQ=YEARLY", start, atWall(date(2027, 3, 6, 10, 0), time.UTC), "FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=6"},
+		{"yearly in its own months", "FREQ=YEARLY;BYMONTH=3,6", start, atWall(date(2027, 3, 13, 10, 0), time.UTC), "FREQ=YEARLY;BYMONTH=3,6;BYMONTHDAY=13"},
+		{"at another time", "FREQ=DAILY", start, atWall(date(2026, 11, 13, 14, 30), time.UTC), "FREQ=DAILY;BYHOUR=14;BYMINUTE=30"},
+		{"daily", "FREQ=DAILY", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=DAILY"},
+		{"on the start's weekday", "FREQ=WEEKLY", start, atWall(date(2026, 11, 10, 10, 0), time.UTC), "FREQ=WEEKLY"},
+		{"with its own days", "FREQ=WEEKLY;BYDAY=MO", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=WEEKLY;BYDAY=MO"},
+		{"unreadable", "FREQ=SOMETIMES", start, atWall(date(2026, 11, 13, 10, 0), time.UTC), "FREQ=SOMETIMES"},
+		{"all-day", "FREQ=WEEKLY", day(date(2026, 10, 6, 0, 0)), day(date(2026, 11, 13, 0, 0)), "FREQ=WEEKLY;BYDAY=FR"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := spellOut(c.rule, c.start, c.edited); got != c.want {
+				t.Errorf("spellOut(%q, %v, %v) = %q; want %q", c.rule, c.start.t, c.edited.t, got, c.want)
+			}
+		})
+	}
+}
+
+// TestInPhase checks whether a start counts a rule's INTERVAL in the edited
+// event's periods (#11, FR-17): a whole number of intervals of years,
+// months, weeks from the rule's WKST, days or hours apart; always for an
+// INTERVAL of 1 and a rule Lucid cannot read.
+func TestInPhase(t *testing.T) {
+	t.Parallel()
+	start := atWall(date(2026, 10, 6, 10, 0), time.UTC) // a Tuesday
+	for _, c := range []struct {
+		rule   string
+		edited time.Time
+		want   bool
+	}{
+		{"FREQ=WEEKLY;INTERVAL=2", date(2026, 11, 6, 10, 0), true},
+		{"FREQ=WEEKLY;INTERVAL=2", date(2026, 11, 13, 10, 0), false},
+		{"FREQ=WEEKLY;INTERVAL=2", date(2026, 10, 11, 10, 0), true},
+		{"FREQ=WEEKLY;INTERVAL=2;WKST=SU", date(2026, 10, 11, 10, 0), false},
+		{"FREQ=MONTHLY;INTERVAL=3", date(2027, 1, 13, 10, 0), true},
+		{"FREQ=MONTHLY;INTERVAL=3", date(2026, 12, 13, 10, 0), false},
+		{"FREQ=YEARLY;INTERVAL=2", date(2028, 3, 1, 10, 0), true},
+		{"FREQ=YEARLY;INTERVAL=2", date(2027, 3, 1, 10, 0), false},
+		{"FREQ=DAILY;INTERVAL=3", date(2026, 10, 9, 10, 0), true},
+		{"FREQ=DAILY;INTERVAL=3", date(2026, 10, 10, 10, 0), false},
+		{"FREQ=HOURLY;INTERVAL=5", date(2026, 10, 7, 11, 0), true},
+		{"FREQ=HOURLY;INTERVAL=5", date(2026, 10, 7, 12, 0), false},
+		{"FREQ=WEEKLY", date(2026, 11, 13, 10, 0), true},
+		{"FREQ=SOMETIMES", date(2026, 11, 13, 10, 0), true},
+	} {
+		t.Run(c.rule+" "+c.edited.Format("2006-01-02T15"), func(t *testing.T) {
+			t.Parallel()
+			if got := inPhase(c.rule, start, atWall(c.edited, time.UTC)); got != c.want {
+				t.Errorf("inPhase(%q, %v, %v) = %v; want %v", c.rule, start.t, c.edited, got, c.want)
+			}
 		})
 	}
 }
