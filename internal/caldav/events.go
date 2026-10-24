@@ -628,6 +628,22 @@ func editedEvent(o calObject, ref objRef, master *ical.Component, instance, move
 	return ev, nil
 }
 
+// shownFrom returns t where the series master in cal shows an event there,
+// an instance of its rule, an RDATE or an override, else its first instance
+// after t, as the event list shows the edited event of a changed rule that
+// doesn't fall on it (#11, FR-17), else t, also for a series whose timing
+// Lucid cannot read.
+func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Time {
+	tm, err := parseTiming(master)
+	if err != nil || isInstance(master, tm, t) || findOverride(cal, master, t) != nil {
+		return t
+	}
+	if _, from, err := placeInRule(master, tm, t); err == nil && !from.t.IsZero() {
+		return from.t.UTC()
+	}
+	return t
+}
+
 // applySeriesEdit applies the change in, whose normalized rule is rr, to the
 // event master in cal, in memory, as UpdateEvent saves it (FR-17), and
 // returns where the edited event is then:
@@ -637,7 +653,9 @@ func editedEvent(o calObject, ref objRef, master *ical.Component, instance, move
 //     after the move;
 //   - from such an occurrence with a changed rule or all-day flag: the series
 //     moves as the edited event moved and takes the rule rr, read at the
-//     edited event (see startOnRule), and instance is in.Start;
+//     edited event (see startOnRule), and instance is in.Start, or, where
+//     the series no longer shows an event there, its next one (see
+//     shownFrom, #11);
 //   - otherwise, for a single event and a series whose rule goes (rr == ""):
 //     the fields and dates of in, as entered, and both are nil.
 //
@@ -676,7 +694,9 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// written. A changed rule is read at the edited event, where the
 		// editor built it, and DTSTART goes to its first event from where it
 		// moved, see startOnRule, unless it was set off the old rule (see
-		// startsOnRule, #9). Of title, description and location only what
+		// startsOnRule, #9). Where the rule doesn't fall on the edited event,
+		// that event is gone, while an exception there stays, as every
+		// exception does (#11). Of title, description and location only what
 		// changed from the event as shown goes into the series, see
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
@@ -716,8 +736,9 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 			at = startOnRule(rr, at, edited)
 		}
 		end = at.t.Add(in.End.Sub(in.Start))
-		instance = &in.Start
 		applyEventSchedule(cal, master, in, rr, at, end, tz)
+		listed := shownFrom(cal, master, in.Start)
+		instance = &listed
 		if applyChangedEventFields(master, ov, in) {
 			bumpChangeProps(ov, now)
 		}
@@ -1075,12 +1096,14 @@ func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in d
 }
 
 // startOnRule returns the DTSTART of a series whose rule changes to rule
-// from its event edited, after the series moved to start (#9, FR-17): the
-// first event of rule from start on, with rule read at edited, as the editor
-// builds it there. What the rule leaves to its start, the weekday of
-// FREQ=WEEKLY, the day of FREQ=MONTHLY, the month and day of FREQ=YEARLY and
-// the clock time, comes from edited, and the periods its INTERVAL counts
-// are edited's, so edited stays an event of the rule, and DTSTART is one,
+// from its event edited, after the series moved to start (#9, #11, FR-17):
+// the first event of rule from start on, or from edited where that lies
+// before start, as the new series of a split from an RDATE starts at the old
+// rule's next event after it, with rule read at edited, as the editor builds
+// it there. What the rule leaves to its start, the weekday of FREQ=WEEKLY,
+// the day of FREQ=MONTHLY, the month and day of FREQ=YEARLY and the clock
+// time, comes from edited, and the periods its INTERVAL counts are edited's,
+// so edited stays an event of the rule where it is one, and DTSTART is one,
 // as RFC 5545 section 3.8.5.3 asks. A COUNT, counted from DTSTART, or an
 // UNTIL can still end the series before edited. The rule itself stays as it
 // is: a DTSTART on edited's weekday, day and clock implies the same parts.
@@ -1088,19 +1111,23 @@ func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in d
 // from its event of 11-10 repeats on the 6th, and a rule with every part
 // written out has start as an event off the rule, which RFC 5545 leaves
 // undefined and clients read differently: Lucid counts it, as section 3.3.10
-// does for COUNT (see ruleInstances), rrule-go leaves it out.
+// does for COUNT (see ruleInstances), rrule-go leaves it out. So a rule
+// edited is no event of moves DTSTART too, also from the series' first
+// event: changed to "Every week on Friday" from its event of Tuesday 11-10,
+// the series starts on Friday 10-09, and the edited event is gone.
 //
 // Both are read on their wall clock in start's zone, and so is the result,
-// also a time that zone skips (#8). It is start from the series' first
-// event, for a rule edited is no event of (#11), also by its hours,
-// minutes or seconds (see onClock), for one Lucid cannot read, and where
-// edited lies more than maxRRuleIterations of the rule's events after
-// start, such as a rule every minute over months.
+// also a time that zone skips (#8). It is start for a rule edited is no
+// event of by its hours, minutes or seconds (see onClock), for one Lucid
+// cannot read, where the rule has no event within maxRRuleIterations, and
+// where its first event lies after its UNTIL, so that a series doesn't move
+// past its end.
 func startOnRule(rule string, start, edited dateValue) dateValue {
 	loc := start.loc()
 	s, a := start.wallIn(loc), edited.wallIn(loc)
-	if !a.After(s) {
-		return start
+	from := s
+	if a.Before(s) {
+		from = a
 	}
 	opt, err := rrule.StrToROptionInLocation(rule, time.UTC)
 	if err != nil {
@@ -1110,29 +1137,33 @@ func startOnRule(rule string, start, edited dateValue) dateValue {
 	if !onClock(opt, a) {
 		return start
 	}
+	// The last instant an event may have, as ruleInstances reads UNTIL;
+	// zero: none.
+	until := opt.Until
+	if !until.IsZero() && !strings.HasSuffix(strings.ToUpper(rulePart(rule, "UNTIL")), "Z") {
+		until = zoned(opt.Until, loc)
+	}
 	// Counted from DTSTART, they would end the search early.
 	opt.Count, opt.Until = 0, time.Time{}
-	opt.Dtstart = periodsBefore(opt, a, s)
+	opt.Dtstart = periodsBefore(opt, a, from)
 	r, err := rrule.NewRRule(*opt)
 	if err != nil {
 		return start
 	}
 	next := r.Iterator()
-	var first time.Time
 	for range maxRRuleIterations {
 		w, ok := next()
-		if !ok || w.After(a) {
+		if !ok {
 			break
 		}
-		if w.Before(s) {
+		if w.Before(from) {
 			continue
 		}
-		if first.IsZero() {
-			first = w
+		first := atWall(w, loc)
+		if !until.IsZero() && first.t.After(until) {
+			break
 		}
-		if w.Equal(a) {
-			return atWall(first, loc)
-		}
+		return first
 	}
 	return start
 }

@@ -922,26 +922,29 @@ event, and the refusal comes as a toast.
   Tuesday, so that the day parts it writes for an existing series keep the
   series there; it used to open on Monday and move the series there.
 - **A changed rule is read where the editor built it**, at the edited
-  event's place in the rule, moved as the series moved (`startOnRule`):
-  what it leaves to its start, the weekday, the day of the month, the month
-  and the clock time, and the periods its `INTERVAL` counts. `DTSTART` goes
-  to that rule's first event from where the series started, moved as the
-  event moved, and the rule is written as sent: a `DTSTART` on the edited
-  event's weekday, day and time implies the same parts. A weekly series from
-  Tuesday 2026-10-06 changed to "Every month on day 10" from its event of
-  11-10 gets `DTSTART` on 10-10 and repeats on the 10th; changed to "Every 2
-  weeks on Tuesday", it gets 10-13, so 11-10 stays one of its events. Kept
-  at its old start, as before, the series repeated on the 6th, and a rule
-  with its day parts written out had 10-06 as an event off the rule, which
-  RFC 5545 leaves undefined (section 3.8.5.3) and clients read differently.
-  From the series' first event nothing moves. Nor does a `DTSTART` that was
-  no event of the old rule, a start set off the rule, as the repeat editor
-  lets a new series start and other clients write it, or the start of a
-  series of dates without a rule (`startsOnRule`): ended after 10 events, a
-  series from a Tuesday that repeats on Fridays keeps its Tuesday as the
-  first of them. Nor, either, for a rule the edited event is no event of,
-  such as "Every week on Friday" from a Tuesday, which the repeat editor
-  can build (#11).
+  event's place in the rule, moved as the series moved (`startOnRule`): what
+  it leaves to its start, the weekday, the day of the month, the month and
+  the clock time, and the periods its `INTERVAL` counts. `DTSTART` goes to
+  that rule's first event from where the series started, moved as the event
+  moved, and the rule is written as sent: a `DTSTART` on the edited event's
+  weekday, day and time implies the same parts. A weekly series from Tuesday
+  2026-10-06 changed to "Every month on day 10" from its event of 11-10 gets
+  `DTSTART` on 10-10 and repeats on the 10th; changed to "Every 2 weeks on
+  Tuesday", it gets 10-13, so 11-10 stays one of its events. Kept at its old
+  start, as before, the series repeated on the 6th, and a rule with its day
+  parts written out had 10-06 as an event off the rule, which RFC 5545
+  leaves undefined (section 3.8.5.3) and clients read differently. So
+  `DTSTART` goes to the rule's first event also for a rule the edited event
+  is no event of, which the repeat editor can build, and from the series'
+  first event (#11): changed to "Every week on Friday" from its event of
+  Tuesday 11-10, the series starts on Friday 10-09, the edited event is
+  gone, and the answer is the series' next event, 11-13. An exception at the
+  edited event stays where it is, as every exception does when the rule
+  changes. Nor does a `DTSTART` move that was no event of the old rule, a
+  start set off the rule, as the repeat editor lets a new series start and
+  other clients write it, or the start of a series of dates without a rule
+  (`startsOnRule`): ended after 10 events, a series from a Tuesday that
+  repeats on Fridays keeps its Tuesday as the first of them.
 - **Which moves are refused**: `seriesShift(rule, from, to)` is a pure
   function shared, case for case, between the server (Go,
   `internal/caldav/seriesshift.go`) and the browser (TypeScript,
@@ -1085,7 +1088,11 @@ as entered (`UpdateFollowing`).
   compared case-insensitively (RFC 5545 section 3.1), keeps the rule the
   new series inherited, with its lowered `COUNT`, so that a move doesn't
   count as a new rule; any other rule is the new series' own, and no rule
-  makes it the single event entered.
+  makes it the single event entered. A changed rule moves the new series'
+  `DTSTART` to its first event from R on (`startOnRule`), also from an
+  `RDATE`, which stays one of the new series: "Every week on Friday" from
+  the Tuesday 11-10 of a weekly series starts the new series on Friday
+  11-13, and an exception at R stays where it is (#11).
 - **No link between the two.** Like most surveyed writers (Apple and
   Nextcloud Calendar add a `RELATED-TO`), Lucid writes neither a
   `RELATED-TO` nor a `RANGE`: the two series are independent resources,

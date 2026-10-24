@@ -1855,23 +1855,88 @@ func TestUpdateSeriesNewRuleStartsAtSkippedTime(t *testing.T) {
 		seriesEvents("Backup", date(2027, 3, 28, 1, 30), date(2027, 4, 4, 0, 30)))
 }
 
-// TestUpdateSeriesNewRuleOffEditedEventKeepsStart checks that a changed
-// rule the edited event is no event of, as the repeat editor can build it,
-// leaves DTSTART where the series moved it (FR-17): the event of Tuesday
-// 11-10 changed to "Every week on Friday" keeps the series' start on Tuesday
-// 10-06. Where such a series starts is #11.
-func TestUpdateSeriesNewRuleOffEditedEventKeepsStart(t *testing.T) {
+// TestUpdateSeriesNewRuleOffEditedEventMovesStart checks that a changed rule
+// the edited event is no event of, as the repeat editor can build it, moves
+// DTSTART to the rule's first event from where the series started, as for a
+// rule the edited event is on (#11, FR-17): the weekly series from Tuesday
+// 10-06 changed to "Every week on Friday" from its event of 11-10 starts on
+// Friday 10-09, also from its first event, ended after 10 events, and
+// all-day. The edited event is gone, and the answer is the series' next
+// event, 11-13. Kept at 10-06, the start was an event off the rule, which
+// Lucid listed before the Fridays and rrule-go leaves out.
+func TestUpdateSeriesNewRuleOffEditedEventMovesStart(t *testing.T) {
+	t.Parallel()
+	allDay := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"DTSTART;VALUE=DATE:20261006", "DTEND;VALUE=DATE:20261007", "RRULE:FREQ=WEEKLY", "END:VEVENT",
+	}
+	for _, c := range []struct {
+		name   string
+		lines  []string
+		rid    time.Time
+		rule   string
+		stored string
+		answer time.Time // zero: not checked
+	}{
+		{"later", reviewSeries("FREQ=WEEKLY"), date(2026, 11, 10, 9, 0), "FREQ=WEEKLY;BYDAY=FR", "DTSTART;TZID=Europe/Berlin:20261009T100000", date(2026, 11, 13, 9, 0)},
+		{"first", reviewSeries("FREQ=WEEKLY"), date(2026, 10, 6, 8, 0), "FREQ=WEEKLY;BYDAY=FR", "DTSTART;TZID=Europe/Berlin:20261009T100000", date(2026, 10, 9, 8, 0)},
+		{"count", reviewSeries("FREQ=WEEKLY"), date(2026, 11, 10, 9, 0), "FREQ=WEEKLY;BYDAY=FR;COUNT=10", "DTSTART;TZID=Europe/Berlin:20261009T100000", date(2026, 11, 13, 9, 0)},
+		{"all-day", allDay, date(2026, 11, 10, 0, 0), "FREQ=WEEKLY;BYDAY=FR", "DTSTART;VALUE=DATE:20261009", time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", c.lines...)
+			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Minute))
+
+			in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
+			in.RRule, in.Timezone, in.AllDay = c.rule, "Europe/Berlin", ev.AllDay
+			up, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			wantStored(t, e, "work", "series.ics", c.stored, "RRULE:"+c.rule)
+			if !c.answer.IsZero() && (!up.Start.Equal(c.answer) || up.RecurrenceID == nil || !up.RecurrenceID.Equal(c.answer)) {
+				t.Errorf("answer at %v (recurrence ID %v); want %v", up.Start, up.RecurrenceID, c.answer)
+			}
+			switch c.name {
+			case "later":
+				checkOccurrences(t, listed(t, e, "work", date(2026, 10, 1, 0, 0), date(2026, 10, 12, 0, 0)),
+					seriesEvents("Review", date(2026, 10, 9, 8, 0)))
+			case "count":
+				evs := listed(t, e, "work", date(2026, 10, 1, 0, 0), date(2027, 1, 1, 0, 0))
+				if len(evs) != 10 || !evs[9].Start.Equal(date(2026, 12, 11, 9, 0)) {
+					t.Errorf("got %d events, the last at %v; want 10 to 2026-12-11T09:00Z", len(evs), evs[len(evs)-1].Start)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateSeriesNewRuleKeepsEditedException checks that an exception at
+// the edited event stays where it is when a changed rule no longer has its
+// RECURRENCE-ID, as every other exception does, while the series moves to
+// the rule (#11, FR-17): "Every week on Friday" from the exception of
+// Tuesday 11-10 lists it there and the series' event on Friday 11-13.
+func TestUpdateSeriesNewRuleKeepsEditedException(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
-	id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY")...)
+	id := e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review with Kim",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261110T100000",
+		"DTSTART;TZID=Europe/Berlin:20261110T100000", "DTEND;TZID=Europe/Berlin:20261110T110000",
+		"END:VEVENT")...)
 	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 1))
 
-	in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
+	in := seriesUpdate(ev, "Review with Kim", "", ev.Start, ev.End)
 	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", "Europe/Berlin"
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustNoErr(t, err)
 
-	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20261006T100000", "RRULE:FREQ=WEEKLY;BYDAY=FR")
+	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20261009T100000")
+	want := slices.Concat(
+		[]occ{{title: "Review with Kim", start: date(2026, 11, 10, 9, 0), end: date(2026, 11, 10, 10, 0), rid: ptr(date(2026, 11, 10, 9, 0))}},
+		seriesEvents("Review", date(2026, 11, 13, 9, 0)))
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 9, 0, 0), date(2026, 11, 16, 0, 0)), want)
 }
 
 // TestUpdateSeriesNewRuleKeepsStartOffOldRule checks that a changed rule
@@ -1933,11 +1998,12 @@ func TestStartsOnRule(t *testing.T) {
 }
 
 // TestStartOnRule checks where a series whose rule changes from its event
-// edited starts, once moved to start (#9, FR-17): at the rule's first event
-// from start on, read at edited, of every frequency, with its INTERVAL
-// counted in edited's periods, also where the week starts on another day,
-// and with the parts it gives itself; at start for a rule edited is no event
-// of and for one Lucid cannot read.
+// edited starts, once moved to start (#9, #11, FR-17): at the rule's first
+// event from start on, or from edited where it lies before start, read at
+// edited, of every frequency, with its INTERVAL counted in edited's periods,
+// also where the week starts on another day, with the parts it gives itself,
+// and for a rule edited is no event of; at start for one Lucid cannot read
+// and for one whose UNTIL comes before that event.
 func TestStartOnRule(t *testing.T) {
 	t.Parallel()
 	tuesday := date(2026, 10, 6, 10, 0)
@@ -1977,7 +2043,11 @@ func TestStartOnRule(t *testing.T) {
 		{"the 31st", "FREQ=MONTHLY", date(2026, 12, 31, 10, 0), date(2026, 10, 31, 10, 0), time.Time{}},
 		{"February 29", "FREQ=YEARLY", date(2028, 2, 29, 10, 0), date(2028, 2, 29, 10, 0), time.Time{}},
 		{"from the series' start", "FREQ=MONTHLY", tuesday, tuesday, time.Time{}},
-		{"off the rule", "FREQ=WEEKLY;BYDAY=FR", date(2026, 11, 10, 10, 0), tuesday, time.Time{}},
+		{"off the rule", "FREQ=WEEKLY;BYDAY=FR", date(2026, 11, 10, 10, 0), date(2026, 10, 9, 10, 0), time.Time{}},
+		{"from the series' start off the rule", "FREQ=WEEKLY;BYDAY=FR", tuesday, date(2026, 10, 9, 10, 0), time.Time{}},
+		// "This and following" from an RDATE: the new series starts after it (#11).
+		{"edited before the start", "FREQ=WEEKLY;BYDAY=FR", date(2026, 10, 1, 10, 0), date(2026, 10, 2, 10, 0), time.Time{}},
+		{"an end before its first event", "FREQ=WEEKLY;BYDAY=FR;UNTIL=20261007T000000Z", tuesday, tuesday, time.Time{}},
 		// rrule-go would look for 09:00 among 02:00, 06:00, 10:00, ... forever.
 		{"hours off the rule", "FREQ=HOURLY;INTERVAL=4;BYHOUR=9", date(2026, 10, 7, 10, 0), tuesday, time.Time{}},
 		{"minutes off the rule", "FREQ=MINUTELY;INTERVAL=15;BYMINUTE=0", date(2026, 10, 6, 11, 5), tuesday, time.Time{}},

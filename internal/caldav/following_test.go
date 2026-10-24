@@ -1759,6 +1759,77 @@ func TestUpdateFollowingNewRuleIntoAnotherZone(t *testing.T) {
 	}
 }
 
+// TestUpdateFollowingNewRuleOffEditedEvent checks that the new series of a
+// split with a changed rule the edited event is no event of starts at that
+// rule's first event from the edited event on, as "all events" moves a
+// series there (#11, FR-17): "Every week on Friday" from the Monday 03-24 of
+// a weekly series starts it on Friday 03-28, not on 03-24, also from an
+// RDATE on Wednesday 03-26, which stays one of the new series, and where it
+// started on the old rule's next event, Monday 03-31. An exception at the
+// edited event stays where it is, before the new series' first Friday.
+func TestUpdateFollowingNewRuleOffEditedEvent(t *testing.T) {
+	t.Parallel()
+	fridays := []string{
+		"2025-03-28T08:00:00Z/2025-03-28T09:00:00Z Standup", "2025-04-04T07:00:00Z/2025-04-04T08:00:00Z Standup",
+		"2025-04-11T07:00:00Z/2025-04-11T08:00:00Z Standup", "2025-04-18T07:00:00Z/2025-04-18T08:00:00Z Standup",
+		"2025-04-25T07:00:00Z/2025-04-25T08:00:00Z Standup",
+	}
+	mondays := []string{
+		"2025-03-03T08:00:00Z/2025-03-03T09:00:00Z Standup", "2025-03-10T08:00:00Z/2025-03-10T09:00:00Z Standup",
+		"2025-03-17T08:00:00Z/2025-03-17T09:00:00Z Standup",
+	}
+	exception := slices.Concat(weeklyStandup(), []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20250101T000000Z", "SUMMARY:Standup with Kim",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20250324T090000",
+		"DTSTART;TZID=Europe/Berlin:20250324T090000", "DTEND;TZID=Europe/Berlin:20250324T100000",
+		"END:VEVENT",
+	})
+	for _, c := range []struct {
+		name  string
+		lines []string
+		rid   time.Time
+		n     []string // in the new series' resource
+		shown []string
+	}{
+		{
+			"rule event", weeklyStandup(), date(2025, 3, 24, 8, 0),
+			[]string{"DTSTART;TZID=Europe/Berlin:20250328T090000"},
+			slices.Concat(mondays, fridays),
+		},
+		{
+			"rdate", weeklyStandup("RDATE;TZID=Europe/Berlin:20250326T090000"), date(2025, 3, 26, 8, 0),
+			[]string{"DTSTART;TZID=Europe/Berlin:20250328T090000", "RDATE;TZID=Europe/Berlin:20250326T090000"},
+			slices.Concat(mondays, []string{
+				"2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup", "2025-03-26T08:00:00Z/2025-03-26T09:00:00Z Standup",
+			}, fridays),
+		},
+		{
+			"exception", exception, date(2025, 3, 24, 8, 0),
+			[]string{"DTSTART;TZID=Europe/Berlin:20250328T090000"},
+			slices.Concat(mondays, []string{"2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup with Kim"}, fridays),
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			got := updateFollowing(t, e, c.lines, c.rid,
+				func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", "Europe/Berlin" })
+			mustNoErr(t, got.err)
+
+			_, nData := newSeriesIn(t, e, got.id)
+			checkStored(t, "N", nData, c.n, nil)
+			want := slices.Clone(c.shown)
+			slices.Sort(want)
+			if shown := listedEvents(t, e); !slices.Equal(shown, want) {
+				t.Errorf("shown:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+			}
+			if c.name == "rule event" && !got.res.Event.Start.Equal(date(2025, 3, 28, 8, 0)) {
+				t.Errorf("answer at %v; want 2025-03-28T08:00Z", got.res.Event.Start)
+			}
+		})
+	}
+}
+
 // TestUpdateFollowingFirst checks that "this and following events" at the
 // first event the series shows is "all events": UpdateEvent with the event
 // as instanceStart, one PUT and no new resource, also where the client's view

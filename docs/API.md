@@ -232,12 +232,16 @@ attendees. A single event gets none.
   `FREQ=YEARLY`, the clock time) and the periods its `INTERVAL` counts. The
   series' first event goes to the rule's first event from where the series
   started, moved as above, so the occurrence stays one of its rule's events
-  (a `COUNT`, counted from the series' first event, or an `UNTIL` can still
-  end the series before it); the rule is written as sent. A weekly series from Tuesday 2026-10-06 sent
-  `FREQ=MONTHLY` from its occurrence of 11-10 starts on 10-10. The first
-  event stays where the series moved where it was no event of the old rule
-  (a start set off the rule, or a series of dates without one) or the
-  occurrence is no event of the new rule.
+  where the rule falls on it (a `COUNT`, counted from the series' first
+  event, or an `UNTIL` can still end the series before it); the rule is
+  written as sent. A weekly series from Tuesday 2026-10-06 sent
+  `FREQ=MONTHLY` from its occurrence of 11-10 starts on 10-10. Sent
+  `FREQ=WEEKLY;BYDAY=FR` from there, a rule that doesn't fall on the
+  occurrence, it starts on 10-09: the occurrence goes, and the response's
+  event is the series' next one, 11-13. An override at the occurrence stays
+  where it is, as every override does. The first event stays where the
+  series moved where it was no event of the old rule (a start set off the
+  rule, or a series of dates without one).
 - **Edited exception:** with the rule and `allDay` unchanged, the edited
   exception, if there is one, takes `start` and `end`. A save that changes
   the rule or `allDay` leaves it at its own start and end (only its
@@ -345,7 +349,8 @@ Changes this occurrence and the following ones as a series of their own
 ("This and following events"). The series ends before `recurrenceId`, as the
 `DELETE` below ends it, and a new series, a resource with a UID of its own,
 goes on from it: a copy of the series with `DTSTART` at `recurrenceId` (for
-an `RDATE`, which it keeps, at the rule's next event if there is one), the
+an `RDATE`, which it keeps, at the rule's next event if there is one; for a
+changed rule, at that rule's first event from `recurrenceId` on), the
 rule's `COUNT` lowered by the events before it (an `UNTIL` stays), and the
 `EXDATE` and `RDATE` values and the overrides from `recurrenceId` on, by the
 `RECURRENCE-ID` of an override, never by its own date. Neither refers to the
