@@ -131,6 +131,7 @@ export function keepsRuleAndAllDay(values: EventFormValues, initial: EventFormVa
 
 /** Convert form values to the API payload. `event` is set when editing. */
 export function formToInput(v: EventFormValues, timeZone: string, event?: CalEvent): EventInput {
+  const initial = event ? editFormValues(event, timeZone) : undefined
   let start: Date
   let end: Date
   if (v.allDay) {
@@ -138,14 +139,22 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     // All-day end is exclusive: the day after the last day.
     end = localDateToUtc(addDays(parseDayKey(v.endDate), 1))
   } else {
-    start = zonedToUtc(v.startDate, v.startTime, timeZone)
-    end = zonedToUtc(v.endDate, v.endTime, timeZone)
+    // The fields can't say which of a time summer time repeats it is, so one
+    // left as the editor opened it keeps its instant (#10, FR-18).
+    const timed = event !== undefined && initial !== undefined && !initial.allDay
+    start =
+      timed && v.startDate === initial.startDate && v.startTime === initial.startTime
+        ? event.startsAt
+        : zonedToUtc(v.startDate, v.startTime, timeZone)
+    end =
+      timed && v.endDate === initial.endDate && v.endTime === initial.endTime
+        ? event.endsAt
+        : zonedToUtc(v.endDate, v.endTime, timeZone)
   }
   // While a series' rule and all-day flag are unchanged from the editor's
   // initial values, the stored RRULE goes back verbatim (FR-17): rebuilding
   // it from the preset can rewrite text the server would then see as a
   // changed rule, losing the fast path that keeps the series' own time zone.
-  const initial = event ? editFormValues(event, timeZone) : undefined
   const rrule =
     event?.recurring && initial && keepsRuleAndAllDay(v, initial)
       ? event.rrule

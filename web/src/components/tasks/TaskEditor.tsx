@@ -50,7 +50,7 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
-import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskRepeat } from '@/lib/calendarTasks'
+import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
 import { dayAt, parseDayKey } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
@@ -204,6 +204,9 @@ export function TaskEditor({
       ? taskToForm(repeat ? { ...state.todo, ...repeat.shown, title: repeat.title } : state.todo, tz, state.todo)
       : { ...taskForm(state.draft.title, state.draft.task), description: state.draft.description },
   )
+  // The dates the editor opened with, which `opened` holds as fields: a save sends one back as it
+  // is while its fields stay (#10, FR-18).
+  const openedDates: TaskDates | undefined = repeat?.shown ?? todo
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(buildTaskFormSchema(todo && { original: todo, timeZone: tz })),
     defaultValues: opened,
@@ -216,7 +219,7 @@ export function TaskEditor({
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
   // Overdue as the task list will show it once saved (FR-14).
-  const entered = formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz)
+  const entered = formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz, undefined, openedDates)
   const overdue = isOverdue(entered, now)
   const setOpts = { shouldDirty: true, shouldValidate: formState.isSubmitted }
 
@@ -305,7 +308,7 @@ export function TaskEditor({
   // The body of a save of `v`: for a series, with its own values where the user left them alone,
   // so a repeat's own title shown here is not taken for a change (FR-17).
   const editInput = (v: TaskFormValues): TodoInput => {
-    const input = formToTodoInput(v, tz, todo)
+    const input = formToTodoInput(v, tz, todo, openedDates)
     return todo?.recurring ? seriesEditInput(todo, input, editedFields(opened, v)) : input
   }
 

@@ -28,6 +28,21 @@ describe('taskForm', () => {
     expect(formToTodoInput(taskToForm(todo(), TZ), TZ)).toMatchObject({ due: null, dueAllDay: false })
   })
 
+  it('sends the dates the editor opened with while they stay, also in the hour summer time repeats', () => {
+    const t = todo({ due: '2026-10-25T01:30:00Z', start: '2026-10-25T01:00:00Z' })
+    const v = { ...taskToForm(t, TZ), title: 'Renamed' }
+    expect(formToTodoInput(v, TZ, t, t)).toMatchObject({ start: '2026-10-25T01:00:00.000Z', due: '2026-10-25T01:30:00.000Z' })
+    // Without them, the times are read as entered: the first 02:00 and 02:30.
+    expect(formToTodoInput(v, TZ, t)).toMatchObject({ start: '2026-10-25T00:00:00.000Z', due: '2026-10-25T00:30:00.000Z' })
+  })
+
+  it("compares with the repeat's dates the editor opened, not the series'", () => {
+    const series = todo({ due: '2026-10-18T01:30:00Z', rrule: 'FREQ=WEEKLY', recurring: true })
+    const shown = { start: null, startAllDay: false, due: '2026-10-25T01:30:00Z', dueAllDay: false }
+    const v = taskToForm({ ...series, ...shown }, TZ, series)
+    expect(formToTodoInput(v, TZ, series, shown).due).toBe('2026-10-25T01:30:00.000Z')
+  })
+
   it('keeps IN-PROCESS unless completed', () => {
     const t = todo({ status: 'IN-PROCESS' })
     const v = taskToForm(t, TZ)

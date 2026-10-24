@@ -300,6 +300,14 @@ describe('TaskEditor', () => {
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Personal'])
   })
 
+  it('keeps the due time of a task in the hour summer time repeats when only its title changes', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openTask(todo({ due: '2026-10-25T01:30:00Z' }))
+    await user.type(within(dialog).getByPlaceholderText('Add a title'), ' renamed')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect((await saved(fetch)).due).toBe('2026-10-25T01:30:00.000Z')
+  })
+
   describe('repeat', () => {
     // A task due Monday, Oct 5 that repeats on Mondays and Thursdays; Monday's is its current repeat.
     const series = todo({

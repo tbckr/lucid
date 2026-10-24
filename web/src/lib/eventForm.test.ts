@@ -68,6 +68,32 @@ describe('formToInput', () => {
     })
   })
 
+  it("sends an event's own times while its date and time stay as it opened, also in the hour summer time repeats", () => {
+    for (const [start, end] of [
+      ['2026-10-25T00:30:00Z', '2026-10-25T00:45:00Z'],
+      ['2026-10-25T01:30:00Z', '2026-10-25T01:45:00Z'],
+    ] as const) {
+      const event = toCalEvent(apiEvent({ start, end }))
+      const input = formToInput({ ...editFormValues(event, TZ), title: 'Renamed' }, TZ, event)
+      expect(input.start).toBe(new Date(start).toISOString())
+      expect(input.end).toBe(new Date(end).toISOString())
+    }
+  })
+
+  it('reads a changed time anew, next to one that stays', () => {
+    const event = toCalEvent(apiEvent({ start: '2026-10-25T01:30:00Z', end: '2026-10-25T01:45:00Z' }))
+    const input = formToInput({ ...editFormValues(event, TZ), endTime: '03:00' }, TZ, event)
+    expect(input.start).toBe('2026-10-25T01:30:00.000Z')
+    expect(input.end).toBe('2026-10-25T02:00:00.000Z')
+  })
+
+  it('reads the times of an all-day event made timed as entered', () => {
+    const event = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }))
+    const input = formToInput({ ...editFormValues(event, TZ), allDay: false }, TZ, event)
+    expect(input.start).toBe('2026-09-25T07:00:00.000Z')
+    expect(input.end).toBe('2026-09-25T08:00:00.000Z')
+  })
+
   it('converts all-day values to UTC midnight with exclusive end', () => {
     const input = formToInput({ ...base, allDay: true, endDate: '2026-03-29', recurrence: 'yearly' }, TZ)
     expect(input.start).toBe('2026-03-28T00:00:00.000Z')
