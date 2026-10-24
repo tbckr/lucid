@@ -308,6 +308,13 @@ describe('TaskEditor', () => {
     expect((await saved(fetch)).due).toBe('2026-10-25T01:30:00.000Z')
   })
 
+  it('says that a due time summer time skips is saved an hour later', async () => {
+    const { dialog } = await openNew({ ...slides, task: { startDate: '', startTime: '', dueDate: '2026-03-29', dueTime: '02:30' } })
+    const note = "Clocks go forward on this day: 2:30 AM doesn't exist and is saved as 3:30 AM."
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveAccessibleDescription(note)
+  })
+
   describe('repeat', () => {
     // A task due Monday, Oct 5 that repeats on Mondays and Thursdays; Monday's is its current repeat.
     const series = todo({

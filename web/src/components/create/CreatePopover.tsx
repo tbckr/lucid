@@ -232,6 +232,7 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
                 }}
                 prefs={prefs}
                 now={now}
+                timeZone={tz}
                 invalid={!!whenError}
                 describedBy={whenError ? `${id}-when-error` : undefined}
               />

@@ -21,6 +21,7 @@ import { KindSwitch } from '@/components/create/KindSwitch'
 import { RepeatField } from '@/components/recurrence/RepeatField'
 import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
+import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
 import { TimeSelect } from '@/components/events/TimeSelect'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
@@ -51,7 +52,7 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
 import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
-import { dayAt, parseDayKey } from '@/lib/dates'
+import { dayAt, parseDayKey, skippedTime } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { buildRRule, RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
@@ -470,6 +471,8 @@ export function TaskEditor({
     const refusal =
       !error && refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined
     const note = error ?? refusal
+    // A time summer time skips on its date, and the one it is saved as (#10, FR-18).
+    const saved = time ? skippedTime(date, time, tz) : null
     // The label keeps its own column, so on narrow screens the time wraps below the date.
     return (
       <div className="grid grid-cols-[3rem_1fr] items-start gap-x-2 gap-y-1">
@@ -508,6 +511,7 @@ export function TaskEditor({
               placeholder={t('tasks.addTime')}
               prefs={prefs}
               invalid={!!error}
+              describedBy={saved ? `${id}-${which}-skipped` : undefined}
               aria-label={t(`tasks.${which}Time`)}
             />
           )}
@@ -520,6 +524,15 @@ export function TaskEditor({
           >
             {note}
           </p>
+        )}
+        {saved && (
+          <SkippedTimeNote
+            id={`${id}-${which}-skipped`}
+            time={time}
+            saved={saved}
+            prefs={prefs}
+            className="col-start-2 text-muted-foreground"
+          />
         )}
       </div>
     )

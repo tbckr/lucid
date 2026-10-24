@@ -84,6 +84,50 @@ function writtenEtags(fetch: { mock: { calls: [RequestInfo | URL, RequestInit?][
     .map(([, init]) => (init?.headers as Record<string, string>)['If-Match'] ?? '')
 }
 
+describe('a time summer time skips', () => {
+  afterEach(() => {
+    useUi.getState().openEditor(null)
+    vi.restoreAllMocks()
+  })
+
+  /** The create editor with times on 29 March 2026, when Berlin skips 02:00 to 03:00. */
+  const night = (startTime: string, endTime: string): CreateEditorState => ({
+    ...create,
+    draft: { ...create.draft, event: { allDay: false, startDate: '2026-03-29', startTime, endDate: '2026-03-29', endTime } },
+  })
+  const note = (time: string, saved: string) =>
+    `Clocks go forward on this day: ${time} doesn't exist and is saved as ${saved}.`
+
+  it('says that the start is saved an hour later', async () => {
+    const { dialog } = await openEditor(night('02:30', '04:00'))
+    expect(within(dialog).getByText(note('2:30 AM', '3:30 AM'))).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveAccessibleDescription(note('2:30 AM', '3:30 AM'))
+  })
+
+  it('drops the note once the time exists', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(night('02:30', '04:00'))
+    expect(within(dialog).getByText(note('2:30 AM', '3:30 AM'))).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.click(screen.getByRole('option', { name: '1:30 AM' }))
+    expect(within(dialog).queryByText(/Clocks go forward/)).not.toBeInTheDocument()
+  })
+
+  it('says it for start and end alike, and saves them where it says', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(night('02:15', '02:45'))
+    expect(within(dialog).getByText(note('2:15 AM', '3:15 AM'))).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveAccessibleDescription(note('2:45 AM', '3:45 AM'))
+    await user.type(within(dialog).getByPlaceholderText('Add a title'), 'Night shift')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
+    })
+    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
+    expect(bodyOf(init)).toMatchObject({ start: '2026-03-29T01:15:00.000Z', end: '2026-03-29T01:45:00.000Z' })
+  })
+})
+
 describe('EventEditor', () => {
   afterEach(() => {
     useUi.getState().openEditor(null)

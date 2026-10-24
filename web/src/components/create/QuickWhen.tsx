@@ -1,16 +1,27 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DateField } from '@/components/events/DateField'
+import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
 import { TimeSelect } from '@/components/events/TimeSelect'
+import { skippedTime } from '@/lib/dates'
 import { shiftEnd } from '@/lib/eventForm'
 import { type FormatPrefs } from '@/lib/format'
 import { shiftTask, type CreateKind, type EventWhen, type TaskWhen } from '@/lib/quickCreate'
 import { cn } from '@/lib/utils'
 
+/** A time summer time skips, and the one it is saved as, with the id of its note. */
+interface Note {
+  id: string
+  time: string
+  saved: string
+}
+
 /**
  * When the new entry happens, as the sentence the details popover shows
  * ("Wed, Sep 30 10:15 AM – 11:15 AM", "Due Wed, Sep 30 10:15 AM"), each part a
  * quiet field on the tint. Moving the start keeps the length (FR-09, FR-16).
+ * A time summer time skips on its date is said below, with the time it is
+ * saved as, in `timeZone` (#10, FR-18).
  */
 export function QuickWhen({
   kind,
@@ -20,6 +31,7 @@ export function QuickWhen({
   onTask,
   prefs,
   now,
+  timeZone,
   invalid,
   describedBy,
 }: {
@@ -30,6 +42,7 @@ export function QuickWhen({
   onTask: (when: TaskWhen) => void
   prefs: FormatPrefs
   now: Date
+  timeZone: string
   invalid?: boolean
   describedBy?: string | undefined
 }) {
@@ -44,6 +57,17 @@ export function QuickWhen({
     setShown({ end: shown.end || endDiffers, due: shown.due || dueDiffers })
   }
   const tint = 'tint' as const
+  // A shown time summer time skips on its date, as the note said below the line (#10, FR-18).
+  const skipped = (which: 'start' | 'end' | 'due', date: string, time: string): Note | null => {
+    const saved = skippedTime(date, time, timeZone)
+    return saved ? { id: `${id}-${which}-skipped`, time, saved } : null
+  }
+  const withNotes = (when: ReactNode, ...notes: (Note | null)[]) => (
+    <>
+      {when}
+      {notes.map((n) => n && <SkippedTimeNote key={n.id} id={n.id} time={n.time} saved={n.saved} prefs={prefs} />)}
+    </>
+  )
   // Every part has the fields' padding, so the text of each line starts under the title's.
   const line = 'tabular -ml-1.5 flex flex-wrap items-center text-base font-medium'
   // A time range wraps after the date as a whole.
@@ -53,7 +77,9 @@ export function QuickWhen({
     const moveStart = (date: string, time: string) => {
       onEvent({ ...event, startDate: date, startTime: time, ...shiftEnd(event, date, time) })
     }
-    return (
+    const start = event.allDay ? null : skipped('start', event.startDate, event.startTime)
+    const end = event.allDay ? null : skipped('end', event.endDate, event.endTime)
+    return withNotes(
       <div className={line}>
         <DateField
           id={`${id}-start`}
@@ -78,6 +104,7 @@ export function QuickWhen({
                 moveStart(event.startDate, v)
               }}
               prefs={prefs}
+              describedBy={start?.id}
               aria-label={t('event.startTime')}
               tone={tint}
             />
@@ -105,6 +132,7 @@ export function QuickWhen({
               }}
               prefs={prefs}
               invalid={invalid}
+              describedBy={end?.id}
               aria-label={t('event.endTime')}
               tone={tint}
             />
@@ -116,13 +144,17 @@ export function QuickWhen({
         <span id={`${id}-ends`} className="sr-only">
           {t('event.ends')}
         </span>
-      </div>
+      </div>,
+      start,
+      end,
     )
   }
 
   // A span keeps one date for start and due unless they differ.
   if (task.startDate && task.dueDate) {
-    return (
+    const start = skipped('start', task.startDate, task.startTime)
+    const due = skipped('due', task.dueDate, task.dueTime)
+    return withNotes(
       <div className={line}>
         <DateField
           id={`${id}-date`}
@@ -144,6 +176,7 @@ export function QuickWhen({
                 onTask(shiftTask(task, task.startDate, v))
               }}
               prefs={prefs}
+              describedBy={start?.id}
               aria-label={t('tasks.startTime')}
               tone={tint}
             />
@@ -173,6 +206,7 @@ export function QuickWhen({
               }}
               prefs={prefs}
               invalid={invalid}
+              describedBy={due?.id}
               aria-label={t('tasks.dueTime')}
               tone={tint}
             />
@@ -184,7 +218,9 @@ export function QuickWhen({
         <span id={`${id}-due-label`} className="sr-only">
           {t('tasks.dueLabel')}
         </span>
-      </div>
+      </div>,
+      start,
+      due,
     )
   }
 
@@ -192,7 +228,8 @@ export function QuickWhen({
   const which = task.dueDate || !task.startDate ? 'due' : 'start'
   const date = which === 'due' ? task.dueDate : task.startDate
   const time = which === 'due' ? task.dueTime : task.startTime
-  return (
+  const note = skipped(which, date, time)
+  return withNotes(
     <div className={line}>
       <span id={`${id}-label`} className="px-1.5">
         {which === 'due' ? t('tasks.dueLabel') : t('tasks.startLabel')}
@@ -219,9 +256,11 @@ export function QuickWhen({
         none={t('tasks.noTime')}
         placeholder={t('tasks.addTime')}
         prefs={prefs}
+        describedBy={note?.id}
         aria-label={which === 'due' ? t('tasks.dueTime') : t('tasks.startTime')}
         tone={tint}
       />
-    </div>
+    </div>,
+    note,
   )
 }

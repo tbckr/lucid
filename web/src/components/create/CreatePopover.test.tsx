@@ -217,6 +217,20 @@ describe('CreatePopover', () => {
     expect(onShortcut).not.toHaveBeenCalled()
   })
 
+  it('says that a start summer time skips is saved an hour later, for an event and a task', async () => {
+    const user = userEvent.setup()
+    // 01:00 on 29 March 2026, the night Berlin skips 02:00 to 03:00.
+    const origin = { ...click, start: new Date(2026, 2, 29, 1), end: new Date(2026, 2, 29, 3) }
+    const { dialog } = await openPopover({ origin })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.click(option('2:30 AM'))
+    const note = "Clocks go forward on this day: 2:30 AM doesn't exist and is saved as 3:30 AM."
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveAccessibleDescription(note)
+
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveAccessibleDescription(note)
+  })
+
   it('hands the values to the event editor', async () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()

@@ -856,7 +856,10 @@ event, and the refusal comes as a toast.
   does an event dropped there from another day (`enteredAt`). A value that
   a move, a change to timed or a change of zone puts at such a time, such
   as a `DTSTART` moved from 01:30 to 02:30 on that night, is written as
-  computed, 02:30, so every other event stays at that time.
+  computed, 02:30, so every other event stays at that time. A time entered
+  in an editor that the browser's zone skips, such as 02:30 that night, is
+  read the same way, at 03:30, which the editor says before saving: a series
+  entered there starts and repeats at 03:30, as the API carries instants.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and

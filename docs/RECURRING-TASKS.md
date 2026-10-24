@@ -1163,7 +1163,10 @@ and is excluded there at 02:30, and a move from it counts from 02:30: dragged
 from 03:30 to 04:30, the series and its later references go to 04:30, as an
 event series does. Saved at the 03:30 it shows, with a new due or rule, it
 keeps 02:30. A date a move or a change to timed dates puts at such a
-time is written as computed, 02:30, so every other repeat keeps that time.
+time is written as computed, 02:30, so every other repeat keeps that time. A
+time entered in the task editor that the browser's zone skips is read the
+same way, at 03:30, which the editor says before saving: a series entered
+there starts and repeats at 03:30, as the API carries instants.
 
 `DTSTART` stays on the rule, so a `COUNT` stays a `COUNT`, without the
 occurrences before the moved one, which the new `DTSTART` leaves behind. An

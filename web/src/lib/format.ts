@@ -86,6 +86,13 @@ export function formatTime(date: Date, p: FormatPrefs): string {
   return format(date, timePattern(p.hourCycle), { locale: p.locale })
 }
 
+/** A time of day as a form holds it ("HH:mm") in the hour cycle: "2:30 PM" / "14:30". */
+export function formatClock(value: string, p: FormatPrefs): string {
+  const [h = 0, m = 0] = value.split(':').map(Number)
+  // 1 January 2000: a day no time zone changes its clocks on.
+  return formatTime(new Date(2000, 0, 1, h, m), p)
+}
+
 /** Compact time for chips: "9 AM" / "9:30 AM" or "09:00". */
 export function formatShortTime(date: Date, p: FormatPrefs): string {
   if (p.hourCycle === '24h') return format(date, 'HH:mm', { locale: p.locale })

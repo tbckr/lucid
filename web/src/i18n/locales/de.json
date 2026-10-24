@@ -147,6 +147,7 @@
     "startDate": "Startdatum",
     "endDate": "Enddatum",
     "timezoneOther": "Zeiten in {{tz}}. Beim Speichern wechselt der Termin von {{from}} in diese Zeitzone.",
+    "skippedTime": "An diesem Tag wird die Uhr vorgestellt: {{time}} gibt es nicht und wird als {{saved}} gespeichert.",
     "calendar": "Kalender",
     "chooseCalendar": "Kalender wählen",
     "repeat": "Wiederholen",

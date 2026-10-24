@@ -29,7 +29,7 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
-import { dayAt, parseDayKey } from '@/lib/dates'
+import { dayAt, parseDayKey, skippedTime } from '@/lib/dates'
 import {
   editFormValues,
   eventFormSchema,
@@ -61,6 +61,7 @@ import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
+import { SkippedTimeNote } from './SkippedTimeNote'
 import { TimeSelect } from './TimeSelect'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
@@ -174,6 +175,9 @@ function EditorForm({
   // occurrence its place in the rule, as far from there as the form moves it, where a save moves the
   // series (`eventRuleStart`), not where an exception moved it; else the start as the form shows it.
   const entered = allDay ? parseDayKey(startDate) : dayAt(startDate, startTime)
+  // A time summer time skips on its date, and the one it is saved as, said under its row (#10, FR-18).
+  const startSaved = allDay ? null : skippedTime(startDate, startTime, tz)
+  const endSaved = allDay ? null : skippedTime(endDate, endTime, tz)
   const start = occurrence ? eventRuleStart(occurrence, entered, allDay) : entered
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
@@ -442,10 +446,20 @@ function EditorForm({
                     onStartChange(getValues('startDate'), v)
                   }}
                   prefs={prefs}
+                  describedBy={startSaved ? `${id}-start-skipped` : undefined}
                   aria-label={t('event.startTime')}
                 />
               )}
             </div>
+            {startSaved && (
+              <SkippedTimeNote
+                id={`${id}-start-skipped`}
+                time={startTime}
+                saved={startSaved}
+                prefs={prefs}
+                className="text-muted-foreground"
+              />
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <span id={`${id}-ends`} className="w-12 text-sm text-muted-foreground max-sm:sr-only">
                 {t('event.ends')}
@@ -478,6 +492,7 @@ function EditorForm({
                       onChange={field.onChange}
                       prefs={prefs}
                       invalid={!!endError}
+                      describedBy={endSaved ? `${id}-end-skipped` : undefined}
                       aria-label={t('event.endTime')}
                     />
                   )}
@@ -487,6 +502,15 @@ function EditorForm({
                 <span className="tabular pl-1 text-sm text-muted-foreground">{formatDuration(duration, prefs)}</span>
               )}
             </div>
+            {endSaved && (
+              <SkippedTimeNote
+                id={`${id}-end-skipped`}
+                time={endTime}
+                saved={endSaved}
+                prefs={prefs}
+                className="text-muted-foreground"
+              />
+            )}
             {endError && (
               <p id={`${id}-end-error`} className="text-sm text-destructive">
                 {endError}

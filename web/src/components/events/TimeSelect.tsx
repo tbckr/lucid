@@ -1,19 +1,13 @@
 import { useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { atMinutes } from '@/lib/dates'
 import { timeOptions } from '@/lib/eventForm'
-import { formatTime, type FormatPrefs } from '@/lib/format'
+import { formatClock, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { onTint } from './EditorRow'
 
 const OPTIONS = timeOptions(15)
 // Radix Select items cannot have an empty value; this one stands for "no time".
 const NONE = 'none'
-
-function label(value: string, prefs: FormatPrefs): string {
-  const [h = 0, m = 0] = value.split(':').map(Number)
-  return formatTime(atMinutes(new Date(2000, 0, 1), h * 60 + m), prefs)
-}
 
 /**
  * Time picker honouring the 12h/24h preference, in 15-minute steps. With
@@ -30,6 +24,7 @@ export function TimeSelect({
   none,
   placeholder,
   tone,
+  describedBy,
   'aria-label': ariaLabel,
 }: {
   id?: string
@@ -44,6 +39,8 @@ export function TimeSelect({
   placeholder?: string
   /** On a calendar's tint, like `DateField`. */
   tone?: 'tint'
+  /** The id of a note about the time, such as one summer time skips. */
+  describedBy?: string | undefined
   'aria-label'?: string
 }) {
   const options = useMemo(() => (value === '' || OPTIONS.includes(value) ? OPTIONS : [...OPTIONS, value].sort()), [value])
@@ -60,6 +57,7 @@ export function TimeSelect({
         id={id}
         aria-label={ariaLabel}
         aria-invalid={invalid ? true : undefined}
+        aria-describedby={describedBy}
         className={cn(
           'tabular',
           empty
@@ -76,7 +74,7 @@ export function TimeSelect({
         {none !== undefined && <SelectItem value={NONE}>{none}</SelectItem>}
         {options.map((o) => (
           <SelectItem key={o} value={o} className="tabular">
-            {label(o, prefs)}
+            {formatClock(o, prefs)}
           </SelectItem>
         ))}
       </SelectContent>

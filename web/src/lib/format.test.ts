@@ -5,6 +5,7 @@ import { toCalTask } from './calendarTasks'
 import { visibleRange } from './dates'
 import { toCalEvent } from './events'
 import {
+  formatClock,
   formatDuration,
   formatEventSpan,
   formatEventWhen,
@@ -92,6 +93,13 @@ describe('locale loading', () => {
 
 describe('time formats', () => {
   const d = new Date(2026, 8, 25, 14, 5)
+  it('formats a time of day as entered, in the hour cycle', () => {
+    expect(formatClock('14:05', us)).toBe('2:05 PM')
+    expect(formatClock('14:05', deDE)).toBe('14:05')
+    // A time some days don't have still formats.
+    expect(formatClock('02:30', us)).toBe('2:30 AM')
+  })
+
   it('honours the hour cycle', () => {
     expect(timePattern('12h')).toBe('h:mm a')
     expect(formatTime(d, us)).toBe('2:05 PM')
