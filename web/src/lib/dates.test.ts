@@ -12,6 +12,7 @@ import {
   movedAs,
   parseDayKey,
   shiftInterval,
+  skippedTime,
   snapMinutes,
   stepDate,
   utcDateToLocal,
@@ -87,6 +88,36 @@ describe('DST safety', () => {
     expect(zonedToUtc('2026-01-15', '09:00', 'Europe/Berlin').toISOString()).toBe('2026-01-15T08:00:00.000Z')
     expect(zonedToUtc('2026-07-15', '09:00', 'Europe/Berlin').toISOString()).toBe('2026-07-15T07:00:00.000Z')
     expect(zonedToUtc('2026-07-15', '09:00', 'America/New_York').toISOString()).toBe('2026-07-15T13:00:00.000Z')
+  })
+
+  it('zonedToUtc reads a time a change to summer time skips with the offset before it, as RFC 5545 does', () => {
+    expect(zonedToUtc('2026-03-29', '02:30', 'Europe/Berlin').toISOString()).toBe('2026-03-29T01:30:00.000Z')
+    expect(zonedToUtc('2026-03-08', '02:30', 'America/New_York').toISOString()).toBe('2026-03-08T07:30:00.000Z')
+    expect(zonedToUtc('2026-10-04', '02:15', 'Australia/Lord_Howe').toISOString()).toBe('2026-10-03T15:45:00.000Z')
+    expect(zonedToUtc('2026-09-06', '00:30', 'America/Santiago').toISOString()).toBe('2026-09-06T04:30:00.000Z')
+    expect(zonedToUtc('2026-03-29', '01:30', 'Europe/London').toISOString()).toBe('2026-03-29T01:30:00.000Z')
+    // The times around it keep theirs.
+    expect(zonedToUtc('2026-03-29', '01:59', 'Europe/Berlin').toISOString()).toBe('2026-03-29T00:59:00.000Z')
+    expect(zonedToUtc('2026-03-29', '03:00', 'Europe/Berlin').toISOString()).toBe('2026-03-29T01:00:00.000Z')
+  })
+
+  it('zonedToUtc reads a time a change back repeats as the first of the two', () => {
+    expect(zonedToUtc('2026-10-25', '02:30', 'Europe/Berlin').toISOString()).toBe('2026-10-25T00:30:00.000Z')
+    expect(zonedToUtc('2026-10-25', '03:00', 'Europe/Berlin').toISOString()).toBe('2026-10-25T02:00:00.000Z')
+    expect(zonedToUtc('2026-11-01', '01:30', 'America/New_York').toISOString()).toBe('2026-11-01T05:30:00.000Z')
+    expect(zonedToUtc('2026-04-05', '01:45', 'Australia/Lord_Howe').toISOString()).toBe('2026-04-04T14:45:00.000Z')
+  })
+
+  it('skippedTime names the time a skipped time is saved as, and nothing for one that exists', () => {
+    expect(skippedTime('2026-03-29', '02:30', 'Europe/Berlin')).toBe('03:30')
+    expect(skippedTime('2026-03-08', '02:00', 'America/New_York')).toBe('03:00')
+    expect(skippedTime('2026-10-04', '02:15', 'Australia/Lord_Howe')).toBe('02:45')
+    expect(skippedTime('2026-09-06', '00:30', 'America/Santiago')).toBe('01:30')
+    expect(skippedTime('2026-03-29', '01:30', 'Europe/London')).toBe('02:30')
+    expect(skippedTime('2026-03-29', '03:00', 'Europe/Berlin')).toBeNull()
+    expect(skippedTime('2026-10-25', '02:30', 'Europe/Berlin')).toBeNull()
+    expect(skippedTime('2026-03-29', '', 'Europe/Berlin')).toBeNull()
+    expect(skippedTime('', '02:30', 'Europe/Berlin')).toBeNull()
   })
 
   it('utcToZoned is the inverse', () => {

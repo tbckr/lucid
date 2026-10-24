@@ -12,7 +12,7 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
-import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
+import { formatInTimeZone } from 'date-fns-tz'
 import { type WeekStart } from './locale'
 
 export type ViewKind = 'month' | 'week' | 'day' | 'agenda'
@@ -150,9 +150,75 @@ export function snapMinutes(minutes: number, step = 15): number {
   return Math.round(minutes / step) * step
 }
 
-/** Wall-clock date + time in `timeZone` → UTC instant. */
+/**
+ * Wall-clock date + time in `timeZone` → UTC instant, as the server's `zoned`
+ * reads a DATE-TIME with a TZID (RFC 5545 section 3.3.5): a time a change of
+ * the zone's UTC offset skips takes the offset before the change, so 02:30 on
+ * the night Berlin changes to summer time is 03:30 CEST, and a time a change
+ * back repeats is the first of the two. The editors then put a time where the
+ * calendar (`Date`) and the server put it (#10, FR-18).
+ */
 export function zonedToUtc(date: string, time: string, timeZone: string): Date {
-  return fromZonedTime(`${date}T${time}:00`, timeZone)
+  return new Date(resolveWall(date, time, timeZone).at)
+}
+
+/**
+ * The time `time` ("HH:mm") on `date` is saved as where `timeZone` skips it,
+ * such as "03:30" for 02:30 on the night Berlin changes to summer time
+ * (`zonedToUtc`), for the editors to say so before saving (#10, FR-18).
+ * `null` where the time exists, a repeated one too, or a value is invalid.
+ */
+export function skippedTime(date: string, time: string, timeZone: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null
+  const { at, skipped } = resolveWall(date, time, timeZone)
+  return skipped ? new Date(wallOf(at, timeZone)).toISOString().slice(11, 16) : null
+}
+
+const DAY_MS = 24 * 3600 * 1000
+
+/**
+ * The instant of `date` at `time` in `timeZone`, see `zonedToUtc`, and whether
+ * the zone skips that time. The offsets a day before and after, which no zone
+ * changes twice in between: the instant at each, and whether the zone has
+ * that offset there (the algorithm of the server's `zoned`).
+ */
+function resolveWall(date: string, time: string, timeZone: string): { at: number; skipped: boolean } {
+  const wall = Date.parse(`${date}T${time}:00Z`)
+  const offsetAt = (t: number) => wallOf(t, timeZone) - t
+  const at = (offset: number) => ({ t: wall - offset, ok: offsetAt(wall - offset) === offset })
+  const before = at(offsetAt(wall - DAY_MS))
+  const after = at(offsetAt(wall + DAY_MS))
+  if (after.ok && (!before.ok || after.t < before.t)) return { at: after.t, skipped: false }
+  // The time itself, the first of two, or a skipped one.
+  return { at: before.t, skipped: !before.ok && !after.ok }
+}
+
+const wallFormats = new Map<string, Intl.DateTimeFormat>()
+
+/**
+ * The date and clock time of the instant `t` in `timeZone`, read as UTC, in
+ * ms. From Intl, not date-fns-tz, whose zoned dates go through the runtime's
+ * own zone: a wall clock that zone skips comes out an hour off (London's
+ * 02:30 at 01:30Z on 2026-03-29 formats as 03:30 in a Berlin browser).
+ */
+function wallOf(t: number, timeZone: string): number {
+  let f = wallFormats.get(timeZone)
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    wallFormats.set(timeZone, f)
+  }
+  const parts = f.formatToParts(t)
+  const n = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value)
+  return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second'))
 }
 
 /** UTC instant → wall-clock date/time strings in `timeZone`. */
