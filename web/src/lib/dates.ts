@@ -163,6 +163,17 @@ export function zonedToUtc(date: string, time: string, timeZone: string): Date {
 }
 
 /**
+ * `zonedToUtc` for an end or due time entered with `start`: of a time a
+ * change back repeats, the second where the first lies before `start`, as
+ * for the end of an event at the second 02:00 on the night Berlin leaves
+ * summer time, whose start is kept (#10, FR-18).
+ */
+export function zonedToUtcAfter(date: string, time: string, timeZone: string, start: Date): Date {
+  const { at, later } = resolveWall(date, time, timeZone)
+  return new Date(later !== undefined && at < start.getTime() ? later : at)
+}
+
+/**
  * The time `time` ("HH:mm") on `date` is saved as where `timeZone` skips it,
  * such as "03:30" for 02:30 on the night Berlin changes to summer time
  * (`zonedToUtc`), for the editors to say so before saving (#10, FR-18).
@@ -177,19 +188,23 @@ export function skippedTime(date: string, time: string, timeZone: string): strin
 const DAY_MS = 24 * 3600 * 1000
 
 /**
- * The instant of `date` at `time` in `timeZone`, see `zonedToUtc`, and whether
- * the zone skips that time. The offsets a day before and after, which no zone
- * changes twice in between: the instant at each, and whether the zone has
- * that offset there (the algorithm of the server's `zoned`).
+ * The instant of `date` at `time` in `timeZone`, see `zonedToUtc`, whether
+ * the zone skips that time, and the second instant of one it repeats. The
+ * offsets a day before and after, which no zone changes twice in between:
+ * the instant at each, and whether the zone has that offset there (the
+ * algorithm of the server's `zoned`).
  */
-function resolveWall(date: string, time: string, timeZone: string): { at: number; skipped: boolean } {
+function resolveWall(date: string, time: string, timeZone: string): { at: number; skipped: boolean; later?: number } {
   const wall = Date.parse(`${date}T${time}:00Z`)
   const offsetAt = (t: number) => wallOf(t, timeZone) - t
   const at = (offset: number) => ({ t: wall - offset, ok: offsetAt(wall - offset) === offset })
   const before = at(offsetAt(wall - DAY_MS))
   const after = at(offsetAt(wall + DAY_MS))
-  if (after.ok && (!before.ok || after.t < before.t)) return { at: after.t, skipped: false }
-  // The time itself, the first of two, or a skipped one.
+  if (before.ok && after.ok && before.t !== after.t) {
+    return { at: Math.min(before.t, after.t), skipped: false, later: Math.max(before.t, after.t) }
+  }
+  if (after.ok && !before.ok) return { at: after.t, skipped: false }
+  // The time itself, or a skipped one.
   return { at: before.t, skipped: !before.ok && !after.ok }
 }
 

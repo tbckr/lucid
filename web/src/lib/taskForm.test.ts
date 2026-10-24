@@ -36,6 +36,12 @@ describe('taskForm', () => {
     expect(formToTodoInput(v, TZ, t)).toMatchObject({ start: '2026-10-25T00:00:00.000Z', due: '2026-10-25T00:30:00.000Z' })
   })
 
+  it('reads a changed due time in the hour summer time repeats after a start kept at its second pass', () => {
+    const t = todo({ start: '2026-10-25T01:00:00Z', due: '2026-10-25T01:30:00Z' })
+    const v = { ...taskToForm(t, TZ), dueTime: '02:45' }
+    expect(formToTodoInput(v, TZ, t, t)).toMatchObject({ start: '2026-10-25T01:00:00.000Z', due: '2026-10-25T01:45:00.000Z' })
+  })
+
   it("compares with the repeat's dates the editor opened, not the series'", () => {
     const series = todo({ due: '2026-10-18T01:30:00Z', rrule: 'FREQ=WEEKLY', recurring: true })
     const shown = { start: null, startAllDay: false, due: '2026-10-25T01:30:00Z', dueAllDay: false }

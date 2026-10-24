@@ -96,6 +96,16 @@ describe('formToInput', () => {
     expect(input.end).toBe('2026-10-25T02:00:00.000Z')
   })
 
+  it('reads a changed end in the hour summer time repeats after a start kept at its second pass', () => {
+    // 02:00-02:30 CET, after the clocks went back from 03:00 CEST.
+    const event = toCalEvent(apiEvent({ start: '2026-10-25T01:00:00Z', end: '2026-10-25T01:30:00Z' }))
+    const v = { ...editFormValues(event, TZ), endTime: '02:45' }
+    expect(eventFormSchema.safeParse(v).success).toBe(true)
+    const input = formToInput(v, TZ, event)
+    expect(input.start).toBe('2026-10-25T01:00:00.000Z')
+    expect(input.end).toBe('2026-10-25T01:45:00.000Z')
+  })
+
   it('reads the times of an all-day event made timed as entered', () => {
     const event = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }))
     const input = formToInput({ ...editFormValues(event, TZ), allDay: false }, TZ, event)

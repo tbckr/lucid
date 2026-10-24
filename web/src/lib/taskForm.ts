@@ -2,7 +2,7 @@ import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
 import { anchorOf, type TaskDates } from './calendarTasks'
-import { dayAt, dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayAt, dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zonedToUtcAfter } from './dates'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { ruleInZone, taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
@@ -86,19 +86,24 @@ function toFields(iso: string | null | undefined, allDay: boolean, timeZone: str
 /**
  * Date and time fields as a wire date; a date without time is all-day. The
  * fields can't say which of a time summer time repeats it is, so a time left
- * as the editor opened it, `opened`, keeps its instant (#10, FR-18).
+ * as the editor opened it, `opened`, keeps its instant, and a due time
+ * entered anew is not before the start, `after` (#10, FR-18).
  */
 function fromFields(
   date: string,
   time: string,
   timeZone: string,
-  opened?: string | null,
-  openedAllDay = false,
+  { opened, openedAllDay = false, after }: { opened?: string | null; openedAllDay?: boolean; after?: string | null } = {},
 ): { value: string | null; allDay: boolean } {
   if (!date) return { value: null, allDay: false }
   if (time) {
     const shown = opened && !openedAllDay ? toFields(opened, false, timeZone) : null
-    const at = opened && shown?.date === date && shown.time === time ? new Date(opened) : zonedToUtc(date, time, timeZone)
+    const at =
+      opened && shown?.date === date && shown.time === time
+        ? new Date(opened)
+        : after
+          ? zonedToUtcAfter(date, time, timeZone, new Date(after))
+          : zonedToUtc(date, time, timeZone)
     return { value: at.toISOString(), allDay: false }
   }
   return { value: localDateToUtc(parseDayKey(date)).toISOString(), allDay: true }
@@ -196,8 +201,12 @@ export function taskToForm(todo: Todo, timeZone: string, series: Todo = todo): T
  * dates the editor opened with: a repeat's own, else the task's.
  */
 export function formToTodoInput(v: TaskFormValues, timeZone: string, original?: Todo, opened?: TaskDates): TodoInput {
-  const start = fromFields(v.startDate, v.startTime, timeZone, opened?.start, opened?.startAllDay)
-  const due = fromFields(v.dueDate, v.dueTime, timeZone, opened?.due, opened?.dueAllDay)
+  const start = fromFields(v.startDate, v.startTime, timeZone, { opened: opened?.start, openedAllDay: opened?.startAllDay })
+  const due = fromFields(v.dueDate, v.dueTime, timeZone, {
+    opened: opened?.due,
+    openedAllDay: opened?.dueAllDay,
+    after: start.allDay ? null : start.value,
+  })
   const keepStatus = original && original.status !== 'COMPLETED' ? original.status : 'NEEDS-ACTION'
   const rrule = repeatChanged(v, timeZone, original) ? writtenRule(v, timeZone, original) : null
   return {

@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays, format } from 'date-fns'
 import { z } from 'zod'
 import { type EventInput, type OccurrenceInput } from './api/schemas'
-import { dayAt, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc } from './dates'
+import { dayAt, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zonedToUtcAfter } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
@@ -142,7 +142,8 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     end = localDateToUtc(addDays(parseDayKey(v.endDate), 1))
   } else {
     // The fields can't say which of a time summer time repeats it is, so one
-    // left as the editor opened it keeps its instant (#10, FR-18).
+    // left as the editor opened it keeps its instant, and an end entered
+    // anew is not before the start (#10, FR-18).
     const timed = event !== undefined && initial !== undefined && !initial.allDay
     start =
       timed && v.startDate === initial.startDate && v.startTime === initial.startTime
@@ -151,7 +152,7 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     end =
       timed && v.endDate === initial.endDate && v.endTime === initial.endTime
         ? event.endsAt
-        : zonedToUtc(v.endDate, v.endTime, timeZone)
+        : zonedToUtcAfter(v.endDate, v.endTime, timeZone, start)
   }
   // While a series' rule and all-day flag are unchanged from the editor's
   // initial values, the stored RRULE goes back verbatim (FR-17): rebuilding

@@ -20,6 +20,7 @@ import {
   visibleRange,
   weekDays,
   zonedToUtc,
+  zonedToUtcAfter,
 } from './dates'
 
 // Tests run with TZ=Europe/Berlin (see vite.config.ts): DST starts 2026-03-29, ends 2026-10-25.
@@ -106,6 +107,19 @@ describe('DST safety', () => {
     expect(zonedToUtc('2026-10-25', '03:00', 'Europe/Berlin').toISOString()).toBe('2026-10-25T02:00:00.000Z')
     expect(zonedToUtc('2026-11-01', '01:30', 'America/New_York').toISOString()).toBe('2026-11-01T05:30:00.000Z')
     expect(zonedToUtc('2026-04-05', '01:45', 'Australia/Lord_Howe').toISOString()).toBe('2026-04-04T14:45:00.000Z')
+  })
+
+  it('zonedToUtcAfter takes the second of a repeated time where the first lies before the start', () => {
+    const second = new Date('2026-10-25T01:00:00Z') // 02:00 CET, the second
+    expect(zonedToUtcAfter('2026-10-25', '02:45', 'Europe/Berlin', second).toISOString()).toBe('2026-10-25T01:45:00.000Z')
+    const first = new Date('2026-10-25T00:00:00Z') // 02:00 CEST, the first
+    expect(zonedToUtcAfter('2026-10-25', '02:45', 'Europe/Berlin', first).toISOString()).toBe('2026-10-25T00:45:00.000Z')
+    // A time that doesn't repeat is read as zonedToUtc reads it.
+    expect(zonedToUtcAfter('2026-10-25', '01:45', 'Europe/Berlin', second).toISOString()).toBe('2026-10-24T23:45:00.000Z')
+    expect(zonedToUtcAfter('2026-03-29', '02:30', 'Europe/Berlin', second).toISOString()).toBe('2026-03-29T01:30:00.000Z')
+    expect(zonedToUtcAfter('2026-11-01', '01:45', 'America/New_York', new Date('2026-11-01T06:15:00Z')).toISOString()).toBe(
+      '2026-11-01T06:45:00.000Z',
+    )
   })
 
   it('skippedTime names the time a skipped time is saved as, and nothing for one that exists', () => {
