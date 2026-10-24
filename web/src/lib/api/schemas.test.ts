@@ -33,6 +33,12 @@ describe('schemas', () => {
     expect(eventSchema.parse(apiEvent({ modified: true })).modified).toBe(true)
   })
 
+  // #11: an event an override describes keeps its place when the series' repeat changes.
+  it('parses override, false when left out', () => {
+    expect(eventSchema.parse(apiEvent()).override).toBe(false)
+    expect(eventSchema.parse({ ...apiEvent(), override: true }).override).toBe(true)
+  })
+
   it('parses the flags that decide whether a series can be split, false when left out', () => {
     const { first: _f, hasAttendees: _a, ...unflagged } = apiEvent()
     const left = eventSchema.parse(unflagged)

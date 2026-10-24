@@ -161,7 +161,12 @@ expanded server-side. The range may span at most 366 days.
 Use `key` as the React key / occurrence identity; `id` identifies the
 resource for updates/deletes. `modified` is `true` for an occurrence of a
 series whose override visibly changed it (start, duration, all-day, title,
-location or description); it is omitted (`false`) otherwise.
+location or description); it is omitted (`false`) otherwise. `override` is
+`true` for every occurrence an override describes, whatever it changes, so
+also where `modified` is `false` (an attendee's reply, an alarm of its own),
+and also where the rule no longer has its `recurrenceId`; it is omitted
+(`false`) otherwise. Such an occurrence keeps its place when the series'
+rule changes (see "Changed rule" under `PUT` below).
 
 `timezone` is the IANA zone of a timed event's `DTSTART`, as its `TZID`
 names it: for a series, the zone it recurs in, whose wall clock its moves

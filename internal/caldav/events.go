@@ -232,6 +232,7 @@ func expandObject(o calObject, ref objRef, from, to time.Time) ([]domain.Event, 
 		ev.Description = textOr(c.Props, ical.PropDescription, base.Description)
 		ev.Location = textOr(c.Props, ical.PropLocation, base.Location)
 		ev.Modified = overrideModified(c, otm, rid, master, tm)
+		ev.Override = true
 		ev = asOccurrence(at(ev, otm, otm.start.t), rid)
 		// The series' zone, which its rule recurs in and a move of it is
 		// judged in, also for an exception another client wrote in another

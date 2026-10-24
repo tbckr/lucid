@@ -1912,6 +1912,33 @@ func TestUpdateSeriesNewRuleOffEditedEventMovesStart(t *testing.T) {
 	}
 }
 
+// TestListEventsMarksOverrides checks that the event list marks every event
+// an override describes, whatever it changes, also one that differs only
+// invisibly, which Modified leaves out, and one whose RECURRENCE-ID the rule
+// no longer has, and no event of the rule (#11, FR-17): such an event keeps
+// its place when the rule changes, which the repeat editor says.
+func TestListEventsMarksOverrides(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	e.put(t, "work", "series.ics", reviewSeries("FREQ=WEEKLY;BYDAY=FR",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261110T100000",
+		"DTSTART;TZID=Europe/Berlin:20261110T100000", "DTEND;TZID=Europe/Berlin:20261110T110000",
+		"END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Review", "X-PROBE:1",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261113T100000",
+		"DTSTART;TZID=Europe/Berlin:20261113T100000", "DTEND;TZID=Europe/Berlin:20261113T110000",
+		"END:VEVENT")...)
+
+	evs := listed(t, e, "work", date(2026, 11, 9, 0, 0), date(2026, 11, 21, 0, 0))
+	checkOccurrences(t, evs, seriesEvents("Review", date(2026, 11, 10, 9, 0), date(2026, 11, 13, 9, 0), date(2026, 11, 20, 9, 0)))
+	for i, want := range []bool{true, true, false} {
+		if evs[i].Override != want || evs[i].Modified {
+			t.Errorf("event at %v: Override %v, Modified %v; want %v, false", evs[i].Start, evs[i].Override, evs[i].Modified, want)
+		}
+	}
+}
+
 // TestUpdateSeriesNewRuleKeepsEditedException checks that an exception at
 // the edited event stays where it is when a changed rule no longer has its
 // RECURRENCE-ID, as every other exception does, while the series moves to

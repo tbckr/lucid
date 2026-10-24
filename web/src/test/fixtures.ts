@@ -23,6 +23,7 @@ export function apiEvent(p: Partial<ApiEvent> = {}): ApiEvent {
     rrule: '',
     recurring: false,
     modified: false,
+    override: false,
     hasAttendees: false,
     first: false,
     ...p,

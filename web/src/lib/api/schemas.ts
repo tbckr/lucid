@@ -64,6 +64,8 @@ export const eventSchema = z
     recurrenceId: isoDateTime.nullish(),
     // FR-17: true for an occurrence of a series an override visibly changed.
     modified: z.boolean().optional().default(false),
+    // FR-17: true for an occurrence an override describes, which keeps its place when the rule changes (#11).
+    override: z.boolean().optional().default(false),
     // FR-17: true if the series or any override has an ORGANIZER or ATTENDEE, which the server refuses to split.
     hasAttendees: z.boolean().optional().default(false),
     // FR-17: true for the first occurrence of its series that the server shows, which has nothing before it to keep.

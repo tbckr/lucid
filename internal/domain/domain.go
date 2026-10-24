@@ -110,6 +110,11 @@ type Event struct {
 	// description. Invisible differences, such as PARTSTAT or an added
 	// VALARM, do not set it (FR-17).
 	Modified bool `json:"modified,omitempty"`
+	// Override is true for an occurrence of a series that an override
+	// describes, whatever it changes, also one whose RECURRENCE-ID the rule
+	// no longer has: such an event keeps its place when the rule changes
+	// (#11, FR-17).
+	Override bool `json:"override,omitempty"`
 	// First is true for the occurrence that is the first one of its series
 	// ListEvents shows, whatever the window: a window that starts after it
 	// has no such event. A series is not split at its first event, which

@@ -220,6 +220,7 @@ export function previewOf(
       recurring: false,
       recurrenceId: null,
       modified: false,
+      override: false,
       hasAttendees: false,
       first: false,
     })
