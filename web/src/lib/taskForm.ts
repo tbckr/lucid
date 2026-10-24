@@ -337,8 +337,9 @@ export function withDue(todo: Todo, due: Fields, timeZone: string): TodoInput {
   }
   if (!due.time) start = { date: start.date, time: '' }
   else if (!start.time || !before.time) start = { date: start.date, time: due.time }
-  if (`${start.date}T${start.time}` > `${due.date}T${due.time}`) start = due
-
-  const s = fromFields(start.date, start.time, timeZone)
+  // A start after the due date moves back to it, at the times saved: on the night summer time starts,
+  // 02:45 is saved after 03:15 (#10, FR-18).
+  let s = fromFields(start.date, start.time, timeZone)
+  if (s.value && next.value && Date.parse(s.value) > Date.parse(next.value)) s = next
   return todoToInput(todo, { ...patch, start: s.value, startAllDay: s.allDay })
 }

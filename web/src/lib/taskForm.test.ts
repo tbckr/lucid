@@ -121,6 +121,15 @@ describe('taskForm', () => {
   })
 
   describe('withDue', () => {
+    it('moves a start after the new due date back to it at the times saved on the night summer time starts', () => {
+      // 02:45 to 03:15 on the 28th, moved to the 29th: 02:45 is saved as 03:45, after 03:15.
+      const t = todo({ start: '2026-03-28T01:45:00Z', due: '2026-03-28T02:15:00Z' })
+      expect(withDue(t, { date: '2026-03-29', time: '03:15' }, TZ)).toMatchObject({
+        start: '2026-03-29T01:15:00.000Z',
+        due: '2026-03-29T01:15:00.000Z',
+      })
+    })
+
     it('moves an all-day due date and its start by the same days, keeping the rest', () => {
       const t = todo({ title: ' as is ', start: '2026-09-20T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true })
       expect(withDue(t, { date: '2026-09-30', time: '' }, TZ)).toMatchObject({
