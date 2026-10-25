@@ -122,7 +122,10 @@ export interface OverflowEntry<T extends CalItem = CalItem> {
   items: T[]
   /** Earliest start of its items, minutes after midnight (clipped to the day). */
   startMin: number
-  /** Where it is drawn: startMin, pushed below an earlier entry it would overlap; one point (TASK_POINT_MINUTES) high. */
+  /**
+   * Where it is drawn, one point (TASK_POINT_MINUTES) high: at the top of its stack, the "+N" below a bundle; a stack
+   * late in the evening is raised to end at midnight.
+   */
   topMin: number
   col: number
   cols: number
@@ -197,11 +200,12 @@ interface Stack<T extends CalItem> {
   events: TimedSegment<T>[]
 }
 
-/** Where a stack is drawn: one point per kind it holds. */
-const stackAt = (s: Stack<CalItem>): Interval => ({
-  from: s.top,
-  to: s.top + TASK_POINT_MINUTES * (Number(s.tasks.length > 0) + Number(s.events.length > 0)),
-})
+/** Where a stack is drawn: one point per kind it holds, from its top, raised late in the evening to end at midnight. */
+const stackAt = (s: Stack<CalItem>): Interval => {
+  const height = TASK_POINT_MINUTES * (Number(s.tasks.length > 0) + Number(s.events.length > 0))
+  const from = Math.min(s.top, DAY_MINUTES - height)
+  return { from, to: from + height }
+}
 
 /** The entry standing for `segs`, drawn at `topMin`; placed later. */
 function overflowEntry<T extends CalItem>(kind: OverflowEntry['kind'], segs: TimedSegment<T>[], topMin: number): OverflowEntry<T> {
@@ -209,11 +213,12 @@ function overflowEntry<T extends CalItem>(kind: OverflowEntry['kind'], segs: Tim
   return { kind, items: segs.map((s) => s.event).sort(compareEvents), startMin, topMin, col: 0, cols: 1 }
 }
 
-/** A stack's entries, top to bottom: its tasks, then "+N" for its events. */
+/** A stack's entries, top to bottom where it is drawn: its tasks, then "+N" for its events. */
 function stackEntries<T extends CalItem>(s: Stack<T>): OverflowEntry<T>[] {
   const out: OverflowEntry<T>[] = []
-  if (s.tasks.length > 0) out.push(overflowEntry('tasks', s.tasks, s.top))
-  if (s.events.length > 0) out.push(overflowEntry('events', s.events, s.top + (s.tasks.length > 0 ? TASK_POINT_MINUTES : 0)))
+  const { from } = stackAt(s)
+  if (s.tasks.length > 0) out.push(overflowEntry('tasks', s.tasks, from))
+  if (s.events.length > 0) out.push(overflowEntry('events', s.events, from + (s.tasks.length > 0 ? TASK_POINT_MINUTES : 0)))
   return out
 }
 
@@ -292,7 +297,8 @@ function place<T extends CalItem>(
  * overlap, else into a new one there, so its count stays at its place. What a stack pushes out of the last column thus
  * joins it, unless it held that column from well before; then it starts its own stack at its start, where nothing
  * else needs that column. A stack is at most two points tall and never pushes the next item out in turn; where stacks
- * still meet, they become one, and what that counts away from its place is decided again.
+ * still meet, they become one, and what that counts away from its place is decided again. A stack late in the evening
+ * is raised to end at midnight, so the day's column holds it.
  */
 export function layoutDayWithin<T extends CalItem>(
   segments: TimedSegment<T>[],

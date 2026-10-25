@@ -132,6 +132,10 @@ describe('layoutDayWithin', () => {
         true,
       )
     }
+    // The overflow column is drawn within the day: a stack late in the evening is raised to end at midnight.
+    for (const e of layout.overflow) {
+      expect(e.topMin + TASK_POINT_MINUTES, `${note} ${e.kind}@${e.startMin} ends by midnight`).toBeLessThanOrEqual(24 * 60)
+    }
     // Nothing drawn at the same time shares a column, and all of it shares one column count.
     for (const [i, a] of boxes.entries()) {
       for (const b of boxes.slice(i + 1)) {
@@ -192,19 +196,25 @@ describe('layoutDayWithin', () => {
       layout.overflow.find(
         (o) => o.col === e.col && o.kind !== e.kind && o.topMin === e.topMin + (e.kind === 'tasks' ? 1 : -1) * TASK_POINT_MINUTES,
       )
+    /** Where `o` is drawn once an item leaves its stack: a stack raised to end at midnight may sink back to it. */
+    const sinksTo = (o: OverflowEntry) =>
+      [o, partner(o)].some((x) => x && x.topMin + TASK_POINT_MINUTES === 24 * 60) ? { from: o.topMin, to: 24 * 60 } : drawnAt(o)
     for (const e of layout.overflow) {
       const stack = [e, partner(e)].flatMap((x) => (x ? [x] : []))
+      const counted = { from: Math.min(...stack.map((x) => x.topMin)), to: Math.max(...stack.map((x) => x.topMin + TASK_POINT_MINUTES)) }
       for (const seg of e.items.map((i) => segOf.get(i)!)) {
         if (seg.event.kind === 'task' && ownReason(seg)) continue
         const at = extent(seg)
         const place = { from: at.from, to: Math.max(at.to, at.from + TASK_POINT_MINUTES) }
-        expect(
-          stack.some((x) => overlap(drawnAt(x), place)),
-          `${note} ${seg.event.title} counted away from its place`,
-        ).toBe(true)
+        // In the day's last hour, where stacks are raised to end at midnight (and so may meet the stack before), a
+        // count may be drawn up to an hour before its place.
+        const late = place.from >= 24 * 60 - 2 * TASK_POINT_MINUTES ? 2 * TASK_POINT_MINUTES : 0
+        expect(overlap(counted, { from: place.from - late, to: place.to }), `${note} ${seg.event.title} counted away from its place`).toBe(
+          true,
+        )
         for (let c = 0; c < capacity; c++) {
           if (layout.placed.some((p) => p.col === c && overlap(extent(p), at))) continue
-          const stays = layout.overflow.filter((o) => (o !== e || o.items.length > 1) && overlap(drawnAt(o), at))
+          const stays = layout.overflow.filter((o) => (o !== e || o.items.length > 1) && overlap(sinksTo(o), at))
           expect(c === capacity - 1 && stays.length > 0, `${note} ${seg.event.title} has room in column ${c}`).toBe(true)
         }
       }
@@ -463,6 +473,25 @@ describe('layoutDayWithin', () => {
     ])
   })
 
+  it('raises a stack late in the evening so it ends at midnight', () => {
+    const late = within(
+      [
+        timed('call', 25, 23, 0, 0, 0, 26),
+        timed('deploy', 25, 23, 15, 0, 0, 26),
+        timed('pager', 25, 23, 30, 23, 45),
+        pt('lock', 23, 30),
+        pt('alarm', 23, 30),
+      ],
+      2,
+    )
+    expect(placedOf(late)).toEqual({ call: [0, 2, 1] })
+    // Drawn at 23:30 and 24:00 by their place, the bundle and "+2" are raised by a point to end at midnight.
+    expect(overflowOf(late)).toEqual([
+      { kind: 'tasks', items: ['alarm', 'lock'], startMin: 1410, topMin: 1380, col: 1, cols: 2 },
+      { kind: 'events', items: ['deploy', 'pager'], startMin: 1395, topMin: 1410, col: 1, cols: 2 },
+    ])
+  })
+
   it('keeps its rules on seeded random days', () => {
     /** Park-Miller: the same cases on every run. */
     const random = (seed: number) => {
@@ -472,23 +501,29 @@ describe('layoutDayWithin', () => {
         return s % n
       }
     }
-    for (let seed = 1; seed <= 300; seed++) {
-      const r = random(seed)
-      const items: CalItem[] = []
-      const count = 3 + r(12)
-      for (let i = 0; i < count; i++) {
-        const start = 8 * 60 + 5 * r(48) // 8:00-11:55
-        const length = [5, 15, 30, 45, 60, 90, 180][r(7)]!
-        const end = start + length
-        const at = (m: number) => local(25, Math.floor(m / 60), m % 60)
-        const key = `i${i}`
-        if (r(5) < 3) items.push(timed(key, 25, Math.floor(start / 60), start % 60, Math.floor(end / 60), end % 60))
-        else if (r(3) > 0) items.push(toCalTask(todo({ id: key, title: key, due: at(start) }))!)
-        else items.push(toCalTask(todo({ id: key, title: key, start: at(start), due: at(end) }))!)
+    // Busy mornings, and late evenings whose items run up to and past midnight.
+    for (const [from, starts, name] of [
+      [8 * 60, 48, 'morning'],
+      [21 * 60, 36, 'evening'],
+    ] as const) {
+      for (let seed = 1; seed <= 300; seed++) {
+        const r = random(seed)
+        const items: CalItem[] = []
+        const count = 3 + r(12)
+        for (let i = 0; i < count; i++) {
+          const start = from + 5 * r(starts) // 8:00-11:55, 21:00-23:55
+          const length = [5, 15, 30, 45, 60, 90, 180][r(7)]!
+          const end = start + length
+          const at = (m: number) => new Date(2026, 8, 25, Math.floor(m / 60), m % 60).toISOString()
+          const key = `i${i}`
+          if (r(5) < 3) items.push(toCalEvent(apiEvent({ key, id: key, title: key, start: at(start), end: at(end) })))
+          else if (r(3) > 0) items.push(toCalTask(todo({ id: key, title: key, due: at(start) }))!)
+          else items.push(toCalTask(todo({ id: key, title: key, start: at(start), due: at(end) }))!)
+        }
+        const capacity = 1 + r(4)
+        const segments = timedSegments(items, day)
+        expectRules(segments, capacity, layoutDayWithin(segments, capacity), `${name} seed ${seed}, capacity ${capacity}:`)
       }
-      const capacity = 1 + r(4)
-      const segments = timedSegments(items, day)
-      expectRules(segments, capacity, layoutDayWithin(segments, capacity), `seed ${seed}, capacity ${capacity}:`)
     }
   })
 })
