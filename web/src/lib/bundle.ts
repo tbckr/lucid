@@ -1,3 +1,4 @@
+import { type TFunction } from 'i18next'
 import { type CalItem } from './events'
 
 /**
@@ -17,4 +18,14 @@ export function ringColors(tasks: CalItem[], solidOf: (calendarId: string) => st
   const [first] = colors
   if (first === undefined) return []
   return Array.from({ length: rings }, (_, i) => colors[i] ?? first)
+}
+
+/**
+ * The name of an "N more" button for assistive technology (FR-07, NFR-27): what stands behind it, then its day. It
+ * holds events only, except in the one-row cell of the month, where a day with tasks and events that don't fit has
+ * everything behind its "N more"; then it can't say which.
+ */
+export function moreLabel(t: TFunction, items: CalItem[], date: string): string {
+  const key = items.every((item) => item.kind === 'event') ? 'more.events' : 'more.label'
+  return t(key, { count: items.length, date })
 }

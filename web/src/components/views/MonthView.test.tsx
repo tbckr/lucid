@@ -77,6 +77,7 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 describe('MonthView', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     act(() => {
       useUi.getState().openCreate(null)
       useUi.getState().openOverflow(null)
@@ -254,7 +255,7 @@ describe('MonthView', () => {
     // Three rows: two events by title, then "3 more" for the rest.
     expect(within(cell).getByRole('button', { name: 'Call, 10 AM' })).toBeInTheDocument()
     expect(within(cell).getByRole('button', { name: 'Gym, 10 AM' })).toBeInTheDocument()
-    await user.click(within(cell).getByRole('button', { name: '3 more, Friday, September 25th, 2026' }))
+    await user.click(within(cell).getByRole('button', { name: '3 more events, Friday, September 25th, 2026' }))
     // The list is portaled out of the cell, but React bubbles its clicks into the cell.
     const list = await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
     // It holds only what the cell hides (FR-07).
@@ -272,6 +273,57 @@ describe('MonthView', () => {
     useUi.getState().openDetail(null)
   })
 
+  describe('in a one-row cell', () => {
+    /** Lays each week row out one row of items tall under its date: the ResizeObserver reports it once, as the browser does. */
+    function oneRow() {
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          readonly callback: ResizeObserverCallback
+          constructor(callback: ResizeObserverCallback) {
+            this.callback = callback
+          }
+          observe(target: Element) {
+            this.callback([{ target, contentRect: { height: 30 + 22 } } as unknown as ResizeObserverEntry], this)
+          }
+          unobserve() {
+            // nothing to stop
+          }
+          disconnect() {
+            // nothing to stop
+          }
+        },
+      )
+    }
+    const events = ['Standup', 'Review'].map((title, i) => toCalEvent(apiEvent({ id: `e${i}`, key: `e${i}`, title })))
+
+    // "N more" names what stands behind it: events only, whenever it holds nothing else (FR-07, NFR-27).
+    it('names the events behind "N more"', () => {
+      oneRow()
+      renderMonth(events)
+      const cell = screen.getByRole('gridcell', { name: /September 25th/ })
+      const more = within(cell).getByRole('button', { name: '2 more events, Friday, September 25th, 2026' })
+      expect(more).toHaveTextContent('2 more')
+    })
+
+    it('names no kind when "N more" holds the day with its tasks', () => {
+      oneRow()
+      const call = toCalTask(todo({ id: 't1', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
+      renderMonth([...events, call])
+      const cell = screen.getByRole('gridcell', { name: /September 25th/ })
+      expect(within(cell).getByRole('button', { name: '3 more, Friday, September 25th, 2026' })).toHaveTextContent('3 more')
+    })
+
+    it('bundles a day of tasks only', () => {
+      oneRow()
+      const tasks = ['Rent', 'Call'].map((title, i) => toCalTask(todo({ id: `t${i}`, title, due: `2026-09-25T1${i}:00:00Z` }))!)
+      renderMonth(tasks)
+      const cell = screen.getByRole('gridcell', { name: /September 25th/ })
+      expect(within(cell).getByRole('button', { name: '2 tasks, Friday, September 25th, 2026' })).toBeInTheDocument()
+      expect(within(cell).queryByRole('button', { name: /^\d+ more/ })).toBeNull()
+    })
+  })
+
   it("bundles a busy day's tasks and keeps its events (FR-07)", () => {
     const events = [
       toCalEvent(apiEvent({ id: 'e1', key: 'e1', title: 'Standup', start: '2026-09-25T07:00:00Z', end: '2026-09-25T08:00:00Z' })),
@@ -286,7 +338,7 @@ describe('MonthView', () => {
     expect(within(cell).getByRole('button', { name: 'Review, 10 AM' })).toBeInTheDocument()
     const bundle = within(cell).getByRole('button', { name: '3 tasks, Friday, September 25th, 2026' })
     expect(bundle).toHaveTextContent('3 tasks')
-    expect(within(cell).queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    expect(within(cell).queryByRole('button', { name: /^\d+ more/ })).toBeNull()
     expect(within(cell).queryByRole('checkbox')).toBeNull()
     // In the cell's colors: no surface of its own in the month.
     expect(bundle).not.toHaveClass('bg-muted')

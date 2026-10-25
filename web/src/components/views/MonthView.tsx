@@ -11,6 +11,7 @@ import { TaskBundle } from '@/components/tasks/TaskBundle'
 import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
+import { moreLabel } from '@/lib/bundle'
 import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { dayKey, monthGrid, stepDate } from '@/lib/dates'
 import { type DragBinding, type DropData } from '@/lib/dnd'
@@ -474,7 +475,7 @@ function DayCell({
             count={cell.more.length}
             drag="event"
             home={() => cellRef.current}
-            label={t('more.label', { count: cell.more.length, date })}
+            label={moreLabel(t, cell.more, date)}
           />
         )}
       </div>

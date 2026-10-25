@@ -113,6 +113,8 @@
     "short": "+{{count}}",
     "label_one": "{{count}} more, {{date}}",
     "label_other": "{{count}} more, {{date}}",
+    "events_one": "{{count}} more event, {{date}}",
+    "events_other": "{{count}} more events, {{date}}",
     "eventsAt_one": "{{count}} more event at {{time}}, {{date}}",
     "eventsAt_other": "{{count}} more events at {{time}}, {{date}}"
   },

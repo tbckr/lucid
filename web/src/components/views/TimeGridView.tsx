@@ -11,6 +11,7 @@ import { TaskBundle } from '@/components/tasks/TaskBundle'
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
+import { moreLabel } from '@/lib/bundle'
 import { canDrag, TASK_POINT_MINUTES, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DragBinding, type DropData } from '@/lib/dnd'
@@ -325,7 +326,7 @@ function AllDayCell({
           count={cell.more.length}
           drag="event"
           home={() => createRef.current}
-          label={t('more.label', { count: cell.more.length, date })}
+          label={moreLabel(t, cell.more, date)}
           className="absolute z-10"
           style={rowBox(cellRowsUsed(cell) - 1)}
         />

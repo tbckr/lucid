@@ -113,6 +113,8 @@
     "short": "+{{count}}",
     "label_one": "{{count}} weiterer, {{date}}",
     "label_other": "{{count}} weitere, {{date}}",
+    "events_one": "{{count}} weiterer Termin, {{date}}",
+    "events_other": "{{count}} weitere Termine, {{date}}",
     "eventsAt_one": "{{count}} weiterer Termin um {{time}}, {{date}}",
     "eventsAt_other": "{{count}} weitere Termine um {{time}}, {{date}}"
   },

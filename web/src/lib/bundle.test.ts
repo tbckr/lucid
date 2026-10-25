@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { ringColors } from './bundle'
+import i18n from '@/i18n'
+import { moreLabel, ringColors } from './bundle'
 import { toCalTask } from './calendarTasks'
-import { todo } from '@/test/fixtures'
+import { toCalEvent } from './events'
+import { apiEvent, todo } from '@/test/fixtures'
 
 const ORANGE = '#f97316'
 const BLUE = '#3b82f6'
@@ -50,5 +52,26 @@ describe('ringColors', () => {
   it('counts calendars of the same color as one color', () => {
     const sameColor = (id: string) => (id === 'a' || id === 'b' ? ORANGE : BLUE)
     expect(ringColors(tasksOf('a', 'c', 'b'), sameColor, 3)).toEqual([ORANGE, BLUE, ORANGE])
+  })
+})
+
+describe('moreLabel', () => {
+  const events = [1, 2, 3].map((i) => toCalEvent(apiEvent({ id: `e${i}`, key: `e${i}` })))
+  const [task] = tasksOf('orange')
+  const date = 'Friday, September 25th, 2026'
+  const en = i18n.getFixedT('en')
+  const de = i18n.getFixedT('de')
+
+  it('names the events behind it when it holds nothing else', () => {
+    expect(moreLabel(en, events, date)).toBe('3 more events, Friday, September 25th, 2026')
+    expect(moreLabel(en, events.slice(0, 1), date)).toBe('1 more event, Friday, September 25th, 2026')
+    expect(moreLabel(de, events, 'Freitag')).toBe('3 weitere Termine, Freitag')
+    expect(moreLabel(de, events.slice(0, 1), 'Freitag')).toBe('1 weiterer Termin, Freitag')
+  })
+
+  it('names no kind when tasks are behind it too', () => {
+    expect(moreLabel(en, [...events, task!], date)).toBe('4 more, Friday, September 25th, 2026')
+    expect(moreLabel(en, [task!], date)).toBe('1 more, Friday, September 25th, 2026')
+    expect(moreLabel(de, [...events, task!], 'Freitag')).toBe('4 weitere, Freitag')
   })
 })

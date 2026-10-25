@@ -190,7 +190,7 @@ describe('TimeGridView', () => {
     expect(Array.from(cell.querySelectorAll<HTMLElement>('[data-event-key]')).map((el) => el.dataset.eventKey)).toEqual(['A', 'B'])
     // Nothing expands the row any more: its label column has no toggle.
     expect(screen.getByText('All day').closest('div')?.querySelector('button[aria-expanded]')).toBeNull()
-    const more = within(cell).getByRole('button', { name: '2 more, Friday, September 25th, 2026' })
+    const more = within(cell).getByRole('button', { name: '2 more events, Friday, September 25th, 2026' })
     expect(more).toHaveTextContent('2 more')
     expect(more).toHaveStyle({ top: `${3 + 2 * 22}px` })
     // In line with the bars above it.
@@ -236,11 +236,11 @@ describe('TimeGridView', () => {
       </QueryClientProvider>
     )
     const { rerender } = render(view(events))
-    fireEvent.click(screen.getByRole('button', { name: '2 more, Friday, September 25th, 2026' }))
+    fireEvent.click(screen.getByRole('button', { name: '2 more events, Friday, September 25th, 2026' }))
     await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
     // An event dragged out of the list leaves the day with room: its "N more" goes away while the list stays open.
     rerender(view(events.slice(0, 2)))
-    expect(screen.queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^\d+ more/ })).toBeNull()
     await user.keyboard('{Escape}')
     await waitFor(() => {
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New all-day event on Friday, September 25th, 2026' }))
@@ -264,7 +264,7 @@ describe('TimeGridView', () => {
     const bar = cell.querySelector<HTMLElement>('[data-event-key="A"]')!
     expect(bundle.style.left).toBe(bar.style.left)
     expect(bundle.style.width).toBe(bar.style.width)
-    expect(within(cell).queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    expect(within(cell).queryByRole('button', { name: /^\d+ more/ })).toBeNull()
     fireEvent.click(bundle)
     expect(useUi.getState().overflow?.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key))
     act(() => {

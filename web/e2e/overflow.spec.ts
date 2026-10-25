@@ -28,7 +28,7 @@ async function cellsOf(page: Page): Promise<{ today: Locator; target: Locator }>
 }
 
 /** "+N more", which holds the events a cell has no room for. */
-const MORE = /^\d+ more, /
+const MORE = /^\d+ more events, /
 /** The bundle, which holds the tasks a cell has no room for (FR-07). */
 const BUNDLE = /^\d+ tasks, /
 
