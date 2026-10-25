@@ -1,7 +1,7 @@
 import { useDraggable } from '@dnd-kit/core'
 import { useTranslation } from 'react-i18next'
 import { useDndState } from '@/components/dnd/dndState'
-import { ResizeHandle } from '@/components/events/EventItems'
+import { BLOCK_TIME_IF_ROOM, ResizeHandle } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { dayKey } from '@/lib/dates'
 import { PX_PER_MINUTE, type DragData } from '@/lib/dnd'
@@ -45,7 +45,8 @@ function DraftPart({ item, day, colors, prefs, segment }: Props & { segment: Tim
   const start = formatShortTime(shown.startsAt, prefs)
   const time = task && shown.point ? start : `${start} – ${formatShortTime(shown.endsAt, prefs)}`
   const height = Math.max(18, (segment.endMin - segment.startMin) * PX_PER_MINUTE - 2)
-  // As in a short block, title and time share one line.
+  // As in a short block, title and time share one line, and in a narrow column the title wins over
+  // the time (FR-07, `BLOCK_TIME_IF_ROOM`). A draft has no repeat mark to give up first.
   const compact = height < 34
 
   return (
@@ -61,7 +62,7 @@ function DraftPart({ item, day, colors, prefs, segment }: Props & { segment: Tim
       className={cn(
         // Takes the pointer although the open popover leaves the rest of the page without it.
         'pointer-events-auto absolute inset-x-1 z-40 flex min-h-0 gap-1.5 overflow-hidden rounded-md border-l-[3px] px-1.5 text-xs leading-4 shadow-float',
-        compact ? 'items-center py-0' : 'py-1',
+        compact ? 'items-center py-0 @container' : 'py-1',
         isDragging && 'opacity-40',
       )}
       style={{
@@ -81,7 +82,7 @@ function DraftPart({ item, day, colors, prefs, segment }: Props & { segment: Tim
       )}
       <span className={cn('flex min-w-0', compact ? 'items-center gap-1' : 'flex-col')}>
         <span className="truncate font-semibold">{shown.title.trim() || t('event.untitled')}</span>
-        <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{time}</span>
+        <span className={cn('tabular truncate opacity-90', compact && ['shrink-0', BLOCK_TIME_IF_ROOM])}>{time}</span>
       </span>
       {item.kind === 'event' && <ResizeHandle event={item} disabled={segment.clippedEnd} draft />}
     </div>

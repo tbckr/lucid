@@ -559,6 +559,21 @@ describe('TimeGridView', () => {
     expect(draft).toHaveTextContent(/10 AM$/)
   })
 
+  // As in a one-line block, a narrow one-line draft lets its title win over its time (FR-07).
+  it('lets the title of a one-line draft win over its time, but not in a draft with a line for each', () => {
+    const { container } = renderDay()
+    withPreview('task', { startDate: '', startTime: '', dueDate: '2026-09-25', dueTime: '10:00' })
+    const draft = () => container.querySelector<HTMLElement>('[data-draft]')!
+    expect(draft()).toHaveClass('@container')
+    expect(within(draft()).getByText('10 AM')).toHaveClass('@max-[6rem]:hidden')
+    withPreview('event', at('10:00', '10:30'))
+    expect(draft()).toHaveClass('@container')
+    expect(within(draft()).getByText('10 AM – 10:30 AM')).toHaveClass('@max-[6rem]:hidden')
+    withPreview('event', at('10:00', '11:00'))
+    expect(draft()).not.toHaveClass('@container')
+    expect(within(draft()).getByText('10 AM – 11 AM')).not.toHaveClass('@max-[6rem]:hidden')
+  })
+
   it('clips a draft that runs past midnight', () => {
     const { container } = renderDay()
     withPreview('event', at('23:30', '00:30', '2026-09-26'))
