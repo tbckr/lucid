@@ -256,9 +256,29 @@ describe('layoutDayWithin', () => {
       layout.overflow.find(
         (o) => o.col === e.col && o.kind !== e.kind && o.topMin === e.topMin + (e.kind === 'tasks' ? 1 : -1) * TASK_POINT_MINUTES,
       )
-    /** Where `o` is drawn once an item leaves its stack: a stack raised to end at midnight may sink back to it. */
-    const sinksTo = (o: OverflowEntry) =>
-      [o, partner(o)].some((x) => x && x.topMin + TASK_POINT_MINUTES === 24 * 60) ? { from: o.topMin, to: 24 * 60 } : drawnAt(o)
+    // Late in the evening the stacks are raised to end by midnight, back to back: the entries of that run are drawn
+    // above where they belong, so a count there may be drawn up to an hour (the rule above) before its place, and what
+    // stays of a stack an item leaves may sink back, as far as midnight.
+    const raised = new Set<OverflowEntry>()
+    let edge = 24 * 60
+    for (const e of [...layout.overflow].sort((a, b) => b.topMin - a.topMin)) {
+      if (e.topMin + TASK_POINT_MINUTES !== edge) break
+      raised.add(e)
+      edge = e.topMin
+    }
+    const inRun = (o: OverflowEntry) => raised.has(o) || [partner(o)].some((x) => x && raised.has(x))
+    /** Where `o` is drawn once an item leaves its stack. */
+    const sinksTo = (o: OverflowEntry) => (inRun(o) ? { from: o.topMin, to: 24 * 60 } : drawnAt(o))
+    // Nothing is counted by an entry that ends an hour or more before it (R22's bound, also at midnight): a task whose
+    // point group meets more than fit is measured from where its group starts, its bundle's own place (a chain of
+    // points may reach further than an hour); everything else from its own start.
+    for (const e of layout.overflow) {
+      for (const seg of e.items.map((i) => segOf.get(i)!)) {
+        const group = seg.event.kind === 'task' ? pointGroups.find((g) => g.includes(seg))! : []
+        const from = group.some(overfullAt) ? Math.min(...group.map((x) => x.startMin)) : seg.startMin
+        expect(from - (e.topMin + TASK_POINT_MINUTES), `${note} ${seg.event.title} counted an hour early`).toBeLessThan(60)
+      }
+    }
     for (const e of layout.overflow) {
       const stack = [e, partner(e)].flatMap((x) => (x ? [x] : []))
       const counted = { from: Math.min(...stack.map((x) => x.topMin)), to: Math.max(...stack.map((x) => x.topMin + TASK_POINT_MINUTES)) }
@@ -266,15 +286,12 @@ describe('layoutDayWithin', () => {
         if (seg.event.kind === 'task' && ownReason(seg)) continue
         const at = extent(seg)
         const place = { from: at.from, to: Math.max(at.to, at.from + TASK_POINT_MINUTES) }
-        // In the day's last hour, where stacks are raised to end at midnight (and so may meet the stack before), a
-        // count may be drawn up to an hour before its place.
-        const late = place.from >= 24 * 60 - 2 * TASK_POINT_MINUTES ? 2 * TASK_POINT_MINUTES : 0
+        // In the day's last hour, and in the run of stacks raised to end at midnight, a count may be drawn up to an hour
+        // before its place.
+        const late = place.from >= 24 * 60 - 2 * TASK_POINT_MINUTES || inRun(e) ? 2 * TASK_POINT_MINUTES : 0
         expect(overlap(counted, { from: place.from - late, to: place.to }), `${note} ${seg.event.title} counted away from its place`).toBe(
           true,
         )
-        // And its own entry ends less than an hour before it starts (R22's bound, also at midnight). A bundled task
-        // has no such bound: its point group, chained, may reach further (FR-07).
-        expect(seg.startMin - (e.topMin + TASK_POINT_MINUTES), `${note} ${seg.event.title} counted an hour early`).toBeLessThan(60)
         for (let c = 0; c < capacity; c++) {
           if (layout.placed.some((p) => p.col === c && overlap(extent(p), at))) continue
           const stays = layout.overflow.filter((o) => (o !== e || o.items.length > 1) && overlap(sinksTo(o), at))
@@ -569,9 +586,10 @@ describe('layoutDayWithin', () => {
     ])
   })
 
-  it('keeps a late stack raised by a merge clear of the stack before it', () => {
-    // Found by review: merging the 23:50 task into the "+N" below made a stack an hour tall, raised it to 23:00, into
-    // the bundle above, and nothing merged them again.
+  it('keeps a late stack raised to midnight clear of the stack before it', () => {
+    // Found by review: when raising decided where stacks meet, the 23:50 task's stack, raised to end at midnight, slid
+    // over the bundle before it. Raising now only draws: the stacks stay apart, each moved up only as far as the next
+    // one needs.
     const late = within(
       [
         timed('a', 25, 23, 15, 23, 30),
@@ -584,17 +602,44 @@ describe('layoutDayWithin', () => {
       ],
       3,
     )
-    // One stack: the bundle at 22:45 and "+2" below it; the 23:50 task is counted in the evening's last hour.
+    // The bundle at 22:30, "+2" at 23:00 and the 23:50 task as itself at 23:30, ending at midnight.
     expect(placedOf(late)).toEqual({ b: [0, 3, 1], a: [1, 3, 1] })
     expect(overflowOf(late)).toEqual([
-      { kind: 'tasks', items: ['span', 'ten', 'fifty'], startMin: 1365, topMin: 1365, col: 2, cols: 3 },
-      { kind: 'events', items: ['d', 'c'], startMin: 1400, topMin: 1395, col: 2, cols: 3 },
+      { kind: 'tasks', items: ['span', 'ten'], startMin: 1365, topMin: 1350, col: 0, cols: 1 },
+      { kind: 'events', items: ['d', 'c'], startMin: 1400, topMin: 1380, col: 2, cols: 3 },
+      { kind: 'tasks', items: ['fifty'], startMin: 1430, topMin: 1410, col: 2, cols: 3 },
     ])
   })
 
-  it('gives a late task its column back where an earlier stack counted it', () => {
-    // Found on a random evening: merged into the 22:05 bundle, the 23:50 task stayed counted there, nearly two hours
-    // early, with nothing drawn at 23:50, because the stack's events were counted away from their place already.
+  it('keeps the bundles of a busy late evening near their own times', () => {
+    // Found by review: raised to end at midnight, the 23:15 bundle met the 22:05 stack and merged into it, so the
+    // 23:55 task was drawn at 22:05, nearly two hours early, and nothing was drawn after 23:05. Now each count stays
+    // within half an hour of its items: 22:00, 22:30, 23:00 and 23:30.
+    const late = within(
+      [
+        timed('a', 25, 21, 45, 0, 0, 26),
+        timed('b', 25, 23, 35, 0, 0, 26),
+        timed('c', 25, 22, 0, 22, 30),
+        timed('d', 25, 23, 0, 23, 30),
+        pt('t1', 22, 5),
+        pt('t2', 23, 15),
+        pt('t3', 23, 55),
+      ],
+      2,
+    )
+    expect(placedOf(late)).toEqual({ a: [0, 2, 1] })
+    expect(overflowOf(late)).toEqual([
+      { kind: 'tasks', items: ['t1'], startMin: 1325, topMin: 1320, col: 1, cols: 2 },
+      { kind: 'events', items: ['c', 'd'], startMin: 1320, topMin: 1350, col: 1, cols: 2 },
+      { kind: 'tasks', items: ['t2', 't3'], startMin: 1395, topMin: 1380, col: 1, cols: 2 },
+      { kind: 'events', items: ['b'], startMin: 1415, topMin: 1410, col: 1, cols: 2 },
+    ])
+  })
+
+  it('counts a late task near its own time', () => {
+    // Found on a random evening: merged into an earlier stack, the 23:50 task was counted well over an hour before
+    // it, with nothing drawn at 23:50, and the release pass, held back by the stack's events counted away already,
+    // left it there. Now it stays in the stack of 23:15, which is raised to end at midnight and drawn from 23:00.
     const late = within(
       [
         pt('call', 22, 5),
@@ -606,7 +651,13 @@ describe('layoutDayWithin', () => {
       ],
       1,
     )
-    expect(placedOf(late)).toMatchObject({ lock: [0, 1, 1] })
+    expect(placedOf(late)).toEqual({})
+    expect(overflowOf(late).map(({ kind, items, topMin }) => [kind, items, topMin])).toEqual([
+      ['tasks', ['call'], 1320],
+      ['events', ['a', 'b'], 1350],
+      ['tasks', ['lock'], 1380],
+      ['events', ['c', 'd'], 1410],
+    ])
   })
 
   it('keeps its rules on seeded random days', () => {
