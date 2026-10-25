@@ -1,9 +1,12 @@
 import { DndContext, type DragStartEvent } from '@dnd-kit/core'
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
@@ -12,6 +15,7 @@ import { previewOf, type CreateKind, type EventWhen, type TaskWhen } from '@/lib
 import { useUi } from '@/stores/ui'
 import { apiEvent, calendar, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
+import { OverflowPopover } from './OverflowPopover'
 import { TimeGridView } from './TimeGridView'
 
 // Counts renders of the grid's event blocks; they keep their real behavior.
@@ -159,16 +163,58 @@ describe('TimeGridView', () => {
     const cell = allDayCell()
     expect(cell).toHaveStyle({ height: `${3 * 22 + 6}px` })
     expect(Array.from(cell.querySelectorAll<HTMLElement>('[data-event-key]')).map((el) => el.dataset.eventKey)).toEqual(['A', 'B'])
-    expect(screen.queryByRole('button', { name: 'Show all all-day events' })).toBeNull()
+    // Nothing expands the row any more: its label column has no toggle.
+    expect(screen.getByText('All day').closest('div')?.querySelector('button[aria-expanded]')).toBeNull()
     const more = within(cell).getByRole('button', { name: '2 more, Friday, September 25th, 2026' })
     expect(more).toHaveTextContent('2 more')
     expect(more).toHaveStyle({ top: `${3 + 2 * 22}px` })
     fireEvent.click(more)
     const overflow = useUi.getState().overflow
     expect(overflow?.items.map((i) => i.key)).toEqual(['C', 'D'])
-    expect(overflow?.home).toBe(cell)
+    // Home is the cell's create button, which covers the cell and takes the focus.
+    expect(overflow?.home).toBe(within(cell).getByRole('button', { name: /^New all-day event/ }))
     act(() => {
       useUi.getState().openOverflow(null)
+    })
+  })
+
+  it('returns the focus to the all-day cell once the button of its list is gone (NFR-27)', async () => {
+    const user = userEvent.setup()
+    const events = ['A', 'B', 'C', 'D'].map(allDayEvent)
+    const queryClient = new QueryClient()
+    const view = (shown: CalItem[]) => (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <DndContext>
+            <TimeGridView
+              days={[new Date(2026, 8, 25)]}
+              now={new Date(2026, 8, 25, 12)}
+              events={shown}
+              corrupted={[]}
+              prefs={prefs}
+              colorsOf={() => colors}
+              calendarOf={() => cal}
+            />
+            {/* The list of a bundle or "N more" lives beside the views (FR-07). */}
+            <OverflowPopover
+              prefs={prefs}
+              colorsOf={() => colors}
+              readOnly={() => false}
+              lookup={(key) => events.find((e) => e.key === key)}
+            />
+          </DndContext>
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(view(events))
+    fireEvent.click(screen.getByRole('button', { name: '2 more, Friday, September 25th, 2026' }))
+    await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
+    // An event dragged out of the list leaves the day with room: its "N more" goes away while the list stays open.
+    rerender(view(events.slice(0, 2)))
+    expect(screen.queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New all-day event on Friday, September 25th, 2026' }))
     })
   })
 

@@ -194,15 +194,9 @@ function AllDayCell({
     id: `alldaycell:${key}`,
     data: { type: 'day', day } satisfies DropData,
   })
-  // The cell is where the lists of its bundle and "N more" point and give the focus to once their button is gone.
-  const cellRef = useRef<HTMLDivElement | null>(null)
-  const ref = useCallback(
-    (el: HTMLDivElement | null) => {
-      setNodeRef(el)
-      cellRef.current = el
-    },
-    [setNodeRef],
-  )
+  // The cell's create button, which covers it, is where the lists of its bundle and "N more" point and give the focus
+  // to once their button is gone (NFR-27): it takes the focus, which the cell itself does not.
+  const createRef = useRef<HTMLButtonElement | null>(null)
   const date = format(day, 'PPPP', { locale: prefs.locale })
   // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
   const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
@@ -246,12 +240,13 @@ function AllDayCell({
 
   return (
     <div
-      ref={ref}
+      ref={setNodeRef}
       data-draft={draft ? '' : undefined}
       className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8')}
       style={{ height }}
     >
       <button
+        ref={createRef}
         type="button"
         tabIndex={-1}
         aria-label={t('week.newAllDay', { date })}
@@ -272,7 +267,7 @@ function AllDayCell({
             day={day}
             tasks={tasks}
             drag="event"
-            home={() => cellRef.current}
+            home={() => createRef.current}
             colorsOf={colorsOf}
             label={t('bundle.label', { count: tasks.length, date })}
             // Rounded like the bars around it.
@@ -289,7 +284,7 @@ function AllDayCell({
           items={cell.more}
           count={cell.more.length}
           drag="event"
-          home={() => cellRef.current}
+          home={() => createRef.current}
           label={t('more.label', { count: cell.more.length, date })}
           className="absolute inset-x-1 z-10 w-auto"
           style={{ top: rowTop(cellRowsUsed(cell) - 1) }}
