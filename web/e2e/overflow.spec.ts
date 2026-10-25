@@ -7,7 +7,7 @@ test.afterEach(async ({ page }) => {
   await deleteTestTasks(page)
 })
 
-/** The list behind a "+N more" button. */
+/** The list behind a "+N more" button or a bundle. */
 const list = (page: Page) => page.locator('[data-radix-popper-content-wrapper] [role="dialog"]')
 
 /** Presses on `handle`, moves over `target` and stays there: the caller drops or cancels. */
@@ -27,10 +27,15 @@ async function cellsOf(page: Page): Promise<{ today: Locator; target: Locator }>
   return { today: cells.nth(at), target: cells.nth(at >= 2 ? at - 2 : at + 2) }
 }
 
-/** Whether the entry is in the cell, or in its "+N more" list when the cell has no room for it. */
-async function expectIn(page: Page, cell: Locator, entry: (scope: Locator) => Locator): Promise<void> {
+/** "+N more", which holds the events a cell has no room for. */
+const MORE = /^\d+ more, /
+/** The bundle, which holds the tasks a cell has no room for (FR-07). */
+const BUNDLE = /^\d+ tasks, /
+
+/** Whether the entry is in the cell, or in the list of its `holder` (an event's "+N more") when the cell has no room for it. */
+async function expectIn(page: Page, cell: Locator, entry: (scope: Locator) => Locator, holder = MORE): Promise<void> {
   if ((await entry(cell).count()) === 0) {
-    await cell.getByRole('button', { name: /^\d+ more, / }).click()
+    await cell.getByRole('button', { name: holder }).click()
     await expect(entry(list(page))).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(list(page)).toHaveCount(0)
@@ -56,25 +61,31 @@ async function openMonth(page: Page): Promise<void> {
   await page.keyboard.press('m')
 }
 
-/** Today with 8 events and a task, opened in the month view; `fixed` is the day the page takes for today. */
+/**
+ * Today with 8 events and two tasks, "E2E overflowtask <stamp> <n>" due at 15:00 and 16:00, opened in the month
+ * view; `fixed` is the day the page takes for today. The tasks share a bundle, the events beyond its room "+N more".
+ */
 async function busyDay(page: Page, stamp: number, fixed?: Date): Promise<void> {
   if (fixed) await page.clock.setFixedTime(fixed)
   await login(page)
   const today = fixed ?? new Date()
   await addEvents(page, stamp, today, 8)
-  const due = new Date(today)
-  due.setHours(15, 0, 0, 0)
-  await createTestTask(page, { title: `E2E overflowtask ${stamp}`, due: due.toISOString(), dueAllDay: false })
+  for (const n of [0, 1]) {
+    const due = new Date(today)
+    due.setHours(15 + n, 0, 0, 0)
+    await createTestTask(page, { title: `E2E overflowtask ${stamp} ${n}`, due: due.toISOString(), dueAllDay: false })
+  }
   await openMonth(page)
 }
 
-test('drag an event and a task out of the "+N more" list', async ({ page }) => {
+test('drag an event out of the "+N more" list and a task out of its bundle', async ({ page }) => {
   const stamp = Date.now()
   await busyDay(page, stamp)
   const { today, target } = await cellsOf(page)
-  const more = today.getByRole('button', { name: /^\d+ more, / })
+  const more = today.getByRole('button', { name: MORE })
+  const bundle = today.getByRole('button', { name: BUNDLE })
   const event = (scope: Locator, n = 7) => scope.locator('[data-event-key]', { hasText: `E2E overflow ${stamp} ${n}` })
-  const task = (scope: Locator) => scope.locator('[data-task-key]', { hasText: `E2E overflowtask ${stamp}` })
+  const task = (scope: Locator, n = 0) => scope.locator('[data-task-key]', { hasText: `E2E overflowtask ${stamp} ${n}` })
 
   // An event out of the list: the list is hidden while it is dragged, and gone once it is dropped.
   await more.click()
@@ -87,18 +98,25 @@ test('drag an event and a task out of the "+N more" list', async ({ page }) => {
   await expect(list(page)).toHaveCount(0)
   await expectIn(page, target, (scope) => event(scope))
 
-  // A later click opens the list again: no click was swallowed.
+  // A later click opens the list again: no click was swallowed. It holds events only (FR-07).
   await more.click()
   await expect(list(page)).toBeVisible()
+  await expect(event(list(page), 6)).toBeVisible()
+  await expect(list(page).locator('[data-task-key]')).toHaveCount(0)
 
-  // A task out of the list, by its title.
+  await page.keyboard.press('Escape')
+  await expect(list(page)).toHaveCount(0)
+
+  // A task out of its bundle's list, by its title.
+  await bundle.click()
+  await expect(bundle).toHaveAttribute('aria-expanded', 'true')
   const handle = task(list(page)).locator('button:not([role="checkbox"])')
   await expect(handle).toBeVisible()
   await dragOver(page, handle, target)
   await expect(list(page)).toHaveCSS('visibility', 'hidden')
   await page.mouse.up()
   await expect(list(page)).toHaveCount(0)
-  await expectIn(page, target, task)
+  await expectIn(page, target, task, BUNDLE)
 
   // Escape during a drag cancels it: the entry stays, and the list is closed.
   await more.click()
@@ -124,8 +142,8 @@ test('switch the "+N more" list to a neighbouring day, and close it with a secon
   await openMonth(page)
   const cells = monthGrid(page).getByRole('gridcell')
   const at = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
-  const first = cells.nth(at).getByRole('button', { name: /^\d+ more, / })
-  const second = cells.nth(at + step).getByRole('button', { name: /^\d+ more, / })
+  const first = cells.nth(at).getByRole('button', { name: MORE })
+  const second = cells.nth(at + step).getByRole('button', { name: MORE })
   const entry = (n: string) => list(page).locator('[data-event-key]', { hasText: `E2E overflow ${stamp} ${n}` })
 
   await first.click()
@@ -152,7 +170,7 @@ test('drag an event out of the "+N more" list with the keyboard', async ({ page 
   const stamp = Date.now()
   await busyDay(page, stamp, new Date(2026, 9, 21, 12))
   const { today } = await cellsOf(page)
-  const more = today.getByRole('button', { name: /^\d+ more, / })
+  const more = today.getByRole('button', { name: MORE })
   const event = (scope: Locator) => scope.locator('[data-event-key]', { hasText: `E2E overflow ${stamp} 7` })
   const said = page.locator('[role="status"][aria-live="assertive"]')
 

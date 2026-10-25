@@ -250,16 +250,77 @@ describe('MonthView', () => {
     )
     const user = userEvent.setup()
     renderMonth(events)
-    await user.click(screen.getByRole('button', { name: /^\d+ more, / }))
+    const cell = screen.getByRole('gridcell', { name: /September 25th/ })
+    // Three rows: two events by title, then "3 more" for the rest.
+    expect(within(cell).getByRole('button', { name: 'Call, 10 AM' })).toBeInTheDocument()
+    expect(within(cell).getByRole('button', { name: 'Gym, 10 AM' })).toBeInTheDocument()
+    await user.click(within(cell).getByRole('button', { name: '3 more, Friday, September 25th, 2026' }))
     // The list is portaled out of the cell, but React bubbles its clicks into the cell.
     const list = await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
+    // It holds only what the cell hides (FR-07).
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      expect.stringContaining('Lunch'),
+      expect.stringContaining('Review'),
+      expect.stringContaining('Standup'),
+    ])
     await user.click(within(list).getByText('Friday, September 25th, 2026'))
     expect(useUi.getState().create).toBeNull()
     // The bare DndContext here has no drag distance: a pointer press on a row would start a drag, not click.
-    fireEvent.click(within(list).getByRole('button', { name: /Call/ }))
+    fireEvent.click(within(list).getByRole('button', { name: /Standup/ }))
     expect(useUi.getState().create).toBeNull()
-    expect(useUi.getState().detail?.item).toBe(events[4])
+    expect(useUi.getState().detail?.item).toBe(events[0])
     useUi.getState().openDetail(null)
+  })
+
+  it("bundles a busy day's tasks and keeps its events (FR-07)", () => {
+    const events = [
+      toCalEvent(apiEvent({ id: 'e1', key: 'e1', title: 'Standup', start: '2026-09-25T07:00:00Z', end: '2026-09-25T08:00:00Z' })),
+      toCalEvent(apiEvent({ id: 'e2', key: 'e2', title: 'Review' })),
+    ]
+    const tasks = ['Rent', 'Call', 'Mail'].map(
+      (title, i) => toCalTask(todo({ id: `t${i}`, title, due: `2026-09-25T1${i}:00:00Z` }))!,
+    )
+    renderMonth([...tasks, ...events])
+    const cell = screen.getByRole('gridcell', { name: /September 25th/ })
+    expect(within(cell).getByRole('button', { name: 'Standup, 9 AM' })).toBeInTheDocument()
+    expect(within(cell).getByRole('button', { name: 'Review, 10 AM' })).toBeInTheDocument()
+    const bundle = within(cell).getByRole('button', { name: '3 tasks, Friday, September 25th, 2026' })
+    expect(bundle).toHaveTextContent('3 tasks')
+    expect(within(cell).queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    expect(within(cell).queryByRole('checkbox')).toBeNull()
+    // In the cell's colors: no surface of its own in the month.
+    expect(bundle).not.toHaveClass('bg-muted')
+    expect(bundle).not.toHaveClass('[--host:var(--outside)]')
+
+    fireEvent.click(bundle)
+    const overflow = useUi.getState().overflow
+    expect(overflow?.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key))
+    expect(overflow?.drag).toBe('event')
+    expect(overflow?.home).toBe(cell)
+  })
+
+  it('rings a bundle on a day outside the month in that day\'s color', () => {
+    const tasks = ['Rent', 'Call', 'Mail', 'Gym'].map(
+      (title, i) => toCalTask(todo({ id: `t${i}`, title, due: `2026-10-01T1${i}:00:00Z` }))!,
+    )
+    renderMonth(tasks)
+    const cell = screen.getByRole('gridcell', { name: /October 1st/ })
+    expect(within(cell).getByRole('button', { name: '4 tasks, Thursday, October 1st, 2026' })).toHaveClass(
+      '[--host:var(--outside)]',
+    )
+  })
+
+  it('shows an all-day task as a bar below the bars of the day', () => {
+    const rent = toCalTask(todo({ id: 't1', title: 'Pay rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!
+    const off = toCalEvent(
+      apiEvent({ id: 'off', key: 'off', title: 'Off', allDay: true, start: '2026-09-24T00:00:00Z', end: '2026-09-26T00:00:00Z' }),
+    )
+    const { container } = renderMonth([rent, off])
+    const bar = container.querySelector<HTMLElement>('[data-task-key="task:t1"]')!
+    // In the cell's flow, below the event's bar, not placed in a lane of its own.
+    expect(bar).not.toHaveClass('absolute')
+    expect(bar.parentElement).toHaveStyle({ paddingTop: '22px' })
+    expect(within(bar).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeInTheDocument()
   })
 
   it('highlights the day under a drag', async () => {

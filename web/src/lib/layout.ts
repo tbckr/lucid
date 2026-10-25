@@ -98,7 +98,7 @@ export function layoutDay<T extends CalItem>(segments: TimedSegment<T>[], minDur
 }
 
 /* ------------------------------------------------------------------------ */
-/* Week rows (month view, all-day row): spanning bars in lanes + "+N more"  */
+/* Week rows (month view, all-day row): bars in lanes, rows, bundle, "N more" */
 /* ------------------------------------------------------------------------ */
 
 export interface BarSegment<T extends CalItem = CalItem> {
@@ -112,16 +112,19 @@ export interface BarSegment<T extends CalItem = CalItem> {
   continuesAfter: boolean
 }
 
+/** A row below a cell's bar lanes: an item, or the day's tasks bundled into one entry (FR-07). */
+export type CellRow<T extends CalItem = CalItem> = { type: 'item'; item: T } | { type: 'bundle'; items: T[] }
+
 export interface CellLayout<T extends CalItem = CalItem> {
   day: Date
-  /** Every event on this day (for the "+N more" popover). */
+  /** Every event and task on this day, in display order. */
   all: T[]
-  /** Visible single-day events, rendered below the bar lanes. */
-  singles: T[]
-  /** Rows occupied by visible bars above the singles. */
+  /** Rows below the bar lanes, in display order; a bundle sorts by its earliest task (compareEvents). */
+  rows: CellRow<T>[]
+  /** Rows occupied by visible bars above the rows. */
   barRows: number
-  /** Events hidden behind "+N more". */
-  hidden: number
+  /** Behind "N more": events that don't fit; in a one-row cell, everything of the day. */
+  more: T[]
 }
 
 export interface WeekRowLayout<T extends CalItem = CalItem> {
@@ -129,10 +132,57 @@ export interface WeekRowLayout<T extends CalItem = CalItem> {
   cells: CellLayout<T>[]
 }
 
+/** Drawn as a bar in a lane: spanning, except a task on a single day, which is a row like a timed one (FR-07). */
+function isBar(e: CalItem): boolean {
+  return isSpanning(e) && !(e.kind === 'task' && firstDay(e).getTime() === lastDay(e).getTime())
+}
+
+/** Lane order: events before tasks, so hiding by lane hides task bars first (FR-07); then by first day, longer first. */
+function compareBars(a: CalItem, b: CalItem): number {
+  if (a.kind !== b.kind) return a.kind === 'event' ? -1 : 1
+  return (
+    firstDay(a).getTime() - firstDay(b).getTime() ||
+    differenceInCalendarDays(lastDay(b), firstDay(b)) - differenceInCalendarDays(lastDay(a), firstDay(a)) ||
+    compareEvents(a, b)
+  )
+}
+
+/** A row with the item it sorts by: a bundle by its earliest task. */
+interface Sorted<T extends CalItem> {
+  row: CellRow<T>
+  head: T
+}
+
+const itemRow = <T extends CalItem>(item: T): CellRow<T> => ({ type: 'item', item })
+const sortedItem = <T extends CalItem>(item: T): Sorted<T> => ({ row: itemRow(item), head: item })
+
+/** The row of the day's tasks: two or more bundle, one stays itself (FR-07). */
+function taskRow<T extends CalItem>(tasks: T[]): Sorted<T>[] {
+  const [head] = tasks
+  if (head === undefined) return []
+  return [{ row: tasks.length === 1 ? itemRow(head) : { type: 'bundle', items: tasks }, head }]
+}
+
+function sortedRows<T extends CalItem>(rows: Sorted<T>[]): CellRow<T>[] {
+  return rows.sort((a, b) => compareEvents(a.head, b.head)).map((r) => r.row)
+}
+
+/** Rows the bars take: up to the lowest lane among them. */
+const maxLane = (bars: { lane: number }[]) => bars.reduce((m, p) => Math.max(m, p.lane + 1), 0)
+
+/** A bar placed in a lane of the week row, over columns `sc` through `ec`. */
+interface Placed<T extends CalItem> {
+  event: T
+  sc: number
+  ec: number
+  lane: number
+}
+
 /**
- * Lay out one week row. `capacity` is the number of event rows that fit into
- * a cell (Infinity = unlimited). When a day overflows, one row is reserved
- * for the "+N more" button and everything beyond is hidden.
+ * Lay out one week row (FR-07). `capacity` is the number of rows that fit into a cell (Infinity = unlimited).
+ * Bars take lanes, events first; below them each cell shows its items. Where a day has more than fit, its tasks
+ * become one bundle row first; only if the events still don't fit, one row is kept for "N more", hidden task bars
+ * join the bundle and hidden event bars and the events beyond go behind "N more". A one-row cell shows only "N more".
  */
 export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capacity: number): WeekRowLayout<T> {
   const n = days.length
@@ -141,57 +191,74 @@ export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capa
   const rowStart = startOfDay(first)
 
   const byDay = groupByDay(events, days)
-  const spanning = events
-    .filter((e) => isSpanning(e) && days.some((d) => overlapsDay(e, d)))
-    .sort(
-      (a, b) =>
-        firstDay(a).getTime() - firstDay(b).getTime() ||
-        differenceInCalendarDays(lastDay(b), firstDay(b)) - differenceInCalendarDays(lastDay(a), firstDay(a)) ||
-        compareEvents(a, b),
-    )
+  const spanning = events.filter((e) => isBar(e) && days.some((d) => overlapsDay(e, d))).sort(compareBars)
 
-  // Greedy lane assignment.
-  const laneEnds: number[] = []
-  const placed: { event: T; sc: number; ec: number; lane: number }[] = []
+  // Each bar takes the first lane free over all its columns: tasks fill the gaps the events leave.
+  const lanes: boolean[][] = []
+  const placed: Placed<T>[] = []
   for (const e of spanning) {
     const sc = Math.max(0, differenceInCalendarDays(firstDay(e), rowStart))
     const ec = Math.min(n - 1, differenceInCalendarDays(lastDay(e), rowStart))
-    let lane = laneEnds.findIndex((end) => end < sc)
-    if (lane === -1) {
-      lane = laneEnds.length
-      laneEnds.push(ec)
-    } else {
-      laneEnds[lane] = ec
+    const cols = Array.from({ length: ec - sc + 1 }, (_, i) => sc + i)
+    let taken = lanes.find((t) => cols.every((c) => !t[c]))
+    if (!taken) {
+      taken = []
+      lanes.push(taken)
     }
-    placed.push({ event: e, sc, ec, lane })
+    for (const c of cols) taken[c] = true
+    placed.push({ event: e, sc, ec, lane: lanes.indexOf(taken) })
   }
 
-  const limits: number[] = []
-  const cells: CellLayout<T>[] = days.map((day, c) => {
+  // Per column: which of the bars over it show.
+  const shows: ((p: Placed<T>) => boolean)[] = []
+  const cells = days.map((day, c): CellLayout<T> => {
     const all = byDay.get(dayKey(day)) ?? []
     const covering = placed.filter((p) => p.sc <= c && p.ec >= c)
-    const singles = all.filter((e) => !isSpanning(e))
-    const topRows = covering.reduce((m, p) => Math.max(m, p.lane + 1), 0)
-    if (topRows + singles.length <= capacity) {
-      limits[c] = Number.POSITIVE_INFINITY
-      return { day, all, singles, barRows: topRows, hidden: 0 }
+    const items = all.filter((e) => !isBar(e))
+    const eventItems = items.filter((e) => e.kind === 'event')
+    const taskItems = items.filter((e) => e.kind === 'task')
+    const topRows = maxLane(covering)
+    shows[c] = () => true
+
+    // Everything fits.
+    if (topRows + items.length <= capacity) {
+      return { day, all, rows: items.map(itemRow), barRows: topRows, more: [] }
     }
-    const limit = Math.max(0, capacity - 1)
-    limits[c] = limit
-    const visibleBars = covering.filter((p) => p.lane < limit)
-    const barRows = visibleBars.reduce((m, p) => Math.max(m, p.lane + 1), 0)
-    const singleSlots = Math.max(0, limit - barRows)
-    const shown = singles.slice(0, singleSlots)
-    const hidden = covering.length - visibleBars.length + singles.length - shown.length
-    return { day, all, singles: shown, barRows, hidden }
+    // The tasks yield: they share one row.
+    let bundleRow = taskItems.length > 0 ? 1 : 0
+    if (topRows + eventItems.length + bundleRow <= capacity) {
+      return { day, all, rows: sortedRows([...eventItems.map(sortedItem), ...taskRow(taskItems)]), barRows: topRows, more: [] }
+    }
+    // The events overflow too: one row for "N more", and one for the tasks, also where only a hidden task bar needs it.
+    let limit = capacity - 1 - bundleRow
+    if (bundleRow === 0 && covering.some((p) => p.event.kind === 'task' && p.lane >= limit)) {
+      bundleRow = 1
+      limit -= 1
+    }
+    // A one-row cell: "N more" for everything.
+    if (limit < 0) {
+      shows[c] = () => false
+      return { day, all, rows: [], barRows: 0, more: all }
+    }
+    const lanesShown = limit
+    const visible = (p: Placed<T>) => p.lane < lanesShown
+    shows[c] = visible
+    const onTop = covering.filter(visible)
+    const barRows = maxLane(onTop)
+    const shown = eventItems.slice(0, lanesShown - barRows)
+    // What stays in view; the day's other tasks share the bundle row, its other events go behind "N more".
+    const kept = new Set([...onTop.map((p) => p.event), ...shown])
+    const bundled = all.filter((e) => e.kind === 'task' && !kept.has(e))
+    const more = all.filter((e) => e.kind === 'event' && !kept.has(e))
+    return { day, all, rows: sortedRows([...shown.map(sortedItem), ...taskRow(bundled)]), barRows, more }
   })
 
-  // Split bars into runs of columns where their lane is visible.
+  // Split bars into runs of columns where they show.
   const bars: BarSegment<T>[] = []
   for (const p of placed) {
     let runStart = -1
     for (let c = p.sc; c <= p.ec + 1; c++) {
-      const visible = c <= p.ec && p.lane < (limits[c] ?? Number.POSITIVE_INFINITY)
+      const visible = c <= p.ec && (shows[c]?.(p) ?? true)
       if (visible && runStart === -1) runStart = c
       if (!visible && runStart !== -1) {
         const runEnd = c - 1
@@ -210,6 +277,10 @@ export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capa
   return { bars, cells }
 }
 
+/** Rows a cell fills: its bars, its rows, and one for "N more". */
+export function cellRowsUsed(cell: CellLayout): number {
+  return cell.barRows + cell.rows.length + (cell.more.length > 0 ? 1 : 0)
+}
 
 /** How many event rows fit into a month cell of the given pixel height. */
 export function cellCapacity(cellHeight: number, headerHeight: number, rowHeight: number): number {

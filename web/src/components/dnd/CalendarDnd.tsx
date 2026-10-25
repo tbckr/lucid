@@ -70,6 +70,7 @@ import {
 import { todoToInput } from '@/lib/tasks'
 import { useUi } from '@/stores/ui'
 import { DndStateContext } from './dndState'
+import { tileOf } from './tiles'
 
 function dragData(data: unknown): DragData | null {
   return data && typeof data === 'object' && 'type' in data ? (data as DragData) : null
@@ -157,18 +158,6 @@ function taskDrop(result: Extract<DropResult, { kind: 'task' }>): (TaskMove & Sc
 /** What refused a move of a repeat that no option allows (FR-17); undefined while one does. */
 function refusedBy(result: ScopeResult): ShiftReason | undefined {
   return result.options.length === 0 ? result.reason : undefined
-}
-
-/**
- * The tile of the event or task `key` in the views, to give the focus back to (NFR-27): an
- * event's tile is its button; a task's holds its checkbox and its title, which opens and drags it.
- */
-function tileOf(key: string): HTMLElement | null | undefined {
-  const tile = Array.from(document.querySelectorAll<HTMLElement>('[data-event-key], [data-task-key]')).find(
-    (el) => (el.dataset.eventKey ?? el.dataset.taskKey) === key,
-  )
-  if (tile?.dataset.taskKey === undefined) return tile
-  return tile.querySelector<HTMLElement>('button:not([role="checkbox"])')
 }
 
 /**

@@ -3,11 +3,22 @@ import { toCalTask } from './calendarTasks'
 import { dayKey, eachDay } from './dates'
 import { compareEvents, toCalEvent } from './events'
 import { apiEvent, todo } from '@/test/fixtures'
-import { agendaRows, cellCapacity, layoutDay, layoutWeekRow, timedSegments } from './layout'
+import { agendaRows, cellCapacity, cellRowsUsed, layoutDay, layoutWeekRow, timedSegments, type CellLayout } from './layout'
 
 const local = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).toISOString()
 const timed = (key: string, d: number, h1: number, m1: number, h2: number, m2: number, d2 = d) =>
   toCalEvent(apiEvent({ key, id: key, title: key, start: local(d, h1, m1), end: local(d2, h2, m2) }))
+const utc = (d: number) => new Date(Date.UTC(2026, 8, d)).toISOString()
+/** A task due at `due`, a date where `dueAllDay`. */
+const task = (key: string, due: string, dueAllDay = false) =>
+  toCalTask(todo({ id: key, title: key, due, dueAllDay }))!
+/** An all-day task from `from` through `through`. */
+const taskSpan = (key: string, from: number, through: number) =>
+  toCalTask(todo({ id: key, title: key, start: utc(from), startAllDay: true, due: utc(through), dueAllDay: true }))!
+/** A cell's rows by title, a bundle as `bundle(<titles>)`. */
+const rowsOf = (cell: CellLayout) =>
+  cell.rows.map((r) => (r.type === 'item' ? r.item.title : `bundle(${r.items.map((i) => i.title).join(',')})`))
+const titles = (items: { title: string }[]) => items.map((i) => i.title)
 const allDay = (key: string, from: number, toExclusive: number) =>
   toCalEvent(
     apiEvent({
@@ -74,6 +85,9 @@ describe('layoutDay', () => {
 
 describe('layoutWeekRow', () => {
   const days = eachDay({ start: new Date(2026, 8, 20), end: new Date(2026, 8, 27) }) // Sun 20 .. Sat 26
+  /** The bars shown over column `c`, by title, with their lanes. */
+  const barsOver = (bars: ReturnType<typeof layoutWeekRow>['bars'], c: number) =>
+    bars.filter((b) => b.startCol <= c && b.startCol + b.span > c).map((b) => [b.event.title, b.lane])
 
   it('assigns lanes to spanning events and keeps singles below', () => {
     const trip = allDay('trip', 21, 24) // Mon-Wed
@@ -86,8 +100,8 @@ describe('layoutWeekRow', () => {
     ])
     const wed = cells[3]!
     expect(wed.barRows).toBe(2)
-    expect(wed.singles.map((e) => e.key)).toEqual(['lunch'])
-    expect(wed.hidden).toBe(0)
+    expect(rowsOf(wed)).toEqual(['lunch'])
+    expect(wed.more).toEqual([])
     expect(cells[0]!.barRows).toBe(0)
   })
 
@@ -95,6 +109,126 @@ describe('layoutWeekRow', () => {
     const long = allDay('long', 18, 30)
     const [bar] = layoutWeekRow(days, [long], Infinity).bars
     expect(bar).toMatchObject({ startCol: 0, span: 7, continuesBefore: true, continuesAfter: true })
+  })
+
+  it('keeps everything when it fits', () => {
+    const off = allDay('off', 25, 26)
+    const { bars, cells } = layoutWeekRow(days, [task('t1', local(25, 11)), timed('e1', 25, 9, 0, 10, 0), off], 4)
+    const fri = cells[5]!
+    expect(cellRowsUsed(fri)).toBe(3)
+    expect(fri.more).toEqual([])
+    expect(rowsOf(fri)).toEqual(['e1', 't1'])
+    expect(barsOver(bars, 5)).toEqual([['off', 0]])
+  })
+
+  it('bundles tasks before hiding events', () => {
+    const events = [timed('e1', 25, 9, 0, 10, 0), timed('e2', 25, 10, 0, 11, 0)]
+    const tasks = [11, 12, 13].map((h, i) => task(`t${i + 1}`, local(25, h)))
+    const fri = layoutWeekRow(days, [...tasks, ...events], 4).cells[5]!
+    expect(rowsOf(fri)).toEqual(['e1', 'e2', 'bundle(t1,t2,t3)'])
+    expect(fri.more).toEqual([])
+    expect(cellRowsUsed(fri)).toBe(3)
+  })
+
+  it('sorts a bundle among the events by its earliest task', () => {
+    const events = [timed('e1', 25, 9, 0, 10, 0), timed('e2', 25, 10, 0, 11, 0)]
+    const tasks = [task('t1', local(25, 12)), task('t2', local(25, 9, 30))]
+    const fri = layoutWeekRow(days, [...tasks, ...events], 3).cells[5]!
+    expect(rowsOf(fri)).toEqual(['e1', 'bundle(t2,t1)', 'e2'])
+  })
+
+  it('a single task is not bundled', () => {
+    const events = [9, 10, 11].map((h) => timed(`e${h}`, 25, h, 0, h + 1, 0))
+    const fri = layoutWeekRow(days, [...events, task('t1', local(25, 12))], 3).cells[5]!
+    expect(rowsOf(fri)).toEqual(['e9', 't1'])
+    expect(titles(fri.more)).toEqual(['e10', 'e11'])
+    expect(cellRowsUsed(fri)).toBe(3)
+  })
+
+  it('single-day all-day tasks are rows, not bars', () => {
+    const rent = task('rent', utc(25), true)
+    const chore = taskSpan('chore', 22, 23)
+    const { bars, cells } = layoutWeekRow(days, [rent, chore], Infinity)
+    expect(bars.map((b) => [b.event.title, b.startCol, b.span])).toEqual([['chore', 2, 2]])
+    expect(rowsOf(cells[5]!)).toEqual(['rent'])
+    expect(cells[5]!.barRows).toBe(0)
+  })
+
+  it('lanes go to events first', () => {
+    const chore = taskSpan('chore', 22, 23) // Tue-Wed
+    const trip = allDay('trip', 23, 26) // Wed-Fri
+    const { bars } = layoutWeekRow(days, [chore, trip], Infinity)
+    expect(Object.fromEntries(bars.map((b) => [b.event.title, b.lane]))).toEqual({ trip: 0, chore: 1 })
+  })
+
+  it('gives a task bar a lane an event leaves free', () => {
+    const early = taskSpan('early', 20, 21) // Sun-Mon
+    const trip = allDay('trip', 23, 26) // Wed-Fri
+    const { bars } = layoutWeekRow(days, [early, trip], Infinity)
+    expect(Object.fromEntries(bars.map((b) => [b.event.title, b.lane]))).toEqual({ trip: 0, early: 0 })
+  })
+
+  it('hidden task bars join the bundle, hidden event bars go behind more', () => {
+    const events = [allDay('a', 24, 27), allDay('b', 24, 27), allDay('c', 25, 26)] // lanes 0, 1, 2 over Friday
+    const chore = taskSpan('chore', 25, 26) // Fri-Sat, lane 3
+    const tasks = [task('t1', local(25, 9)), task('t2', local(25, 10))]
+    const { bars, cells } = layoutWeekRow(days, [...tasks, chore, ...events], 4)
+    const fri = cells[5]!
+    expect(barsOver(bars, 5)).toEqual([
+      ['a', 0],
+      ['b', 1],
+    ])
+    expect(fri.barRows).toBe(2)
+    expect(rowsOf(fri)).toEqual(['bundle(chore,t1,t2)'])
+    expect(titles(fri.more)).toEqual(['c'])
+    expect(cellRowsUsed(fri)).toBe(4)
+    // Saturday has room: the task bar shows there, as a run of its own.
+    expect(bars.filter((b) => b.event.title === 'chore').map((b) => [b.startCol, b.span, b.lane])).toEqual([[6, 1, 3]])
+    expect(cells[6]!.more).toEqual([])
+  })
+
+  it('makes room for a bundle when only a hidden task bar needs one', () => {
+    const events = [allDay('a', 25, 26), allDay('b', 25, 26)] // lanes 0, 1
+    const chore = taskSpan('chore', 25, 26) // lane 2
+    const lunch = timed('lunch', 25, 12, 0, 13, 0)
+    const { bars, cells } = layoutWeekRow(days, [chore, lunch, ...events], 3)
+    const fri = cells[5]!
+    expect(barsOver(bars, 5)).toEqual([['a', 0]])
+    expect(rowsOf(fri)).toEqual(['chore'])
+    expect(titles(fri.more)).toEqual(['b', 'lunch'])
+  })
+
+  it('falls back to one more for everything in a one-row cell', () => {
+    const off = allDay('off', 25, 26)
+    const { bars, cells } = layoutWeekRow(days, [task('t1', local(25, 9)), off], 1)
+    const fri = cells[5]!
+    expect(fri.rows).toEqual([])
+    expect(fri.barRows).toBe(0)
+    expect(titles(fri.more)).toEqual(['off', 't1'])
+    expect(barsOver(bars, 5)).toEqual([])
+    expect(cellRowsUsed(fri)).toBe(1)
+  })
+
+  it('bundles a one-row cell that has only tasks', () => {
+    const fri = layoutWeekRow(days, [task('t1', local(25, 9)), task('t2', local(25, 10))], 1).cells[5]!
+    expect(rowsOf(fri)).toEqual(['bundle(t1,t2)'])
+    expect(fri.more).toEqual([])
+  })
+
+  it('cellRowsUsed counts the more row', () => {
+    const e = timed('e', 25, 9, 0, 10, 0)
+    const cell = (more: ReturnType<typeof timed>[]): CellLayout => ({
+      day: new Date(2026, 8, 25),
+      all: [e],
+      rows: [
+        { type: 'item', item: e },
+        { type: 'bundle', items: [e, e] },
+      ],
+      barRows: 1,
+      more,
+    })
+    expect(cellRowsUsed(cell([e]))).toBe(4)
+    expect(cellRowsUsed(cell([]))).toBe(3)
   })
 
   it('hides overflow behind "+N more" and splits bars at hidden lanes', () => {
@@ -105,24 +239,27 @@ describe('layoutWeekRow', () => {
     const mon = cells[1]!
     const tue = cells[2]!
     // Monday: 2 bars fit in 3 rows.
-    expect(mon.hidden).toBe(0)
+    expect(mon.more).toEqual([])
     // Tuesday: 2 bars + 3 singles > 3 → keep 2 rows, hide the rest.
-    expect(tue.hidden).toBe(3)
-    expect(tue.singles).toHaveLength(0)
+    expect(titles(tue.more)).toEqual(['s9', 's10', 's11'])
+    expect(tue.rows).toHaveLength(0)
     expect(tue.all).toHaveLength(5)
     // Bar b (lane 1) is still visible on Tuesday because limit is 2.
     expect(bars.filter((x) => x.event.key === 'b').map((x) => [x.startCol, x.span])).toEqual([[1, 2]])
   })
 
   it('splits a bar where its lane is hidden', () => {
-    const top = allDay('top', 21, 22) // Mon lane 0
-    const wide = allDay('wide', 20, 24) // Sun-Wed lane? sorted first → lane 0
-    const other = allDay('other', 21, 23) // Mon-Tue lane 1
+    const top = allDay('top', 21, 22) // Mon, lane 2
+    const wide = allDay('wide', 20, 24) // Sun-Wed, sorted first → lane 0
+    const other = allDay('other', 21, 23) // Mon-Tue, lane 1
     const tueSingles = [9, 10].map((h) => timed(`t${h}`, 22, h, 0, h + 1, 0))
     const res = layoutWeekRow(days, [top, wide, other, ...tueSingles], 2)
     // capacity 2 → overflowing days only show lane 0.
     expect(res.bars.find((b) => b.event.key === 'wide')).toMatchObject({ startCol: 0, span: 4, lane: 0 })
-    expect(res.cells[2]!.hidden).toBeGreaterThan(0)
+    expect(titles(res.cells[1]!.more)).toEqual(['other', 'top'])
+    expect(titles(res.cells[2]!.more)).toEqual(['other', 't9', 't10'])
+    // Wednesday has room again: other ends Tuesday, so nothing of it shows.
+    expect(res.bars.filter((b) => b.event.key !== 'wide')).toEqual([])
   })
 
   it('handles empty input', () => {
@@ -153,20 +290,18 @@ describe('agendaRows', () => {
 })
 
 describe('tasks among events', () => {
-  const task = (key: string, d: number, h: number) =>
-    toCalTask(todo({ id: key, title: key, due: new Date(2026, 8, d, h).toISOString() }))!
-
   it('puts events before tasks with the same start and length', () => {
     const event = timed('B', 23, 12, 0, 12, 30)
-    const sorted = [task('A', 23, 12), event].sort(compareEvents)
+    const sorted = [task('A', local(23, 12)), event].sort(compareEvents)
     expect(sorted.map((e) => e.title)).toEqual(['B', 'A'])
   })
 
-  it('counts tasks in "+N more"', () => {
+  it('bundles tasks instead of counting them in more', () => {
     const days = eachDay({ start: new Date(2026, 8, 20), end: new Date(2026, 8, 27) })
-    const { cells } = layoutWeekRow(days, [task('rent', 23, 12), timed('a', 23, 9, 0, 9, 30), timed('b', 23, 10, 0, 10, 30)], 2)
+    const tasks = [task('rent', local(23, 12)), task('call', local(23, 14))]
+    const { cells } = layoutWeekRow(days, [...tasks, timed('a', 23, 9, 0, 9, 30), timed('b', 23, 10, 0, 10, 30)], 2)
     const wed = cells[3]!
-    expect(wed.hidden).toBe(2)
-    expect(wed.singles.map((e) => e.key)).toEqual(['a'])
+    expect(titles(wed.more)).toEqual(['a', 'b'])
+    expect(rowsOf(wed)).toEqual(['bundle(rent,call)'])
   })
 })

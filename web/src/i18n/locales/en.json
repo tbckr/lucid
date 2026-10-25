@@ -123,8 +123,6 @@
     "labelAt_other": "{{count}} tasks at {{time}}, {{date}}"
   },
   "week": {
-    "expandAllDay": "Show all all-day events",
-    "collapseAllDay": "Show fewer all-day events",
     "newAllDay": "New all-day event on {{date}}",
     "newAt": "New event at {{time}}"
   },

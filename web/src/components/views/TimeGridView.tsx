@@ -1,28 +1,33 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addDays, format, isSameDay } from 'date-fns'
-import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DraftBlock } from '@/components/create/DraftBlock'
 import { useDndState, useScopePreview } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
+import { TaskBundle } from '@/components/tasks/TaskBundle'
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
 import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
-import { HOUR_HEIGHT, PX_PER_MINUTE, type DropData } from '@/lib/dnd'
+import { HOUR_HEIGHT, PX_PER_MINUTE, type DragBinding, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
 import { formatHour, formatShortTime, type FormatPrefs } from '@/lib/format'
-import { layoutDay, layoutWeekRow, timedSegments } from '@/lib/layout'
+import { cellRowsUsed, layoutDay, layoutWeekRow, timedSegments, type BarSegment, type CellLayout } from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useUi, type CreateState } from '@/stores/ui'
+import { MoreButton } from './MoreButton'
 import { useDragCreate } from './useDragCreate'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
+/** Rows of the all-day row at most: it never pushes the time grid away (FR-07). */
 const ALL_DAY_ROWS = 3
+const ROW_PX = 22
+/** Top of a row of the all-day row, below its 3 px padding. */
+const rowTop = (row: number) => 3 + row * ROW_PX
 const DAY_MS = 24 * 3600 * 1000
 
 /** Events shown in the all-day row: all-day or at least 24 hours long. */
@@ -42,29 +47,20 @@ interface Props {
 
 export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, calendarOf }: Props) {
   const { t } = useTranslation()
-  const { pendingTodos } = useDndState()
   const setDate = useUi((s) => s.setDate)
   const setView = useUi((s) => s.setView)
   const openCreate = useUi((s) => s.openCreate)
   // Times, not the preview: typing its title must not re-render the grid, only the draft (ColumnDraft).
   const allDayStart = useUi((s) => (s.createPreview?.allDay ? s.createPreview.startsAt.getTime() : null))
   const allDayEnd = useUi((s) => (s.createPreview?.allDay ? s.createPreview.endsAt.getTime() : null))
-  const [expanded, setExpanded] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // A dropped event of a series shows at its new place while it waits for its answer (FR-17).
   const shown = useScopePreview(events)
   const allDayEvents = useMemo(() => shown.filter(inAllDayRow), [shown])
   const timedEvents = useMemo(() => shown.filter((e) => !inAllDayRow(e)), [shown])
-  const allDay = useMemo(
-    () => layoutWeekRow(days, allDayEvents, expanded ? Number.POSITIVE_INFINITY : ALL_DAY_ROWS),
-    [days, allDayEvents, expanded],
-  )
-  const overflowing = allDay.cells.some((c) => c.hidden > 0)
-  const lanes = Math.max(
-    1,
-    allDay.bars.reduce((m, b) => Math.max(m, b.lane + 1), 0) + (overflowing ? 1 : 0),
-  )
+  const allDay = useMemo(() => layoutWeekRow(days, allDayEvents, ALL_DAY_ROWS), [days, allDayEvents])
+  const allDayHeight = Math.max(1, ...allDay.cells.map(cellRowsUsed)) * ROW_PX + 6
 
   // Scroll to ~08:00 on first render (and when switching between week/day).
   useLayoutEffect(() => {
@@ -74,8 +70,6 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
 
   const cols = `3.5rem repeat(${days.length}, minmax(0, 1fr))`
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
-  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
-  const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -111,29 +105,17 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
 
       {/* All-day row */}
       <div className="grid shrink-0 overflow-y-hidden border-b border-grid [scrollbar-gutter:stable]" style={{ gridTemplateColumns: cols }}>
-        <div className="flex flex-col items-end justify-between gap-1 py-1 pr-2 text-[0.6875rem] text-muted-foreground">
-          <span>{t('event.allDay')}</span>
-          {(overflowing || expanded) && (
-            <button
-              type="button"
-              onClick={() => {
-                setExpanded((v) => !v)
-              }}
-              aria-expanded={expanded}
-              aria-label={expanded ? t('week.collapseAllDay') : t('week.expandAllDay')}
-              className="rounded-sm p-0.5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {expanded ? <ChevronUpIcon className="size-3.5" aria-hidden /> : <ChevronDownIcon className="size-3.5" aria-hidden />}
-            </button>
-          )}
-        </div>
-        {allDay.cells.map(({ day: d, hidden }, c) => (
+        <div className="py-1 pr-2 text-right text-[0.6875rem] text-muted-foreground">{t('event.allDay')}</div>
+        {allDay.cells.map((cell, c) => (
           <AllDayCell
-            key={dayKey(d)}
-            day={d}
-            height={lanes * 22 + 6}
-            label={t('week.newAllDay', { date: format(d, 'PPPP', { locale: prefs.locale }) })}
-            draft={allDayStart !== null && allDayEnd !== null && allDayStart < addDays(d, 1).getTime() && allDayEnd > d.getTime()}
+            key={dayKey(cell.day)}
+            cell={cell}
+            bars={allDay.bars.filter((b) => b.startCol === c)}
+            height={allDayHeight}
+            draft={allDayStart !== null && allDayEnd !== null && allDayStart < addDays(cell.day, 1).getTime() && allDayEnd > cell.day.getTime()}
+            prefs={prefs}
+            colorsOf={colorsOf}
+            readOnly={readOnly}
             onCreate={(day, target) => {
               const start = atMinutes(day, 0)
               openCreate({
@@ -142,62 +124,7 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
                 returnFocus: target,
               })
             }}
-          >
-            {allDay.bars
-              .filter((b) => b.startCol === c)
-              .map((b) => {
-                const e = b.event
-                const style = { top: 3 + b.lane * 22, left: 2, width: `calc(${b.span * 100}% + ${b.span - 1}px - 4px)` }
-                return (
-                  <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
-                    {e.kind === 'task' ? (
-                      <TaskBar
-                        task={e}
-                        colors={colorsOf(e.calendarId)}
-                        prefs={prefs}
-                        readOnly={readOnly(e.calendarId)}
-                        drag={{
-                          id: `allday:${e.key}:${dayKey(d)}`,
-                          data: { type: 'event', event: e, originDay: d },
-                          disabled: taskDisabled(e),
-                        }}
-                        continuesBefore={b.continuesBefore}
-                        continuesAfter={b.continuesAfter}
-                        className="absolute z-10"
-                        style={style}
-                      />
-                    ) : (
-                      <EventBar
-                        event={e}
-                        colors={colorsOf(e.calendarId)}
-                        prefs={prefs}
-                        continuesBefore={b.continuesBefore}
-                        continuesAfter={b.continuesAfter}
-                        drag={{
-                          id: `allday:${e.key}:${dayKey(d)}`,
-                          data: { type: 'event', event: e, originDay: d },
-                          disabled: readOnly(e.calendarId),
-                        }}
-                        className="absolute z-10"
-                        style={style}
-                      />
-                    )}
-                  </EventBoundary>
-                )
-              })}
-            {hidden > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setExpanded(true)
-                }}
-                className="absolute inset-x-1 z-10 h-5 rounded-sm px-1 text-left text-xs font-semibold text-muted-foreground hover:bg-muted"
-                style={{ top: 3 + (ALL_DAY_ROWS - 1) * 22 }}
-              >
-                {t('month.more', { count: hidden })}
-              </button>
-            )}
-          </AllDayCell>
+          />
         ))}
       </div>
 
@@ -234,29 +161,92 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   )
 }
 
+/**
+ * A day of the all-day row: its bars, below them its single-day tasks, bundled where they don't fit, and "N more" for
+ * the events that still don't (FR-07).
+ */
 function AllDayCell({
-  day,
+  cell,
+  bars,
   height,
-  label,
   draft,
+  prefs,
+  colorsOf,
+  readOnly,
   onCreate,
-  children,
 }: {
-  day: Date
+  cell: CellLayout
+  /** The bars starting in this cell. */
+  bars: BarSegment[]
   height: number
-  label: string
   /** The create popover's all-day entry covers this day. */
   draft: boolean
+  prefs: FormatPrefs
+  colorsOf: (id: string) => EventColors
+  readOnly: (calendarId: string) => boolean
   onCreate: (day: Date, target: HTMLElement) => void
-  children: React.ReactNode
 }) {
+  const { t } = useTranslation()
+  const { pendingTodos } = useDndState()
+  const { day } = cell
+  const key = dayKey(day)
   const { setNodeRef, isOver } = useDroppable({
-    id: `alldaycell:${dayKey(day)}`,
+    id: `alldaycell:${key}`,
     data: { type: 'day', day } satisfies DropData,
   })
+  // The cell is where the lists of its bundle and "N more" point and give the focus to once their button is gone.
+  const cellRef = useRef<HTMLDivElement | null>(null)
+  const ref = useCallback(
+    (el: HTMLDivElement | null) => {
+      setNodeRef(el)
+      cellRef.current = el
+    },
+    [setNodeRef],
+  )
+  const date = format(day, 'PPPP', { locale: prefs.locale })
+  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
+  const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
+  const drag = (e: CalItem, disabled: boolean): DragBinding => ({
+    id: `allday:${e.key}:${key}`,
+    data: { type: 'event', event: e, originDay: day },
+    disabled,
+  })
+  /** An entry of the cell, as a bar `span` columns wide from `row`. */
+  const entry = (e: CalItem, row: number, span = 1, continuesBefore = false, continuesAfter = false) => {
+    const style = { top: rowTop(row), left: 2, width: `calc(${span * 100}% + ${span - 1}px - 4px)` }
+    return (
+      <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
+        {e.kind === 'task' ? (
+          <TaskBar
+            task={e}
+            colors={colorsOf(e.calendarId)}
+            prefs={prefs}
+            readOnly={readOnly(e.calendarId)}
+            drag={drag(e, taskDisabled(e))}
+            continuesBefore={continuesBefore}
+            continuesAfter={continuesAfter}
+            className="absolute z-10"
+            style={style}
+          />
+        ) : (
+          <EventBar
+            event={e}
+            colors={colorsOf(e.calendarId)}
+            prefs={prefs}
+            continuesBefore={continuesBefore}
+            continuesAfter={continuesAfter}
+            drag={drag(e, readOnly(e.calendarId))}
+            className="absolute z-10"
+            style={style}
+          />
+        )}
+      </EventBoundary>
+    )
+  }
+
   return (
     <div
-      ref={setNodeRef}
+      ref={ref}
       data-draft={draft ? '' : undefined}
       className={cn('relative border-l border-grid', (isOver || draft) && 'bg-primary/8')}
       style={{ height }}
@@ -264,13 +254,47 @@ function AllDayCell({
       <button
         type="button"
         tabIndex={-1}
-        aria-label={label}
+        aria-label={t('week.newAllDay', { date })}
         onClick={(e) => {
           onCreate(day, e.currentTarget)
         }}
         className="absolute inset-0 cursor-default outline-none"
       />
-      {children}
+      {bars.map((b) => entry(b.event, b.lane, b.span, b.continuesBefore, b.continuesAfter))}
+      {cell.rows.map((row, i) => {
+        if (row.type === 'item') return entry(row.item, cell.barRows + i)
+        const tasks = row.items.filter((e): e is CalTask => e.kind === 'task')
+        return (
+          <TaskBundle
+            key="bundle"
+            variant="tile"
+            id={`bundle:allday:${key}`}
+            day={day}
+            tasks={tasks}
+            drag="event"
+            home={() => cellRef.current}
+            colorsOf={colorsOf}
+            label={t('bundle.label', { count: tasks.length, date })}
+            // Rounded like the bars around it.
+            className="absolute inset-x-1 z-10 h-5 rounded-sm"
+            style={{ top: rowTop(cell.barRows + i) }}
+          />
+        )
+      })}
+      {cell.more.length > 0 && (
+        <MoreButton
+          variant="text"
+          id={`more:allday:${key}`}
+          day={day}
+          items={cell.more}
+          count={cell.more.length}
+          drag="event"
+          home={() => cellRef.current}
+          label={t('more.label', { count: cell.more.length, date })}
+          className="absolute inset-x-1 z-10 w-auto"
+          style={{ top: rowTop(cellRowsUsed(cell) - 1) }}
+        />
+      )}
     </div>
   )
 }

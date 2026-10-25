@@ -7,12 +7,13 @@ import { useDndState, useScopePreview } from '@/components/dnd/dndState'
 import { CorruptedEvent } from '@/components/events/CorruptedEvent'
 import { EventBoundary } from '@/components/events/EventBoundary'
 import { EventBar, EventChip } from '@/components/events/EventItems'
+import { TaskBundle } from '@/components/tasks/TaskBundle'
 import { TaskBar, TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type CorruptedItem, type Calendar } from '@/lib/api/schemas'
 import { canDrag, type CalTask } from '@/lib/calendarTasks'
 import { dayKey, monthGrid, stepDate } from '@/lib/dates'
-import { type DropData } from '@/lib/dnd'
+import { type DragBinding, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
 import { weekdayNames, type FormatPrefs } from '@/lib/format'
 import { cellCapacity, layoutWeekRow, type CellLayout, type WeekRowLayout } from '@/lib/layout'
@@ -322,6 +323,7 @@ function DayCell({
     [setNodeRef],
   )
   const first = day.getDate() === 1
+  const date = format(day, 'PPPP', { locale: prefs.locale })
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
   // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
   const taskDisabled = (task: CalTask) => readOnly(task.calendarId) || !canDrag(task) || pendingTodos.has(task.todo.id)
@@ -358,7 +360,7 @@ function DayCell({
             e.stopPropagation()
             onOpenDay(day)
           }}
-          aria-label={t('month.openDay', { date: format(day, 'PPPP', { locale: prefs.locale }) })}
+          aria-label={t('month.openDay', { date })}
           className={cn(
             'tabular inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 font-display text-[0.8125rem] font-semibold outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring',
             !inMonth && 'text-muted-foreground font-medium',
@@ -411,45 +413,68 @@ function DayCell({
       })}
 
       <div className="flex flex-col gap-0.5 px-1" style={{ paddingTop: cell.barRows * 22 }}>
-        {cell.singles.map((e) => (
-          <EventBoundary key={e.key} item={e}>
-            {e.kind === 'task' ? (
-              <TaskChip
-                task={e}
-                colors={colorsOf(e.calendarId)}
-                prefs={prefs}
-                readOnly={readOnly(e.calendarId)}
-                drag={{
-                  id: `chip:${e.key}:${key}`,
-                  data: { type: 'event', event: e, originDay: day },
-                  disabled: taskDisabled(e),
-                }}
+        {cell.rows.map((row) => {
+          if (row.type === 'bundle') {
+            const tasks = row.items.filter((e): e is CalTask => e.kind === 'task')
+            return (
+              <TaskBundle
+                key="bundle"
+                variant="chip"
+                id={`bundle:${key}`}
+                day={day}
+                tasks={tasks}
+                drag="event"
+                home={() => cellRef.current}
+                colorsOf={colorsOf}
+                label={t('bundle.label', { count: tasks.length, date })}
+                // The rings are filled and haloed in the color of the cell they sit on.
+                className={cn(!inMonth && '[--host:var(--outside)]')}
               />
-            ) : (
-              <EventChip
-                event={e}
-                colors={colorsOf(e.calendarId)}
-                prefs={prefs}
-                drag={{
-                  id: `chip:${e.key}:${key}`,
-                  data: { type: 'event', event: e, originDay: day },
-                  disabled: readOnly(e.calendarId),
-                }}
-              />
-            )}
-          </EventBoundary>
-        ))}
+            )
+          }
+          const e = row.item
+          const drag = (disabled: boolean): DragBinding => ({
+            id: `chip:${e.key}:${key}`,
+            data: { type: 'event', event: e, originDay: day },
+            disabled,
+          })
+          return (
+            <EventBoundary key={e.key} item={e}>
+              {e.kind === 'task' ? (
+                e.allDay ? (
+                  <TaskBar
+                    task={e}
+                    colors={colorsOf(e.calendarId)}
+                    prefs={prefs}
+                    readOnly={readOnly(e.calendarId)}
+                    drag={drag(taskDisabled(e))}
+                  />
+                ) : (
+                  <TaskChip
+                    task={e}
+                    colors={colorsOf(e.calendarId)}
+                    prefs={prefs}
+                    readOnly={readOnly(e.calendarId)}
+                    drag={drag(taskDisabled(e))}
+                  />
+                )
+              ) : (
+                <EventChip event={e} colors={colorsOf(e.calendarId)} prefs={prefs} drag={drag(readOnly(e.calendarId))} />
+              )}
+            </EventBoundary>
+          )
+        })}
         {corrupted.length > 0 && <CorruptedEvent reason={corrupted.map((c) => c.reason).join('\n')} />}
-        {cell.hidden > 0 && (
+        {cell.more.length > 0 && (
           <MoreButton
             variant="text"
             id={`more:${key}`}
             day={day}
-            items={cell.all}
-            count={cell.hidden}
+            items={cell.more}
+            count={cell.more.length}
             drag="event"
             home={() => cellRef.current}
-            label={t('more.label', { count: cell.hidden, date: format(day, 'PPPP', { locale: prefs.locale }) })}
+            label={t('more.label', { count: cell.more.length, date })}
           />
         )}
       </div>

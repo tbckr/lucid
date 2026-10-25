@@ -146,6 +146,61 @@ describe('TimeGridView', () => {
     const cell = screen.getByRole('button', { name: /New all-day event/ }).parentElement!
     expect(within(cell).getByRole('checkbox', { name: 'Completed: Pay rent' })).toBeInTheDocument()
   })
+
+  /** An all-day event on Sept 25. */
+  const allDayEvent = (title: string) =>
+    toCalEvent(apiEvent({ id: title, key: title, title, allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }))
+  /** The all-day row's cell of Sept 25. */
+  const allDayCell = () => screen.getByRole('button', { name: /^New all-day event/ }).parentElement!
+
+  it('caps the all-day row at three rows without expanding (FR-07)', () => {
+    const events = ['A', 'B', 'C', 'D'].map(allDayEvent)
+    renderDay(events)
+    const cell = allDayCell()
+    expect(cell).toHaveStyle({ height: `${3 * 22 + 6}px` })
+    expect(Array.from(cell.querySelectorAll<HTMLElement>('[data-event-key]')).map((el) => el.dataset.eventKey)).toEqual(['A', 'B'])
+    expect(screen.queryByRole('button', { name: 'Show all all-day events' })).toBeNull()
+    const more = within(cell).getByRole('button', { name: '2 more, Friday, September 25th, 2026' })
+    expect(more).toHaveTextContent('2 more')
+    expect(more).toHaveStyle({ top: `${3 + 2 * 22}px` })
+    fireEvent.click(more)
+    const overflow = useUi.getState().overflow
+    expect(overflow?.items.map((i) => i.key)).toEqual(['C', 'D'])
+    expect(overflow?.home).toBe(cell)
+    act(() => {
+      useUi.getState().openOverflow(null)
+    })
+  })
+
+  it('bundles all-day tasks in the all-day row (FR-07)', () => {
+    // By title, as they show on one day.
+    const tasks = ['Call', 'Mail', 'Rent'].map(
+      (title, i) => toCalTask(todo({ id: `t${i}`, title, due: '2026-09-25T00:00:00Z', dueAllDay: true }))!,
+    )
+    renderDay([...tasks, allDayEvent('A'), allDayEvent('B')])
+    const cell = allDayCell()
+    expect(cell).toHaveStyle({ height: `${3 * 22 + 6}px` })
+    expect(cell.querySelectorAll('[data-event-key]')).toHaveLength(2)
+    expect(cell.querySelector('[data-task-key]')).toBeNull()
+    const bundle = within(cell).getByRole('button', { name: '3 tasks, Friday, September 25th, 2026' })
+    // A row on Mist, in the third row (FR-07).
+    expect(bundle).toHaveClass('bg-muted')
+    expect(bundle).toHaveStyle({ top: `${3 + 2 * 22}px` })
+    expect(within(cell).queryByRole('button', { name: /^\d+ more, / })).toBeNull()
+    fireEvent.click(bundle)
+    expect(useUi.getState().overflow?.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key))
+    act(() => {
+      useUi.getState().openOverflow(null)
+    })
+  })
+
+  it('grows the all-day row with its rows when there is room', () => {
+    renderDay([toCalTask(todo({ id: 't1', title: 'Rent', due: '2026-09-25T00:00:00Z', dueAllDay: true }))!, allDayEvent('A')])
+    const cell = allDayCell()
+    expect(cell).toHaveStyle({ height: `${2 * 22 + 6}px` })
+    expect(cell.querySelector('[data-task-key="task:t1"]')).toHaveStyle({ top: `${3 + 22}px` })
+  })
+
   it('picks up a timed task to move it in the grid (FR-10)', () => {
     const call = toCalTask(todo({ id: 't1', title: 'Call', due: '2026-09-25T08:00:00Z' }))!
     const onDragStart = vi.fn<(e: DragStartEvent) => void>()
