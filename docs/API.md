@@ -86,8 +86,8 @@ login request can carry a CSRF token.
 When not logged in: `{ "authenticated": false, "csrfToken": "...", "version": "1.2.0" }`.
 
 `version` is the version of the running binary, as printed by `lucid --version`
-(`dev` for builds without version information). The SPA shows it on the login
-page and in the settings.
+(`dev` for builds without version information, `nix-` and the commit for Nix
+builds). The SPA shows it on the login page and in the settings.
 
 ### `POST /api/v1/auth/login`
 

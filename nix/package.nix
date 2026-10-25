@@ -92,10 +92,12 @@ buildGoModule {
 
   env.CGO_ENABLED = 0;
 
+  # The nix- prefix marks the version as a Nix build wherever it appears
+  # (--version, the SPA, the report, the user agent).
   ldflags = [
     "-s"
     "-w"
-    "-X main.version=${version}"
+    "-X main.version=nix-${version}"
     "-X main.commit=${commit}"
     "-X main.date=${date}"
   ];

@@ -379,7 +379,8 @@ each release once it is published, pre-releases excepted, so
 `nix flake update` brings you the next one. To stay on one release, use its
 tag (`github:tbckr/lucid/v1.2.0`); without a ref, `github:tbckr/lucid` is the
 development state of `main`. A flake cannot see tags, so `lucid --version` of
-a Nix build shows the commit instead of the version number.
+a Nix build shows `nix-` and the commit instead of the version number
+(`nix-a10d937`).
 
 <details>
 <summary><strong>NixOS</strong></summary>
