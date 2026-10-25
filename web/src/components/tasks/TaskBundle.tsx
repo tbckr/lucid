@@ -78,6 +78,8 @@ export function TaskBundle({
   const full = ringColors(tasks, (calendarId) => colorsOf(calendarId).solid, RINGS)
   const colors = narrow ? full.slice(0, COMPACT_RINGS) : full
   const words = t('bundle.count', { count: tasks.length })
+  // Done, its rings and count dim like a done task; the button doesn't, so its focus ring keeps its strength (NFR-27).
+  const dim = tasks.every(isDoneTask) && 'opacity-60'
   return (
     <button
       ref={button}
@@ -91,12 +93,11 @@ export function TaskBundle({
         variant === 'tile'
           ? 'rounded-md bg-muted [--host:var(--muted)] hover:bg-border hover:[--host:var(--border)]'
           : 'h-5 w-full rounded-sm [--host:var(--surface)] hover:bg-muted hover:[--host:var(--muted)]',
-        tasks.every(isDoneTask) && 'opacity-60',
         className,
       )}
       style={style}
     >
-      <span aria-hidden className="flex shrink-0 items-center">
+      <span aria-hidden className={cn('flex shrink-0 items-center', dim)}>
         {colors.map((color, i) => (
           <span
             key={i}
@@ -106,7 +107,7 @@ export function TaskBundle({
           />
         ))}
       </span>
-      <span className="truncate">{narrow ? tasks.length : words}</span>
+      <span className={cn('truncate', dim)}>{narrow ? tasks.length : words}</span>
       {/* The full rings and words, out of sight, to measure them by; the words as generated content, out of its text. */}
       <span
         ref={sizer}

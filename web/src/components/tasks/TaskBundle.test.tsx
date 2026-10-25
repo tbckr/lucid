@@ -138,19 +138,26 @@ describe('TaskBundle', () => {
   })
 
   it('dims when every task is done', () => {
+    /** Whether its rings and count are dimmed. */
+    const dimmed = () =>
+      Array.from(screen.getByRole('button').children)
+        .filter((el) => !el.hasAttribute('data-sizer'))
+        .every((el) => el.classList.contains('opacity-60'))
     const done = (id: string) => task(id, { status: 'COMPLETED' })
     const doneRepeat = occurrenceTask(occurrence({ state: 'done' }), todo({ recurring: true }))
     if (!doneRepeat) throw new Error('an occurrence with a due date has a place')
     const { unmount } = renderBundle({ tasks: [task('1'), done('2'), done('3')] })
-    expect(screen.getByRole('button')).not.toHaveClass('opacity-60')
+    expect(dimmed()).toBe(false)
     unmount()
     const planned = occurrenceTask(occurrence({ state: 'upcoming' }), todo({ recurring: true }))
     if (!planned) throw new Error('an occurrence with a due date has a place')
     const second = renderBundle({ tasks: [done('1'), planned] })
-    expect(screen.getByRole('button')).not.toHaveClass('opacity-60')
+    expect(dimmed()).toBe(false)
     second.unmount()
     renderBundle({ tasks: [done('1'), doneRepeat, task('3', { status: 'CANCELLED' })] })
-    expect(screen.getByRole('button')).toHaveClass('opacity-60')
+    expect(dimmed()).toBe(true)
+    // Its focus ring keeps its full strength (NFR-27): the button itself does not dim.
+    expect(screen.getByRole('button')).not.toHaveClass('opacity-60')
   })
 
   it('opens the list with its tasks, and a second click closes it', async () => {
