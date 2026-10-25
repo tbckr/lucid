@@ -41,6 +41,12 @@ const ALL_DAY_ROWS = 3
 const ROW_PX = 22
 /** Top of a row of the all-day row, below its 3 px padding. */
 const rowTop = (row: number) => 3 + row * ROW_PX
+/** The box of an entry of the all-day row `span` days wide from `row`; its bundle and "N more" line up with its bars. */
+const rowBox = (row: number, span = 1): CSSProperties => ({
+  top: rowTop(row),
+  left: 2,
+  width: `calc(${span * 100}% + ${span - 1}px - 4px)`,
+})
 const DAY_MS = 24 * 3600 * 1000
 
 /** Events shown in the all-day row: all-day or at least 24 hours long. */
@@ -239,7 +245,7 @@ function AllDayCell({
   })
   /** An entry of the cell, as a bar `span` columns wide from `row`. */
   const entry = (e: CalItem, row: number, span = 1, continuesBefore = false, continuesAfter = false) => {
-    const style = { top: rowTop(row), left: 2, width: `calc(${span * 100}% + ${span - 1}px - 4px)` }
+    const style = rowBox(row, span)
     return (
       <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
         {e.kind === 'task' ? (
@@ -303,8 +309,8 @@ function AllDayCell({
             colorsOf={colorsOf}
             label={t('bundle.label', { count: tasks.length, date })}
             // Rounded like the bars around it.
-            className="absolute inset-x-1 z-10 h-5 rounded-sm"
-            style={{ top: rowTop(cell.barRows + i) }}
+            className="absolute z-10 h-5 rounded-sm"
+            style={rowBox(cell.barRows + i)}
           />
         )
       })}
@@ -318,8 +324,8 @@ function AllDayCell({
           drag="event"
           home={() => createRef.current}
           label={t('more.label', { count: cell.more.length, date })}
-          className="absolute inset-x-1 z-10 w-auto"
-          style={{ top: rowTop(cellRowsUsed(cell) - 1) }}
+          className="absolute z-10"
+          style={rowBox(cellRowsUsed(cell) - 1)}
         />
       )}
     </div>

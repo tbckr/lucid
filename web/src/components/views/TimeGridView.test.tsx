@@ -193,6 +193,10 @@ describe('TimeGridView', () => {
     const more = within(cell).getByRole('button', { name: '2 more, Friday, September 25th, 2026' })
     expect(more).toHaveTextContent('2 more')
     expect(more).toHaveStyle({ top: `${3 + 2 * 22}px` })
+    // In line with the bars above it.
+    const bar = cell.querySelector<HTMLElement>('[data-event-key="A"]')!
+    expect(more.style.left).toBe(bar.style.left)
+    expect(more.style.width).toBe(bar.style.width)
     fireEvent.click(more)
     const overflow = useUi.getState().overflow
     expect(overflow?.items.map((i) => i.key)).toEqual(['C', 'D'])
@@ -254,9 +258,12 @@ describe('TimeGridView', () => {
     expect(cell.querySelectorAll('[data-event-key]')).toHaveLength(2)
     expect(cell.querySelector('[data-task-key]')).toBeNull()
     const bundle = within(cell).getByRole('button', { name: '3 tasks, Friday, September 25th, 2026' })
-    // A row on Mist, in the third row (FR-07).
+    // A row on Mist, in the third row, in line with the bars above it (FR-07).
     expect(bundle).toHaveClass('bg-muted')
     expect(bundle).toHaveStyle({ top: `${3 + 2 * 22}px` })
+    const bar = cell.querySelector<HTMLElement>('[data-event-key="A"]')!
+    expect(bundle.style.left).toBe(bar.style.left)
+    expect(bundle.style.width).toBe(bar.style.width)
     expect(within(cell).queryByRole('button', { name: /^\d+ more, / })).toBeNull()
     fireEvent.click(bundle)
     expect(useUi.getState().overflow?.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key))
