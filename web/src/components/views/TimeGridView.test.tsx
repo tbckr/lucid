@@ -377,6 +377,40 @@ describe('TimeGridView', () => {
       expect(screen.getByRole('button', { name: '1 more event at 9:15 AM, Friday, September 25th, 2026' })).toBeInTheDocument()
     })
 
+    it('drags a lone task drawn above its time from where its tile is (FR-07)', () => {
+      measured(56 + 7 * 90)
+      // Sync 9–12 beside two short events at 9:00: "+N" stacks at 9:00, and the 9:20 task, which finds no column, joins
+      // it on top, drawn at 9:00.
+      const items = [
+        toCalEvent(apiEvent({ id: 'sync', key: 'sync', title: 'Sync', start: '2026-09-25T07:00:00Z', end: '2026-09-25T10:00:00Z' })),
+        toCalEvent(apiEvent({ id: 'b', key: 'b', title: 'B', start: '2026-09-25T07:00:00Z', end: '2026-09-25T07:20:00Z' })),
+        toCalEvent(apiEvent({ id: 'c', key: 'c', title: 'C', start: '2026-09-25T07:00:00Z', end: '2026-09-25T07:10:00Z' })),
+        toCalTask(todo({ id: 't9', title: 'Call', due: '2026-09-25T07:20:00Z' }))!,
+      ]
+      const onDragStart = vi.fn<(e: DragStartEvent) => void>()
+      const { container } = renderWithProviders(
+        <DndContext onDragStart={onDragStart}>
+          <TimeGridView
+            days={week}
+            now={new Date(2026, 8, 25, 12)}
+            events={items}
+            corrupted={[]}
+            prefs={prefs}
+            colorsOf={() => colors}
+            calendarOf={() => cal}
+          />
+        </DndContext>,
+      )
+      expect(container.querySelector('[data-task-key="task:t9"]')).toHaveStyle({ top: `${540 * 0.8}px` })
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Call, 9:20 AM' }), { code: 'Space', key: ' ' })
+      expect(onDragStart.mock.calls[0]![0].active.data.current).toEqual({
+        type: 'timed',
+        event: items[3],
+        originDay: new Date(2026, 8, 25),
+        offset: -20,
+      })
+    })
+
     it('opens the hidden events from "+N" with listed drags', () => {
       measured(56 + 7 * 90)
       renderWithProviders(grid(week, [...events, ...tasksAtNine(3)]))

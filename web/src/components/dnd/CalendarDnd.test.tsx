@@ -8,7 +8,7 @@ import { createRef, type ReactNode, type RefObject } from 'react'
 import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventChip, ResizeHandle, TimedBlock } from '@/components/events/EventItems'
-import { TaskChip } from '@/components/tasks/TaskItems'
+import { TaskBlock, TaskChip } from '@/components/tasks/TaskItems'
 import { queryKeys, UNDO_EVENT_KEY } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { endpoints } from '@/lib/api/endpoints'
@@ -1392,6 +1392,41 @@ describe('CalendarDnd', () => {
       expect(tileIn(5, current)).not.toHaveClass('ring-2')
       await user.keyboard('{Escape}')
     })
+  })
+
+  it('lands a task drawn in the overflow column at the time of its tile (FR-07)', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, todo({ id: 't9' })))
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.left ? rect(Number(this.dataset.left), 0, 100, 1152) : rect(10, 432, 80, 22)
+    })
+    api.setCsrfToken('tok')
+    // Due at 9:20, drawn at 9:00, the top of its stack.
+    const call = toCalTask(todo({ id: 't9', title: 'Call', due: '2026-09-25T07:20:00Z' }))!
+    const fri = new Date(2026, 8, 25)
+    renderWithProviders(
+      <CalendarDnd renderOverlay={() => null}>
+        <Column day={fri} left={0} columnRef={createRef<HTMLDivElement>()}>
+          <TaskBlock
+            task={call}
+            colors={colors}
+            prefs={prefs}
+            readOnly={false}
+            size="xs"
+            drag={{ id: 'block', data: { type: 'timed', event: call, originDay: fri, offset: -20 }, disabled: false }}
+          />
+        </Column>
+      </CalendarDnd>,
+      loadCalendars,
+    )
+
+    // One step down moves its tile from 9:00 to 9:15: the task is then due at 9:15, not 9:35.
+    await moveDown(screen.getByRole('button', { name: 'Call, 9:20 AM' }))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+    const [url, init] = fetch.mock.calls[0]!
+    expect(urlOf(url)).toBe('/api/v1/todos/t9')
+    expect(bodyOf(init)).toMatchObject({ due: '2026-09-25T07:15:00.000Z' })
   })
 
   describe('a row dragged out of a time-grid list (FR-07, FR-10)', () => {

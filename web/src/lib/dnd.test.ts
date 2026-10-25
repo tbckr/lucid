@@ -68,6 +68,22 @@ describe('dropResult', () => {
     })
   })
 
+  // A task the overflow column draws at its stack's place (FR-07): 9:15, drawn at 9:00.
+  it('lands a tile drawn away from its task where the tile lands', () => {
+    const point = toCalTask(todo({ due: '2026-09-25T07:15:00Z' }))!
+    const drag = { type: 'timed' as const, event: point, originDay: day(25), offset: -15 }
+    // Its tile's top moved from 9:00 to 2 PM: due 2 PM, not 2:15 PM.
+    expect(dropResult(drag, { type: 'column', day: day(25) }, 300 * PX_PER_MINUTE)).toMatchObject({
+      kind: 'task',
+      input: { due: '2026-09-25T12:00:00.000Z' },
+      delta: { days: 0, minutes: 285 },
+    })
+    // Across to the next day at the same height: 9 AM there.
+    expect(dropResult(drag, { type: 'column', day: day(26) }, 0)).toMatchObject({ input: { due: '2026-09-26T07:00:00.000Z' } })
+    // Put back where it was drawn: nothing moves.
+    expect(dropResult(drag, { type: 'column', day: day(25) }, 3)).toBeNull()
+  })
+
   it('returns null for no-ops and incompatible targets', () => {
     expect(dropResult({ type: 'event', event: timed, originDay: day(25) }, { type: 'day', day: day(25) }, 0)).toBeNull()
     expect(dropResult({ type: 'timed', event: timed, originDay: day(25) }, { type: 'day', day: day(26) }, 0)).toBeNull()

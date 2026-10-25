@@ -21,12 +21,14 @@ export const SNAP_PX = SNAP_MINUTES * PX_PER_MINUTE
  * instead of saving them (FR-09). `listed`: a row of a time-grid list (FR-07),
  * which has no tile to measure a move from: on a column it lands at the time it
  * is dropped at, on a day it moves like an `event`; `originDay` is the day its
- * item starts on.
+ * item starts on. `offset`: minutes a `timed` tile is drawn after its item's
+ * start (before it, if negative), as a task in the overflow column at its
+ * stack's place (FR-07); a move lands the item where the tile's top lands.
  */
 export type DragData =
   | { type: 'event'; event: CalItem; originDay: Date }
   | { type: 'listed'; event: CalItem; originDay: Date }
-  | { type: 'timed'; event: CalItem; originDay: Date; draft?: true }
+  | { type: 'timed'; event: CalItem; originDay: Date; draft?: true; offset?: number }
   | { type: 'resize'; event: CalEvent; draft?: true }
 
 /** How a view makes one of its items draggable. */
@@ -103,8 +105,11 @@ function movedDelta(
     if (top === undefined) return null
     delta = landedDelta(drag.event, drop.day, top)
   } else {
-    const minutes = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
-    delta = { days: differenceInCalendarDays(drop.day, drag.originDay), minutes }
+    const moved = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
+    const days = differenceInCalendarDays(drop.day, drag.originDay)
+    // A tile drawn away from its item's start puts the item where the tile lands, once it moves (FR-07).
+    const offset = drag.type === 'timed' && (moved !== 0 || days !== 0) ? (drag.offset ?? 0) : 0
+    delta = { days, minutes: moved + offset }
   }
   if (delta.days === 0 && delta.minutes === 0) return null
   return delta

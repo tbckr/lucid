@@ -388,7 +388,8 @@ function DayColumn({
   // The column is where the lists of its bundles and "+N" point and give the focus to once their button is gone
   // (NFR-27); it takes the focus without being a tab stop.
   const home = () => column.current
-  const taskBlock = (e: CalTask, size: 'xs' | 'sm' | 'md', style: CSSProperties) => {
+  /** `offset`: minutes its tile is drawn after its start, as in the overflow column; a move lands it there (FR-07). */
+  const taskBlock = (e: CalTask, size: 'xs' | 'sm' | 'md', style: CSSProperties, offset = 0) => {
     const ro = readOnly(e.calendarId)
     return (
       <TaskBlock
@@ -398,7 +399,7 @@ function DayColumn({
         readOnly={ro}
         drag={{
           id: `timed:${e.key}:${key}`,
-          data: { type: 'timed', event: e, originDay: day },
+          data: { type: 'timed', event: e, originDay: day, ...(offset !== 0 && { offset }) },
           // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
           disabled: ro || !canDrag(e) || pendingTodos.has(e.todo.id),
         }}
@@ -473,11 +474,11 @@ function DayColumn({
           zIndex: 10 + entry.col,
         }
         const [only] = entry.items
-        // A bundle of one is the task itself.
+        // A bundle of one is the task itself, drawn at its stack's top, where a drag of it starts from.
         if (entry.kind === 'tasks' && entry.items.length === 1 && only?.kind === 'task') {
           return (
             <EventBoundary key={only.key} item={only} className="absolute inset-x-1">
-              {taskBlock(only, 'xs', style)}
+              {taskBlock(only, 'xs', style, entry.topMin - entry.startMin)}
             </EventBoundary>
           )
         }
