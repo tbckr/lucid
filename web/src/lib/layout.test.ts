@@ -187,7 +187,7 @@ describe('layoutWeekRow', () => {
     expect(cells[6]!.more).toEqual([])
   })
 
-  it('makes room for a bundle when only a hidden task bar needs one', () => {
+  it('makes room for a bundle when only a task bar needs one', () => {
     const events = [allDay('a', 25, 26), allDay('b', 25, 26)] // lanes 0, 1
     const chore = taskSpan('chore', 25, 26) // lane 2
     const lunch = timed('lunch', 25, 12, 0, 13, 0)
@@ -196,6 +196,52 @@ describe('layoutWeekRow', () => {
     expect(barsOver(bars, 5)).toEqual([['a', 0]])
     expect(rowsOf(fri)).toEqual(['chore'])
     expect(titles(fri.more)).toEqual(['b', 'lunch'])
+  })
+
+  it("hides a busy day's task bars in its bundle before its events", () => {
+    // As seeded: an event bar in lane 0, a task bar in lane 1 that reaches into a day whose events overflow.
+    const offsite = allDay('offsite', 24, 26) // Thu-Fri, lane 0
+    const report = taskSpan('report', 23, 24) // Wed-Thu, lane 1
+    const events = [9, 10, 11].map((h) => timed(`e${h}`, 24, h, 0, h + 1, 0))
+    const tasks = [task('t1', local(24, 13)), task('t2', local(24, 14))]
+    const { bars, cells } = layoutWeekRow(days, [report, ...tasks, ...events, offsite], 4)
+    const thu = cells[4]!
+    expect(barsOver(bars, 4)).toEqual([['offsite', 0]])
+    expect(thu.barRows).toBe(1)
+    // The task bar takes no row of its own while events are hidden: an event shows where it was.
+    expect(rowsOf(thu)).toEqual(['bundle(report,t1,t2)', 'e9'])
+    expect(titles(thu.more)).toEqual(['e10', 'e11'])
+    expect(cellRowsUsed(thu)).toBe(4)
+    // Wednesday has room: the task bar shows there, in its lane.
+    expect(bars.filter((b) => b.event.title === 'report').map((b) => [b.startCol, b.span, b.lane])).toEqual([[3, 1, 1]])
+  })
+
+  it('shows a lone task bar of a busy day as its row', () => {
+    const report = taskSpan('report', 24, 25) // Thu-Fri, lane 0
+    const events = [9, 10, 11].map((h) => timed(`e${h}`, 25, h, 0, h + 1, 0))
+    const { bars, cells } = layoutWeekRow(days, [report, ...events], 3)
+    const fri = cells[5]!
+    expect(barsOver(bars, 5)).toEqual([])
+    expect(fri.barRows).toBe(0)
+    expect(rowsOf(fri)).toEqual(['report', 'e9'])
+    expect(titles(fri.more)).toEqual(['e10', 'e11'])
+    expect(bars.filter((b) => b.event.title === 'report').map((b) => [b.startCol, b.span, b.lane])).toEqual([[4, 1, 0]])
+  })
+
+  it('leaves the lane of a hidden task bar empty above an event bar', () => {
+    const a = allDay('a', 22, 25) // Tue-Thu, lane 0
+    const b = allDay('b', 23, 27) // Wed-Sat, lane 1
+    const late = taskSpan('late', 25, 26) // Fri-Sat: lane 0, free once a ends
+    const events = [9, 10, 11].map((h) => timed(`e${h}`, 25, h, 0, h + 1, 0))
+    const { bars, cells } = layoutWeekRow(days, [late, a, b, ...events], 4)
+    const fri = cells[5]!
+    // An accepted edge: lanes are shared across the week, so b stays in lane 1 over the empty lane 0.
+    expect(barsOver(bars, 5)).toEqual([['b', 1]])
+    expect(fri.barRows).toBe(2)
+    expect(rowsOf(fri)).toEqual(['late'])
+    expect(titles(fri.more)).toEqual(['e9', 'e10', 'e11'])
+    // Saturday has room: the task bar shows there.
+    expect(bars.filter((x) => x.event.title === 'late').map((x) => [x.startCol, x.span, x.lane])).toEqual([[6, 1, 0]])
   })
 
   it('falls back to one more for everything in a one-row cell', () => {
