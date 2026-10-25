@@ -79,6 +79,18 @@ function dropData(data: unknown): DropData | null {
   return data && typeof data === 'object' && 'type' in data ? (data as DropData) : null
 }
 
+/**
+ * How far below the top of the column it is over the dragged tile starts, in px (FR-10): where a row dragged out of a
+ * time-grid list is placed in the day. The overlay is where `translated` says, and the column where it is now, so a
+ * scroll since the pick-up counts. Undefined for any other drag, and without a rect to measure.
+ */
+function topInColumn(e: DragMoveEvent | DragOverEvent | DragEndEvent, d: DragData, drop: DropData | null): number | undefined {
+  if (d.type !== 'listed' || drop?.type !== 'column') return undefined
+  const rect = e.active.rect.current.translated ?? e.active.rect.current.initial
+  const column = drop.ref?.current
+  return rect && column ? rect.top - column.getBoundingClientRect().top : undefined
+}
+
 /** Whether two drops would save the same; a move gives both dates of a task one offset. */
 function sameDrop(a: DropResult | null, b: DropResult | null): boolean {
   if (a?.kind === 'event' && b?.kind === 'event') return a.times.start === b.times.start && a.times.end === b.times.end
@@ -480,7 +492,7 @@ export function CalendarDnd({
     const d = dragData(e.active.data.current)
     if (!d) return
     const drop = dropData(e.over?.data.current)
-    const next = dropResult(d, drop, e.delta.y)
+    const next = dropResult(d, drop, e.delta.y, topInColumn(e, d, drop))
     // FR-17: with one option, the drop of an event or repeat of a series won't ask; say
     // beforehand what it reaches, or why a repeat can't land here. Worked out again only for a
     // new target, not on every move of the pointer.
@@ -516,8 +528,8 @@ export function CalendarDnd({
     const d = dragData(e.active.data.current)
     if (!d) return
     const drop = dropData(e.over?.data.current)
-    const result = dropResult(d, drop, e.delta.y)
-    if (d.type !== 'event' && d.draft) {
+    const result = dropResult(d, drop, e.delta.y, topInColumn(e, d, drop))
+    if ('draft' in d && d.draft) {
       if (result) dropDraft(d, result, drop)
       return
     }

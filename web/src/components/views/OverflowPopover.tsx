@@ -10,7 +10,7 @@ import { TaskChip } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { canDrag } from '@/lib/calendarTasks'
 import { type DragBinding } from '@/lib/dnd'
-import { isSpanning, type CalItem } from '@/lib/events'
+import { firstDay, isSpanning, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useUi, type OverflowState } from '@/stores/ui'
@@ -29,6 +29,7 @@ function isRow(id: UniqueIdentifier): boolean {
 function Entry({
   item,
   day,
+  drag,
   colors,
   prefs,
   readOnly,
@@ -36,15 +37,17 @@ function Entry({
 }: {
   item: CalItem
   day: Date
+  drag: OverflowState['drag']
   colors: EventColors
   prefs: FormatPrefs
   readOnly: boolean
   onOpen: (item: CalItem) => void
 }) {
   const { pendingTodos } = useDndState()
+  // A row of a time-grid list is dropped at a time, which is measured from where its item starts, not from the list's day.
   const bind = (disabled: boolean): DragBinding => ({
     id: `${DRAG_ID}${item.key}`,
-    data: { type: 'event', event: item, originDay: day },
+    data: { type: drag, event: item, originDay: drag === 'listed' ? firstDay(item) : day },
     disabled,
   })
   if (item.kind === 'task') {
@@ -62,19 +65,20 @@ function Entry({
 interface RowsProps {
   items: CalItem[]
   day: Date
+  drag: OverflowState['drag']
   prefs: FormatPrefs
   colorsOf: (calendarId: string) => EventColors
   readOnly: (calendarId: string) => boolean
   onOpen: (item: CalItem) => void
 }
 
-function Rows({ items, day, prefs, colorsOf, readOnly, onOpen }: RowsProps) {
+function Rows({ items, day, drag, prefs, colorsOf, readOnly, onOpen }: RowsProps) {
   return (
     <ul className="flex flex-col gap-1">
       {items.map((e) => (
         <li key={e.key}>
           <EventBoundary item={e}>
-            <Entry item={e} day={day} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
+            <Entry item={e} day={day} drag={drag} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
           </EventBoundary>
         </li>
       ))}
@@ -83,7 +87,7 @@ function Rows({ items, day, prefs, colorsOf, readOnly, onOpen }: RowsProps) {
 }
 
 /** Virtualized list for busy days (NFR-25); mounted only while the popover is open. */
-function VirtualList({ items, day, prefs, colorsOf, readOnly, onOpen }: RowsProps) {
+function VirtualList({ items, day, drag, prefs, colorsOf, readOnly, onOpen }: RowsProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual is not compiler-safe yet
   const virtualizer = useVirtualizer({
@@ -106,7 +110,7 @@ function VirtualList({ items, day, prefs, colorsOf, readOnly, onOpen }: RowsProp
               style={{ height: v.size, transform: `translateY(${v.start}px)` }}
             >
               <EventBoundary item={e}>
-                <Entry item={e} day={day} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
+                <Entry item={e} day={day} drag={drag} colors={colorsOf(e.calendarId)} prefs={prefs} readOnly={readOnly(e.calendarId)} onOpen={onOpen} />
               </EventBoundary>
             </li>
           )
@@ -195,7 +199,7 @@ function OverflowList({
 }) {
   const openOverflow = useUi((s) => s.openOverflow)
   const openDetail = useUi((s) => s.openDetail)
-  const { anchor, home, rect, day, items } = state
+  const { anchor, home, rect, day, items, drag } = state
   // A row stays when its entry has left the calendar; it shows the entry as it was.
   const rows = useMemo(() => items.map((item) => lookup(item.key) ?? item), [items, lookup])
   // Points at the button, or where it was while it is not on the page; floating-ui follows the scrolling of `home`.
@@ -216,7 +220,7 @@ function OverflowList({
     openDetail({ item, anchor: place() })
   }
 
-  const props = { items: rows, day, prefs, colorsOf, readOnly, onOpen }
+  const props = { items: rows, day, drag, prefs, colorsOf, readOnly, onOpen }
   return (
     <>
       <PopoverAnchor virtualRef={virtualRef} />

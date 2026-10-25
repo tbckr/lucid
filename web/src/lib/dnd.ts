@@ -1,9 +1,9 @@
-import { differenceInCalendarDays } from 'date-fns'
+import { addDays, differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
 import { movedTodo, placedOn, shiftedTask, toCalTask, type CalTask, type TaskDates } from './calendarTasks'
-import { movedTimes, withTimes, type CalEvent, type CalItem } from './events'
-import { snapMinutes } from './dates'
+import { atMinutes, minutesOfDay, snapMinutes } from './dates'
+import { firstDay, movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { type Scope } from './scope'
 
 /** Pixel height of one hour in the time grid. */
@@ -18,10 +18,14 @@ export const SNAP_PX = SNAP_MINUTES * PX_PER_MINUTE
 /**
  * Data attached to draggables. Events and tasks move alike (FR-16); only events
  * resize. `draft`: the create popover's entry, which a drop gives the new times
- * instead of saving them (FR-09).
+ * instead of saving them (FR-09). `listed`: a row of a time-grid list (FR-07),
+ * which has no tile to measure a move from: on a column it lands at the time it
+ * is dropped at, on a day it moves like an `event`; `originDay` is the day its
+ * item starts on.
  */
 export type DragData =
   | { type: 'event'; event: CalItem; originDay: Date }
+  | { type: 'listed'; event: CalItem; originDay: Date }
   | { type: 'timed'; event: CalItem; originDay: Date; draft?: true }
   | { type: 'resize'; event: CalEvent; draft?: true }
 
@@ -43,7 +47,8 @@ export type DropResult =
 /** Data attached to droppables; a time-grid column also refers to its element, for the create popover to point at. */
 export type DropData = { type: 'day'; day: Date } | { type: 'column'; day: Date; ref?: RefObject<HTMLElement | null> }
 
-const SLOTS_PER_DAY = (24 * 60) / SNAP_MINUTES
+const MINUTES_PER_DAY = 24 * 60
+const SLOTS_PER_DAY = MINUTES_PER_DAY / SNAP_MINUTES
 
 /**
  * The span a drag in the empty time grid creates, in minutes since midnight:
@@ -60,6 +65,7 @@ export function createRange(anchorMin: number, pointerMin: number): { startMin: 
 /** Which droppable type a draggable may land on. */
 export function acceptsDrop(drag: DragData['type'], drop: DropData['type']): boolean {
   if (drag === 'event') return drop === 'day'
+  if (drag === 'listed') return true
   if (drag === 'timed') return drop === 'column'
   return drop === 'column'
 }
@@ -67,17 +73,48 @@ export function acceptsDrop(drag: DragData['type'], drop: DropData['type']): boo
 /** Non-resize drag data, which alone carries an `originDay` to measure a move from. */
 type MoveDrag = Exclude<DragData, { type: 'resize' }>
 
-/** The day/minute offset a drop would apply, or null for a no-op or an incompatible target. */
-function movedDelta(drag: MoveDrag, drop: DropData | null, deltaY: number): { days: number; minutes: number } | null {
-  if (!drop || !acceptsDrop(drag.type, drop.type)) return null
-  const days = differenceInCalendarDays(drop.day, drag.originDay)
-  const minutes = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
-  if (days === 0 && minutes === 0) return null
-  return { days, minutes }
+/**
+ * The offset that puts `item` where a row dropped on the column of `day` with its top `top` px below the column's top
+ * lands (FR-07, FR-10): its start at the 15-minute slot there, within the day. The minutes are the ones between
+ * where the item starts on that day and the slot on the day's wall clock, so a change of the UTC offset between the
+ * two, on the days clocks go back or forward, doesn't shift the landing by an hour.
+ */
+function landedDelta(item: CalItem, day: Date, top: number): { days: number; minutes: number } {
+  const days = differenceInCalendarDays(day, firstDay(item))
+  const slot = Math.min(MINUTES_PER_DAY - SNAP_MINUTES, Math.max(0, snapMinutes(top / PX_PER_MINUTE, SNAP_MINUTES)))
+  const start = addDays(item.startsAt, days)
+  const at = atMinutes(day, slot)
+  return { days, minutes: slot - minutesOfDay(start) + at.getTimezoneOffset() - start.getTimezoneOffset() }
 }
 
-/** What a finished drag saves. Returns null when nothing changes or the drop target is incompatible. */
-export function dropResult(drag: DragData, drop: DropData | null, deltaY: number): DropResult | null {
+/**
+ * The day/minute offset a drop would apply, or null for a no-op or an incompatible target. `top`: for a `listed`
+ * row on a column, the dragged tile's top below the column's top, in px; without it that drop is not placed.
+ */
+function movedDelta(
+  drag: MoveDrag,
+  drop: DropData | null,
+  deltaY: number,
+  top?: number,
+): { days: number; minutes: number } | null {
+  if (!drop || !acceptsDrop(drag.type, drop.type)) return null
+  let delta: { days: number; minutes: number }
+  if (drag.type === 'listed' && drop.type === 'column') {
+    if (top === undefined) return null
+    delta = landedDelta(drag.event, drop.day, top)
+  } else {
+    const minutes = drag.type === 'timed' ? snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES) : 0
+    delta = { days: differenceInCalendarDays(drop.day, drag.originDay), minutes }
+  }
+  if (delta.days === 0 && delta.minutes === 0) return null
+  return delta
+}
+
+/**
+ * What a finished drag saves. Returns null when nothing changes or the drop target is incompatible. `top`: where a
+ * dragged `listed` row's tile starts below the top of the column it is over, in px (see `movedDelta`).
+ */
+export function dropResult(drag: DragData, drop: DropData | null, deltaY: number, top?: number): DropResult | null {
   if (drag.type === 'resize') {
     const minutes = snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES)
     if (minutes === 0) return null
@@ -87,7 +124,7 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
     if (end === e.endsAt.getTime()) return null
     return { kind: 'event', event: e, times: { start: e.start, end: new Date(end).toISOString() } }
   }
-  const delta = movedDelta(drag, drop, deltaY)
+  const delta = movedDelta(drag, drop, deltaY, top)
   if (!delta) return null
   const e = drag.event
   if (e.kind === 'task') {

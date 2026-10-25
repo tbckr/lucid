@@ -5,6 +5,7 @@ import {
   acceptsDrop,
   createRange,
   dropResult,
+  HOUR_HEIGHT,
   PX_PER_MINUTE,
   withDrop,
   withScopePreview,
@@ -94,7 +95,106 @@ describe('dropResult', () => {
     expect(acceptsDrop('event', 'day')).toBe(true)
     expect(acceptsDrop('event', 'column')).toBe(false)
     expect(acceptsDrop('timed', 'column')).toBe(true)
+    expect(acceptsDrop('timed', 'day')).toBe(false)
     expect(acceptsDrop('resize', 'column')).toBe(true)
+    expect(acceptsDrop('resize', 'day')).toBe(false)
+    expect(acceptsDrop('listed', 'column')).toBe(true)
+    expect(acceptsDrop('listed', 'day')).toBe(true)
+  })
+})
+
+describe('dropResult for a row dragged out of a time-grid list (FR-07, FR-10)', () => {
+  // Due 09:00 local on 2026-09-25; a list row has no tile to measure a move from, so a drop on a column places it.
+  const due = toCalTask(todo({ due: new Date(2026, 8, 25, 9).toISOString() }))!
+  const listed = (event: DragData['event'], originDay = day(25)): DragData => ({ type: 'listed', event, originDay })
+  const column = (d: Date) => ({ type: 'column' as const, day: d })
+
+  it('lands a listed item at the dropped time', () => {
+    const result = dropResult(listed(due), column(day(26)), 0, 14 * HOUR_HEIGHT + 5)
+    expect(result).toMatchObject({ kind: 'task', input: { due: new Date(2026, 8, 26, 14).toISOString() } })
+  })
+
+  it('moves a task with a start and a due date as one, its start landing at the dropped time', () => {
+    const span = toCalTask(
+      todo({ start: new Date(2026, 8, 25, 9).toISOString(), due: new Date(2026, 8, 25, 11).toISOString() }),
+    )!
+    expect(dropResult(listed(span), column(day(25)), 0, 15 * HOUR_HEIGHT)).toMatchObject({
+      input: { start: new Date(2026, 8, 25, 15).toISOString(), due: new Date(2026, 8, 25, 17).toISOString() },
+      delta: { days: 0, minutes: 6 * 60 },
+    })
+  })
+
+  it('lands a listed event at the dropped time, keeping its length', () => {
+    expect(dropResult(listed(timed), column(day(25)), 0, 14 * HOUR_HEIGHT)).toEqual({
+      kind: 'event',
+      event: timed,
+      times: { start: new Date(2026, 8, 25, 14).toISOString(), end: new Date(2026, 8, 25, 15).toISOString() },
+    })
+  })
+
+  it('lands a listed item at the dropped time on a DST day', () => {
+    // 2026-10-25 is the night Berlin changes back to winter time: the day is 25 hours long.
+    const event = toCalEvent(apiEvent({ start: '2026-10-25T08:00:00Z', end: '2026-10-25T09:00:00Z' }))
+    const drag = listed(event, new Date(2026, 9, 25))
+    expect(dropResult(drag, column(new Date(2026, 9, 25)), 0, 14 * HOUR_HEIGHT)).toMatchObject({
+      times: { start: '2026-10-25T13:00:00.000Z', end: '2026-10-25T14:00:00.000Z' },
+    })
+  })
+
+  it('lands an item from before the change at the dropped time after it', () => {
+    // 01:00 CEST is 23:00Z the day before; 14:00 on the wall clock is 13:00Z, not 12:00Z.
+    const early = toCalEvent(apiEvent({ start: '2026-10-24T23:00:00Z', end: '2026-10-25T00:00:00Z' }))
+    const same = dropResult(listed(early, new Date(2026, 9, 25)), column(new Date(2026, 9, 25)), 0, 14 * HOUR_HEIGHT)
+    expect(same).toMatchObject({ times: { start: '2026-10-25T13:00:00.000Z', end: '2026-10-25T14:00:00.000Z' } })
+    // From the day before, the winter-time day is reached by calendar days, not by 24 hours.
+    const before = toCalEvent(apiEvent({ start: '2026-10-24T07:00:00Z', end: '2026-10-24T08:00:00Z' }))
+    const next = dropResult(listed(before, new Date(2026, 9, 24)), column(new Date(2026, 9, 25)), 0, 9 * HOUR_HEIGHT)
+    expect(next).toMatchObject({ times: { start: '2026-10-25T08:00:00.000Z', end: '2026-10-25T09:00:00.000Z' } })
+  })
+
+  it('snaps the top to 15 minutes and keeps it within the day', () => {
+    const at = (top: number) => dropResult(listed(due), column(day(25)), 0, top)
+    // 09:07 is below the item's 09:00 start but rounds to it: no change.
+    expect(at(9 * HOUR_HEIGHT + 7 * PX_PER_MINUTE)).toBeNull()
+    expect(at(9 * HOUR_HEIGHT + 8 * PX_PER_MINUTE)).toMatchObject({ input: { due: new Date(2026, 8, 25, 9, 15).toISOString() } })
+    expect(at(-500)).toMatchObject({ input: { due: new Date(2026, 8, 25, 0).toISOString() } })
+    expect(at(24 * HOUR_HEIGHT + 500)).toMatchObject({ input: { due: new Date(2026, 8, 25, 23, 45).toISOString() } })
+  })
+
+  it('measures from the first day of an item that began before the day it is listed on', () => {
+    const night = toCalEvent(apiEvent({ start: new Date(2026, 8, 24, 22).toISOString(), end: new Date(2026, 8, 25, 2).toISOString() }))
+    expect(dropResult(listed(night, day(24)), column(day(25)), 0, 8 * HOUR_HEIGHT)).toMatchObject({
+      times: { start: new Date(2026, 8, 25, 8).toISOString(), end: new Date(2026, 8, 25, 12).toISOString() },
+    })
+  })
+
+  it('keeps the time on an all-day cell', () => {
+    expect(dropResult(listed(due), { type: 'day', day: day(27) }, 0)).toMatchObject({
+      kind: 'task',
+      input: { due: new Date(2026, 8, 27, 9).toISOString() },
+      delta: { days: 2, minutes: 0 },
+    })
+    // The height of the pointer means nothing there.
+    expect(dropResult(listed(due), { type: 'day', day: day(27) }, 400, 14 * HOUR_HEIGHT)).toMatchObject({
+      input: { due: new Date(2026, 8, 27, 9).toISOString() },
+    })
+  })
+
+  it('needs a top on a column', () => {
+    expect(dropResult(listed(due), column(day(26)), 0)).toBeNull()
+  })
+
+  it('is a no-op where it already is', () => {
+    expect(dropResult(listed(due), column(day(25)), 0, 9 * HOUR_HEIGHT)).toBeNull()
+    expect(dropResult(listed(due), { type: 'day', day: day(25) }, 0)).toBeNull()
+    expect(dropResult(listed(due), null, 0, 9 * HOUR_HEIGHT)).toBeNull()
+  })
+
+  it('previews the item where it lands', () => {
+    const drag = listed(due)
+    const moved = withDrop(drag, dropResult(drag, column(day(26)), 0, 14 * HOUR_HEIGHT)!)
+    expect(moved.type).toBe('listed')
+    expect(moved.event.startsAt).toEqual(new Date(2026, 8, 26, 14))
   })
 })
 

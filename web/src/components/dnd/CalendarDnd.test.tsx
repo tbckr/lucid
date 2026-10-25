@@ -16,7 +16,7 @@ import { type ApiEvent, type EventRestore, type OccurrenceState, type Todo } fro
 import { occurrenceTask, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
 import { type DragData, type DropData } from '@/lib/dnd'
-import { toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
+import { firstDay, toCalEvent, type CalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
 import { previewOf } from '@/lib/quickCreate'
 import { type ScopeHint } from '@/lib/scope'
@@ -1391,6 +1391,66 @@ describe('CalendarDnd', () => {
       expect(tileIn(12, planned('Mon, Oct 12')).style.getPropertyValue('--tw-ring-color')).toBe(colors.solid)
       expect(tileIn(5, current)).not.toHaveClass('ring-2')
       await user.keyboard('{Escape}')
+    })
+  })
+
+  describe('a row dragged out of a time-grid list (FR-07, FR-10)', () => {
+    /**
+     * Two columns of the time grid 100 px right of each other and 100 px down the page, 1152 px (24 hours) tall,
+     * and a row of a list outside them, which a keyboard drag lifts at 480 px and moves into the next column.
+     */
+    function renderListed(event: CalEvent, overlay: Overlay = () => null) {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+        return this.dataset.left ? rect(Number(this.dataset.left), 100, 100, 1152) : rect(10, 480, 80, 46)
+      })
+      api.setCsrfToken('tok')
+      return renderWithProviders(
+        <CalendarDnd renderOverlay={overlay}>
+          <Column day={new Date(2026, 8, 25)} left={0} columnRef={createRef<HTMLDivElement>()} />
+          <Column day={new Date(2026, 8, 26)} left={100} columnRef={createRef<HTMLDivElement>()} />
+          <EventChip
+            event={event}
+            colors={colors}
+            prefs={prefs}
+            drag={{ id: 'overflow:e1', data: { type: 'listed', event, originDay: firstDay(event) }, disabled: false }}
+          />
+        </CalendarDnd>,
+        loadCalendars,
+      )
+    }
+
+    it('lands at the time its tile is over, below the top of the column', async () => {
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, apiEvent()))
+      const overlay = vi.fn<Overlay>(() => null)
+      renderListed(toCalEvent(apiEvent({ title: 'Standup' })), overlay)
+
+      // The tile lifts at 480 px down the page and moves to the middle of the next column, 576 px below
+      // its top: 553 px, which is 11:30 at 48 px an hour. Not the time of the 653 px from the page's top.
+      await moveRight(screen.getByRole('button', { name: 'Standup, 10 AM' }))
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1)
+      })
+      const [url, init] = fetch.mock.calls[0]!
+      expect(urlOf(url)).toBe('/api/v1/events/e1')
+      expect(bodyOf(init)).toMatchObject({ start: '2026-09-26T09:30:00.000Z', end: '2026-09-26T10:30:00.000Z' })
+    })
+
+    it('shows the time it would land at while it is dragged', async () => {
+      vi.spyOn(globalThis, 'fetch')
+      const overlay = vi.fn<Overlay>(() => null)
+      renderListed(toCalEvent(apiEvent({ title: 'Standup' })), overlay)
+
+      const row = screen.getByRole('button', { name: 'Standup, 10 AM' })
+      row.focus()
+      fireEvent.keyDown(row, { code: 'Space', key: ' ' })
+      await act(() => new Promise((resolve) => setTimeout(resolve)))
+      fireEvent.keyDown(document, { code: 'ArrowRight', key: 'ArrowRight' })
+
+      const [data] = overlay.mock.lastCall ?? []
+      expect(data?.type).toBe('listed')
+      expect(data?.event.startsAt).toEqual(new Date(2026, 8, 26, 11, 30))
+      expect(data?.event.endsAt).toEqual(new Date(2026, 8, 26, 12, 30))
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
     })
   })
 })

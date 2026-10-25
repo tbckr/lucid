@@ -51,8 +51,11 @@ export interface OverflowState {
   day: Date
   /** What the button stood for when it opened, in display order; kept until it closes (FR-07). */
   items: CalItem[]
-  /** How rows drag (FR-10): 'event' moves by whole days, like a month chip. */
-  drag: 'event'
+  /**
+   * How rows drag (FR-10): 'event' moves by whole days, like a month chip; 'listed', in a time-grid list, also places
+   * the item at the time it is dropped at on a day column.
+   */
+  drag: 'event' | 'listed'
   /** The button; `home` (its cell or column) and `rect` (the button's box at opening) stand in once it is gone. */
   anchor: HTMLElement
   home: HTMLElement

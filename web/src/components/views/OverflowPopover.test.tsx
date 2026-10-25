@@ -1,4 +1,4 @@
-import { DndContext, KeyboardSensor, PointerSensor, useDraggable, useSensor, useSensors } from '@dnd-kit/core'
+import { DndContext, KeyboardSensor, PointerSensor, useDndMonitor, useDraggable, useSensor, useSensors } from '@dnd-kit/core'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -9,10 +9,10 @@ import { DndStateContext, type DndState } from '@/components/dnd/dndState'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { occurrenceTask, toCalTask } from '@/lib/calendarTasks'
 import { eventColors } from '@/lib/color'
-import { DRAG_DISTANCE } from '@/lib/dnd'
+import { DRAG_DISTANCE, type DragData } from '@/lib/dnd'
 import { toCalEvent, type CalItem } from '@/lib/events'
 import { type FormatPrefs } from '@/lib/format'
-import { useUi } from '@/stores/ui'
+import { useUi, type OverflowState } from '@/stores/ui'
 import { apiEvent, occurrence, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { OverflowPopover, VIRTUALIZE_THRESHOLD } from './OverflowPopover'
@@ -42,19 +42,38 @@ function Dnd({ children }: { children: ReactNode }) {
   return <DndContext sensors={sensors}>{children}</DndContext>
 }
 
+/** Hands the data of every draggable picked up to `onPickUp`. */
+function PickUps({ onPickUp }: { onPickUp: (data: DragData | undefined) => void }) {
+  useDndMonitor({
+    onDragStart: ({ active }) => {
+      onPickUp(active.data.current as DragData | undefined)
+    },
+  })
+  return null
+}
+
 interface Setup {
   lookup?: (key: string) => CalItem | undefined
   readOnly?: (calendarId: string) => boolean
   pendingTodos?: ReadonlySet<string>
   /** A click that reaches the element around the popover, as one reaches the day cell. */
   onCellClick?: () => void
+  /** Called with the data of a row when it is picked up. */
+  onPickUp?: (data: DragData | undefined) => void
 }
 
-function popover({ lookup = () => undefined, readOnly = () => false, pendingTodos = new Set(), onCellClick }: Setup = {}) {
+function popover({
+  lookup = () => undefined,
+  readOnly = () => false,
+  pendingTodos = new Set(),
+  onCellClick,
+  onPickUp,
+}: Setup = {}) {
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events -- stands for the day cell
     <div onClick={onCellClick}>
       <Dnd>
+        {onPickUp && <PickUps onPickUp={onPickUp} />}
         <DndStateContext value={{ ...idle, pendingTodos }}>
           <OverflowPopover prefs={prefs} colorsOf={() => colors} readOnly={readOnly} lookup={lookup} />
         </DndStateContext>
@@ -100,13 +119,13 @@ afterEach(() => {
 })
 
 /** Opens the list the way a "+N" button does, after the first render (as in the app). */
-function open(items: CalItem[]) {
+function open(items: CalItem[], drag: OverflowState['drag'] = 'event') {
   act(() => {
     useUi.getState().openOverflow({
       id: 'more:2026-09-25',
       day,
       items,
-      drag: 'event',
+      drag,
       anchor,
       home,
       rect: new DOMRect(10, 20, 100, 20),
@@ -309,6 +328,57 @@ describe('OverflowPopover', () => {
       renderPopover({ readOnly: () => true })
       open([rent])
       expect(await screen.findByRole('button', { name: /Pay rent/ })).not.toHaveAttribute('aria-roledescription')
+    })
+
+    /** Picks up the row named `name` with the keyboard and cancels the drag, which closes the list. */
+    async function pickUp(name: string | RegExp) {
+      const list = await screen.findByRole('dialog', { name: HEADER })
+      fireEvent.keyDown(within(list).getByRole('button', { name }), { code: 'Space', key: ' ' })
+      await waitFor(() => {
+        expect(list).toHaveClass('invisible')
+      })
+      await act(() => new Promise((r) => setTimeout(r, 0)))
+      fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
+    }
+
+    it('drags rows of a month or all-day list as events of their day', async () => {
+      const picked: (DragData | undefined)[] = []
+      renderPopover({ onPickUp: (data) => picked.push(data) })
+      open([standup, rent], 'event')
+      await pickUp('Standup, 10 AM')
+      expect(picked).toHaveLength(1)
+      expect(picked[0]?.type).toBe('event')
+      expect(picked[0]).toMatchObject({ originDay: day })
+      expect(picked[0]?.event).toBe(standup)
+    })
+
+    it('rows of a time-grid list drag as listed', async () => {
+      const picked: (DragData | undefined)[] = []
+      // Began the evening before: the list is for the 25th, and the row measures from the day it starts on.
+      const night = toCalEvent(
+        apiEvent({ id: 'e4', key: 'e4', title: 'Night shift', start: new Date(2026, 8, 24, 22).toISOString(), end: new Date(2026, 8, 25, 2).toISOString() }),
+      )
+      renderPopover({ onPickUp: (data) => picked.push(data) })
+      open([standup, rent, night], 'listed')
+      await pickUp('Standup, 10 AM')
+      expect(picked[0]?.type).toBe('listed')
+      expect(picked[0]).toMatchObject({ originDay: new Date(2026, 8, 25) })
+      expect(picked[0]?.event).toBe(standup)
+      // The popover closed with the drag; open it again for the task and the event from the day before.
+      await waitFor(() => {
+        expect(useUi.getState().overflow).toBeNull()
+      })
+      open([standup, rent, night], 'listed')
+      await pickUp(/Pay rent/)
+      expect(picked[1]).toMatchObject({ type: 'listed', originDay: new Date(2026, 8, 25) })
+      expect(picked[1]?.event).toBe(rent)
+      await waitFor(() => {
+        expect(useUi.getState().overflow).toBeNull()
+      })
+      open([standup, rent, night], 'listed')
+      await pickUp(/Night shift/)
+      expect(picked[2]).toMatchObject({ type: 'listed', originDay: new Date(2026, 8, 24) })
+      expect(picked[2]?.event).toBe(night)
     })
 
     it('hides while a row is dragged out and closes when the drag ends', async () => {
