@@ -566,6 +566,29 @@ describe('layoutDayWithin', () => {
     ])
   })
 
+  it('keeps a late stack raised by a merge clear of the stack before it', () => {
+    // Found by review: merging the 23:50 task into the "+N" below made a stack an hour tall, raised it to 23:00, into
+    // the bundle above, and nothing merged them again.
+    const late = within(
+      [
+        timed('a', 25, 23, 15, 23, 30),
+        timed('b', 25, 23, 15, 0, 0, 26),
+        timed('c', 25, 23, 20, 23, 25),
+        timed('d', 25, 23, 20, 2, 20, 26),
+        toCalTask(todo({ id: 'span', title: 'span', start: local(25, 22, 45), due: local(25, 22, 50) }))!,
+        pt('ten', 23, 10),
+        pt('fifty', 23, 50),
+      ],
+      3,
+    )
+    // One stack: the bundle at 22:45 and "+2" below it; the 23:50 task is counted in the evening's last hour.
+    expect(placedOf(late)).toEqual({ b: [0, 3, 1], a: [1, 3, 1] })
+    expect(overflowOf(late)).toEqual([
+      { kind: 'tasks', items: ['span', 'ten', 'fifty'], startMin: 1365, topMin: 1365, col: 2, cols: 3 },
+      { kind: 'events', items: ['d', 'c'], startMin: 1400, topMin: 1395, col: 2, cols: 3 },
+    ])
+  })
+
   it('keeps its rules on seeded random days', () => {
     /** Park-Miller: the same cases on every run. */
     const random = (seed: number) => {
@@ -575,18 +598,18 @@ describe('layoutDayWithin', () => {
         return s % n
       }
     }
-    // Busy mornings, and late evenings whose items run up to and past midnight.
-    for (const [from, starts, name] of [
-      [8 * 60, 48, 'morning'],
-      [21 * 60, 36, 'evening'],
+    // Busy mornings, and late evenings whose items run up to and past midnight, with short ones that stack up there.
+    for (const [from, starts, lengths, name] of [
+      [8 * 60, 48, [5, 15, 30, 45, 60, 90, 180], 'morning'],
+      [20 * 60, 48, [5, 10, 15, 30, 45, 60, 90, 180], 'evening'],
     ] as const) {
       for (let seed = 1; seed <= 300; seed++) {
         const r = random(seed)
         const items: CalItem[] = []
         const count = 3 + r(12)
         for (let i = 0; i < count; i++) {
-          const start = from + 5 * r(starts) // 8:00-11:55, 21:00-23:55
-          const length = [5, 15, 30, 45, 60, 90, 180][r(7)]!
+          const start = from + 5 * r(starts) // 8:00-11:55, 20:00-23:55
+          const length = lengths[r(lengths.length)]!
           const end = start + length
           const at = (m: number) => new Date(2026, 8, 25, Math.floor(m / 60), m % 60).toISOString()
           const key = `i${i}`

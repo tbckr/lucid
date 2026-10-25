@@ -341,32 +341,37 @@ export function layoutDayWithin<T extends CalItem>(
 
   /**
    * Stacks that would overlap become one, at the earlier top. What that leaves counted away from its place leaves the
-   * stack and is decided again, once (a bundle's tasks stay with it).
+   * stack and is decided again, once (a bundle's tasks stay with it). A merge late in the evening can raise a stack
+   * into the one before it, so this repeats until no stacks meet; each repeat leaves one stack fewer.
    */
   const settle = () => {
-    const out: Stack<T>[] = []
-    for (const s of [...stacks].sort((a, b) => a.top - b.top)) {
-      const above = out.at(-1)
-      if (!above || !overlaps(stackAt(above), stackAt(s))) {
-        out.push(s)
-        continue
-      }
-      above.tasks.push(...s.tasks)
-      above.events.push(...s.events)
-      for (;;) {
-        const lost = [...above.tasks, ...above.events].filter(
-          (x) => !bundled.has(x) && !decidedAgain.has(x) && !overlaps(placeOf(x), stackAt(above)),
-        )
-        if (lost.length === 0) break
-        for (const x of lost) {
-          decidedAgain.add(x)
-          away.delete(x)
+    for (let merged = true; merged; ) {
+      merged = false
+      const out: Stack<T>[] = []
+      for (const s of [...stacks].sort((a, b) => stackAt(a).from - stackAt(b).from || a.top - b.top)) {
+        const above = out.at(-1)
+        if (!above || !overlaps(stackAt(above), stackAt(s))) {
+          out.push(s)
+          continue
         }
-        above.tasks = above.tasks.filter((x) => !lost.includes(x))
-        above.events = above.events.filter((x) => !lost.includes(x))
+        merged = true
+        above.tasks.push(...s.tasks)
+        above.events.push(...s.events)
+        for (;;) {
+          const lost = [...above.tasks, ...above.events].filter(
+            (x) => !bundled.has(x) && !decidedAgain.has(x) && !overlaps(placeOf(x), stackAt(above)),
+          )
+          if (lost.length === 0) break
+          for (const x of lost) {
+            decidedAgain.add(x)
+            away.delete(x)
+          }
+          above.tasks = above.tasks.filter((x) => !lost.includes(x))
+          above.events = above.events.filter((x) => !lost.includes(x))
+        }
       }
+      stacks = out.filter((s) => s.tasks.length + s.events.length > 0)
     }
-    stacks = out.filter((s) => s.tasks.length + s.events.length > 0)
   }
 
   /** Moves `seg` into `stack`. */
