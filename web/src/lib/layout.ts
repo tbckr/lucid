@@ -1,4 +1,5 @@
 import { differenceInCalendarDays, startOfDay } from 'date-fns'
+import { TASK_POINT_MINUTES } from './calendarTasks'
 import { dayKey, minutesOfDay } from './dates'
 import { compareEvents, firstDay, groupByDay, isSpanning, lastDay, overlapsDay, type CalItem } from './events'
 
@@ -44,6 +45,11 @@ export function timedSegments<T extends CalItem>(events: T[], day: Date): TimedS
   return out
 }
 
+/** The order columns are handed out in: by start, longer first, then as displayed. */
+function segmentOrder<T extends CalItem>(a: TimedSegment<T>, b: TimedSegment<T>): number {
+  return a.startMin - b.startMin || b.endMin - a.endMin || compareEvents(a.event, b.event)
+}
+
 /**
  * Assign overlap columns (classic calendar layout): events are grouped into
  * clusters of transitively overlapping events; each event takes the first
@@ -53,9 +59,7 @@ export function timedSegments<T extends CalItem>(events: T[], day: Date): TimedS
  * `minDuration` keeps very short events from visually colliding.
  */
 export function layoutDay<T extends CalItem>(segments: TimedSegment<T>[], minDuration = 20): PositionedSegment<T>[] {
-  const sorted = [...segments].sort(
-    (a, b) => a.startMin - b.startMin || b.endMin - a.endMin || compareEvents(a.event, b.event),
-  )
+  const sorted = [...segments].sort(segmentOrder)
   const visualEnd = (s: TimedSegment<T>) => Math.max(s.endMin, s.startMin + minDuration)
   const result: PositionedSegment<T>[] = []
 
@@ -95,6 +99,228 @@ export function layoutDay<T extends CalItem>(segments: TimedSegment<T>[], minDur
   }
   if (cluster.length > 0) flush()
   return result
+}
+
+/* ------------------------------------------------------------------------ */
+/* Time grid within its width (FR-07): task bundles and "+N"                */
+/* ------------------------------------------------------------------------ */
+
+/** Narrowest readable column in the time grid (FR-07): a block's checkbox or color bar and about three letters. */
+export const MIN_COLUMN_PX = 44
+
+/** Columns that fit a day column of `width` px; Infinity before it is measured (width 0 or not finite). */
+export function columnCapacity(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return Infinity
+  return Math.max(1, Math.floor(width / MIN_COLUMN_PX))
+}
+
+/** An entry of the overflow column (FR-07): what stands for the items that don't get a column of their own. */
+export interface OverflowEntry<T extends CalItem = CalItem> {
+  /** 'tasks': a bundle, or one task shown as itself; 'events': "+N". */
+  kind: 'tasks' | 'events'
+  /** In compareEvents order. */
+  items: T[]
+  /** Earliest start of its items, minutes after midnight (clipped to the day). */
+  startMin: number
+  /** Where it is drawn: startMin, pushed below an earlier entry it would overlap; one point (TASK_POINT_MINUTES) high. */
+  topMin: number
+  col: number
+  cols: number
+}
+
+export interface DayLayout<T extends CalItem = CalItem> {
+  placed: PositionedSegment<T>[]
+  overflow: OverflowEntry<T>[]
+}
+
+/** Minutes of a day, end exclusive. */
+interface Interval {
+  from: number
+  to: number
+}
+
+const overlaps = (a: Interval, b: Interval) => a.from < b.to && b.from < a.to
+
+/** Where an entry of the overflow column is drawn: one point high. */
+const drawnAt = (e: OverflowEntry): Interval => ({ from: e.topMin, to: e.topMin + TASK_POINT_MINUTES })
+
+/** The times where more than `capacity` of the intervals meet. */
+function overfull(intervals: Interval[], capacity: number): Interval[] {
+  // At the same minute, ends come first: an interval ending where another starts does not meet it.
+  const edges = intervals.flatMap((i) => [
+    { at: i.from, step: 1 },
+    { at: i.to, step: -1 },
+  ])
+  edges.sort((a, b) => a.at - b.at || a.step - b.step)
+  const out: Interval[] = []
+  let meeting = 0
+  let from: number | null = null
+  for (const { at, step } of edges) {
+    meeting += step
+    if (from === null && meeting > capacity) {
+      from = at
+    } else if (from !== null && meeting <= capacity) {
+      out.push({ from, to: at })
+      from = null
+    }
+  }
+  return out
+}
+
+/** Groups of `xs` whose intervals overlap, transitively, in order of their starts. */
+function chains<X>(xs: X[], interval: (x: X) => Interval): X[][] {
+  const out: X[][] = []
+  let group: X[] = []
+  let end = -Infinity
+  for (const x of [...xs].sort((a, b) => interval(a).from - interval(b).from)) {
+    const at = interval(x)
+    if (at.from >= end) {
+      group = []
+      out.push(group)
+    }
+    group.push(x)
+    end = Math.max(end, at.to)
+  }
+  return out
+}
+
+/** An item in a column of its own. */
+interface Column<T extends CalItem> {
+  seg: TimedSegment<T>
+  col: number
+}
+
+/** The entry standing for `segs`, not yet stacked or placed. */
+function overflowEntry<T extends CalItem>(kind: OverflowEntry['kind'], segs: TimedSegment<T>[]): OverflowEntry<T> {
+  const startMin = Math.min(...segs.map((s) => s.startMin))
+  return { kind, items: segs.map((s) => s.event).sort(compareEvents), startMin, topMin: startMin, col: 0, cols: 1 }
+}
+
+/** The overflow column top to bottom, by start, tasks first; an entry that would overlap the one above goes below it. */
+function stack<T extends CalItem>(entries: OverflowEntry<T>[]): OverflowEntry<T>[] {
+  entries.sort((a, b) => a.startMin - b.startMin || Number(a.kind === 'events') - Number(b.kind === 'events'))
+  let bottom = -Infinity
+  return entries.map((e) => {
+    const topMin = Math.max(e.startMin, bottom)
+    bottom = topMin + TASK_POINT_MINUTES
+    return { ...e, topMin }
+  })
+}
+
+/**
+ * Hand out columns `0..capacity-1` in layoutDay's order, each item the first one free over its whole time; the last
+ * column is taken wherever the overflow column draws an entry. Stops at the first item that finds no column.
+ */
+function firstFit<T extends CalItem>(
+  order: TimedSegment<T>[],
+  capacity: number,
+  entries: Interval[],
+  extent: (s: TimedSegment<T>) => Interval,
+): { columns: Column<T>[]; failed?: TimedSegment<T> } {
+  const ends = Array.from({ length: capacity }, () => -Infinity)
+  const columns: Column<T>[] = []
+  for (const seg of order) {
+    const at = extent(seg)
+    const col = ends.findIndex((end, c) => end <= at.from && (c < capacity - 1 || !entries.some((e) => overlaps(e, at))))
+    if (col === -1) return { columns, failed: seg }
+    ends[col] = at.to
+    columns.push({ seg, col })
+  }
+  return { columns }
+}
+
+type Drawn<T extends CalItem> = { at: Interval; column: Column<T> } | { at: Interval; entry: OverflowEntry<T> }
+
+/**
+ * Column counts per cluster of everything drawn: the overflow column sits right of the cluster's items, as the last
+ * column at most, and items extend right over free columns as in layoutDay.
+ */
+function place<T extends CalItem>(
+  columns: Column<T>[],
+  overflow: OverflowEntry<T>[],
+  capacity: number,
+  extent: (s: TimedSegment<T>) => Interval,
+): DayLayout<T> {
+  const drawn: Drawn<T>[] = [
+    ...columns.map((column) => ({ at: extent(column.seg), column })),
+    ...overflow.map((entry) => ({ at: drawnAt(entry), entry })),
+  ]
+  const layout: DayLayout<T> = { placed: [], overflow: [] }
+  for (const cluster of chains(drawn, (d) => d.at)) {
+    const items = cluster.flatMap((d) => ('column' in d ? [{ at: d.at, ...d.column }] : []))
+    const entries = cluster.flatMap((d) => ('entry' in d ? [d] : []))
+    const last = Math.max(-1, ...items.map((i) => i.col))
+    const entryCol = Math.min(last + 1, capacity - 1)
+    const cols = entries.length > 0 ? Math.max(last + 1, entryCol + 1) : last + 1
+    for (const item of items) {
+      let span = 1
+      for (let c = item.col + 1; c < cols; c++) {
+        const blocked =
+          items.some((o) => o.col === c && overlaps(o.at, item.at)) ||
+          (c === entryCol && entries.some((e) => overlaps(e.at, item.at)))
+        if (blocked) break
+        span++
+      }
+      layout.placed.push({ ...item.seg, col: item.col, cols, span })
+    }
+    for (const { entry } of entries) layout.overflow.push({ ...entry, col: entryCol, cols })
+  }
+  return layout
+}
+
+/**
+ * Lay out a day of the time grid in `capacity` columns (FR-07). Where no more items meet than fit, this is layoutDay.
+ * Where more meet, the tasks there yield first: tasks whose points overlap become one entry of the overflow column, the
+ * last column. Only events that then find no column over their whole time are hidden, behind one "+N" per group of
+ * hidden events that overlap. Every item is decided at its own time: one with room keeps its column beside a busy
+ * hour, except a task where an event is hidden, which yields too, so tasks never take a column while events are hidden.
+ */
+export function layoutDayWithin<T extends CalItem>(
+  segments: TimedSegment<T>[],
+  capacity: number,
+  minDuration = 20,
+): DayLayout<T> {
+  const cap = Math.max(1, Math.floor(capacity))
+  const extent = (s: TimedSegment<T>): Interval => ({ from: s.startMin, to: Math.max(s.endMin, s.startMin + minDuration) })
+  const full = overfull(segments.map(extent), cap)
+  if (full.length === 0) return { placed: layoutDay(segments, minDuration), overflow: [] }
+
+  // Tasks group by their points: a 10:30 task stays out of a 9:00 bundle, and a long task groups by its start.
+  const groups = chains(
+    segments.filter((s) => s.event.kind === 'task'),
+    (s) => ({ from: s.startMin, to: s.startMin + TASK_POINT_MINUTES }),
+  )
+  const groupOf = new Map(groups.flatMap((g) => g.map((s) => [s, g] as const)))
+  const yielded = new Set(groups.filter((g) => g.some((s) => full.some((f) => overlaps(f, extent(s))))))
+  const hidden = new Set<TimedSegment<T>>()
+  const order = [...segments].sort(segmentOrder)
+  const shown = (s: TimedSegment<T>) => {
+    const group = groupOf.get(s)
+    return !hidden.has(s) && !(group && yielded.has(group))
+  }
+
+  // Whatever yields only adds to the overflow column, so this settles after at most one round per item.
+  for (;;) {
+    const overflow = stack([
+      ...[...yielded].map((g) => overflowEntry('tasks', g)),
+      ...chains([...hidden], extent).map((g) => overflowEntry('events', g)),
+    ])
+    const { columns, failed } = firstFit(order.filter(shown), cap, overflow.map(drawnAt), extent)
+    if (failed) {
+      // An event without a column goes behind "+N"; a task (pushed out by a stacked entry) into the overflow column.
+      const group = groupOf.get(failed)
+      if (group) yielded.add(group)
+      else hidden.add(failed)
+      continue
+    }
+    const hiddenAt = [...hidden].map(extent)
+    const crowded = columns.flatMap(({ seg }) => {
+      const group = groupOf.get(seg)
+      return group && hiddenAt.some((h) => overlaps(h, extent(seg))) ? [group] : []
+    })
+    if (crowded.length === 0) return place(columns, overflow, cap, extent)
+    for (const group of crowded) yielded.add(group)
+  }
 }
 
 /* ------------------------------------------------------------------------ */

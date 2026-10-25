@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { toCalTask } from './calendarTasks'
+import { TASK_POINT_MINUTES, toCalTask } from './calendarTasks'
 import { dayKey, eachDay } from './dates'
-import { compareEvents, toCalEvent } from './events'
+import { compareEvents, toCalEvent, type CalItem } from './events'
 import { apiEvent, todo } from '@/test/fixtures'
-import { agendaRows, cellCapacity, cellRowsUsed, layoutDay, layoutWeekRow, timedSegments, type CellLayout } from './layout'
+import {
+  agendaRows,
+  cellCapacity,
+  cellRowsUsed,
+  columnCapacity,
+  layoutDay,
+  layoutDayWithin,
+  layoutWeekRow,
+  timedSegments,
+  type CellLayout,
+  type DayLayout,
+  type TimedSegment,
+} from './layout'
 
 const local = (d: number, h: number, m = 0) => new Date(2026, 8, d, h, m).toISOString()
 const timed = (key: string, d: number, h1: number, m1: number, h2: number, m2: number, d2 = d) =>
@@ -80,6 +92,235 @@ describe('layoutDay', () => {
   it('treats very short events as minDuration long', () => {
     const r = layout(timed('a', 25, 9, 0, 9, 5), timed('b', 25, 9, 10, 9, 30))
     expect(r.a?.[1]).toBe(2)
+  })
+})
+
+describe('columnCapacity', () => {
+  it('fits columns of at least MIN_COLUMN_PX, unlimited before measurement', () => {
+    expect(columnCapacity(0)).toBe(Infinity)
+    expect(columnCapacity(NaN)).toBe(Infinity)
+    expect(columnCapacity(43)).toBe(1)
+    expect(columnCapacity(44)).toBe(1)
+    expect(columnCapacity(90)).toBe(2)
+    expect(columnCapacity(170)).toBe(3)
+  })
+})
+
+describe('layoutDayWithin', () => {
+  const day = new Date(2026, 8, 25)
+  /** A timed task point on Sept 25. */
+  const pt = (key: string, h: number, m = 0) => toCalTask(todo({ id: key, title: key, due: local(25, h, m) }))!
+  const overlap = (a: { from: number; to: number }, b: { from: number; to: number }) => a.from < b.to && b.from < a.to
+  const extent = (s: TimedSegment) => ({ from: s.startMin, to: Math.max(s.endMin, s.startMin + 20) })
+
+  /** The rules every layout within a width keeps (FR-07), checked on every case. */
+  function expectRules(segments: TimedSegment[], capacity: number, layout: DayLayout, note = '') {
+    const boxes = [
+      ...layout.placed.map((p) => ({ name: p.event.title, ...extent(p), col: p.col, span: p.span, cols: p.cols })),
+      ...layout.overflow.map((e) => ({
+        name: `${e.kind}@${e.startMin}`,
+        from: e.topMin,
+        to: e.topMin + TASK_POINT_MINUTES,
+        col: e.col,
+        span: 1,
+        cols: e.cols,
+      })),
+    ]
+    for (const b of boxes) {
+      expect(b.col >= 0 && b.span >= 1 && b.col + b.span <= b.cols && b.cols <= capacity, `${note} ${b.name} in its columns`).toBe(
+        true,
+      )
+    }
+    // Nothing drawn at the same time shares a column, and all of it shares one column count.
+    for (const [i, a] of boxes.entries()) {
+      for (const b of boxes.slice(i + 1)) {
+        if (!overlap(a, b)) continue
+        expect(a.col + a.span <= b.col || b.col + b.span <= a.col, `${note} ${a.name} and ${b.name} share a column`).toBe(true)
+        expect(a.cols, `${note} ${a.name} and ${b.name} differ in columns`).toBe(b.cols)
+      }
+    }
+    // At no minute do placed segments plus entries drawn there take more than `capacity` columns.
+    const last = Math.max(0, ...boxes.map((b) => b.to))
+    for (let m = 0; m < last; m++) {
+      const used = boxes.filter((b) => b.from <= m && m < b.to).reduce((n, b) => n + b.span, 0)
+      expect(used, `${note} columns at minute ${m}`).toBeLessThanOrEqual(capacity)
+    }
+    // Every item is placed or in exactly one entry, of its own kind, in display order, at its earliest start.
+    const segOf = new Map<CalItem, TimedSegment>(segments.map((s) => [s.event, s]))
+    const shown = [...layout.placed.map((p) => p.event), ...layout.overflow.flatMap((e) => e.items)]
+    expect(shown, `${note} shown once each`).toHaveLength(segments.length)
+    expect(new Set(shown), `${note} shown once each`).toEqual(new Set(segments.map((s) => s.event)))
+    for (const e of layout.overflow) {
+      expect(e.items.length, `${note} ${e.kind}@${e.startMin} is empty`).toBeGreaterThan(0)
+      expect(
+        e.items.every((i) => i.kind === (e.kind === 'tasks' ? 'task' : 'event')),
+        `${note} ${e.kind}@${e.startMin} mixes kinds`,
+      ).toBe(true)
+      expect(titles(e.items), `${note} ${e.kind}@${e.startMin} order`).toEqual(titles([...e.items].sort(compareEvents)))
+      expect(e.startMin, `${note} ${e.kind}@${e.startMin} start`).toBe(Math.min(...e.items.map((i) => segOf.get(i)!.startMin)))
+      expect(e.topMin, `${note} ${e.kind}@${e.startMin} above its start`).toBeGreaterThanOrEqual(e.startMin)
+    }
+    // No event is hidden at a minute where a task is placed as itself.
+    const hidden = layout.overflow.filter((e) => e.kind === 'events').flatMap((e) => e.items.map((i) => segOf.get(i)!))
+    for (const p of layout.placed.filter((x) => x.event.kind === 'task')) {
+      for (const h of hidden) {
+        expect(overlap(extent(p), extent(h)), `${note} ${p.event.title} placed beside hidden ${h.event.title}`).toBe(false)
+      }
+    }
+  }
+
+  const within = (items: CalItem[], capacity: number, on = day) => {
+    const segments = timedSegments(items, on)
+    const layout = layoutDayWithin(segments, capacity)
+    expectRules(segments, capacity, layout)
+    return layout
+  }
+  /** Placed items by title: [col, cols, span]. */
+  const placedOf = (l: DayLayout) => Object.fromEntries(l.placed.map((p) => [p.event.title, [p.col, p.cols, p.span]]))
+  const overflowOf = (l: DayLayout) =>
+    l.overflow.map((e) => ({
+      kind: e.kind,
+      items: titles(e.items),
+      startMin: e.startMin,
+      topMin: e.topMin,
+      col: e.col,
+      cols: e.cols,
+    }))
+
+  it('equals layoutDay when it fits', () => {
+    const segments = timedSegments([timed('a', 25, 9, 0, 10, 0), timed('b', 25, 9, 0, 9, 30), pt('t', 9)], day)
+    const layout = layoutDayWithin(segments, 3)
+    expectRules(segments, 3, layout)
+    expect(layout.placed).toEqual(layoutDay(segments))
+    expect(layout.overflow).toEqual([])
+  })
+
+  it('bundles tasks first', () => {
+    const l = within([timed('a', 25, 9, 0, 10, 0), timed('b', 25, 9, 30, 11, 0), pt('t1', 9), pt('t2', 9), pt('t3', 9)], 3)
+    expect(placedOf(l)).toEqual({ a: [0, 3, 1], b: [1, 3, 2] })
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['t1', 't2', 't3'], startMin: 540, topMin: 540, col: 2, cols: 3 }])
+  })
+
+  it("hides events only when they still don't fit", () => {
+    const events = [timed('a', 25, 9, 0, 10, 0), timed('b', 25, 9, 0, 10, 30), timed('c', 25, 9, 15, 11, 0)]
+    const tasks = [1, 2, 3, 4, 5, 6].map((i) => pt(`t${i}`, 9))
+    const l = within([...tasks, ...events], 2)
+    expect(placedOf(l)).toEqual({ b: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2', 't3', 't4', 't5', 't6'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['a', 'c'], startMin: 540, topMin: 570, col: 1, cols: 2 },
+    ])
+  })
+
+  it("decides at the item's own time", () => {
+    const l = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), pt('t3', 10, 30)], 2)
+    // The 10:30 task has room beside the event: it stays itself, below the bundle.
+    expect(placedOf(l)).toEqual({ e: [0, 2, 1], t3: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 }])
+  })
+
+  it('groups by point, not by cluster', () => {
+    const l = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9, 20), pt('t3', 10, 30)], 2)
+    expect(placedOf(l)).toEqual({ e: [0, 2, 1], t3: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 }])
+  })
+
+  it('keeps a lone task as itself in the overflow column', () => {
+    const l = within([timed('a', 25, 9, 0, 10, 0), timed('b', 25, 9, 0, 10, 0), pt('t', 9)], 2)
+    expect(placedOf(l)).toEqual({ a: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['b'], startMin: 540, topMin: 570, col: 1, cols: 2 },
+    ])
+  })
+
+  it('+N counts only its group', () => {
+    const morning = [1, 2, 3].map((i) => timed(`a${i}`, 25, 9, 0, 10, 0))
+    const afternoon = [1, 2, 3].map((i) => timed(`b${i}`, 25, 14, 0, 15, 0))
+    const l = within([...morning, ...afternoon], 2)
+    expect(placedOf(l)).toEqual({ a1: [0, 2, 1], b1: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'events', items: ['a2', 'a3'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['b2', 'b3'], startMin: 840, topMin: 840, col: 1, cols: 2 },
+    ])
+  })
+
+  it('lays out an hour with room as layoutDay does', () => {
+    const busy = [1, 2, 3].map((i) => timed(`a${i}`, 25, 9, 0, 10, 0))
+    const calm = [timed('x', 25, 12, 0, 13, 0), timed('y', 25, 12, 30, 13, 30)]
+    const l = within([...busy, ...calm], 2)
+    expect(l.placed.filter((p) => p.event.title === 'x' || p.event.title === 'y')).toEqual(layoutDay(timedSegments(calm, day)))
+  })
+
+  it('stacks a bundle and +N in a single column', () => {
+    const l = within([timed('e', 25, 9, 0, 10, 0), pt('t1', 9), pt('t2', 9)], 1)
+    expect(l.placed).toEqual([])
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 0, cols: 1 },
+      { kind: 'events', items: ['e'], startMin: 540, topMin: 570, col: 0, cols: 1 },
+    ])
+  })
+
+  it('groups a clipped task by its segment on the day', () => {
+    // A point due at 23:50 ends at midnight (pointEnd), so a task from 23:50 to 0:20 is what reaches into Sept 25.
+    const late = toCalTask(todo({ id: 'late', title: 'late', start: local(24, 23, 50), due: local(25, 0, 20) }))!
+    const l = within([late, pt('early', 0, 5), timed('e', 25, 0, 0, 1, 0)], 2)
+    expect(placedOf(l)).toEqual({ e: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['late', 'early'], startMin: 0, topMin: 0, col: 1, cols: 2 }])
+  })
+
+  it('yields a task at the time of a hidden event', () => {
+    // long has no column over all its time (the 11:00 bundle takes the last one), so it is hidden; the 10:00 task,
+    // with room of its own, must not take a column beside it.
+    const items = [timed('early', 25, 8, 0, 9, 30), timed('long', 25, 9, 0, 12, 0), pt('t', 10), pt('b1', 11), pt('b2', 11)]
+    const l = within(items, 2)
+    expect(placedOf(l)).toEqual({ early: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'events', items: ['long'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'tasks', items: ['t'], startMin: 600, topMin: 600, col: 0, cols: 1 },
+      { kind: 'tasks', items: ['b1', 'b2'], startMin: 660, topMin: 660, col: 0, cols: 1 },
+    ])
+  })
+
+  it('moves a task pushed out by a stacked entry into the overflow column', () => {
+    // The "+1" for short stacks below the 9:00 bundle, onto 9:30, where the 9:35 task had its column.
+    const items = [timed('day', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('short', 25, 9, 10, 9, 20), pt('t3', 9, 35)]
+    const l = within(items, 2)
+    expect(placedOf(l)).toEqual({ day: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['short'], startMin: 550, topMin: 570, col: 1, cols: 2 },
+      { kind: 'tasks', items: ['t3'], startMin: 575, topMin: 600, col: 1, cols: 2 },
+    ])
+  })
+
+  it('keeps its rules on seeded random days', () => {
+    /** Park-Miller: the same cases on every run. */
+    const random = (seed: number) => {
+      let s = seed
+      return (n: number) => {
+        s = (s * 16807) % 2147483647
+        return s % n
+      }
+    }
+    for (let seed = 1; seed <= 300; seed++) {
+      const r = random(seed)
+      const items: CalItem[] = []
+      const count = 3 + r(12)
+      for (let i = 0; i < count; i++) {
+        const start = 8 * 60 + 5 * r(48) // 8:00-11:55
+        const length = [5, 15, 30, 45, 60, 90, 180][r(7)]!
+        const end = start + length
+        const at = (m: number) => local(25, Math.floor(m / 60), m % 60)
+        const key = `i${i}`
+        if (r(5) < 3) items.push(timed(key, 25, Math.floor(start / 60), start % 60, Math.floor(end / 60), end % 60))
+        else if (r(3) > 0) items.push(toCalTask(todo({ id: key, title: key, due: at(start) }))!)
+        else items.push(toCalTask(todo({ id: key, title: key, start: at(start), due: at(end) }))!)
+      }
+      const capacity = 1 + r(4)
+      const segments = timedSegments(items, day)
+      expectRules(segments, capacity, layoutDayWithin(segments, capacity), `seed ${seed}, capacity ${capacity}:`)
+    }
   })
 })
 
