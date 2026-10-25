@@ -24,8 +24,11 @@ export interface PositionedSegment<T extends CalItem = CalItem> extends TimedSeg
   cols: number
   /** Columns this segment may extend over (>= 1). */
   span: number
-  /** Its cluster's last column is the overflow column (FR-07), which is drawn slim (`columnBox`). */
-  withOverflow?: true
+  /**
+   * Its cluster's last column is the overflow column and holds nothing but its entries (FR-07): that column is drawn
+   * slim and the cluster's other columns share the rest (`columnBox`).
+   */
+  slimOverflow?: true
 }
 
 const DAY_MINUTES = 24 * 60
@@ -131,6 +134,8 @@ export interface OverflowEntry<T extends CalItem = CalItem> {
   topMin: number
   col: number
   cols: number
+  /** Its column holds nothing but overflow entries in its cluster, so it is drawn slim (`columnBox`). */
+  slimOverflow?: true
 }
 
 export interface DayLayout<T extends CalItem = CalItem> {
@@ -269,7 +274,7 @@ function place<T extends CalItem>(
     const last = Math.max(-1, ...items.map((i) => i.col))
     const entryCol = Math.min(last + 1, capacity - 1)
     const cols = stacked.length > 0 ? Math.max(last + 1, entryCol + 1) : last + 1
-    for (const item of items) {
+    const spans = items.map((item) => {
       let span = 1
       for (let c = item.col + 1; c < cols; c++) {
         const blocked =
@@ -278,9 +283,14 @@ function place<T extends CalItem>(
         if (blocked) break
         span++
       }
-      layout.placed.push({ ...item.seg, col: item.col, cols, span, ...(stacked.length > 0 && { withOverflow: true as const }) })
-    }
-    for (const { stack } of stacked) layout.overflow.push(...stack.map((e) => ({ ...e, col: entryCol, cols })))
+      return span
+    })
+    // The overflow column is drawn slim where it holds nothing but its entries; an item of its own there keeps the
+    // cluster's columns even.
+    const slim = stacked.length > 0 && items.every((item, i) => item.col + (spans[i] ?? 1) <= entryCol)
+    const mark = slim ? { slimOverflow: true as const } : {}
+    items.forEach((item, i) => layout.placed.push({ ...item.seg, col: item.col, cols, span: spans[i] ?? 1, ...mark }))
+    for (const { stack } of stacked) layout.overflow.push(...stack.map((e) => ({ ...e, col: entryCol, cols, ...mark })))
   }
   return layout
 }
@@ -468,21 +478,20 @@ export function overflowColumnPx(overflow: OverflowEntry[]): number {
 
 /**
  * Where an entry is drawn across a day column `width` px wide (FR-07), in % of it: its columns `col` to `col + span`
- * of `cols`. In a cluster `withOverflow`, the overflow column, its last, is drawn `overflowPx` wide, and the cluster's
+ * of `cols`. In a cluster `slim`, the overflow column, its last, is drawn `overflowPx` wide, and the cluster's
  * other columns share the rest, so the items beside a bundle or "+N" keep more of their titles. Elsewhere, and where
  * the slim column would be no narrower than an even share, the columns are even.
  */
 export function columnBox(
   { col, span, cols }: { col: number; span: number; cols: number },
-  withOverflow: boolean,
+  slim: boolean,
   width: number,
   overflowPx: number,
 ): { left: number; width: number } {
-  if (!withOverflow || cols < 2 || overflowPx <= 0 || overflowPx >= width / cols) {
+  if (!slim || cols < 2 || overflowPx <= 0 || overflowPx >= width / cols) {
     return { left: (col / cols) * 100, width: (span / cols) * 100 }
   }
-  const slim = overflowPx / width
-  const content = (1 - slim) / (cols - 1)
+  const content = (1 - overflowPx / width) / (cols - 1)
   const end = col + span >= cols ? 1 : (col + span) * content
   return { left: col * content * 100, width: (end - col * content) * 100 }
 }

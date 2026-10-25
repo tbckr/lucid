@@ -379,10 +379,10 @@ function DayColumn({
     [setNodeRef],
   )
   const layout = useMemo(() => layoutDayWithin(timedSegments(events, day), capacity), [events, day, capacity])
-  // Where a cluster has an overflow column, it is drawn slim and the cluster's other columns share the rest (FR-07).
+  // Where a cluster's overflow column holds nothing but its entries, it is drawn slim and the cluster's other columns
+  // share the rest (FR-07).
   const overflowPx = overflowColumnPx(layout.overflow)
-  const across = (col: number, span: number, cols: number, withOverflow: boolean) =>
-    columnBox({ col, span, cols }, withOverflow, colWidth, overflowPx)
+  const across = (col: number, span: number, cols: number, slim: boolean) => columnBox({ col, span, cols }, slim, colWidth, overflowPx)
   const today = isSameDay(day, now)
   const date = format(day, 'PPPP', { locale: prefs.locale })
   // The column is where the lists of its bundles and "+N" point and give the focus to once their button is gone
@@ -438,7 +438,7 @@ function DayColumn({
         const preview = resized && !p.clippedEnd ? (resized.endsAt.getTime() - e.endsAt.getTime()) / 60_000 : 0
         const top = p.startMin * PX_PER_MINUTE
         const height = Math.max(18, (p.endMin - p.startMin + preview) * PX_PER_MINUTE - 2)
-        const box = across(p.col, p.span, p.cols, p.withOverflow === true)
+        const box = across(p.col, p.span, p.cols, p.slimOverflow === true)
         const ro = readOnly(e.calendarId)
         const size = height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'
         const style = { top, height, left: `${box.left}%`, width: `calc(${box.width}% - 4px)`, zIndex: 10 + p.col }
@@ -464,7 +464,7 @@ function DayColumn({
 
       {layout.overflow.map((entry) => {
         // One point high, at its stack's place in the overflow column (FR-07).
-        const box = across(entry.col, 1, entry.cols, true)
+        const box = across(entry.col, 1, entry.cols, entry.slimOverflow === true)
         const style: CSSProperties = {
           top: entry.topMin * PX_PER_MINUTE,
           height: TASK_POINT_MINUTES * PX_PER_MINUTE - 2,

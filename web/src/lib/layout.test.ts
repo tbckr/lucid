@@ -110,8 +110,8 @@ describe('columnCapacity', () => {
 })
 
 describe('columnBox', () => {
-  const box = (col: number, span: number, cols: number, withOverflow: boolean, width = 90) => {
-    const b = columnBox({ col, span, cols }, withOverflow, width, 37)
+  const box = (col: number, span: number, cols: number, slim: boolean, width = 90) => {
+    const b = columnBox({ col, span, cols }, slim, width, 37)
     return [Math.round(b.left * 100) / 100, Math.round(b.width * 100) / 100]
   }
 
@@ -181,11 +181,16 @@ describe('layoutDayWithin', () => {
         true,
       )
     }
-    // What is drawn beside an overflow entry knows its cluster has one, so the overflow column can be drawn slim.
-    for (const p of layout.placed) {
-      if (layout.overflow.some((e) => overlap(extent(p), { from: e.topMin, to: e.topMin + TASK_POINT_MINUTES }))) {
-        expect(p.withOverflow, `${note} ${p.event.title} beside an overflow column`).toBe(true)
+    // Whether the overflow column is drawn slim is the cluster's: what is drawn at the same time agrees on it; and a
+    // slim column holds no item placed in it.
+    const slimOf = (x: { slimOverflow?: true }) => x.slimOverflow === true
+    for (const e of layout.overflow) {
+      for (const p of layout.placed.filter((x) => overlap(extent(x), { from: e.topMin, to: e.topMin + TASK_POINT_MINUTES }))) {
+        expect(slimOf(p), `${note} ${p.event.title} and ${e.kind}@${e.startMin} disagree on slim`).toBe(slimOf(e))
       }
+    }
+    for (const p of layout.placed.filter((x) => slimOf(x))) {
+      expect(p.col + p.span, `${note} ${p.event.title} in a slim column`).toBeLessThan(p.cols)
     }
     // The overflow column is drawn within the day: a stack late in the evening is raised to end at midnight.
     for (const e of layout.overflow) {
@@ -326,9 +331,18 @@ describe('layoutDayWithin', () => {
     expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 }])
   })
 
-  it('marks the items of a cluster that draws an overflow column', () => {
-    const l = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('later', 25, 14, 0, 15, 0)], 2)
-    expect(Object.fromEntries(l.placed.map((p) => [p.event.title, p.withOverflow ?? false]))).toEqual({ e: true, later: false })
+  it('draws the overflow column slim only where it holds nothing but its entries', () => {
+    const slim = (l: DayLayout) => [
+      Object.fromEntries(l.placed.map((p) => [p.event.title, p.slimOverflow ?? false])),
+      l.overflow.map((e) => e.slimOverflow ?? false),
+    ]
+    // The 9:00 bundle alone in the last column: slim; the 14:00 event's cluster has no overflow column.
+    const alone = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('later', 25, 14, 0, 15, 0)], 2)
+    expect(slim(alone)).toEqual([{ e: true, later: false }, [true]])
+    // A 10:30 task of its own in that column, below the bundle: the cluster's columns stay even.
+    const shared = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), pt('t3', 10, 30)], 2)
+    expect(placedOf(shared)).toEqual({ e: [0, 2, 1], t3: [1, 2, 1] })
+    expect(slim(shared)).toEqual([{ e: false, t3: false }, [false]])
   })
 
   it('groups by point, not by cluster', () => {

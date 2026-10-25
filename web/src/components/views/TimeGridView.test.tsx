@@ -334,6 +334,18 @@ describe('TimeGridView', () => {
       expect(across(container.querySelector<HTMLElement>('[data-event-key="sync"]')!.parentElement!)).toEqual([0, 58.89])
     })
 
+    it("keeps the columns of a busy hour even where its overflow column also holds an entry of its own", () => {
+      measured(56 + 7 * 90)
+      // Sync runs 9–12 beside the bundle; a 10:30 event has room below it, in the same column.
+      const long = toCalEvent(apiEvent({ id: 'sync', key: 'sync', title: 'Sync', start: '2026-09-25T07:00:00Z', end: '2026-09-25T10:00:00Z' }))
+      const later = toCalEvent(apiEvent({ id: 'call', key: 'call', title: 'Call', start: '2026-09-25T08:30:00Z', end: '2026-09-25T09:30:00Z' }))
+      const { container } = renderWithProviders(grid(week, [long, later, ...tasksAtNine(3)]))
+      const bundle = within(friday()).getByRole('button', { name: /^3 tasks at 9:00 AM/ })
+      expect(across(bundle)).toEqual([50, 50])
+      expect(across(container.querySelector<HTMLElement>('[data-event-key="sync"]')!.parentElement!)).toEqual([0, 50])
+      expect(across(container.querySelector<HTMLElement>('[data-event-key="call"]')!.parentElement!)).toEqual([50, 50])
+    })
+
     it('shows everything in the wide day view', () => {
       measured(56 + 400)
       const { container } = renderWithProviders(grid([new Date(2026, 8, 25)], [...events, ...tasksAtNine(3)]))
