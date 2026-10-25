@@ -42,6 +42,24 @@ export interface DetailState {
 }
 
 /**
+ * The list behind a "+N" or "N more" button (FR-07): a popover the store opens, so it stays while the button and
+ * the layout around it change, and keeps its entries until it is closed.
+ */
+export interface OverflowState {
+  /** The button that opened it: its aria-expanded, and a second click closes. */
+  id: string
+  day: Date
+  /** What the button stood for when it opened, in display order; kept until it closes (FR-07). */
+  items: CalItem[]
+  /** How rows drag (FR-10): 'event' moves by whole days, like a month chip. */
+  drag: 'event'
+  /** The button; `home` (its cell or column) and `rect` (the button's box at opening) stand in once it is gone. */
+  anchor: HTMLElement
+  home: HTMLElement
+  rect: DOMRect
+}
+
+/**
  * An event or task the user added to the problem report (FR-36). The report gets its object's ID and kind; the
  * `label` (its title) and the calendar's name and color are shown in the dialog only, never written to the report.
  */
@@ -95,6 +113,8 @@ interface UiState {
    */
   createPreview: CalItem | null
   taskEditor: TaskEditorState
+  /** The list of a "+N" or "N more" button while it is open; at most one (FR-07). */
+  overflow: OverflowState | null
   settingsOpen: boolean
   shortcutsOpen: boolean
   /** Backend reachable (updated by API client + /healthz polling). */
@@ -120,6 +140,7 @@ interface UiState {
   setCreateWhen: (when: Partial<CreateWhen>, at?: Pick<CreateState, 'anchor' | 'span'>) => void
   setCreatePreview: (preview: CalItem | null) => void
   openTaskEditor: (state: TaskEditorState) => void
+  openOverflow: (state: OverflowState | null) => void
   setSettingsOpen: (open: boolean) => void
   setShortcutsOpen: (open: boolean) => void
   setBackendReachable: (reachable: boolean) => void
@@ -153,6 +174,7 @@ export const useUi = create<UiState>()((set) => ({
   createWhen: null,
   createPreview: null,
   taskEditor: null,
+  overflow: null,
   settingsOpen: false,
   shortcutsOpen: false,
   backendReachable: true,
@@ -160,17 +182,17 @@ export const useUi = create<UiState>()((set) => ({
   signedOut: false,
 
   setView: (view) => {
-    set({ view, detail: null, ...noCreate })
+    set({ view, detail: null, overflow: null, ...noCreate })
   },
   setDate: (date) => {
-    set({ date, detail: null, ...noCreate })
+    set({ date, detail: null, overflow: null, ...noCreate })
   },
   setSidebarOpen: (sidebarOpen) => {
     set({ sidebarOpen })
   },
   // One editor at a time: they share a dialog, and a new entry switches between them.
   openEditor: (editor) => {
-    set({ editor, taskEditor: null, detail: null, ...noCreate })
+    set({ editor, taskEditor: null, detail: null, overflow: null, ...noCreate })
   },
   openDetail: (detail) => {
     set({ detail })
@@ -178,7 +200,13 @@ export const useUi = create<UiState>()((set) => ({
   openCreate: (state) => {
     // The entry the click begins; the popover starts from the same.
     const when = state && draftOf(state.origin, browserTimeZone())
-    set({ create: state, createWhen: when && { event: when.event, task: when.task }, createPreview: null, detail: null })
+    set({
+      create: state,
+      createWhen: when && { event: when.event, task: when.task },
+      createPreview: null,
+      detail: null,
+      overflow: null,
+    })
   },
   setCreateWhen: (when, at) => {
     set((s) => {
@@ -190,7 +218,10 @@ export const useUi = create<UiState>()((set) => ({
     set((s) => (s.create ? { createPreview: preview } : {}))
   },
   openTaskEditor: (taskEditor) => {
-    set({ taskEditor, editor: null, detail: null, ...noCreate })
+    set({ taskEditor, editor: null, detail: null, overflow: null, ...noCreate })
+  },
+  openOverflow: (overflow) => {
+    set({ overflow })
   },
   setSettingsOpen: (settingsOpen) => {
     set({ settingsOpen })

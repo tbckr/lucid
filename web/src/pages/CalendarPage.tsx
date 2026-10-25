@@ -19,6 +19,7 @@ import { TasksPanel } from '@/components/tasks/TasksPanel'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { AgendaView } from '@/components/views/AgendaView'
 import { MonthView } from '@/components/views/MonthView'
+import { OverflowPopover } from '@/components/views/OverflowPopover'
 import { TimeGridView } from '@/components/views/TimeGridView'
 import { newDraft } from '@/components/views/createDefaults'
 import { queryKeys, useCalendarTasks, useEvents, useSession, useVisibleCalendars } from '@/hooks/queries'
@@ -61,8 +62,14 @@ export function CalendarPage() {
   const range = useMemo(() => visibleRange(view, date, prefs.weekStartsOn), [view, date, prefs.weekStartsOn])
   const { events: allEvents, corrupted: corruptedEvents, isFetching, errors } = useEvents(range)
   const events = useMemo(() => allEvents.filter((e) => overlapsRange(e, range)), [allEvents, range])
-  const { tasks, corrupted: corruptedRepeats, errors: repeatErrors } = useCalendarTasks(range)
+  const { tasks, all: rangeTasks, corrupted: corruptedRepeats, errors: repeatErrors } = useCalendarTasks(range)
   const items = useMemo<CalItem[]>(() => [...events, ...tasks], [events, tasks])
+  // What a "+N" list finds its rows in, completed tasks included: it keeps them until it is closed (FR-07).
+  const lookup = useMemo(() => {
+    const byKey = new Map<string, CalItem>()
+    for (const item of [...events, ...rangeTasks]) byKey.set(item.key, item)
+    return (key: string) => byKey.get(key)
+  }, [events, rangeTasks])
   const corrupted = useMemo(() => [...corruptedEvents, ...corruptedRepeats], [corruptedEvents, corruptedRepeats])
   const colorsOf = useCalendarColors()
   const { byId } = useVisibleCalendars()
@@ -306,6 +313,12 @@ export function CalendarPage() {
             }}
           >
             {renderView()}
+            <OverflowPopover
+              prefs={prefs}
+              colorsOf={colorsOf}
+              readOnly={(id) => calendarOf(id)?.readOnly ?? true}
+              lookup={lookup}
+            />
           </CalendarDnd>
         </main>
 

@@ -1,6 +1,6 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addDays, addMonths, format, isSameDay, isSameMonth, startOfDay } from 'date-fns'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useDndState, useScopePreview } from '@/components/dnd/dndState'
@@ -19,7 +19,7 @@ import { cellCapacity, layoutWeekRow, type CellLayout, type WeekRowLayout } from
 import { cn } from '@/lib/utils'
 import { monthWheel, scrollParent, scrollRoom } from '@/lib/wheel'
 import { isModalOpen, useUi } from '@/stores/ui'
-import { MoreEventsPopover } from './MoreEventsPopover'
+import { MoreButton } from './MoreButton'
 import { defaultCreateTimes } from './createDefaults'
 
 const HEADER_PX = 30
@@ -312,6 +312,15 @@ function DayCell({
   const { pendingTodos } = useDndState()
   const key = dayKey(day)
   const { setNodeRef, isOver } = useDroppable({ id: `day:${key}`, data: { type: 'day', day } satisfies DropData })
+  // The cell is where the "N more" list points and gives the focus to once its button is gone.
+  const cellRef = useRef<HTMLDivElement | null>(null)
+  const setCell = useCallback(
+    (el: HTMLDivElement | null) => {
+      setNodeRef(el)
+      cellRef.current = el
+    },
+    [setNodeRef],
+  )
   const first = day.getDate() === 1
   const readOnly = (id: string) => calendarOf(id)?.readOnly ?? true
   // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
@@ -319,7 +328,7 @@ function DayCell({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setCell}
       role="gridcell"
       tabIndex={focused ? 0 : -1}
       data-day={key}
@@ -432,13 +441,15 @@ function DayCell({
         ))}
         {corrupted.length > 0 && <CorruptedEvent reason={corrupted.map((c) => c.reason).join('\n')} />}
         {cell.hidden > 0 && (
-          <MoreEventsPopover
+          <MoreButton
+            variant="text"
+            id={`more:${key}`}
             day={day}
-            events={cell.all}
-            hidden={cell.hidden}
-            prefs={prefs}
-            colorsOf={colorsOf}
-            readOnly={readOnly}
+            items={cell.all}
+            count={cell.hidden}
+            drag="event"
+            home={() => cellRef.current}
+            label={t('more.label', { count: cell.hidden, date: format(day, 'PPPP', { locale: prefs.locale }) })}
           />
         )}
       </div>

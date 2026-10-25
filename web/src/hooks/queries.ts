@@ -258,6 +258,11 @@ function isDoneTask(task: CalTask): boolean {
 export interface CalendarTasksResult {
   /** In order of their start. */
   tasks: CalTask[]
+  /**
+   * The tasks in range before `hideCompletedInCalendar` took the completed ones out, in the same order: what a
+   * "+N" list looks up to keep a task it listed, once ticked off (FR-07).
+   */
+  all: CalTask[]
   /** Occurrences that failed validation, shown as placeholders like events. */
   corrupted: CorruptedItem[]
   /** Failed loads of occurrences; the tasks list reports its own. */
@@ -295,17 +300,16 @@ export function useCalendarTasks(range: DateRange): CalendarTasksResult {
     })),
     combine: combineOccurrences,
   })
-  const all = useMemo(() => joinCalendarTasks(todos, occurrences.occurrences), [todos, occurrences.occurrences])
-  return useMemo(
-    () => ({
-      tasks: all
-        .filter((t) => (!hideCompleted || !isDoneTask(t)) && overlapsRange(t, range))
-        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
+  const joined = useMemo(() => joinCalendarTasks(todos, occurrences.occurrences), [todos, occurrences.occurrences])
+  return useMemo(() => {
+    const all = joined.filter((t) => overlapsRange(t, range)).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())
+    return {
+      tasks: hideCompleted ? all.filter((t) => !isDoneTask(t)) : all,
+      all,
       corrupted: occurrences.corrupted,
       errors: occurrences.errors,
-    }),
-    [all, occurrences.corrupted, occurrences.errors, range, hideCompleted],
-  )
+    }
+  }, [joined, occurrences.corrupted, occurrences.errors, range, hideCompleted])
 }
 
 /** At most this many placeholders go into the problem report (FR-36): the only list in it that nothing else bounds. */

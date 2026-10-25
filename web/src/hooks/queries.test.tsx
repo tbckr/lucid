@@ -203,6 +203,30 @@ describe('useCalendarTasks', () => {
       await waitFor(() => {
         expect(result.current.tasks.map((x) => x.key)).toEqual(['task:open'])
       })
+      // The list behind a "+N" button still finds the ones it listed (FR-07).
+      expect(result.current.all.map((x) => x.key)).toEqual(['task:open', 'task:done', 'task:cancelled'])
+    })
+
+    it('are all in range, in order, whether hidden or not', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+        if (urlOf(input).endsWith('/calendars')) {
+          return Promise.resolve(jsonResponse(200, { calendars: [calendar({ id: 'a' })] }))
+        }
+        const todos = [
+          todo({ id: 'late', calendarId: 'a', due: '2026-09-26T08:00:00Z' }),
+          todo({ id: 'out', calendarId: 'a', due: '2026-10-10T08:00:00Z' }),
+          todo({ id: 'early-done', calendarId: 'a', due: '2026-09-24T08:00:00Z', status: 'COMPLETED' }),
+        ]
+        return Promise.resolve(jsonResponse(200, { todos, corrupted: [] }))
+      })
+      useSettings.setState({ hideCompletedInCalendar: true })
+
+      const { result } = renderHook(() => useCalendarTasks(range), { wrapper })
+
+      await waitFor(() => {
+        expect(result.current.all.map((x) => x.key)).toEqual(['task:early-done', 'task:late'])
+      })
+      expect(result.current.tasks.map((x) => x.key)).toEqual(['task:late'])
     })
   })
 

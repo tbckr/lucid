@@ -15,6 +15,7 @@ import { useUi } from '@/stores/ui'
 import { apiEvent, calendar, occurrence, todo } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
 import { MonthView } from './MonthView'
+import { OverflowPopover } from './OverflowPopover'
 
 // Counts renders of the month's event chips; they keep their real behavior.
 const chipRenders = vi.hoisted(() => ({ count: 0 }))
@@ -37,6 +38,7 @@ function renderMonth(
   events: CalItem[] = [toCalEvent(apiEvent({ title: 'Standup' }))],
   { onDragStart, readOnly = false }: { onDragStart?: (e: DragStartEvent) => void; readOnly?: boolean } = {},
 ) {
+  const items = new Map(events.map((e) => [e.key, e]))
   return renderWithProviders(
     <DndContext onDragStart={onDragStart}>
       <MonthView
@@ -57,6 +59,13 @@ function renderMonth(
         colorsOf={() => colors}
         calendarOf={() => ({ ...cal, readOnly })}
       />
+      {/* The list of a "+N more" button lives beside the views (FR-07). */}
+      <OverflowPopover
+        prefs={prefs}
+        colorsOf={() => colors}
+        readOnly={() => readOnly}
+        lookup={(key) => items.get(key)}
+      />
     </DndContext>,
   )
 }
@@ -70,6 +79,7 @@ describe('MonthView', () => {
     vi.restoreAllMocks()
     act(() => {
       useUi.getState().openCreate(null)
+      useUi.getState().openOverflow(null)
     })
   })
 
@@ -240,12 +250,13 @@ describe('MonthView', () => {
     )
     const user = userEvent.setup()
     renderMonth(events)
-    await user.click(screen.getByRole('button', { name: /^\d+ more$/ }))
+    await user.click(screen.getByRole('button', { name: /^\d+ more, / }))
     // The list is portaled out of the cell, but React bubbles its clicks into the cell.
     const list = await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
     await user.click(within(list).getByText('Friday, September 25th, 2026'))
     expect(useUi.getState().create).toBeNull()
-    await user.click(within(list).getByRole('button', { name: /Call/ }))
+    // The bare DndContext here has no drag distance: a pointer press on a row would start a drag, not click.
+    fireEvent.click(within(list).getByRole('button', { name: /Call/ }))
     expect(useUi.getState().create).toBeNull()
     expect(useUi.getState().detail?.item).toBe(events[4])
     useUi.getState().openDetail(null)

@@ -109,6 +109,11 @@
     "cellLabelTasks_one": "{{date}}, {{events}}, {{count}} Aufgabe",
     "cellLabelTasks_other": "{{date}}, {{events}}, {{count}} Aufgaben"
   },
+  "more": {
+    "short": "+{{count}}",
+    "label_one": "{{count}} weiterer, {{date}}",
+    "label_other": "{{count}} weitere, {{date}}"
+  },
   "week": {
     "expandAllDay": "Alle ganztägigen Termine zeigen",
     "collapseAllDay": "Weniger ganztägige Termine zeigen",

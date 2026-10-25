@@ -13,13 +13,14 @@ import { useUi } from '@/stores/ui'
 
 /**
  * Draggable + clickable wrapper shared by all event renderings. Enter opens
- * the details popover; Space starts a keyboard drag (dnd-kit).
+ * the details popover (`onOpen` opens them elsewhere instead); Space starts a
+ * keyboard drag (dnd-kit).
  *
  * While a dropped event of a series waits for the answer which events move
  * (FR-10, FR-17), nothing can be dragged, its tile anchors the question, and
  * `ringed` marks the tiles the answer in focus would move.
  */
-function useEventInteraction(event: CalEvent, drag: DragBinding) {
+function useEventInteraction(event: CalEvent, drag: DragBinding, onOpen?: (event: CalEvent) => void) {
   const openDetail = useUi((s) => s.openDetail)
   const { pendingKeys, pendingSeries, scope, scopeAnchor } = useDndState()
   const pending = pendingKeys.has(event.key) || pendingSeries.has(event.id)
@@ -40,16 +41,20 @@ function useEventInteraction(event: CalEvent, drag: DragBinding) {
     },
     [setNodeRef, scopeAnchor],
   )
+  const open = (anchor: HTMLElement) => {
+    if (onOpen) onOpen(event)
+    else openDetail({ item: event, anchor })
+  }
   const onClick = (e: MouseEvent<HTMLElement>) => {
     e.stopPropagation()
-    openDetail({ item: event, anchor: e.currentTarget })
+    open(e.currentTarget)
   }
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     // While a keyboard drag is active, Enter drops (handled by dnd-kit).
     if (e.key === 'Enter' && !isDragging) {
       e.preventDefault()
       e.stopPropagation()
-      openDetail({ item: event, anchor: e.currentTarget })
+      open(e.currentTarget)
       return
     }
     listeners?.onKeyDown?.(e)
@@ -152,15 +157,18 @@ export function EventChip({
   prefs,
   drag,
   className,
+  onOpen,
 }: {
   event: CalEvent
   colors: EventColors
   prefs: FormatPrefs
   drag: DragBinding
   className?: string
+  /** Opens the details elsewhere, e.g. at the "+N" button whose list closes. */
+  onOpen?: (event: CalEvent) => void
 }) {
   const { t } = useTranslation()
-  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag)
+  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag, onOpen)
   const title = eventTitle(event, t('event.untitled'))
   return (
     <button
@@ -199,6 +207,7 @@ export function EventBar({
   className,
   style,
   prefs,
+  onOpen,
 }: {
   event: CalEvent
   colors: EventColors
@@ -208,9 +217,11 @@ export function EventBar({
   className?: string
   style?: CSSProperties
   prefs: FormatPrefs
+  /** Opens the details elsewhere, e.g. at the "+N" button whose list closes. */
+  onOpen?: (event: CalEvent) => void
 }) {
   const { t } = useTranslation()
-  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag)
+  const { ref, props, isDragging, pending, ringed } = useEventInteraction(event, drag, onOpen)
   const title = eventTitle(event, t('event.untitled'))
   return (
     <button
