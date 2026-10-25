@@ -141,9 +141,6 @@ interface Interval {
 
 const overlaps = (a: Interval, b: Interval) => a.from < b.to && b.from < a.to
 
-/** Where an entry of the overflow column is drawn: one point high. */
-const drawnAt = (e: OverflowEntry): Interval => ({ from: e.topMin, to: e.topMin + TASK_POINT_MINUTES })
-
 /** The times where more than `capacity` of the intervals meet. */
 function overfull(intervals: Interval[], capacity: number): Interval[] {
   // At the same minute, ends come first: an interval ending where another starts does not meet it.
@@ -190,38 +187,51 @@ interface Column<T extends CalItem> {
   col: number
 }
 
-/** The entry standing for `segs`, not yet stacked or placed. */
-function overflowEntry<T extends CalItem>(kind: OverflowEntry['kind'], segs: TimedSegment<T>[]): OverflowEntry<T> {
-  const startMin = Math.min(...segs.map((s) => s.startMin))
-  return { kind, items: segs.map((s) => s.event).sort(compareEvents), startMin, topMin: startMin, col: 0, cols: 1 }
+/**
+ * A stack of the overflow column (FR-07): at most one point of tasks (a bundle, or one task shown as itself) on top at
+ * `top`, and one point of "+N" for events below it.
+ */
+interface Stack<T extends CalItem> {
+  top: number
+  tasks: TimedSegment<T>[]
+  events: TimedSegment<T>[]
 }
 
-/** The overflow column top to bottom, by start, tasks first; an entry that would overlap the one above goes below it. */
-function stack<T extends CalItem>(entries: OverflowEntry<T>[]): OverflowEntry<T>[] {
-  entries.sort((a, b) => a.startMin - b.startMin || Number(a.kind === 'events') - Number(b.kind === 'events'))
-  let bottom = -Infinity
-  return entries.map((e) => {
-    const topMin = Math.max(e.startMin, bottom)
-    bottom = topMin + TASK_POINT_MINUTES
-    return { ...e, topMin }
-  })
+/** Where a stack is drawn: one point per kind it holds. */
+const stackAt = (s: Stack<CalItem>): Interval => ({
+  from: s.top,
+  to: s.top + TASK_POINT_MINUTES * (Number(s.tasks.length > 0) + Number(s.events.length > 0)),
+})
+
+/** The entry standing for `segs`, drawn at `topMin`; placed later. */
+function overflowEntry<T extends CalItem>(kind: OverflowEntry['kind'], segs: TimedSegment<T>[], topMin: number): OverflowEntry<T> {
+  const startMin = Math.min(...segs.map((s) => s.startMin))
+  return { kind, items: segs.map((s) => s.event).sort(compareEvents), startMin, topMin, col: 0, cols: 1 }
+}
+
+/** A stack's entries, top to bottom: its tasks, then "+N" for its events. */
+function stackEntries<T extends CalItem>(s: Stack<T>): OverflowEntry<T>[] {
+  const out: OverflowEntry<T>[] = []
+  if (s.tasks.length > 0) out.push(overflowEntry('tasks', s.tasks, s.top))
+  if (s.events.length > 0) out.push(overflowEntry('events', s.events, s.top + (s.tasks.length > 0 ? TASK_POINT_MINUTES : 0)))
+  return out
 }
 
 /**
  * Hand out columns `0..capacity-1` in layoutDay's order, each item the first one free over its whole time; the last
- * column is taken wherever the overflow column draws an entry. Stops at the first item that finds no column.
+ * column is taken wherever the overflow column draws a stack. Stops at the first item that finds no column.
  */
 function firstFit<T extends CalItem>(
   order: TimedSegment<T>[],
   capacity: number,
-  entries: Interval[],
+  stacks: Interval[],
   extent: (s: TimedSegment<T>) => Interval,
 ): { columns: Column<T>[]; failed?: TimedSegment<T> } {
   const ends = Array.from({ length: capacity }, () => -Infinity)
   const columns: Column<T>[] = []
   for (const seg of order) {
     const at = extent(seg)
-    const col = ends.findIndex((end, c) => end <= at.from && (c < capacity - 1 || !entries.some((e) => overlaps(e, at))))
+    const col = ends.findIndex((end, c) => end <= at.from && (c < capacity - 1 || !stacks.some((s) => overlaps(s, at))))
     if (col === -1) return { columns, failed: seg }
     ends[col] = at.to
     columns.push({ seg, col })
@@ -229,51 +239,60 @@ function firstFit<T extends CalItem>(
   return { columns }
 }
 
-type Drawn<T extends CalItem> = { at: Interval; column: Column<T> } | { at: Interval; entry: OverflowEntry<T> }
+type Drawn<T extends CalItem> = { at: Interval; column: Column<T> } | { at: Interval; stack: OverflowEntry<T>[] }
 
 /**
  * Column counts per cluster of everything drawn: the overflow column sits right of the cluster's items, as the last
- * column at most, and items extend right over free columns as in layoutDay.
+ * column at most, a stack's entries in one column, and items extend right over free columns as in layoutDay.
  */
 function place<T extends CalItem>(
   columns: Column<T>[],
-  overflow: OverflowEntry<T>[],
+  stacks: Stack<T>[],
   capacity: number,
   extent: (s: TimedSegment<T>) => Interval,
 ): DayLayout<T> {
   const drawn: Drawn<T>[] = [
     ...columns.map((column) => ({ at: extent(column.seg), column })),
-    ...overflow.map((entry) => ({ at: drawnAt(entry), entry })),
+    ...stacks.map((s) => ({ at: stackAt(s), stack: stackEntries(s) })),
   ]
   const layout: DayLayout<T> = { placed: [], overflow: [] }
   for (const cluster of chains(drawn, (d) => d.at)) {
     const items = cluster.flatMap((d) => ('column' in d ? [{ at: d.at, ...d.column }] : []))
-    const entries = cluster.flatMap((d) => ('entry' in d ? [d] : []))
+    const stacked = cluster.flatMap((d) => ('stack' in d ? [d] : []))
     const last = Math.max(-1, ...items.map((i) => i.col))
     const entryCol = Math.min(last + 1, capacity - 1)
-    const cols = entries.length > 0 ? Math.max(last + 1, entryCol + 1) : last + 1
+    const cols = stacked.length > 0 ? Math.max(last + 1, entryCol + 1) : last + 1
     for (const item of items) {
       let span = 1
       for (let c = item.col + 1; c < cols; c++) {
         const blocked =
           items.some((o) => o.col === c && overlaps(o.at, item.at)) ||
-          (c === entryCol && entries.some((e) => overlaps(e.at, item.at)))
+          (c === entryCol && stacked.some((s) => overlaps(s.at, item.at)))
         if (blocked) break
         span++
       }
       layout.placed.push({ ...item.seg, col: item.col, cols, span })
     }
-    for (const { entry } of entries) layout.overflow.push({ ...entry, col: entryCol, cols })
+    for (const { stack } of stacked) layout.overflow.push(...stack.map((e) => ({ ...e, col: entryCol, cols })))
   }
   return layout
 }
 
 /**
  * Lay out a day of the time grid in `capacity` columns (FR-07). Where no more items meet than fit, this is layoutDay.
- * Where more meet, the tasks there yield first: tasks whose points overlap become one entry of the overflow column, the
- * last column. Only events that then find no column over their whole time are hidden, behind one "+N" per group of
- * hidden events that overlap. Every item is decided at its own time: one with room keeps its column beside a busy
- * hour, except a task where an event is hidden, which yields too, so tasks never take a column while events are hidden.
+ *
+ * What yields is decided at each item's own time, and tasks yield first: tasks whose points overlap yield together
+ * where more items meet than fit, and the tasks in an event's way yield before it is hidden. An event is hidden only
+ * where it then finds no column over its whole time, and a task where an event is hidden yields too, so tasks never
+ * take a column while events are hidden. An item with room keeps its column, even beside a busy hour; once all of
+ * this settles, what has room after all gets its column back.
+ *
+ * What yields goes into the overflow column, the last one, as stacks: what would overlap there is one stack, at most
+ * a point of tasks on top and a point of "+N" below. An item goes into the stack its own entry, at its start, would
+ * overlap, else into a new one there, so its count stays at its place. What a stack pushes out of the last column thus
+ * joins it, unless it held that column from well before; then it starts its own stack at its start, where nothing
+ * else needs that column. A stack is at most two points tall and never pushes the next item out in turn; where stacks
+ * still meet, they become one, and what that counts away from its place is decided again.
  */
 export function layoutDayWithin<T extends CalItem>(
   segments: TimedSegment<T>[],
@@ -290,36 +309,141 @@ export function layoutDayWithin<T extends CalItem>(
     segments.filter((s) => s.event.kind === 'task'),
     (s) => ({ from: s.startMin, to: s.startMin + TASK_POINT_MINUTES }),
   )
-  const groupOf = new Map(groups.flatMap((g) => g.map((s) => [s, g] as const)))
-  const yielded = new Set(groups.filter((g) => g.some((s) => full.some((f) => overlaps(f, extent(s))))))
-  const hidden = new Set<TimedSegment<T>>()
+  const yielding = groups.filter((g) => g.some((s) => full.some((f) => overlaps(f, extent(s)))))
+  let stacks: Stack<T>[] = yielding.map((g) => ({ top: Math.min(...g.map((s) => s.startMin)), tasks: [...g], events: [] }))
+  const bundled = new Set(yielding.flat())
+  const away = new Set(bundled)
   const order = [...segments].sort(segmentOrder)
-  const shown = (s: TimedSegment<T>) => {
-    const group = groupOf.get(s)
-    return !hidden.has(s) && !(group && yielded.has(group))
+  /** Where an item's count belongs: over its time, or the point at its start. */
+  const placeOf = (x: TimedSegment<T>): Interval => ({
+    from: x.startMin,
+    to: Math.max(extent(x).to, x.startMin + TASK_POINT_MINUTES),
+  })
+  const decidedAgain = new Set<TimedSegment<T>>()
+
+  /**
+   * Stacks that would overlap become one, at the earlier top. What that leaves counted away from its place leaves the
+   * stack and is decided again, once (a bundle's tasks stay with it).
+   */
+  const settle = () => {
+    const out: Stack<T>[] = []
+    for (const s of [...stacks].sort((a, b) => a.top - b.top)) {
+      const above = out.at(-1)
+      if (!above || !overlaps(stackAt(above), stackAt(s))) {
+        out.push(s)
+        continue
+      }
+      above.tasks.push(...s.tasks)
+      above.events.push(...s.events)
+      for (;;) {
+        const lost = [...above.tasks, ...above.events].filter(
+          (x) => !bundled.has(x) && !decidedAgain.has(x) && !overlaps(placeOf(x), stackAt(above)),
+        )
+        if (lost.length === 0) break
+        for (const x of lost) {
+          decidedAgain.add(x)
+          away.delete(x)
+        }
+        above.tasks = above.tasks.filter((x) => !lost.includes(x))
+        above.events = above.events.filter((x) => !lost.includes(x))
+      }
+    }
+    stacks = out.filter((s) => s.tasks.length + s.events.length > 0)
   }
 
-  // Whatever yields only adds to the overflow column, so this settles after at most one round per item.
+  /** Moves `seg` into `stack`. */
+  const join = (seg: TimedSegment<T>, stack: Stack<T>) => {
+    if (seg.event.kind === 'task') stack.tasks.push(seg)
+    else stack.events.push(seg)
+    away.add(seg)
+  }
+  /** Moves `seg` into the stack an entry of its own, at its start, would overlap, else into a new stack there. */
+  const yieldAtStart = (seg: TimedSegment<T>) => {
+    const top = seg.startMin
+    let stack = stacks.find((s) => overlaps(stackAt(s), { from: top, to: top + TASK_POINT_MINUTES }))
+    if (!stack) {
+      stack = { top, tasks: [], events: [] }
+      stacks.push(stack)
+    }
+    join(seg, stack)
+  }
+  /** The tasks holding the first column `seg` could take if they yielded: no event and no stack in its way there. */
+  const tasksInTheWay = (seg: TimedSegment<T>, columns: Column<T>[]) => {
+    const at = extent(seg)
+    for (let c = 0; c < cap; c++) {
+      if (c === cap - 1 && stacks.some((s) => overlaps(stackAt(s), at))) break
+      const holders = columns.filter((x) => x.col === c && overlaps(extent(x.seg), at)).map((x) => x.seg)
+      if (holders.every((h) => h.event.kind === 'task')) return holders
+    }
+    return []
+  }
+
+  // Each round moves at least one item into the overflow column, and only what a merge counts away from its place
+  // leaves it again, once, so this settles.
   for (;;) {
-    const overflow = stack([
-      ...[...yielded].map((g) => overflowEntry('tasks', g)),
-      ...chains([...hidden], extent).map((g) => overflowEntry('events', g)),
-    ])
-    const { columns, failed } = firstFit(order.filter(shown), cap, overflow.map(drawnAt), extent)
+    settle()
+    const { columns, failed } = firstFit(
+      order.filter((s) => !away.has(s)),
+      cap,
+      stacks.map(stackAt),
+      extent,
+    )
     if (failed) {
-      // An event without a column goes behind "+N"; a task (pushed out by a stacked entry) into the overflow column.
-      const group = groupOf.get(failed)
-      if (group) yielded.add(group)
-      else hidden.add(failed)
+      // Tasks yield first: the tasks in an event's way go into the overflow column before the event does.
+      const blocking = failed.event.kind === 'event' ? tasksInTheWay(failed, columns) : []
+      for (const task of blocking) yieldAtStart(task)
+      if (blocking.length === 0) yieldAtStart(failed)
       continue
     }
-    const hiddenAt = [...hidden].map(extent)
-    const crowded = columns.flatMap(({ seg }) => {
-      const group = groupOf.get(seg)
-      return group && hiddenAt.some((h) => overlaps(h, extent(seg))) ? [group] : []
-    })
-    if (crowded.length === 0) return place(columns, overflow, cap, extent)
-    for (const group of crowded) yielded.add(group)
+    const hiddenAt = stacks.flatMap((s) => s.events.map(extent))
+    const crowded = columns.find(({ seg }) => seg.event.kind === 'task' && hiddenAt.some((h) => overlaps(h, extent(seg))))
+    if (!crowded) return place(release(columns), stacks, cap, extent)
+    yieldAtStart(crowded.seg)
+  }
+
+  /** `stack` without `seg`, as it can be drawn: where its tasks go, its "+N" moves up to its top, or stays where it is. */
+  function without(stack: Stack<T>, seg: TimedSegment<T>): Stack<T>[] {
+    const tasks = stack.tasks.filter((x) => x !== seg)
+    const events = stack.events.filter((x) => x !== seg)
+    const rest = { top: stack.top, tasks, events }
+    if (tasks.length > 0 || stack.tasks.length === 0 || events.length === 0) return [rest]
+    return [rest, { ...rest, top: stack.top + TASK_POINT_MINUTES }]
+  }
+
+  /**
+   * Gives a column back to what has room once everything settled (a task that yielded for an event the next round
+   * placed elsewhere, or an event a stack pushed out that has room after all): an item the overflow column holds for
+   * no reason of its own, where every other item of its stack is still counted at its place without it.
+   */
+  function release(columns: Column<T>[]): Column<T>[] {
+    const drawnAt = (s: Stack<T>) => [stackAt(s)].filter((at) => at.to > at.from)
+    /** The column `seg` of `stack` can take, and its stack without it. */
+    const room = (seg: TimedSegment<T>, stack: Stack<T>) => {
+      if (bundled.has(seg)) return undefined
+      const at = extent(seg)
+      const hidden = stacks.flatMap((s) => s.events)
+      if (seg.event.kind === 'task' && hidden.some((h) => overlaps(extent(h), at))) return undefined
+      const others = stacks.filter((s) => s !== stack).flatMap(drawnAt)
+      const rests = without(stack, seg).filter((rest) =>
+        [...rest.tasks, ...rest.events].every((x) => bundled.has(x) || overlaps(placeOf(x), stackAt(rest))),
+      )
+      for (let col = 0; col < cap; col++) {
+        if (columns.some((x) => x.col === col && overlaps(extent(x.seg), at))) continue
+        const rest = rests.find((r) => col < cap - 1 || ![...others, ...drawnAt(r)].some((s) => overlaps(s, at)))
+        if (rest) return { col, rest }
+      }
+      return undefined
+    }
+    for (;;) {
+      const [first] = stacks
+        .flatMap((stack) => [...stack.tasks, ...stack.events].map((seg) => ({ seg, stack, room: room(seg, stack) })))
+        .filter((x) => x.room !== undefined)
+        .sort((a, b) => segmentOrder(a.seg, b.seg))
+      if (!first?.room) return columns.sort((a, b) => segmentOrder(a.seg, b.seg))
+      const { rest, col } = first.room
+      columns = [...columns, { seg: first.seg, col }]
+      stacks = stacks.map((s) => (s === first.stack ? rest : s)).filter((s) => s.tasks.length + s.events.length > 0)
+    }
   }
 }
 

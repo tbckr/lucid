@@ -14,6 +14,7 @@ import {
   timedSegments,
   type CellLayout,
   type DayLayout,
+  type OverflowEntry,
   type TimedSegment,
 } from './layout'
 
@@ -158,13 +159,54 @@ describe('layoutDayWithin', () => {
       ).toBe(true)
       expect(titles(e.items), `${note} ${e.kind}@${e.startMin} order`).toEqual(titles([...e.items].sort(compareEvents)))
       expect(e.startMin, `${note} ${e.kind}@${e.startMin} start`).toBe(Math.min(...e.items.map((i) => segOf.get(i)!.startMin)))
-      expect(e.topMin, `${note} ${e.kind}@${e.startMin} above its start`).toBeGreaterThanOrEqual(e.startMin)
     }
     // No event is hidden at a minute where a task is placed as itself.
     const hidden = layout.overflow.filter((e) => e.kind === 'events').flatMap((e) => e.items.map((i) => segOf.get(i)!))
     for (const p of layout.placed.filter((x) => x.event.kind === 'task')) {
       for (const h of hidden) {
         expect(overlap(extent(p), extent(h)), `${note} ${p.event.title} placed beside hidden ${h.event.title}`).toBe(false)
+      }
+    }
+    // Nothing is in the overflow column without a reason. A task has one of its own where its point group meets more
+    // items than fit, or where an event is hidden. Everything else there has its count at its place (its own stack
+    // drawn over its time or its "+N" slot), and no room: every column it could take is held by a placed item, or the
+    // last one, the overflow column's, by a stack that stays without it.
+    const meeting = new Map<number, number>()
+    for (const x of segments) for (let m = extent(x).from; m < extent(x).to; m++) meeting.set(m, (meeting.get(m) ?? 0) + 1)
+    const overfullAt = (x: TimedSegment) => {
+      for (let m = extent(x).from; m < extent(x).to; m++) if ((meeting.get(m) ?? 0) > capacity) return true
+      return false
+    }
+    const pointGroups: TimedSegment[][] = []
+    let pointsEnd = -Infinity
+    for (const t of segments.filter((x) => x.event.kind === 'task').sort((a, b) => a.startMin - b.startMin)) {
+      if (t.startMin >= pointsEnd) pointGroups.push([])
+      pointGroups.at(-1)!.push(t)
+      pointsEnd = Math.max(pointsEnd, t.startMin + TASK_POINT_MINUTES)
+    }
+    const ownReason = (t: TimedSegment) =>
+      pointGroups.find((g) => g.includes(t))!.some(overfullAt) || hidden.some((h) => overlap(extent(h), extent(t)))
+    const drawnAt = (e: OverflowEntry) => ({ from: e.topMin, to: e.topMin + TASK_POINT_MINUTES })
+    /** The other entry of `e`'s stack: tasks on top, "+N" right below. */
+    const partner = (e: OverflowEntry) =>
+      layout.overflow.find(
+        (o) => o.col === e.col && o.kind !== e.kind && o.topMin === e.topMin + (e.kind === 'tasks' ? 1 : -1) * TASK_POINT_MINUTES,
+      )
+    for (const e of layout.overflow) {
+      const stack = [e, partner(e)].flatMap((x) => (x ? [x] : []))
+      for (const seg of e.items.map((i) => segOf.get(i)!)) {
+        if (seg.event.kind === 'task' && ownReason(seg)) continue
+        const at = extent(seg)
+        const place = { from: at.from, to: Math.max(at.to, at.from + TASK_POINT_MINUTES) }
+        expect(
+          stack.some((x) => overlap(drawnAt(x), place)),
+          `${note} ${seg.event.title} counted away from its place`,
+        ).toBe(true)
+        for (let c = 0; c < capacity; c++) {
+          if (layout.placed.some((p) => p.col === c && overlap(extent(p), at))) continue
+          const stays = layout.overflow.filter((o) => (o !== e || o.items.length > 1) && overlap(drawnAt(o), at))
+          expect(c === capacity - 1 && stays.length > 0, `${note} ${seg.event.title} has room in column ${c}`).toBe(true)
+        }
       }
     }
   }
@@ -270,8 +312,8 @@ describe('layoutDayWithin', () => {
   })
 
   it('yields a task at the time of a hidden event', () => {
-    // long has no column over all its time (the 11:00 bundle takes the last one), so it is hidden; the 10:00 task,
-    // with room of its own, must not take a column beside it.
+    // long has no column over all its time (the 11:00 bundle needs the last one), so it is hidden, counted at its
+    // start; the 10:00 task, with room of its own, must not take a column while long is hidden.
     const items = [timed('early', 25, 8, 0, 9, 30), timed('long', 25, 9, 0, 12, 0), pt('t', 10), pt('b1', 11), pt('b2', 11)]
     const l = within(items, 2)
     expect(placedOf(l)).toEqual({ early: [0, 2, 1] })
@@ -282,15 +324,142 @@ describe('layoutDayWithin', () => {
     ])
   })
 
-  it('moves a task pushed out by a stacked entry into the overflow column', () => {
-    // The "+1" for short stacks below the 9:00 bundle, onto 9:30, where the 9:35 task had its column.
+  it('puts a task its stack displaces into its bundle', () => {
+    // The "+1" for short goes below the 9:00 bundle, onto 9:30, where the 9:35 task had its column: it joins the bundle.
     const items = [timed('day', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('short', 25, 9, 10, 9, 20), pt('t3', 9, 35)]
     const l = within(items, 2)
     expect(placedOf(l)).toEqual({ day: [0, 2, 1] })
     expect(overflowOf(l)).toEqual([
-      { kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'tasks', items: ['t1', 't2', 't3'], startMin: 540, topMin: 540, col: 1, cols: 2 },
       { kind: 'events', items: ['short'], startMin: 550, topMin: 570, col: 1, cols: 2 },
-      { kind: 'tasks', items: ['t3'], startMin: 575, topMin: 600, col: 1, cols: 2 },
+    ])
+  })
+
+  it('keeps the overflow column of a busy hour to one stack', () => {
+    // The standup's "+1" goes below the bundle, onto 9:30: m1 joins it there, and the later meetings have room.
+    const busy = [timed('Conference', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('standup', 25, 9, 0, 9, 15)]
+    const meetings = [timed('m1', 25, 9, 30, 10, 0), timed('m2', 25, 10, 0, 10, 30), timed('m3', 25, 10, 30, 11, 0)]
+    const l = within([...busy, ...meetings], 2)
+    expect(placedOf(l)).toEqual({ Conference: [0, 2, 1], m2: [1, 2, 1], m3: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['standup', 'm1'], startMin: 540, topMin: 570, col: 1, cols: 2 },
+    ])
+  })
+
+  it('keeps one bundle in a stack and later tasks where they have room', () => {
+    const busy = [timed('Conference', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('standup', 25, 9, 0, 9, 15)]
+    const l = within([...busy, pt('u1', 9, 30), pt('u2', 10), pt('u3', 10, 30)], 2)
+    expect(placedOf(l)).toEqual({ Conference: [0, 2, 1], u2: [1, 2, 1], u3: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2', 'u1'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['standup'], startMin: 540, topMin: 570, col: 1, cols: 2 },
+    ])
+  })
+
+  it("draws a stack's entries in one column", () => {
+    // The "+1" below the bundle overlaps nothing placed, but stays in the bundle's column.
+    const l = within([timed('e', 25, 9, 0, 9, 30), pt('t1', 9), pt('t2', 9), timed('x', 25, 9, 10, 9, 25)], 2)
+    expect(placedOf(l)).toEqual({ e: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['x'], startMin: 550, topMin: 570, col: 1, cols: 2 },
+    ])
+  })
+
+  it('hides one event, not two, where a count needs a column', () => {
+    // short finds no column at 10:00; its "+1" would need long's column, so long goes behind a "+1" at its own start and
+    // short takes the column.
+    const items = [timed('all', 25, 8, 0, 12, 0), timed('long', 25, 9, 0, 11, 0), timed('short', 25, 10, 0, 10, 30)]
+    const l = within(items, 2)
+    expect(placedOf(l)).toEqual({ all: [0, 2, 1], short: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([{ kind: 'events', items: ['long'], startMin: 540, topMin: 540, col: 1, cols: 2 }])
+  })
+
+  it('gives a task its column back once the event beside it has one', () => {
+    // The 10:00 bundle takes the last column, so e needs the first, where the task t sits; t yields, e takes it, and t
+    // then has the last column, which is free until 10:00.
+    const t = toCalTask(todo({ id: 't', title: 't', start: local(25, 8, 50), due: local(25, 9, 20) }))!
+    const l = within([timed('e', 25, 9, 0, 10, 30), t, pt('b1', 10), pt('b2', 10)], 2)
+    expect(placedOf(l)).toEqual({ e: [0, 2, 1], t: [1, 2, 1] })
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['b1', 'b2'], startMin: 600, topMin: 600, col: 1, cols: 2 }])
+  })
+
+  it("lets the tasks in an event's way yield before it is hidden", () => {
+    // Found by the seeded days: without it, review goes behind "+1" and a, b and c yield around it, which leaves review
+    // room after all.
+    const span = (key: string, h1: number, m1: number, h2: number, m2: number) =>
+      toCalTask(todo({ id: key, title: key, start: local(25, h1, m1), due: local(25, h2, m2) }))!
+    const items = [
+      pt('d', 10, 40),
+      timed('workshop', 25, 8, 35, 11, 35),
+      timed('lunch', 25, 11, 5, 12, 35),
+      span('b', 8, 35, 10, 5),
+      pt('a', 8, 30),
+      pt('c', 9, 20),
+      span('e', 11, 5, 12, 5),
+      timed('review', 25, 8, 40, 11, 40),
+    ]
+    const l = within(items, 4)
+    expect(titles(l.placed.map((p) => p.event))).toEqual(['a', 'workshop', 'b', 'review', 'c', 'lunch'])
+    expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['d', 'e'], startMin: 640, topMin: 640, col: 3, cols: 4 }])
+  })
+
+  it('keeps a stack where it starts when an earlier item joins it', () => {
+    // x has no column at 9:00 (the 9:20 bundle needs the last one); its "+1" joins the bundle's stack, which stays.
+    const l = within([timed('all', 25, 8, 0, 12, 0), pt('t1', 9, 20), pt('t2', 9, 20), timed('x', 25, 9, 0, 9, 30)], 2)
+    expect(placedOf(l)).toEqual({ all: [0, 2, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['t1', 't2'], startMin: 560, topMin: 560, col: 1, cols: 2 },
+      { kind: 'events', items: ['x'], startMin: 540, topMin: 590, col: 1, cols: 2 },
+    ])
+  })
+
+  it('moves a stack\'s "+N" back up when its task gets a column back', () => {
+    // Found by the seeded days: note yields for call and joins the 9:40 stack on top, pushing its "+2" to 10:10; once
+    // note has a column after all, the "+2" goes back to 9:40, where chat and sync are.
+    const note = toCalTask(todo({ id: 'note', title: 'note', start: local(25, 9, 15), due: local(25, 9, 20) }))!
+    const items = [
+      timed('trip', 25, 11, 30, 14, 30),
+      timed('talk', 25, 9, 15, 10, 45),
+      pt('mail', 11, 20),
+      timed('chat', 25, 9, 35, 9, 50),
+      timed('demo', 25, 10, 25, 10, 55),
+      timed('call', 25, 9, 30, 9, 35),
+      note,
+      timed('sync', 25, 9, 40, 9, 55),
+    ]
+    const l = within(items, 3)
+    expect(placedOf(l)).toEqual({
+      talk: [0, 3, 1],
+      note: [2, 3, 1],
+      call: [1, 3, 1],
+      demo: [1, 3, 2],
+      mail: [0, 2, 1],
+      trip: [1, 2, 1],
+    })
+    expect(overflowOf(l)).toEqual([{ kind: 'events', items: ['chat', 'sync'], startMin: 575, topMin: 580, col: 2, cols: 3 }])
+  })
+
+  it('decides again what a merge of stacks counts away from its place', () => {
+    // Found by the seeded days: a joins long's stack on top, which then reaches into the 9:25 stack and merges with it;
+    // review and call would be counted at 9:00, so they are decided again and go behind a "+2" at 10:05.
+    const items = [
+      timed('meeting', 25, 9, 30, 10, 30),
+      pt('a', 8, 55),
+      timed('late', 25, 11, 10, 11, 25),
+      pt('b', 9, 25),
+      timed('long', 25, 8, 30, 10, 0),
+      timed('call', 25, 10, 5, 10, 20),
+      timed('early', 25, 8, 20, 8, 25),
+      timed('review', 25, 9, 40, 11, 10),
+    ]
+    const l = within(items, 2)
+    expect(placedOf(l)).toEqual({ early: [0, 2, 1], meeting: [0, 2, 1], late: [0, 1, 1] })
+    expect(overflowOf(l)).toEqual([
+      { kind: 'tasks', items: ['a', 'b'], startMin: 535, topMin: 510, col: 1, cols: 2 },
+      { kind: 'events', items: ['long'], startMin: 510, topMin: 540, col: 1, cols: 2 },
+      { kind: 'events', items: ['review', 'call'], startMin: 580, topMin: 605, col: 1, cols: 2 },
     ])
   })
 
