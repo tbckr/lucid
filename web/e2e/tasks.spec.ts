@@ -17,6 +17,18 @@ const singleTasks = (page: Page) =>
     .locator('[data-task-key]')
     .filter({ hasNot: page.locator('[role="img"]:not([aria-label="Detached from its series"])') })
 
+/**
+ * Takes a Friday at least four weeks ahead for today, at 8:30 UTC (a morning in Berlin, the same day). The demo
+ * data's one-off entries all lie within two weeks of the real today, and on a Friday and the Saturday after it only
+ * the standup repeats: their month cells have room to show a task as itself, where a busy day would bundle it (FR-07).
+ */
+async function quietFriday(page: Page): Promise<void> {
+  const friday = new Date()
+  friday.setUTCHours(8, 30, 0, 0)
+  friday.setUTCDate(friday.getUTCDate() + 28 + ((12 - friday.getUTCDay()) % 7))
+  await page.clock.setFixedTime(friday)
+}
+
 // A failed test never reaches its own clean-up; remove the tasks the specs created.
 test.afterEach(async ({ page }) => {
   await deleteTestTasks(page)
@@ -49,6 +61,8 @@ test('checklist items are shown and editable', async ({ page }) => {
 })
 
 test('rename a task and move its due date in the list', async ({ page }) => {
+  // Tomorrow is then a Saturday, which shows the task in its cell.
+  await quietFriday(page)
   await login(page)
   const title = `E2E inline ${Date.now()}`
   const renamed = `${title} renamed`
@@ -233,6 +247,8 @@ test('dragging a task in the day view moves its due time', async ({ page }) => {
 })
 
 test('dragging a task in the month view moves its due date', async ({ page }) => {
+  // From a Friday to the Saturday after it, both with room for the task in their cells.
+  await quietFriday(page)
   await login(page)
   const title = `E2E drag day ${Date.now()}`
   await page.getByRole('textbox', { name: 'Add task' }).fill(title)
@@ -243,10 +259,10 @@ test('dragging a task in the month view moves its due date', async ({ page }) =>
   await picker.getByRole('button', { name: /^Today / }).click()
   await expect(picker).toBeHidden()
 
-  // To the next day, or the one before when today ends the grid.
+  // To the next day, in the same week row of the grid.
   const cells = monthGrid(page).getByRole('gridcell')
   const today = await cells.evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-current') === 'date'))
-  const target = cells.nth(today + 1 < (await cells.count()) ? today + 1 : today - 1)
+  const target = cells.nth(today + 1)
   const inTarget = target.locator('[data-task-key]', { hasText: title })
   const handle = cells.nth(today).locator('[data-task-key]', { hasText: title }).getByRole('button', { name: new RegExp(title) })
   const from = (await handle.boundingBox())!
