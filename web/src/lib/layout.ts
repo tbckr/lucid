@@ -561,7 +561,10 @@ export interface CellLayout<T extends CalItem = CalItem> {
   rows: CellRow<T>[]
   /** Rows occupied by visible bars above the rows. */
   barRows: number
-  /** Behind "N more": events that don't fit; in a one-row cell, everything of the day. */
+  /**
+   * Behind "N more": events that don't fit. The one exception is a one-row cell with tasks and events that don't
+   * all fit: it has no row left for a bundle next to "N more", so everything of the day, tasks included, is behind it.
+   */
   more: T[]
 }
 
@@ -620,7 +623,9 @@ interface Placed<T extends CalItem> {
  * Lay out one week row (FR-07). `capacity` is the number of rows that fit into a cell (Infinity = unlimited).
  * Bars take lanes, events first; below them each cell shows its items. Where a day has more than fit, its single-day
  * tasks become one bundle row first, then its task bars join that bundle; only if the events still don't fit, one row
- * is kept for "N more", for the hidden event bars and the events beyond. A one-row cell shows only "N more".
+ * is kept for "N more", for the hidden event bars and the events beyond. In a one-row cell, a day with tasks only
+ * still shows its bundle; with events that don't fit besides, there is no row for both, and "N more" stands for the
+ * whole day, tasks included.
  */
 export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capacity: number): WeekRowLayout<T> {
   const n = days.length
@@ -679,7 +684,7 @@ export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capa
     }
     // The events overflow: one row for "N more".
     const limit = capacity - 1 - bundleRow
-    // A one-row cell: "N more" for everything.
+    // A one-row cell, which fits no bundle next to "N more": "N more" for everything, tasks included.
     if (limit < 0) {
       shows[c] = () => false
       return { day, all, rows: [], barRows: 0, more: all }
