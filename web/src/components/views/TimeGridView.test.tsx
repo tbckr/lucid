@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
+import { type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DndStateContext } from '@/components/dnd/dndState'
 import type * as EventItems from '@/components/events/EventItems'
@@ -55,10 +56,34 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) }
 }
 
+/** Lays the time grid out `width` px wide: the ResizeObserver reports it once, as the browser does on observe. */
+function measured(width: number) {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      readonly callback: ResizeObserverCallback
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback
+      }
+      observe(target: Element) {
+        this.callback([{ target, contentRect: { width } } as unknown as ResizeObserverEntry], this)
+      }
+      unobserve() {
+        // nothing to stop
+      }
+      disconnect() {
+        // nothing to stop
+      }
+    },
+  )
+}
+
 describe('TimeGridView', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
     useUi.getState().openCreate(null)
+    useUi.getState().openOverflow(null)
   })
 
   // jsdom lays nothing out, so every slot's top is 0 and clientY is the offset in the slot
@@ -245,6 +270,122 @@ describe('TimeGridView', () => {
     const cell = allDayCell()
     expect(cell).toHaveStyle({ height: `${2 * 22 + 6}px` })
     expect(cell.querySelector('[data-task-key="task:t1"]')).toHaveStyle({ top: `${3 + 22}px` })
+  })
+
+  describe('a busy hour (FR-07)', () => {
+    const week = Array.from({ length: 7 }, (_, i) => new Date(2026, 8, 20 + i))
+    /** Sept 25, 9–10 and 9:15–11 (CEST, UTC+2). */
+    const events = [
+      toCalEvent(apiEvent({ id: 'sync', key: 'sync', title: 'Sync', start: '2026-09-25T07:00:00Z', end: '2026-09-25T08:00:00Z' })),
+      toCalEvent(apiEvent({ id: 'panel', key: 'panel', title: 'Panel', start: '2026-09-25T07:15:00Z', end: '2026-09-25T09:00:00Z' })),
+    ]
+    /** `n` tasks due on Sept 25 at 9:00. */
+    const tasksAtNine = (n: number) =>
+      Array.from({ length: n }, (_, i) => toCalTask(todo({ id: `t${i}`, title: `Task ${i}`, due: '2026-09-25T07:00:00Z' }))!)
+    const grid = (days: Date[], items: CalItem[], beside?: ReactNode) => (
+      <DndContext>
+        <TimeGridView
+          days={days}
+          now={new Date(2026, 8, 25, 12)}
+          events={items}
+          corrupted={[]}
+          prefs={prefs}
+          colorsOf={() => colors}
+          calendarOf={() => cal}
+        />
+        {beside}
+      </DndContext>
+    )
+    /** The day column of Sept 25. */
+    const friday = () => screen.getByRole('button', { name: /^New event at Friday, September 25th, 2026 9:00 AM$/ }).parentElement!
+    const keys = (container: HTMLElement, attr: 'event' | 'task') =>
+      Array.from(container.querySelectorAll<HTMLElement>(`[data-${attr}-key]`)).map((el) => el.getAttribute(`data-${attr}-key`))
+
+    it('bundles a busy hour in a narrow week column', () => {
+      measured(56 + 7 * 90)
+      const { container } = renderWithProviders(grid(week, [...events, ...tasksAtNine(3)]))
+      // One event per time stays readable (FR-07).
+      expect(keys(container, 'event')).toEqual(['sync'])
+      expect(keys(container, 'task')).toEqual([])
+      const bundle = within(friday()).getByRole('button', { name: '3 tasks at 9:00 AM, Friday, September 25th, 2026' })
+      // Compact in a 45 px half of the column: the bare number, centred and close to its rings so a 40 px tile holds it.
+      expect(bundle).toHaveTextContent(/^3$/)
+      expect(bundle).toHaveClass('justify-center', 'gap-0.5', 'px-0')
+      expect(bundle).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px', left: '50%' })
+      const more = within(friday()).getByRole('button', { name: '1 more event at 9:15 AM, Friday, September 25th, 2026' })
+      expect(more).toHaveTextContent('+1')
+      // Below the bundle, in its column.
+      expect(more).toHaveStyle({ top: `${570 * 0.8}px`, height: '22px', left: '50%' })
+    })
+
+    it('shows everything in the wide day view', () => {
+      measured(56 + 400)
+      const { container } = renderWithProviders(grid([new Date(2026, 8, 25)], [...events, ...tasksAtNine(3)]))
+      expect(keys(container, 'event').sort()).toEqual(['panel', 'sync'])
+      expect(keys(container, 'task')).toEqual(['task:t0', 'task:t1', 'task:t2'])
+      expect(container.querySelector('[data-bundle-count]')).toBeNull()
+      expect(screen.queryByRole('button', { name: /more events? at/ })).toBeNull()
+    })
+
+    it('opens the bundle\'s tasks with listed drags', () => {
+      measured(56 + 7 * 90)
+      const tasks = tasksAtNine(3)
+      renderWithProviders(grid(week, [...events, ...tasks]))
+      fireEvent.click(screen.getByRole('button', { name: /^3 tasks at 9:00 AM/ }))
+      const overflow = useUi.getState().overflow
+      expect(overflow?.items.map((i) => i.key)).toEqual(tasks.map((t) => t.key))
+      expect(overflow?.drag).toBe('listed')
+      expect(overflow?.home).toBe(friday())
+    })
+
+    it('draws a lone task of a busy hour as itself, in the overflow column', () => {
+      measured(56 + 7 * 90)
+      const { container } = renderWithProviders(grid(week, [...events, ...tasksAtNine(1)]))
+      expect(container.querySelector('[data-bundle-count]')).toBeNull()
+      const task = container.querySelector<HTMLElement>('[data-task-key="task:t0"]')!
+      expect(task).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px', left: '50%' })
+      expect(within(task).getByRole('button', { name: 'Task 0, 9 AM' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '1 more event at 9:15 AM, Friday, September 25th, 2026' })).toBeInTheDocument()
+    })
+
+    it('opens the hidden events from "+N" with listed drags', () => {
+      measured(56 + 7 * 90)
+      renderWithProviders(grid(week, [...events, ...tasksAtNine(3)]))
+      fireEvent.click(screen.getByRole('button', { name: /^1 more event at 9:15 AM/ }))
+      const overflow = useUi.getState().overflow
+      expect(overflow?.items.map((i) => i.key)).toEqual(['panel'])
+      expect(overflow?.drag).toBe('listed')
+      expect(overflow?.home).toBe(friday())
+    })
+
+    it('returns the focus to the day column once the bundle of its list is gone (NFR-27)', async () => {
+      const user = userEvent.setup()
+      measured(56 + 7 * 90)
+      const tasks = tasksAtNine(3)
+      const queryClient = new QueryClient()
+      const view = (shown: CalItem[]) => (
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            {grid(
+              week,
+              shown,
+              // The list of a bundle or "+N" lives beside the views (FR-07).
+              <OverflowPopover prefs={prefs} colorsOf={() => colors} readOnly={() => false} lookup={(key) => tasks.find((e) => e.key === key)} />,
+            )}
+          </TooltipProvider>
+        </QueryClientProvider>
+      )
+      const { rerender } = render(view([...events, ...tasks]))
+      fireEvent.click(screen.getByRole('button', { name: /^3 tasks at 9:00 AM/ }))
+      await screen.findByRole('dialog', { name: 'Friday, September 25th, 2026' })
+      // Two tasks dragged out of the list leave the hour with room: the bundle goes away while the list stays open.
+      rerender(view([...events, ...tasks.slice(0, 1)]))
+      expect(screen.queryByRole('button', { name: /tasks at/ })).toBeNull()
+      await user.keyboard('{Escape}')
+      await waitFor(() => {
+        expect(document.activeElement).toBe(friday())
+      })
+    })
   })
 
   it('picks up a timed task to move it in the grid (FR-10)', () => {

@@ -162,6 +162,73 @@ test('switch the "+N more" list to a neighbouring day, and close it with a secon
   await expect(second).toHaveAttribute('aria-expanded', 'false')
 })
 
+test('bundle a busy hour in the week and drag a task out of it', async ({ page }) => {
+  const stamp = Date.now()
+  // A morning: 8:30 UTC is 9:30 or 10:30 in Berlin, the time zone of the config, the same day either way.
+  const morning = new Date()
+  morning.setUTCHours(8, 30, 0, 0)
+  await page.clock.setFixedTime(morning)
+  await login(page)
+  await page.keyboard.press('w')
+  // Today at 9:00, 9:30, 10:00 and 11:00 in the browser's time zone, as the server writes times.
+  const [nine, nineThirty, ten, eleven] = await page.evaluate(() =>
+    [
+      [9, 0],
+      [9, 30],
+      [10, 0],
+      [11, 0],
+    ].map(([h, m]) => {
+      const d = new Date()
+      d.setHours(h ?? 0, m, 0, 0)
+      return d.toISOString()
+    }),
+  )
+  await createTestEvent(page, { title: `E2E overflow ${stamp} sync`, start: nine!, end: ten! })
+  await createTestEvent(page, { title: `E2E overflow ${stamp} panel`, start: nineThirty!, end: eleven! })
+  for (const n of [0, 1, 2]) {
+    await createTestTask(page, { title: `E2E overflowtask ${stamp} ${n}`, due: nine!, dueAllDay: false })
+  }
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+  await page.keyboard.press('w')
+
+  // At 1280 px with both sidebars, a week column has room for one event per time beside the bundle (FR-07).
+  const bundle = page.getByRole('button', { name: /^3 tasks at 9:00 AM/ })
+  await expect(bundle).toBeVisible()
+  const task = (scope: Locator, n: number) => scope.locator('[data-task-key]', { hasText: `E2E overflowtask ${stamp} ${n}` })
+  await expect(task(page.getByRole('main'), 0)).toHaveCount(0)
+
+  // Ticked off in the list, a task stays there, checked.
+  await bundle.click()
+  await expect(list(page)).toBeVisible()
+  const done = list(page).getByRole('checkbox', { name: `Completed: E2E overflowtask ${stamp} 0` })
+  await done.click()
+  await expect(done).toBeChecked()
+  await expect(list(page)).toBeVisible()
+
+  // Dragged out onto the next day's column (the one before on the week's last day), its tile's top at 2 PM.
+  const columns = page.getByRole('button', { name: /^New event at .* 12:00 AM$/ })
+  await expect(columns).toHaveCount(7)
+  const at = await bundle.evaluate((el) => Array.from(el.parentElement?.parentElement?.children ?? []).indexOf(el.parentElement!) - 1)
+  const other = columns.nth(at + (morning.getDay() === 6 ? -1 : 1)).locator('..')
+  const row = task(list(page), 1)
+  const tile = (await row.boundingBox())!
+  const from = (await row.locator('button:not([role="checkbox"])').boundingBox())!
+  const column = (await other.boundingBox())!
+  const grab = { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+  await page.mouse.move(grab.x, grab.y)
+  await page.mouse.down()
+  await page.mouse.move(grab.x + 10, grab.y, { steps: 4 })
+  await page.mouse.move(column.x + column.width / 2, column.y + 14 * 48 + (grab.y - tile.y), { steps: 8 })
+  await expect(list(page)).toHaveCSS('visibility', 'hidden')
+  await page.mouse.up()
+  await expect(list(page)).toHaveCount(0)
+
+  const moved = task(other, 1)
+  await expect(moved).toBeVisible()
+  await expect(moved.locator('button:not([role="checkbox"])')).toHaveAccessibleName(`E2E overflowtask ${stamp} 1, 2 PM`)
+})
+
 // The keyboard drag out of the list (FR-10, NFR-27): the list hides, as for a pointer, and the drag goes on although
 // the hidden list drops the focus. The row stays where the list put it, not in its own day's cell, so the arrows
 // move on from there: dnd-kit says where the entry would land, and the drop lands there. On some days the row has

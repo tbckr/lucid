@@ -1,6 +1,6 @@
 import { useDroppable } from '@dnd-kit/core'
 import { addDays, format, isSameDay } from 'date-fns'
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DraftBlock } from '@/components/create/DraftBlock'
 import { useDndState, useScopePreview } from '@/components/dnd/dndState'
@@ -11,18 +11,31 @@ import { TaskBundle } from '@/components/tasks/TaskBundle'
 import { TaskBar, TaskBlock } from '@/components/tasks/TaskItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { type Calendar, type CorruptedItem } from '@/lib/api/schemas'
-import { canDrag, type CalTask } from '@/lib/calendarTasks'
+import { canDrag, TASK_POINT_MINUTES, type CalTask } from '@/lib/calendarTasks'
 import { atMinutes, dayKey, minutesOfDay } from '@/lib/dates'
 import { HOUR_HEIGHT, PX_PER_MINUTE, type DragBinding, type DropData } from '@/lib/dnd'
 import { type CalItem } from '@/lib/events'
-import { formatHour, formatShortTime, type FormatPrefs } from '@/lib/format'
-import { cellRowsUsed, layoutDay, layoutWeekRow, timedSegments, type BarSegment, type CellLayout } from '@/lib/layout'
+import { formatHour, formatShortTime, formatTime, type FormatPrefs } from '@/lib/format'
+import {
+  cellRowsUsed,
+  columnCapacity,
+  layoutDayWithin,
+  layoutWeekRow,
+  timedSegments,
+  type BarSegment,
+  type CellLayout,
+  type OverflowEntry,
+} from '@/lib/layout'
 import { cn } from '@/lib/utils'
 import { useUi, type CreateState } from '@/stores/ui'
 import { MoreButton } from './MoreButton'
 import { useDragCreate } from './useDragCreate'
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
+/** Width of the hour gutter left of the day columns (`3.5rem`). */
+const GUTTER_PX = 56
+/** Below this width a bundle in the time grid shows two rings and the bare number (FR-07). */
+const COMPACT_BUNDLE_PX = 72
 /** Rows of the all-day row at most: it never pushes the time grid away (FR-07). */
 const ALL_DAY_ROWS = 3
 const ROW_PX = 22
@@ -54,6 +67,23 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
   const allDayStart = useUi((s) => (s.createPreview?.allDay ? s.createPreview.startsAt.getTime() : null))
   const allDayEnd = useUi((s) => (s.createPreview?.allDay ? s.createPreview.endsAt.getTime() : null))
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Measure the day columns to know how many columns of entries fit side by side in each (FR-07).
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = gridRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+    }
+  }, [])
+  const colWidth = Math.max(0, (width - GUTTER_PX) / days.length)
+  const capacity = columnCapacity(colWidth)
 
   // A dropped event of a series shows at its new place while it waits for its answer (FR-17).
   const shown = useScopePreview(events)
@@ -130,7 +160,7 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
 
       {/* Time grid */}
       <div ref={scrollRef} className="scrollbar-thin relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
-        <div className="grid" style={{ gridTemplateColumns: cols, height: 24 * HOUR_HEIGHT }}>
+        <div ref={gridRef} className="grid" style={{ gridTemplateColumns: cols, height: 24 * HOUR_HEIGHT }}>
           <div className="relative" aria-hidden>
             {HOURS.slice(1).map((h) => (
               <span
@@ -153,6 +183,8 @@ export function TimeGridView({ days, now, events, corrupted, prefs, colorsOf, ca
               colorsOf={colorsOf}
               readOnly={readOnly}
               onCreate={openCreate}
+              capacity={capacity}
+              colWidth={colWidth}
             />
           ))}
         </div>
@@ -294,6 +326,10 @@ function AllDayCell({
   )
 }
 
+/**
+ * A day of the time grid: its entries side by side in at most `capacity` columns, and where more meet than fit, the
+ * overflow column with its tasks bundled and "+N" for the events that still don't fit (FR-07).
+ */
 function DayColumn({
   day,
   now,
@@ -303,6 +339,8 @@ function DayColumn({
   colorsOf,
   readOnly,
   onCreate,
+  capacity,
+  colWidth,
 }: {
   day: Date
   now: Date
@@ -312,12 +350,17 @@ function DayColumn({
   colorsOf: (id: string) => EventColors
   readOnly: (calendarId: string) => boolean
   onCreate: (state: CreateState) => void
+  /** Columns of entries that fit side by side (`columnCapacity`). */
+  capacity: number
+  /** The column's width in px, 0 before it is measured. */
+  colWidth: number
 }) {
   const { t } = useTranslation()
   const { resize, pendingTodos } = useDndState()
   const column = useRef<HTMLDivElement>(null)
+  const key = dayKey(day)
   const { setNodeRef, isOver } = useDroppable({
-    id: `col:${dayKey(day)}`,
+    id: `col:${key}`,
     data: { type: 'column', day, ref: column } satisfies DropData,
   })
   const ref = useCallback(
@@ -327,8 +370,31 @@ function DayColumn({
     },
     [setNodeRef],
   )
-  const positioned = useMemo(() => layoutDay(timedSegments(events, day)), [events, day])
+  const layout = useMemo(() => layoutDayWithin(timedSegments(events, day), capacity), [events, day, capacity])
   const today = isSameDay(day, now)
+  const date = format(day, 'PPPP', { locale: prefs.locale })
+  // The column is where the lists of its bundles and "+N" point and give the focus to once their button is gone
+  // (NFR-27); it takes the focus without being a tab stop.
+  const home = () => column.current
+  const taskBlock = (e: CalTask, size: 'xs' | 'sm' | 'md', style: CSSProperties) => {
+    const ro = readOnly(e.calendarId)
+    return (
+      <TaskBlock
+        task={e}
+        colors={colorsOf(e.calendarId)}
+        prefs={prefs}
+        readOnly={ro}
+        drag={{
+          id: `timed:${e.key}:${key}`,
+          data: { type: 'timed', event: e, originDay: day },
+          // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
+          disabled: ro || !canDrag(e) || pendingTodos.has(e.todo.id),
+        }}
+        size={size}
+        style={style}
+      />
+    )
+  }
   const { draft, slotProps } = useDragCreate((startMin, endMin, { target, ranged }) => {
     // The popover points at the new entry's slots in this column (FR-09, FR-16).
     onCreate({
@@ -340,7 +406,7 @@ function DayColumn({
   })
 
   return (
-    <div ref={ref} className={cn('relative border-l border-grid', isOver && 'bg-primary/5')}>
+    <div ref={ref} tabIndex={-1} className={cn('relative border-l border-grid outline-none', isOver && 'bg-primary/5')}>
       {HOURS.map((h) => (
         <button
           key={h}
@@ -353,7 +419,7 @@ function DayColumn({
         />
       ))}
 
-      {positioned.map((p) => {
+      {layout.placed.map((p) => {
         const e = p.event
         const resized = e.kind === 'event' && resize?.key === e.key ? resize : null
         // A segment continuing into the next day keeps its height; only the last one grows.
@@ -368,27 +434,14 @@ function DayColumn({
         return (
           <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
             {e.kind === 'task' ? (
-              <TaskBlock
-                task={e}
-                colors={colorsOf(e.calendarId)}
-                prefs={prefs}
-                readOnly={ro}
-                drag={{
-                  id: `timed:${e.key}:${dayKey(day)}`,
-                  data: { type: 'timed', event: e, originDay: day },
-                  // A task's own eligibility (FR-17), on top of its calendar's, decides whether it can be dragged.
-                  disabled: ro || !canDrag(e) || pendingTodos.has(e.todo.id),
-                }}
-                size={size}
-                style={style}
-              />
+              taskBlock(e, size, style)
             ) : (
               <TimedBlock
                 event={resized ?? e}
                 colors={colorsOf(e.calendarId)}
                 prefs={prefs}
                 size={size}
-                drag={{ id: `timed:${e.key}:${dayKey(day)}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
+                drag={{ id: `timed:${e.key}:${key}`, data: { type: 'timed', event: e, originDay: day }, disabled: ro }}
                 style={style}
               >
                 <ResizeHandle event={e} disabled={ro || p.clippedEnd} />
@@ -396,6 +449,27 @@ function DayColumn({
             )}
           </EventBoundary>
         )
+      })}
+
+      {layout.overflow.map((entry) => {
+        // One point high, at its stack's place in the overflow column (FR-07).
+        const style: CSSProperties = {
+          top: entry.topMin * PX_PER_MINUTE,
+          height: TASK_POINT_MINUTES * PX_PER_MINUTE - 2,
+          left: `${(entry.col / entry.cols) * 100}%`,
+          width: `calc(${100 / entry.cols}% - 4px)`,
+          zIndex: 10 + entry.col,
+        }
+        const [only] = entry.items
+        // A bundle of one is the task itself.
+        if (entry.kind === 'tasks' && entry.items.length === 1 && only?.kind === 'task') {
+          return (
+            <EventBoundary key={only.key} item={only} className="absolute inset-x-1">
+              {taskBlock(only, 'xs', style)}
+            </EventBoundary>
+          )
+        }
+        return <OverflowTile key={`${entry.kind}:${entry.topMin}`} entry={entry} day={day} date={date} colWidth={colWidth} prefs={prefs} colorsOf={colorsOf} home={home} style={style} />
       })}
 
       {corrupted.map((c) => (
@@ -436,6 +510,69 @@ function DayColumn({
 
       <ColumnDraft day={day} colorsOf={colorsOf} prefs={prefs} />
     </div>
+  )
+}
+
+/**
+ * An entry of a day column's overflow column (FR-07): a bundle of its tasks, compact where the column has no room for
+ * the words, or "+N" for its events. Both open their list, whose rows land at the time they are dropped at.
+ */
+function OverflowTile({
+  entry,
+  day,
+  date,
+  colWidth,
+  prefs,
+  colorsOf,
+  home,
+  style,
+}: {
+  entry: OverflowEntry
+  day: Date
+  /** The day as the labels name it. */
+  date: string
+  colWidth: number
+  prefs: FormatPrefs
+  colorsOf: (id: string) => EventColors
+  home: () => HTMLElement | null
+  style: CSSProperties
+}) {
+  const { t } = useTranslation()
+  const id = `${dayKey(day)}:${entry.topMin}`
+  const count = entry.items.length
+  const time = formatTime(atMinutes(day, entry.startMin), prefs)
+  if (entry.kind === 'events') {
+    return (
+      <MoreButton
+        variant="tile"
+        id={`more:col:${id}`}
+        day={day}
+        items={entry.items}
+        count={count}
+        drag="listed"
+        home={home}
+        label={t('more.eventsAt', { count, time, date })}
+        className="absolute"
+        style={style}
+      />
+    )
+  }
+  const compact = colWidth / entry.cols < COMPACT_BUNDLE_PX
+  return (
+    <TaskBundle
+      variant="tile"
+      compact={compact}
+      id={`bundle:col:${id}`}
+      day={day}
+      tasks={entry.items.filter((e): e is CalTask => e.kind === 'task')}
+      drag="listed"
+      home={home}
+      colorsOf={colorsOf}
+      label={t('bundle.labelAt', { count, time, date })}
+      // Centred like "+N" below it; compact, the number keeps close to its rings, so a 40 px tile holds two digits.
+      className={cn('absolute justify-center', compact && 'gap-0.5 px-0')}
+      style={style}
+    />
   )
 }
 
