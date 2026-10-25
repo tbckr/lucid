@@ -447,8 +447,10 @@ export function layoutDayWithin<T extends CalItem>(
       const hidden = stacks.flatMap((s) => s.events)
       if (seg.event.kind === 'task' && hidden.some((h) => overlaps(extent(h), at))) return undefined
       const others = stacks.filter((s) => s !== stack).flatMap(drawnAt)
+      // What its stack counts at its place now stays counted there; what it counts away already doesn't hold it back.
+      const atPlace = (x: TimedSegment<T>, s: Stack<T>) => bundled.has(x) || overlaps(placeOf(x), stackAt(s))
       const rests = without(stack, seg).filter((rest) =>
-        [...rest.tasks, ...rest.events].every((x) => bundled.has(x) || overlaps(placeOf(x), stackAt(rest))),
+        [...rest.tasks, ...rest.events].every((x) => atPlace(x, rest) || !atPlace(x, stack)),
       )
       for (let col = 0; col < cap; col++) {
         if (columns.some((x) => x.col === col && overlaps(extent(x.seg), at))) continue

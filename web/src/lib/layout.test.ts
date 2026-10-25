@@ -272,6 +272,9 @@ describe('layoutDayWithin', () => {
         expect(overlap(counted, { from: place.from - late, to: place.to }), `${note} ${seg.event.title} counted away from its place`).toBe(
           true,
         )
+        // And its own entry ends less than an hour before it starts (R22's bound, also at midnight). A bundled task
+        // has no such bound: its point group, chained, may reach further (FR-07).
+        expect(seg.startMin - (e.topMin + TASK_POINT_MINUTES), `${note} ${seg.event.title} counted an hour early`).toBeLessThan(60)
         for (let c = 0; c < capacity; c++) {
           if (layout.placed.some((p) => p.col === c && overlap(extent(p), at))) continue
           const stays = layout.overflow.filter((o) => (o !== e || o.items.length > 1) && overlap(sinksTo(o), at))
@@ -587,6 +590,23 @@ describe('layoutDayWithin', () => {
       { kind: 'tasks', items: ['span', 'ten', 'fifty'], startMin: 1365, topMin: 1365, col: 2, cols: 3 },
       { kind: 'events', items: ['d', 'c'], startMin: 1400, topMin: 1395, col: 2, cols: 3 },
     ])
+  })
+
+  it('gives a late task its column back where an earlier stack counted it', () => {
+    // Found on a random evening: merged into the 22:05 bundle, the 23:50 task stayed counted there, nearly two hours
+    // early, with nothing drawn at 23:50, because the stack's events were counted away from their place already.
+    const late = within(
+      [
+        pt('call', 22, 5),
+        timed('a', 25, 22, 20, 22, 35),
+        timed('b', 25, 22, 40, 22, 45),
+        timed('c', 25, 23, 15, 23, 20),
+        timed('d', 25, 23, 25, 23, 30),
+        pt('lock', 23, 50),
+      ],
+      1,
+    )
+    expect(placedOf(late)).toMatchObject({ lock: [0, 1, 1] })
   })
 
   it('keeps its rules on seeded random days', () => {
