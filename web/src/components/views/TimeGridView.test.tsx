@@ -305,6 +305,11 @@ describe('TimeGridView', () => {
     )
     /** The day column of Sept 25. */
     const friday = () => screen.getByRole('button', { name: /^New event at Friday, September 25th, 2026 9:00 AM$/ }).parentElement!
+    /** A box's `left` and `width` in % (its width without the 4 px gap every block keeps), rounded. */
+    const across = (el: HTMLElement) => {
+      const width = /^calc\(([\d.]+)% - 4px\)$/.exec(el.style.width)?.[1]
+      return [Math.round(parseFloat(el.style.left) * 100) / 100, Math.round(parseFloat(width ?? 'NaN') * 100) / 100]
+    }
     const keys = (container: HTMLElement, attr: 'event' | 'task') =>
       Array.from(container.querySelectorAll<HTMLElement>(`[data-${attr}-key]`)).map((el) => el.getAttribute(`data-${attr}-key`))
 
@@ -318,11 +323,15 @@ describe('TimeGridView', () => {
       // Compact in a 45 px half of the column: the bare number, centred and close to its rings so a 40 px tile holds it.
       expect(bundle).toHaveTextContent(/^3$/)
       expect(bundle).toHaveClass('justify-center', 'gap-0.5', 'px-0')
-      expect(bundle).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px', left: '50%' })
+      expect(bundle).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px' })
       const more = within(friday()).getByRole('button', { name: '1 more event at 9:15 AM, Friday, September 25th, 2026' })
       expect(more).toHaveTextContent('+1')
       // Below the bundle, in its column.
-      expect(more).toHaveStyle({ top: `${570 * 0.8}px`, height: '22px', left: '50%' })
+      expect(more).toHaveStyle({ top: `${570 * 0.8}px`, height: '22px' })
+      // The overflow column is slim, 37 of the 90 px; the event beside it gets the rest.
+      expect(across(bundle)).toEqual([58.89, 41.11])
+      expect(across(more)).toEqual([58.89, 41.11])
+      expect(across(container.querySelector<HTMLElement>('[data-event-key="sync"]')!.parentElement!)).toEqual([0, 58.89])
     })
 
     it('shows everything in the wide day view', () => {
@@ -350,7 +359,8 @@ describe('TimeGridView', () => {
       const { container } = renderWithProviders(grid(week, [...events, ...tasksAtNine(1)]))
       expect(container.querySelector('[data-bundle-count]')).toBeNull()
       const task = container.querySelector<HTMLElement>('[data-task-key="task:t0"]')!
-      expect(task).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px', left: '50%' })
+      expect(task).toHaveStyle({ top: `${540 * 0.8}px`, height: '22px' })
+      expect(across(task)).toEqual([58.89, 41.11])
       expect(within(task).getByRole('button', { name: 'Task 0, 9 AM' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: '1 more event at 9:15 AM, Friday, September 25th, 2026' })).toBeInTheDocument()
     })

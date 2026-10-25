@@ -7,10 +7,12 @@ import {
   agendaRows,
   cellCapacity,
   cellRowsUsed,
+  columnBox,
   columnCapacity,
   layoutDay,
   layoutDayWithin,
   layoutWeekRow,
+  overflowColumnPx,
   timedSegments,
   type CellLayout,
   type DayLayout,
@@ -107,6 +109,53 @@ describe('columnCapacity', () => {
   })
 })
 
+describe('columnBox', () => {
+  const box = (col: number, span: number, cols: number, withOverflow: boolean, width = 90) => {
+    const b = columnBox({ col, span, cols }, withOverflow, width, 37)
+    return [Math.round(b.left * 100) / 100, Math.round(b.width * 100) / 100]
+  }
+
+  it('shares a cluster without an overflow column evenly', () => {
+    expect(box(0, 1, 2, false)).toEqual([0, 50])
+    expect(box(1, 1, 2, false)).toEqual([50, 50])
+    expect(box(0, 2, 3, false)).toEqual([0, 66.67])
+  })
+
+  it('draws the overflow column slim and gives the rest to the other columns (FR-07)', () => {
+    // 37 of 90 px: the overflow column, the last, is 41.11 % wide; the event beside it gets the other 58.89 %.
+    expect(box(1, 1, 2, true)).toEqual([58.89, 41.11])
+    expect(box(0, 1, 2, true)).toEqual([0, 58.89])
+    // Three columns of a 170 px column: the slim one is 21.76 %, two content columns of 39.12 %, and a span to the
+    // end includes the slim one.
+    expect(box(1, 1, 3, true, 170)).toEqual([39.12, 39.12])
+    expect(box(1, 2, 3, true, 170)).toEqual([39.12, 60.88])
+    expect(box(2, 1, 3, true, 170)).toEqual([78.24, 21.76])
+  })
+
+  it('shares evenly where the slim column would be no narrower, and keeps one column whole', () => {
+    expect(box(1, 1, 2, true, 74)).toEqual([50, 50])
+    expect(box(0, 1, 1, true)).toEqual([0, 100])
+  })
+})
+
+describe('overflowColumnPx', () => {
+  const entry = (n: number): OverflowEntry => ({
+    kind: 'tasks',
+    items: Array.from({ length: n }, (_, i) => task(`t${i}`, local(25, 9))),
+    startMin: 540,
+    topMin: 540,
+    col: 1,
+    cols: 2,
+  })
+
+  it('fits the compact bundle and "+N" of its busiest entry, and the gap blocks keep (FR-07)', () => {
+    // Two 14 px rings overlapping by 6, a 2 px gap, 7.2 px per figure, a pixel to spare and the 4 px gap.
+    expect(overflowColumnPx([entry(3), entry(9)])).toBe(37)
+    expect(overflowColumnPx([entry(3), entry(12)])).toBe(44)
+    expect(overflowColumnPx([])).toBe(0)
+  })
+})
+
 describe('layoutDayWithin', () => {
   const day = new Date(2026, 8, 25)
   /** A timed task point on Sept 25. */
@@ -131,6 +180,12 @@ describe('layoutDayWithin', () => {
       expect(b.col >= 0 && b.span >= 1 && b.col + b.span <= b.cols && b.cols <= capacity, `${note} ${b.name} in its columns`).toBe(
         true,
       )
+    }
+    // What is drawn beside an overflow entry knows its cluster has one, so the overflow column can be drawn slim.
+    for (const p of layout.placed) {
+      if (layout.overflow.some((e) => overlap(extent(p), { from: e.topMin, to: e.topMin + TASK_POINT_MINUTES }))) {
+        expect(p.withOverflow, `${note} ${p.event.title} beside an overflow column`).toBe(true)
+      }
     }
     // The overflow column is drawn within the day: a stack late in the evening is raised to end at midnight.
     for (const e of layout.overflow) {
@@ -269,6 +324,11 @@ describe('layoutDayWithin', () => {
     // The 10:30 task has room beside the event: it stays itself, below the bundle.
     expect(placedOf(l)).toEqual({ e: [0, 2, 1], t3: [1, 2, 1] })
     expect(overflowOf(l)).toEqual([{ kind: 'tasks', items: ['t1', 't2'], startMin: 540, topMin: 540, col: 1, cols: 2 }])
+  })
+
+  it('marks the items of a cluster that draws an overflow column', () => {
+    const l = within([timed('e', 25, 8, 0, 12, 0), pt('t1', 9), pt('t2', 9), timed('later', 25, 14, 0, 15, 0)], 2)
+    expect(Object.fromEntries(l.placed.map((p) => [p.event.title, p.withOverflow ?? false]))).toEqual({ e: true, later: false })
   })
 
   it('groups by point, not by cluster', () => {

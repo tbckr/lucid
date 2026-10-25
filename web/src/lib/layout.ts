@@ -24,6 +24,8 @@ export interface PositionedSegment<T extends CalItem = CalItem> extends TimedSeg
   cols: number
   /** Columns this segment may extend over (>= 1). */
   span: number
+  /** Its cluster's last column is the overflow column (FR-07), which is drawn slim (`columnBox`). */
+  withOverflow?: true
 }
 
 const DAY_MINUTES = 24 * 60
@@ -276,7 +278,7 @@ function place<T extends CalItem>(
         if (blocked) break
         span++
       }
-      layout.placed.push({ ...item.seg, col: item.col, cols, span })
+      layout.placed.push({ ...item.seg, col: item.col, cols, span, ...(stacked.length > 0 && { withOverflow: true as const }) })
     }
     for (const { stack } of stacked) layout.overflow.push(...stack.map((e) => ({ ...e, col: entryCol, cols })))
   }
@@ -451,6 +453,38 @@ export function layoutDayWithin<T extends CalItem>(
       stacks = stacks.map((s) => (s === first.stack ? rest : s)).filter((s) => s.tasks.length + s.events.length > 0)
     }
   }
+}
+
+/**
+ * Width of a day column's overflow column where it is drawn slim (FR-07): the compact bundle of its busiest entry
+ * (two 14 px rings overlapping by 6, a 2 px gap and 7.2 px per tabular figure of the 12 px count, as measured, and a
+ * pixel to spare), which also holds "+N", and the 4 px gap every block keeps to its right. 0 without entries.
+ */
+export function overflowColumnPx(overflow: OverflowEntry[]): number {
+  if (overflow.length === 0) return 0
+  const figures = String(Math.max(...overflow.map((e) => e.items.length))).length
+  return Math.ceil(14 + 8 + 2 + 7.2 * figures) + 1 + 4
+}
+
+/**
+ * Where an entry is drawn across a day column `width` px wide (FR-07), in % of it: its columns `col` to `col + span`
+ * of `cols`. In a cluster `withOverflow`, the overflow column, its last, is drawn `overflowPx` wide, and the cluster's
+ * other columns share the rest, so the items beside a bundle or "+N" keep more of their titles. Elsewhere, and where
+ * the slim column would be no narrower than an even share, the columns are even.
+ */
+export function columnBox(
+  { col, span, cols }: { col: number; span: number; cols: number },
+  withOverflow: boolean,
+  width: number,
+  overflowPx: number,
+): { left: number; width: number } {
+  if (!withOverflow || cols < 2 || overflowPx <= 0 || overflowPx >= width / cols) {
+    return { left: (col / cols) * 100, width: (span / cols) * 100 }
+  }
+  const slim = overflowPx / width
+  const content = (1 - slim) / (cols - 1)
+  const end = col + span >= cols ? 1 : (col + span) * content
+  return { left: col * content * 100, width: (end - col * content) * 100 }
 }
 
 /* ------------------------------------------------------------------------ */

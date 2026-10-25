@@ -18,9 +18,11 @@ import { type CalItem } from '@/lib/events'
 import { formatHour, formatShortTime, formatTime, type FormatPrefs } from '@/lib/format'
 import {
   cellRowsUsed,
+  columnBox,
   columnCapacity,
   layoutDayWithin,
   layoutWeekRow,
+  overflowColumnPx,
   timedSegments,
   type BarSegment,
   type CellLayout,
@@ -377,6 +379,10 @@ function DayColumn({
     [setNodeRef],
   )
   const layout = useMemo(() => layoutDayWithin(timedSegments(events, day), capacity), [events, day, capacity])
+  // Where a cluster has an overflow column, it is drawn slim and the cluster's other columns share the rest (FR-07).
+  const overflowPx = overflowColumnPx(layout.overflow)
+  const across = (col: number, span: number, cols: number, withOverflow: boolean) =>
+    columnBox({ col, span, cols }, withOverflow, colWidth, overflowPx)
   const today = isSameDay(day, now)
   const date = format(day, 'PPPP', { locale: prefs.locale })
   // The column is where the lists of its bundles and "+N" point and give the focus to once their button is gone
@@ -432,11 +438,10 @@ function DayColumn({
         const preview = resized && !p.clippedEnd ? (resized.endsAt.getTime() - e.endsAt.getTime()) / 60_000 : 0
         const top = p.startMin * PX_PER_MINUTE
         const height = Math.max(18, (p.endMin - p.startMin + preview) * PX_PER_MINUTE - 2)
-        const width = (p.span / p.cols) * 100
-        const left = (p.col / p.cols) * 100
+        const box = across(p.col, p.span, p.cols, p.withOverflow === true)
         const ro = readOnly(e.calendarId)
         const size = height < 34 ? 'xs' : height < 58 ? 'sm' : 'md'
-        const style = { top, height, left: `${left}%`, width: `calc(${width}% - 4px)`, zIndex: 10 + p.col }
+        const style = { top, height, left: `${box.left}%`, width: `calc(${box.width}% - 4px)`, zIndex: 10 + p.col }
         return (
           <EventBoundary key={e.key} item={e} className="absolute inset-x-1">
             {e.kind === 'task' ? (
@@ -459,11 +464,12 @@ function DayColumn({
 
       {layout.overflow.map((entry) => {
         // One point high, at its stack's place in the overflow column (FR-07).
+        const box = across(entry.col, 1, entry.cols, true)
         const style: CSSProperties = {
           top: entry.topMin * PX_PER_MINUTE,
           height: TASK_POINT_MINUTES * PX_PER_MINUTE - 2,
-          left: `${(entry.col / entry.cols) * 100}%`,
-          width: `calc(${100 / entry.cols}% - 4px)`,
+          left: `${box.left}%`,
+          width: `calc(${box.width}% - 4px)`,
           zIndex: 10 + entry.col,
         }
         const [only] = entry.items
@@ -475,7 +481,19 @@ function DayColumn({
             </EventBoundary>
           )
         }
-        return <OverflowTile key={`${entry.kind}:${entry.topMin}`} entry={entry} day={day} date={date} colWidth={colWidth} prefs={prefs} colorsOf={colorsOf} home={home} style={style} />
+        return (
+          <OverflowTile
+            key={`${entry.kind}:${entry.topMin}`}
+            entry={entry}
+            day={day}
+            date={date}
+            columnPx={(box.width / 100) * colWidth}
+            prefs={prefs}
+            colorsOf={colorsOf}
+            home={home}
+            style={style}
+          />
+        )
       })}
 
       {corrupted.map((c) => (
@@ -527,7 +545,7 @@ function OverflowTile({
   entry,
   day,
   date,
-  colWidth,
+  columnPx,
   prefs,
   colorsOf,
   home,
@@ -537,7 +555,8 @@ function OverflowTile({
   day: Date
   /** The day as the labels name it. */
   date: string
-  colWidth: number
+  /** Width of the overflow column it is drawn in, px. */
+  columnPx: number
   prefs: FormatPrefs
   colorsOf: (id: string) => EventColors
   home: () => HTMLElement | null
@@ -563,7 +582,7 @@ function OverflowTile({
       />
     )
   }
-  const compact = colWidth / entry.cols < COMPACT_BUNDLE_PX
+  const compact = columnPx < COMPACT_BUNDLE_PX
   return (
     <TaskBundle
       variant="tile"
