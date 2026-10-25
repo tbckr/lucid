@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -331,6 +332,50 @@ func TestRedirectPolicy(t *testing.T) {
 			t.Fatalf("other host received %d requests", n)
 		}
 	})
+}
+
+func TestUserAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		userAgent string
+		want      string
+	}{
+		{"default", "", "lucid"},
+		{"configured", "lucid/1.2.3", "lucid/1.2.3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var mu sync.Mutex
+			var got []string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				got = append(got, r.UserAgent())
+				mu.Unlock()
+				if r.URL.Path == "/start" {
+					http.Redirect(w, r, "/target", http.StatusTemporaryRedirect)
+					return
+				}
+				w.WriteHeader(http.StatusMultiStatus)
+				_, _ = w.Write([]byte(`<multistatus xmlns="DAV:"/>`))
+			}))
+			t.Cleanup(ts.Close)
+			p, err := NewProvider(Options{HTTPClient: ts.Client(), UserAgent: tt.userAgent, Logger: slog.New(slog.DiscardHandler)})
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+			u, _ := url.Parse(ts.URL + "/start")
+			if _, _, err := p.newTransport("user", "pass", diag.Names{}).propfind(t.Context(), u, "0", nil, false); err != nil {
+				t.Fatalf("propfind: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(got) != 2 || got[0] != tt.want || got[1] != tt.want {
+				t.Fatalf("User-Agent per request = %q; want %q on both the request and the redirected one", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestCheckRedirect(t *testing.T) {

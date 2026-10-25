@@ -186,6 +186,7 @@ func serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, build b
 		}),
 		CacheSize:      cfg.CacheSize,
 		CacheFreshness: cfg.CacheFreshness,
+		UserAgent:      "lucid/" + build.version,
 		Registerer:     reg,
 		Logger:         logger.With("component", "caldav"),
 	})

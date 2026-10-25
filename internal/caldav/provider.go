@@ -55,6 +55,9 @@ type Options struct {
 	CacheFreshness time.Duration
 	// Registerer receives cache metrics. Optional.
 	Registerer prometheus.Registerer
+	// UserAgent is the User-Agent of every request to a CalDAV server, so its
+	// operator can tell Lucid in their logs. Default "lucid".
+	UserAgent string
 	// Logger is used for diagnostics. Default slog.Default().
 	Logger *slog.Logger
 	// Resolver performs DNS SRV lookups during discovery (RFC 6764).
@@ -105,6 +108,7 @@ func NewProvider(opts Options) (*Provider, error) {
 	}
 	opts.CacheSize = cmp.Or(opts.CacheSize, DefaultCacheSize)
 	opts.CacheFreshness = cmp.Or(opts.CacheFreshness, DefaultCacheFreshness)
+	opts.UserAgent = cmp.Or(opts.UserAgent, "lucid")
 	if opts.Resolver == nil {
 		opts.Resolver = net.DefaultResolver
 	}

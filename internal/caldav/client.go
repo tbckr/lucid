@@ -218,6 +218,7 @@ func (t *transport) newHTTPRequest(ctx context.Context, req request, u *url.URL)
 		return nil, fmt.Errorf("caldav: building request: %w", err)
 	}
 	hr.SetBasicAuth(t.username, t.password)
+	hr.Header.Set("User-Agent", t.p.opts.UserAgent)
 	if req.ctype != "" {
 		hr.Header.Set("Content-Type", req.ctype)
 	}
