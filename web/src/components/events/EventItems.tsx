@@ -11,6 +11,14 @@ import { formatShortTime, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
+/*
+ * A one-line block of the time grid (FR-07): its title wins over the rest in a narrow `@container` (the block's
+ * content box, inside its padding). The repeat mark goes first, then the time, so the title keeps about four
+ * characters; the block's name, its details and its place in the grid still say both.
+ */
+export const BLOCK_MARK_IF_ROOM = '@max-[7rem]:hidden'
+export const BLOCK_TIME_IF_ROOM = '@max-[6rem]:hidden'
+
 /**
  * Draggable + clickable wrapper shared by all event renderings. Enter opens
  * the details popover (`onOpen` opens them elsewhere instead); Space starts a
@@ -292,7 +300,7 @@ export function TimedBlock({
         aria-label={t('event.chipLabel', { title, time })}
         className={cn(
           'relative flex size-full min-h-0 flex-col overflow-hidden rounded-md border-l-[3px] px-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface',
-          compact ? 'flex-row items-center gap-1 py-0' : 'py-1',
+          compact ? 'flex-row items-center gap-1 py-0 @container' : 'py-1',
           pending && 'animate-pulse',
           ringed && 'ring-2',
         )}
@@ -305,9 +313,10 @@ export function TimedBlock({
             recurring={event.recurring}
             modified={event.modified}
             label={t(event.modified ? 'event.modified' : 'event.recurring')}
+            className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
         </span>
-        <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>
+        <span className={cn('tabular truncate opacity-90', compact && ['shrink-0', BLOCK_TIME_IF_ROOM])}>
           {compact ? formatShortTime(event.startsAt, prefs) : time}
         </span>
         {size === 'md' && event.location && <span className="truncate opacity-80">{event.location}</span>}

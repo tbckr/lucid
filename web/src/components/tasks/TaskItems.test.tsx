@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -241,6 +241,14 @@ describe('task items', () => {
       renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="xs" />)
       expect(screen.getByRole('button', { name: /^Water the flowers, / })).toHaveClass('@container')
       expect(screen.getByRole('img', { name: 'Every day' })).toHaveClass('@max-[7rem]:hidden')
+    })
+
+    it('drops the time before the title in a narrow one-line block, keeping it in its name', () => {
+      const point = task()
+      const time = formatShortTime(point.startsAt, prefs)
+      renderWithProviders(<TaskBlock task={point} colors={colors} prefs={prefs} readOnly={false} size="xs" />)
+      const block = screen.getByRole('button', { name: `Pay rent, ${time}` })
+      expect(within(block).getByText(time)).toHaveClass('@max-[6rem]:hidden')
     })
 
     it('keeps the repeat mark of a two-line block, whose title has its own line', () => {

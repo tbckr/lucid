@@ -3,7 +3,7 @@ import { BanIcon, CheckIcon } from 'lucide-react'
 import { useCallback, useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ringStyle, useDndState } from '@/components/dnd/dndState'
-import { RecurringMark } from '@/components/events/EventItems'
+import { BLOCK_MARK_IF_ROOM, BLOCK_TIME_IF_ROOM, RecurringMark } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
@@ -34,10 +34,10 @@ const INK_IN = 'transition-[background-color] duration-200 motion-reduce:transit
  * A one-line item with checkbox, time and title (FR-17): in a narrow `@container` the repeat mark
  * goes first, so it never takes the title's last characters; the details and the task list still
  * show the rule. Either width leaves the title about 3.5rem next to the checkbox, the time and the
- * mark: the chip's own, the block's content box inside its padding.
+ * mark: the chip's own, the block's content box inside its padding. A one-line block also drops
+ * its time before its title (`BLOCK_TIME_IF_ROOM`, shared with events, FR-07).
  */
 const CHIP_MARK_IF_ROOM = '@max-[9rem]:hidden'
-const BLOCK_MARK_IF_ROOM = '@max-[7rem]:hidden'
 
 interface TaskItemProps {
   task: CalTask
@@ -455,7 +455,9 @@ export function TaskBlock({
             className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
         </span>
-        <span className={cn('tabular truncate opacity-90', compact && 'shrink-0')}>{timeText(task, prefs, compact)}</span>
+        <span className={cn('tabular truncate opacity-90', compact && ['shrink-0', BLOCK_TIME_IF_ROOM])}>
+          {timeText(task, prefs, compact)}
+        </span>
       </button>
     </div>
   )
