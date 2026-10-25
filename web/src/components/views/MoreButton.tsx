@@ -2,7 +2,8 @@ import { type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { type CalItem } from '@/lib/events'
-import { useUi, type OverflowState } from '@/stores/ui'
+import { useOverflowButton } from '@/hooks/useOverflowButton'
+import { type OverflowState } from '@/stores/ui'
 
 /**
  * The "+N" or "N more" button of what a day's cell or column has no room for (FR-07): a click opens the list of
@@ -36,25 +37,12 @@ export function MoreButton({
   style?: CSSProperties
 }) {
   const { t } = useTranslation()
-  const open = useUi((s) => s.overflow?.id === id)
-  const openOverflow = useUi((s) => s.openOverflow)
+  const overflow = useOverflowButton({ id, day, items, drag, home })
   return (
     <button
       type="button"
       aria-label={label}
-      aria-haspopup="dialog"
-      aria-expanded={open}
-      data-holds={items.map((i) => i.key).join(' ')}
-      onClick={(e) => {
-        // The list is not an entry of the cell around the button, which a click would create.
-        e.stopPropagation()
-        if (open) {
-          openOverflow(null)
-          return
-        }
-        const button = e.currentTarget
-        openOverflow({ id, day, items, drag, anchor: button, home: home() ?? button, rect: button.getBoundingClientRect() })
-      }}
+      {...overflow}
       className={cn(
         'text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
         variant === 'text'

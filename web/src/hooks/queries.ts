@@ -32,7 +32,7 @@ import {
   type TodoOccurrence,
   type UpdatedTodo,
 } from '@/lib/api/schemas'
-import { anchorOf, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
+import { anchorOf, isDoneTask, occurrenceTask, toCalTask, type CalTask, type TaskRepeat } from '@/lib/calendarTasks'
 import { eventColors, FALLBACK_COLOR } from '@/lib/color'
 import { apiErrorMessage, referenceDescription, referenceDuration, reportAction } from '@/lib/errors'
 import { fetchRange, type DateRange } from '@/lib/dates'
@@ -248,11 +248,6 @@ function joinCalendarTasks(todos: Todo[], occurrences: TodoOccurrence[]): CalTas
     if (task) tasks.push(task)
   }
   return tasks
-}
-
-/** Whether an entry counts as completed: a done task, or an occurrence another app completed (FR-17). */
-function isDoneTask(task: CalTask): boolean {
-  return isDone(task.todo) || task.occurrence?.state === 'done'
 }
 
 export interface CalendarTasksResult {

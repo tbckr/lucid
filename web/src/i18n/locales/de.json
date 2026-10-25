@@ -114,6 +114,14 @@
     "label_one": "{{count}} weiterer, {{date}}",
     "label_other": "{{count}} weitere, {{date}}"
   },
+  "bundle": {
+    "count_one": "{{count}} Aufgabe",
+    "count_other": "{{count}} Aufgaben",
+    "label_one": "{{count}} Aufgabe, {{date}}",
+    "label_other": "{{count}} Aufgaben, {{date}}",
+    "labelAt_one": "{{count}} Aufgabe um {{time}}, {{date}}",
+    "labelAt_other": "{{count}} Aufgaben um {{time}}, {{date}}"
+  },
   "week": {
     "expandAllDay": "Alle ganztägigen Termine zeigen",
     "collapseAllDay": "Weniger ganztägige Termine zeigen",

@@ -5,7 +5,7 @@ import { localDateToUtc, movedAs, utcDateToLocal } from './dates'
 import { type FormatPrefs } from './format'
 import { describeSeriesRule } from './rrule'
 import { taskRuleClock } from './seriesShift'
-import { todoToInput } from './tasks'
+import { isDone, todoToInput } from './tasks'
 
 /** Height of a task that has a single point in time (FR-16). */
 export const TASK_POINT_MINUTES = 30
@@ -233,6 +233,11 @@ export function currentRepeat(todo: Todo): TaskRepeat | null {
     title: todo.title,
     shown: { start: todo.start, startAllDay: todo.startAllDay, due: todo.due, dueAllDay: todo.dueAllDay },
   }
+}
+
+/** Whether an entry counts as completed: a done task, or an occurrence another app completed (FR-17). */
+export function isDoneTask(task: CalTask): boolean {
+  return isDone(task.todo) || task.occurrence?.state === 'done'
 }
 
 /**

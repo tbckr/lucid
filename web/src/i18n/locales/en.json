@@ -114,6 +114,14 @@
     "label_one": "{{count}} more, {{date}}",
     "label_other": "{{count}} more, {{date}}"
   },
+  "bundle": {
+    "count_one": "{{count}} task",
+    "count_other": "{{count}} tasks",
+    "label_one": "{{count}} task, {{date}}",
+    "label_other": "{{count}} tasks, {{date}}",
+    "labelAt_one": "{{count}} task at {{time}}, {{date}}",
+    "labelAt_other": "{{count}} tasks at {{time}}, {{date}}"
+  },
   "week": {
     "expandAllDay": "Show all all-day events",
     "collapseAllDay": "Show fewer all-day events",
