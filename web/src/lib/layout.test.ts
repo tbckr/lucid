@@ -168,7 +168,7 @@ describe('layoutWeekRow', () => {
     expect(Object.fromEntries(bars.map((b) => [b.event.title, b.lane]))).toEqual({ trip: 0, early: 0 })
   })
 
-  it('hidden task bars join the bundle, hidden event bars go behind more', () => {
+  it('bundles a task bar to keep every event bar', () => {
     const events = [allDay('a', 24, 27), allDay('b', 24, 27), allDay('c', 25, 26)] // lanes 0, 1, 2 over Friday
     const chore = taskSpan('chore', 25, 26) // Fri-Sat, lane 3
     const tasks = [task('t1', local(25, 9)), task('t2', local(25, 10))]
@@ -177,14 +177,31 @@ describe('layoutWeekRow', () => {
     expect(barsOver(bars, 5)).toEqual([
       ['a', 0],
       ['b', 1],
+      ['c', 2],
     ])
-    expect(fri.barRows).toBe(2)
+    expect(fri.barRows).toBe(3)
     expect(rowsOf(fri)).toEqual(['bundle(chore,t1,t2)'])
-    expect(titles(fri.more)).toEqual(['c'])
+    expect(fri.more).toEqual([])
     expect(cellRowsUsed(fri)).toBe(4)
     // Saturday has room: the task bar shows there, as a run of its own.
     expect(bars.filter((b) => b.event.title === 'chore').map((b) => [b.startCol, b.span, b.lane])).toEqual([[6, 1, 3]])
     expect(cells[6]!.more).toEqual([])
+  })
+
+  it('bundles task bars before reserving a row for more', () => {
+    const tasks = [taskSpan('x', 24, 25), taskSpan('y', 24, 25)] // Thu-Fri, lanes 0, 1
+    const events = [timed('e9', 25, 9, 0, 10, 0), timed('e10', 25, 10, 0, 11, 0)]
+    const { bars, cells } = layoutWeekRow(days, [...tasks, ...events], 3)
+    const fri = cells[5]!
+    expect(barsOver(bars, 5)).toEqual([])
+    expect(fri.barRows).toBe(0)
+    expect(rowsOf(fri)).toEqual(['bundle(x,y)', 'e9', 'e10'])
+    expect(fri.more).toEqual([])
+    // Thursday has room: both bars show there.
+    expect(barsOver(bars, 4)).toEqual([
+      ['x', 0],
+      ['y', 1],
+    ])
   })
 
   it('makes room for a bundle when only a task bar needs one', () => {
@@ -259,6 +276,10 @@ describe('layoutWeekRow', () => {
     const fri = layoutWeekRow(days, [task('t1', local(25, 9)), task('t2', local(25, 10))], 1).cells[5]!
     expect(rowsOf(fri)).toEqual(['bundle(t1,t2)'])
     expect(fri.more).toEqual([])
+    // A task bar over it joins the bundle too.
+    const { bars, cells } = layoutWeekRow(days, [taskSpan('x', 25, 26), task('t1', local(25, 9))], 1)
+    expect(rowsOf(cells[5]!)).toEqual(['bundle(x,t1)'])
+    expect(barsOver(bars, 5)).toEqual([])
   })
 
   it('cellRowsUsed counts the more row', () => {

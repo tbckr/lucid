@@ -180,9 +180,9 @@ interface Placed<T extends CalItem> {
 
 /**
  * Lay out one week row (FR-07). `capacity` is the number of rows that fit into a cell (Infinity = unlimited).
- * Bars take lanes, events first; below them each cell shows its items. Where a day has more than fit, its tasks
- * become one bundle row first; only if the events still don't fit, one row is kept for "N more", the day's task bars
- * join the bundle, and hidden event bars and the events beyond go behind "N more". A one-row cell shows only "N more".
+ * Bars take lanes, events first; below them each cell shows its items. Where a day has more than fit, its single-day
+ * tasks become one bundle row first, then its task bars join that bundle; only if the events still don't fit, one row
+ * is kept for "N more", for the hidden event bars and the events beyond. A one-row cell shows only "N more".
  */
 export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capacity: number): WeekRowLayout<T> {
   const n = days.length
@@ -228,9 +228,18 @@ export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capa
     if (topRows + eventItems.length + (taskItems.length > 0 ? 1 : 0) <= capacity) {
       return { day, all, rows: sortedRows([...eventItems.map(sortedItem), ...taskRow(taskItems)]), barRows: topRows, more: [] }
     }
-    // The events overflow too: one row for "N more", and one for all the day's tasks, its task bars too, so tasks take
-    // no more than that row while events are hidden.
-    const bundleRow = taskItems.length > 0 || covering.some((p) => p.event.kind === 'task') ? 1 : 0
+    // From here, all the day's tasks share one row, its task bars too, so tasks never take more than that row while an
+    // event could take their place.
+    const tasks = all.filter((e) => e.kind === 'task')
+    const bundleRow = tasks.length > 0 ? 1 : 0
+    const isEventBar = (p: Placed<T>) => p.event.kind === 'event'
+    // The task bars yield too, and then every event fits.
+    const eventRows = maxLane(covering.filter(isEventBar))
+    if (eventRows + eventItems.length + bundleRow <= capacity) {
+      shows[c] = isEventBar
+      return { day, all, rows: sortedRows([...eventItems.map(sortedItem), ...taskRow(tasks)]), barRows: eventRows, more: [] }
+    }
+    // The events overflow: one row for "N more".
     const limit = capacity - 1 - bundleRow
     // A one-row cell: "N more" for everything.
     if (limit < 0) {
@@ -238,16 +247,15 @@ export function layoutWeekRow<T extends CalItem>(days: Date[], events: T[], capa
       return { day, all, rows: [], barRows: 0, more: all }
     }
     // Event bars keep their lanes, also over a lane a hidden task bar leaves empty.
-    const visible = (p: Placed<T>) => p.event.kind === 'event' && p.lane < limit
+    const visible = (p: Placed<T>) => isEventBar(p) && p.lane < limit
     shows[c] = visible
     const onTop = covering.filter(visible)
     const barRows = maxLane(onTop)
     const shown = eventItems.slice(0, limit - barRows)
-    // What stays in view; the day's other tasks share the bundle row, its other events go behind "N more".
+    // The events not in view go behind "N more".
     const kept = new Set([...onTop.map((p) => p.event), ...shown])
-    const bundled = all.filter((e) => e.kind === 'task' && !kept.has(e))
     const more = all.filter((e) => e.kind === 'event' && !kept.has(e))
-    return { day, all, rows: sortedRows([...shown.map(sortedItem), ...taskRow(bundled)]), barRows, more }
+    return { day, all, rows: sortedRows([...shown.map(sortedItem), ...taskRow(tasks)]), barRows, more }
   })
 
   // Split bars into runs of columns where they show.
