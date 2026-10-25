@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
@@ -39,9 +39,49 @@ function renderBundle(p: Partial<Parameters<typeof TaskBundle>[0]> = {}) {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   useUi.getState().openOverflow(null)
   await i18n.changeLanguage('en')
 })
+
+/**
+ * Lays the bundle out `width` px wide, its words at full length `words` px: the ResizeObserver reports on observe, as
+ * the browser does, and `resize` reports again.
+ */
+function laidOut(width: number, words: number) {
+  const size = { width, words }
+  const observers: (() => void)[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      readonly callback: () => void
+      constructor(callback: () => void) {
+        this.callback = callback
+        observers.push(callback)
+      }
+      observe() {
+        this.callback()
+      }
+      unobserve() {
+        // nothing to stop
+      }
+      disconnect() {
+        // nothing to stop
+      }
+    },
+  )
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    const w = 'sizer' in this.dataset ? size.words : size.width
+    return new DOMRect(0, 0, w, 20)
+  })
+  return (width: number) => {
+    size.width = width
+    act(() => {
+      for (const o of observers) o()
+    })
+  }
+}
 
 describe('TaskBundle', () => {
   it('shows rings and the count', () => {
@@ -74,6 +114,19 @@ describe('TaskBundle', () => {
     const button = screen.getByRole('button')
     expect(button).toHaveTextContent(/^6$/)
     expect(button.querySelectorAll('[data-ring]')).toHaveLength(2)
+  })
+
+  it('shows two rings and the number where its words do not fit, measured (FR-07)', () => {
+    const resize = laidOut(80, 90)
+    renderBundle({ variant: 'chip', label: '6 tasks, Thursday, March 12' })
+    const button = screen.getByRole('button')
+    expect(button).toHaveTextContent(/^6$/)
+    expect(button.querySelectorAll('[data-ring]')).toHaveLength(2)
+    resize(90)
+    expect(button).toHaveTextContent(/^6 tasks$/)
+    expect(button.querySelectorAll('[data-ring]')).toHaveLength(3)
+    resize(89)
+    expect(button).toHaveTextContent(/^6$/)
   })
 
   it('chip has no surface', () => {
