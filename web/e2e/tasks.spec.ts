@@ -241,8 +241,10 @@ test('dragging a task in the day view moves its due time', async ({ page }) => {
   await expect(block).toHaveCount(1)
   await expect(block).toContainText('2 PM')
 
-  // Persisted on the server.
+  // Persisted on the server. A reload opens the month, where a busy day bundles its tasks (FR-07): back to the day.
   await page.reload()
+  await expect(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible()
+  await page.keyboard.press('d')
   await expect(block).toContainText('2 PM')
 })
 
@@ -282,7 +284,8 @@ test('dragging a task in the month view moves its due date', async ({ page }) =>
 
 test("more options opens the task editor with the popover's values", async ({ page }) => {
   const title = `E2E more ${Date.now()}`
-  const popover = await newTaskAt(page, '4:00 PM')
+  // Not 4 PM: the demo's "Call the landlord" is due at 15:00 UTC, which is 4 PM in Berlin in winter.
+  const popover = await newTaskAt(page, '2:00 PM')
   await popover.getByPlaceholder('Add a title').fill(title)
   await popover.getByRole('button', { name: 'More options' }).click()
 
