@@ -9,7 +9,12 @@ import { createTestTask, deleteTestTasks, login, monthGrid } from './helpers'
  * the toasts at the bottom, and the seeded one-off items, all within two
  * weeks of the real today, stay out of its cells and the next row's, which
  * a spec only looks at.
+ *
+ * The seed's weekly items still share those cells: a Thursday has the standup, the gym, the flowers and, every
+ * other week, the trash. A busy month cell bundles its tasks (FR-07), so a window this tall gives the cells room
+ * for those and a spec's own tasks, which the specs find as themselves.
  */
+test.use({ viewport: { width: 1280, height: 1400 } })
 
 const DAY = 24 * 3600 * 1000
 
