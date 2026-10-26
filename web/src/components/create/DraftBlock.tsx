@@ -46,7 +46,7 @@ function DraftPart({ item, day, colors, prefs, segment }: Props & { segment: Tim
   const time = task && shown.point ? start : `${start} – ${formatShortTime(shown.endsAt, prefs)}`
   const height = Math.max(18, (segment.endMin - segment.startMin) * PX_PER_MINUTE - 2)
   // As in a short block, title and time share one line, and in a narrow column the title wins over
-  // the time (FR-07, `BLOCK_TIME_IF_ROOM`). A draft has no repeat mark to give up first.
+  // the time (FR-07, `BLOCK_TIME_IF_ROOM`).
   const compact = height < 34
 
   return (

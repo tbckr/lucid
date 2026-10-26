@@ -12,11 +12,11 @@ import { cn } from '@/lib/utils'
 import { useUi } from '@/stores/ui'
 
 /*
- * A one-line block of the time grid (FR-07): its title wins over the rest in a narrow `@container` (the block's
- * content box, inside its padding). The repeat mark goes first, then the time, so the title keeps about four
- * characters; the block's name, its details and its place in the grid still say both.
+ * A one-line block of the time grid (FR-07): its title wins over its time in a narrow `@container` (the block's
+ * content box, inside its padding), so the title keeps about four characters; the block's name, its details and its
+ * place in the grid still say the time. The repeat mark stays: it says whether the block repeats or was changed on
+ * its own (FR-17), which nothing else in the grid shows.
  */
-export const BLOCK_MARK_IF_ROOM = '@max-[7rem]:hidden'
 export const BLOCK_TIME_IF_ROOM = '@max-[6rem]:hidden'
 
 /**
@@ -313,7 +313,6 @@ export function TimedBlock({
             recurring={event.recurring}
             modified={event.modified}
             label={t(event.modified ? 'event.modified' : 'event.recurring')}
-            className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && ['shrink-0', BLOCK_TIME_IF_ROOM])}>

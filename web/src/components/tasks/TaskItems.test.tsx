@@ -225,7 +225,7 @@ describe('task items', () => {
       expect(screen.getByRole('img', { name: 'Every day' })).toBeInTheDocument()
     })
 
-    it('drops the repeat mark before the title in a narrow chip or one-line block', () => {
+    it('drops the repeat mark of a narrow chip, but a one-line block keeps it', () => {
       const t = occurrenceOf({
         due: '2026-10-05T17:00:00Z',
         state: 'current',
@@ -238,9 +238,11 @@ describe('task items', () => {
       expect(screen.getByRole('img', { name: 'Every day' })).toHaveClass('@max-[9rem]:hidden')
       unmount()
 
+      // The block's mark says the task repeats, as an event's says it repeats or was changed on its own (FR-17):
+      // its time gives way instead.
       renderWithProviders(<TaskBlock task={t} colors={colors} prefs={prefs} readOnly={false} size="xs" />)
       expect(screen.getByRole('button', { name: /^Water the flowers, / })).toHaveClass('@container')
-      expect(screen.getByRole('img', { name: 'Every day' })).toHaveClass('@max-[7rem]:hidden')
+      expect(screen.getByRole('img', { name: 'Every day' }).getAttribute('class')).not.toContain('@max-')
     })
 
     it('drops the time before the title in a narrow one-line block, keeping it in its name', () => {

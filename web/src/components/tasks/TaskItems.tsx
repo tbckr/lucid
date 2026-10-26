@@ -3,7 +3,7 @@ import { BanIcon, CheckIcon } from 'lucide-react'
 import { useCallback, useMemo, type CSSProperties, type MouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ringStyle, useDndState } from '@/components/dnd/dndState'
-import { BLOCK_MARK_IF_ROOM, BLOCK_TIME_IF_ROOM, RecurringMark } from '@/components/events/EventItems'
+import { BLOCK_TIME_IF_ROOM, RecurringMark } from '@/components/events/EventItems'
 import { type EventColors } from '@/hooks/useCalendarColors'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
 import { canComplete, recurringLabel, type CalTask } from '@/lib/calendarTasks'
@@ -31,11 +31,11 @@ import { useUi } from '@/stores/ui'
 const INK_IN = 'transition-[background-color] duration-200 motion-reduce:transition-none'
 
 /*
- * A one-line item with checkbox, time and title (FR-17): in a narrow `@container` the repeat mark
- * goes first, so it never takes the title's last characters; the details and the task list still
- * show the rule. Either width leaves the title about 3.5rem next to the checkbox, the time and the
- * mark: the chip's own, the block's content box inside its padding. A one-line block also drops
- * its time before its title (`BLOCK_TIME_IF_ROOM`, shared with events, FR-07).
+ * A chip with checkbox, time and title (FR-17): in a narrow `@container` the repeat mark goes
+ * first, so it never takes the title's last characters; the details and the task list still show
+ * the rule. That leaves the title about 3.5rem next to the checkbox, the time and the mark. A
+ * one-line block keeps its mark, as an event's block does, and drops its time before its title
+ * instead (`BLOCK_TIME_IF_ROOM`, shared with events, FR-07).
  */
 const CHIP_MARK_IF_ROOM = '@max-[9rem]:hidden'
 
@@ -452,7 +452,6 @@ export function TaskBlock({
             recurring={task.todo.recurring}
             detached={isDetached(task.todo)}
             label={recurringLabel(t, task.todo, task.startsAt, prefs, now, tz)}
-            className={compact ? BLOCK_MARK_IF_ROOM : undefined}
           />
         </span>
         <span className={cn('tabular truncate opacity-90', compact && ['shrink-0', BLOCK_TIME_IF_ROOM])}>

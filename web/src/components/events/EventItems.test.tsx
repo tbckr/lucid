@@ -32,8 +32,8 @@ describe('EventItems', () => {
     expect(screen.getByRole('img', { name })).toBeInTheDocument()
   })
 
-  // In a narrow one-line block the title wins: the repeat mark goes first, then the time, both kept in its name.
-  it("lets a narrow one-line TimedBlock's title win over its time and repeat mark", () => {
+  // In a narrow one-line block the title wins over the time, which its name keeps; the repeat mark stays (FR-17).
+  it("lets a narrow one-line TimedBlock's title win over its time, keeping its repeat mark", () => {
     const event = recurringEvent(false)
     const { unmount } = renderWithProviders(
       <DndContext>
@@ -43,7 +43,7 @@ describe('EventItems', () => {
     const block = screen.getByRole('button', { name: 'Event, 10 AM – 11 AM' })
     expect(block).toHaveClass('@container')
     expect(screen.getByText('10 AM')).toHaveClass('@max-[6rem]:hidden')
-    expect(screen.getByRole('img', { name: 'Recurring event' })).toHaveClass('@max-[7rem]:hidden')
+    expect(screen.getByRole('img', { name: 'Recurring event' }).getAttribute('class')).not.toContain('@max-')
     unmount()
 
     // A two-line block has a line for its title.
