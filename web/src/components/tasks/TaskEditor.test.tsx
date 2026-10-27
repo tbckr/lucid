@@ -209,6 +209,16 @@ describe('TaskEditor', () => {
     expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T00:00:00.000Z', dueAllDay: true })
   })
 
+  // Save leaves the field, which reads what was typed there: no Enter and no Tab first (FR-09).
+  it('saves a due time typed right before Save is clicked', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1440')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T13:40:00.000Z', dueAllDay: false })
+  })
+
   it('says what to type for an unreadable due time', async () => {
     const user = userEvent.setup()
     const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))

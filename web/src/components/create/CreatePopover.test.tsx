@@ -256,6 +256,23 @@ describe('CreatePopover', () => {
     expect(within(dialog).queryByText(note)).toBeNull()
   })
 
+  // Create leaves the field, which reads what was typed there: no Enter and no Tab first (FR-09).
+  it('creates the event at a time typed right before Create is clicked', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openPopover()
+    await user.keyboard('Review')
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.keyboard('940')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    // 9:40 to 10:40 in Berlin: the hour it lasted.
+    expect((await posted(fetch)).body).toMatchObject({
+      title: 'Review',
+      start: '2026-09-30T07:40:00.000Z',
+      end: '2026-09-30T08:40:00.000Z',
+      allDay: false,
+    })
+  })
+
   it('Escape in a time field restores it and keeps the popover open; a second one closes it', async () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()

@@ -341,7 +341,7 @@ describe('typed dates (FR-09)', () => {
     }
     window.addEventListener('error', onError)
     try {
-      const { dialog } = await openEditor(create)
+      const { fetch, dialog } = await openEditor(create)
       const end = within(dialog).getByRole('combobox', { name: 'End' })
       await user.click(end)
       await user.keyboard('3/x{Enter}')
@@ -357,7 +357,11 @@ describe('typed dates (FR-09)', () => {
       await user.keyboard('3/12{Enter}')
       expect(errors).toEqual([])
       expect(end).toHaveValue('3/x')
-      expect(within(dialog).getByRole('button', { name: 'Create event' })).toBeEnabled()
+      // Still unreadable, the end keeps the event from being created.
+      await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+      await settle()
+      expect(posts(fetch)).toHaveLength(0)
+      expect(errors).toEqual([])
     } finally {
       window.removeEventListener('error', onError)
     }
