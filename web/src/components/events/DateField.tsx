@@ -102,14 +102,19 @@ export function DateField({
   // What the width of the text depends on, also for the texts it is at least as wide as.
   const metrics = cn('tabular border-x px-3 text-sm', !tint && !empty && 'pr-8', tint && 'px-1.5 text-base font-medium')
   // At least as wide as the last date the field could read, as it shows at rest, so neither shorter numbers typed nor
-  // text it can't read move what follows it; in the editors also as wide as that date's numbers, so the focus doesn't
-  // either. On the tint the numbers may widen it: their room, held at rest, would part the sentence. While empty, at
+  // text it can't read move what follows it, and as wide as the numbers of a two-digit day of its month (the 28th),
+  // so neither the focus nor a longer day typed does. On the tint only while it has the focus: there the numbers'
+  // room, held at rest, would part the sentence, so it comes with the focus, as the outline does. While empty, at
   // least as wide as its placeholder, which the first digits typed replace (FR-09).
   const lastDay = field.lastRead === '' ? null : parseDayKey(field.lastRead)
+  const withNumbers = !tint || field.focused
   const sizes = empty
     ? [placeholder ?? '']
     : lastDay
-      ? [formatPickerDate(lastDay, prefs, now), ...(tint ? [] : [formatTypedDate(lastDay, prefs)])]
+      ? [
+          formatPickerDate(lastDay, prefs, now),
+          ...(withNumbers ? [formatTypedDate(new Date(lastDay.getFullYear(), lastDay.getMonth(), 28), prefs)] : []),
+        ]
       : []
 
   // The day the month shows and marks: what a commit would take now, else the date in the field, else the month

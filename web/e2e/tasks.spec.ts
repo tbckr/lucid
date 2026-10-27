@@ -67,6 +67,8 @@ test('an empty date or time field keeps its width as typing starts', async ({ pa
   await page.getByRole('button', { name: 'Edit task: Buy milk' }).click()
   const editor = page.getByRole('dialog', { name: 'Edit task' })
   await editor.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  // The web fonts in, so a late swap can't change the widths measured.
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
   for (const [name, typed] of [
     ['Start', '3'],
     ['Due time', '9'],
@@ -258,8 +260,8 @@ test('a time typed or picked in the create popover', async ({ page }) => {
   await expect(dueTime).toHaveValue('4:10 PM')
   await expect(popover).toBeVisible()
 
-  // Picked: the list opens on the typed time, in its place among the half hours. The page outside the
-  // popover is inert for Playwright's actions, so the pick uses the mouse.
+  // Picked: the list opens on the typed time, in its place among the half hours. The pick is a real pointer at
+  // the option's position, as a person's is, so it shows that the list takes the mouse above the modal popover.
   await dueTime.click()
   const list = page.getByRole('listbox', { name: 'Due time' })
   await expect(list.getByRole('option', { name: '4:10 PM', exact: true })).toHaveAttribute('aria-selected', 'true')

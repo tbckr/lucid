@@ -801,6 +801,11 @@ async function newEventOnOctober2(page: Page): Promise<Locator> {
   return dialog
 }
 
+/** Wait for the web fonts, so a late swap can't move what a test measures in pixels. */
+async function fontsLoaded(page: Page): Promise<void> {
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+}
+
 // FR-09: the date field is as wide at rest as its numbers are while focused, and keeps that width for text it can't
 // read, so the time beside it stays where it is.
 test("a date field moves nothing beside it as it takes the focus or text it can't read", async ({ page }) => {
@@ -808,6 +813,7 @@ test("a date field moves nothing beside it as it takes the focus or text it can'
   const start = dialog.getByRole('combobox', { name: 'Start', exact: true })
   const startTime = dialog.getByRole('combobox', { name: 'Start time' })
   const left = async () => (await startTime.boundingBox())!.x
+  await fontsLoaded(page)
   const atRest = await left()
 
   await start.click()
@@ -816,6 +822,39 @@ test("a date field moves nothing beside it as it takes the focus or text it can'
   await page.keyboard.type('13/45')
   await page.keyboard.press('Tab')
   await expect(dialog.getByText(/^Enter a date like/)).toBeVisible()
+  expect(await left()).toBe(atRest)
+})
+
+// FR-09: on the tint the date takes the room of its numbers only with the focus, as its outline appears, so the sentence
+// keeps its spacing at rest; it keeps that room while the numbers are typed, also a two-digit day of the month.
+test('a date on the tint keeps the width the focus gives it while it is typed in', async ({ page }) => {
+  // Friday, October 2, 10:30 AM in Berlin: "10/2/2026", the date's numbers, is wider than "Fri, Oct 2".
+  await page.clock.setFixedTime(new Date('2026-10-02T08:30:00Z'))
+  await login(page)
+  await page.keyboard.press('d')
+  await page.getByRole('button', { name: / 1:00 PM$/ }).click({ position: { x: 20, y: 4 } })
+  const popover = page.getByRole('dialog', { name: 'New event' })
+  const start = popover.getByRole('combobox', { name: 'Start', exact: true })
+  const startTime = popover.getByRole('combobox', { name: 'Start time' })
+  await expect(start).toHaveValue('Fri, Oct 2')
+  await popover.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  const left = async () => (await startTime.boundingBox())!.x
+  await fontsLoaded(page)
+  const atRest = await left()
+
+  await start.click()
+  await expect(start).toHaveValue('10/2/2026')
+  const focused = await left()
+  for (const typed of ['1', '0/28/2026']) {
+    await page.keyboard.type(typed)
+    expect(await left()).toBe(focused)
+  }
+  // Restored and left, the sentence is as it was.
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(startTime).toBeFocused()
+  await expect(start).toHaveValue('Fri, Oct 2')
   expect(await left()).toBe(atRest)
 })
 
