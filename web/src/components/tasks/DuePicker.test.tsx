@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { addDays, format, nextMonday } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -84,6 +84,161 @@ describe('DuePicker', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '17:40'), dueAllDay: false }))
     expect(dialog).toBeInTheDocument()
     expect(time).toHaveFocus()
+
+    // Saved, it doesn't wait to be saved again as the picker closes.
+    await user.click(document.body)
+    expect(dialog).not.toBeInTheDocument()
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves a typed time and a picked day as one change', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(-1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840')
+    await user.click(within(dialog).getByRole('button', { name: /^Tomorrow / }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('saves a typed time when an outside click closes the picker', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840')
+    // The press outside leaves the field, then its click closes the picker (Radix waits for the click).
+    await user.click(document.body)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('saves a typed time when a press outside keeps the focus in the field', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    // Radix listens for presses outside from a tick after opening, and closes on their click.
+    await new Promise((resolve) => setTimeout(resolve))
+    fireEvent.pointerDown(document.body)
+    expect(time).toHaveFocus()
+    fireEvent.click(document.body)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('waits with a time left for the rest of the picker, and saves it as the button closes the picker', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: 'Remove due date' })).toHaveFocus()
+    expect(time).toHaveValue('18:40')
+    expect(onChange).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Change due date: Call' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('saves nothing for a time typed back to the saved one', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    await user.tab()
+    await user.tab({ shift: true })
+    await user.keyboard('0900{Enter}')
+    expect(time).toHaveValue('09:00')
+    await user.keyboard('1840')
+    await user.tab()
+    await user.tab({ shift: true })
+    await user.keyboard('0900')
+    await user.click(document.body)
+    expect(dialog).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps the picker open for an unreadable time and says what to type', async () => {
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('18:4x')
+    await user.click(document.body)
+    const note = 'Enter a time like 9:40 AM.'
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(time).toHaveValue('18:4x')
+    // Back on the time, which says what to type.
+    expect(time).toHaveFocus()
+    expect(time).toHaveAccessibleDescription(note)
+    expect(onChange).not.toHaveBeenCalled()
+
+    // Its button doesn't close it either.
+    await user.click(screen.getByRole('button', { name: 'Change due date: Call' }))
+    expect(dialog).toBeInTheDocument()
+    expect(time).toHaveFocus()
+    expect(onChange).not.toHaveBeenCalled()
+
+    // Corrected, the time is saved as the picker closes.
+    await user.keyboard('6:40 PM')
+    await user.click(document.body)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40') }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('Escape drops a typed time', async () => {
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    // The first Escape closes the list and restores the time, the second the picker.
+    await user.keyboard('1840{Escape}')
+    expect(dialog).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(dialog).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+
+    // A time left for the rest of the picker is dropped too.
+    const trigger = screen.getByRole('button', { name: 'Change due date: Call' })
+    await user.click(trigger)
+    const again = screen.getByRole('dialog', { name: 'Due date' })
+    await user.click(within(again).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840')
+    await user.tab()
+    await user.keyboard('{Escape}')
+    expect(again).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+
+    await user.click(trigger)
+    const time = within(screen.getByRole('dialog', { name: 'Due date' })).getByRole('combobox', { name: 'Due time' })
+    expect(time).toHaveValue('9:00 AM')
+  })
+
+  it("saves nothing when a day, a shortcut or Remove due date is picked while the time can't be read", async () => {
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('18:4x')
+    const note = 'Enter a time like 9:40 AM.'
+    for (const pick of [
+      within(dialog).getByRole('button', { name: /^Tomorrow / }),
+      within(dialog).getByRole('button', { name: format(addDays(new Date(), 1), 'PPPP') }),
+      within(dialog).getByRole('button', { name: 'Remove due date' }),
+    ]) {
+      await user.click(pick)
+      expect(onChange).not.toHaveBeenCalled()
+      expect(dialog).toBeInTheDocument()
+      expect(within(dialog).getByText(note)).toBeInTheDocument()
+      expect(time).toHaveValue('18:4x')
+      expect(time).toHaveFocus()
+    }
   })
 
   it('says below the time what to type, and saves nothing', async () => {
@@ -220,6 +375,24 @@ describe('DuePicker', () => {
       expect(onChange).not.toHaveBeenCalled()
       expect(dialog).toBeInTheDocument()
       expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveFocus()
+    })
+
+    it('asks once for a typed time and a picked day', async () => {
+      useSettings.setState({ timeFormat: '24h' })
+      const { user, onChange, onScope, dialog } = await open(series)
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+      await user.keyboard('1840')
+      await user.click(within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' }))
+
+      const ask = within(dialog).getByRole('alertdialog', { name: question })
+      expect(onScope).not.toHaveBeenCalled()
+      await user.click(within(ask).getByRole('button', { name: 'All repeats' }))
+      expect(onScope).toHaveBeenCalledTimes(1)
+      // Friday at 18:40 Berlin time.
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ due: '2026-10-09T16:40:00.000Z', dueAllDay: false }))
+      expect(onChange).not.toHaveBeenCalled()
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      expect(dialog).not.toBeInTheDocument()
     })
 
     // FR-17: an all-day series given a time writes it in the browser's zone, where the server then reads the move:

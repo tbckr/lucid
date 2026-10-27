@@ -51,6 +51,13 @@ interface Asking {
  * the time, or none. A day keeps the time and closes the popover; a new time
  * keeps it open, so a day can follow.
  *
+ * A time typed is saved once: on Enter or a pick in its list at once; left
+ * for the rest of the picker, with the day, shortcut or removal picked next,
+ * as one change (one question for a series), or else as the picker closes.
+ * Escape drops it. Text the time field can't read is said below it and
+ * holds every save back: a day, a shortcut, a removal or a close leaves the
+ * picker open, on the time.
+ *
  * With `onScope`, a series moves at its current repeat, the one the list
  * shows (FR-17). Where the move has a choice, the popover asks in place of
  * the month which repeats it reaches, and `onScope` reports the answer; where
@@ -84,8 +91,10 @@ export function DuePicker({
   const [asking, setAsking] = useState<Asking | null>(null)
   // Why the series can't follow the last pick, said below the month (FR-17).
   const [refused, setRefused] = useState<ShiftReason | null>(null)
-  // A time typed that couldn't be read: it stays in the field, said below it, and nothing is saved (FR-09).
-  const [unread, setUnread] = useState<string | null>(null)
+  // A time typed and left, saved with what follows (FR-14), or text the field couldn't read, said below it,
+  // which saves nothing (FR-09). In a ref too: the click after the field's blur reads it before a render.
+  const pending = useRef<string | null>(null)
+  const [typed, setTyped] = useState<string | null>(null)
   // Where the focus goes once the question gives way to the month again (NFR-27).
   const back = useRef<HTMLElement | null>(null)
   const { dueDate, dueTime } = taskToForm(todo, tz)
@@ -109,11 +118,27 @@ export function DuePicker({
     back.current = null
   }, [asking])
 
-  // Closed, the picker forgets it.
-  if (!open && unread !== null) setUnread(null)
-  const unreadNote = unreadableNote(t, prefs, now, [{ time: unread ?? '' }])
+  const unreadNote = unreadableNote(t, prefs, now, [{ time: typed ?? '' }])
 
   const time = () => document.getElementById(timeId)
+
+  const hold = (value: string | null) => {
+    pending.current = value
+    setTyped(value)
+  }
+
+  // The time a change saves (FR-14): the one typed and left, which it takes, else the saved one. Null while
+  // the typed text can't be read: nothing is saved, and the focus goes to the time, which says what to type.
+  const takeTime = (): string | null => {
+    const value = pending.current
+    if (value === null) return dueTime
+    if (value !== '' && !isFormTime(value)) {
+      time()?.focus()
+      return null
+    }
+    hold(null)
+    return value
+  }
 
   // Where a saved change leaves the picker: on the time, or closed (null). A repeat made a task of
   // its own leaves the series' next repeat here, which the user didn't pick, so the picker closes.
@@ -132,39 +157,55 @@ export function DuePicker({
   }
 
   // Saves a change, or asks first which repeats of a series it reaches (FR-14, FR-17); `from` takes
-  // the focus back if the question is cancelled.
-  const save = (input: TodoInput, source: Source, from: HTMLElement | null) => {
+  // the focus back if the question is cancelled. False while it asks, or where nothing moves.
+  const save = (input: TodoInput, source: Source, from: HTMLElement | null): boolean => {
     setRefused(null)
     if (!repeat) {
       onChange(input)
       settle(input, source, null)
-      return
+      return true
     }
     // The dates it has already: "only this repeat" would still make a task of its own of it.
     if (!datesChanged(repeat.shown, input)) {
       settle(input, source, null)
-      return
+      return true
     }
     const result = scopeOptions({ kind: 'task', action: 'move', item: repeat, to: input })
     const [only] = result.options
     if (result.options.length > 1) {
       back.current = from
       setAsking({ input, source, repeat, result })
+      return false
     } else if (only) {
       onScope?.(only, input)
       settle(input, source, only)
     } else if (result.reason) {
       // Nothing moves: the day stays unpicked, and the line below the month says why.
       setRefused(result.reason)
+      return false
     } else {
       // The last repeat acts as a single task.
       onChange(input)
       settle(input, source, null)
     }
+    return true
   }
 
+  // A day takes a time typed and left along: one save, one question for a series (FR-14, FR-17).
   const pickDay = (day: Date, from: HTMLElement | null) => {
-    save(withDue(todo, { date: dayKey(day), time: dueTime }, tz), 'day', from)
+    const at = takeTime()
+    if (at === null) return
+    save(withDue(todo, { date: dayKey(day), time: at }, tz), 'day', from)
+  }
+
+  // Whether the picker may close, which leaves the time field (FR-14): a time typed and left is saved,
+  // alone, and it closes, unless the save asks first or nothing moves (FR-17); text that can't be read
+  // keeps it open.
+  const leave = (): boolean => {
+    if (pending.current === null) return true
+    const at = takeTime()
+    if (at === null) return false
+    return save(withDue(todo, { date: dueDate, time: at }, tz), 'time', time())
   }
 
   const choose = (scope: Scope) => {
@@ -180,9 +221,12 @@ export function DuePicker({
     <Popover
       open={open}
       onOpenChange={(next) => {
+        // Its button closes it before the click reaches `onInteractOutside`, so the time field is left here too.
+        if (!next && !leave()) return
         setOpen(next)
         setAsking(null)
         setRefused(null)
+        hold(null)
         back.current = null
       }}
     >
@@ -203,10 +247,20 @@ export function DuePicker({
         className={asking ? 'w-80' : 'w-64 p-2'}
         aria-label={t('tasks.due')}
         onEscapeKeyDown={(e) => {
+          // Escape closes the picker without a time typed and left (FR-14).
+          if (!asking) {
+            hold(null)
+            return
+          }
           // Escape leaves the question for the month, not the picker (NFR-27).
-          if (!asking) return
           e.preventDefault()
           setAsking(null)
+        }}
+        onInteractOutside={(e) => {
+          // A press outside that kept the focus in the time field leaves it here, so its text is read first.
+          const field = time()
+          if (field && field === document.activeElement) field.blur()
+          if (!leave()) e.preventDefault()
         }}
       >
         {asking && (
@@ -268,14 +322,17 @@ export function DuePicker({
                 <ClockIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <TimeField
                   id={timeId}
-                  value={unread ?? dueTime}
-                  onChange={(value) => {
-                    if (value !== '' && !isFormTime(value)) {
-                      setUnread(value)
+                  value={typed ?? dueTime}
+                  onChange={(value, via) => {
+                    // Left, a time waits for a day, a shortcut, a removal or the close that follows; text the
+                    // field can't read waits to be corrected (FR-14).
+                    if (via === 'blur' || (value !== '' && !isFormTime(value))) {
+                      hold(value === dueTime ? null : value)
                       return
                     }
-                    setUnread(null)
-                    save(withDue(todo, { date: dueDate, time: value }, tz), 'time', time())
+                    hold(null)
+                    // Typed back to the saved time, it has nothing to save.
+                    if (value !== dueTime) save(withDue(todo, { date: dueDate, time: value }, tz), 'time', time())
                   }}
                   prefs={prefs}
                   none={t('tasks.noTime')}
@@ -296,6 +353,8 @@ export function DuePicker({
                   size="sm"
                   className="justify-start text-muted-foreground"
                   onClick={(e) => {
+                    // Without the due date, a time typed goes too: one save, but not while it can't be read.
+                    if (takeTime() === null) return
                     save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
                   }}
                 >
