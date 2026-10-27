@@ -279,6 +279,35 @@ describe('DuePicker', () => {
     }
   })
 
+  // A click without the press before it, as assistive technology sends one, finds the focus still in the time: the
+  // pick reads what was typed there all the same (FR-14).
+  it.each([
+    ['a shortcut', (dialog: HTMLElement) => within(dialog).getByRole('button', { name: /^Tomorrow / })],
+    ['a day', (dialog: HTMLElement) => within(dialog).getByRole('button', { name: format(addDays(new Date(), 1), 'PPPP') })],
+  ])('saves a typed time with %s clicked while the time still has the focus, as one change', async (_, pick) => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(-1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    fireEvent.click(pick(dialog))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it("removes nothing while the time that still has the focus can't be read", async () => {
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('18:4x')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    expect(onChange).not.toHaveBeenCalled()
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByText('Enter a time like 9:40 AM.')).toBeInTheDocument()
+    expect(time).toHaveFocus()
+  })
+
   it('says below the time what to type, and saves nothing', async () => {
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
@@ -307,6 +336,21 @@ describe('DuePicker', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: null }))
     expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('removes the due date with a time typed and left in one save, and saves nothing more as it closes', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840')
+    await user.tab()
+    expect(onChange).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: null, dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+    await user.click(document.body)
+    expect(onChange).toHaveBeenCalledTimes(1)
   })
 
   it('offers neither a time nor a removal without a due date', async () => {

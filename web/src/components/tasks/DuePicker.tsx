@@ -127,6 +127,13 @@ export function DuePicker({
 
   const time = () => document.getElementById(timeId)
 
+  // Leaves the time field, as the press before a click outside it does, so what was typed there is read first. A
+  // click without that press, as assistive technology sends one, or a press that keeps the focus, finds it unread.
+  const leaveTime = () => {
+    const field = time()
+    if (field && field === document.activeElement) field.blur()
+  }
+
   const hold = (value: string | null) => {
     pending.current = value
     setTyped(value)
@@ -142,6 +149,13 @@ export function DuePicker({
       return null
     }
     return value
+  }
+
+  // The time a day, a shortcut or "Remove due date" saves along (FR-14): what was typed in the time field is read
+  // first, so it goes with the pick instead of being dropped (`typedTime`).
+  const pickedTime = (): string | null => {
+    leaveTime()
+    return typedTime()
   }
 
   // Saves `input` for the repeats `scope` reaches, or as a single task; a time typed went with it.
@@ -205,7 +219,7 @@ export function DuePicker({
 
   // A day takes a time typed and not saved yet along: one save, one question for a series (FR-14, FR-17).
   const pickDay = (day: Date, from: HTMLElement | null) => {
-    const at = typedTime()
+    const at = pickedTime()
     if (at === null) return
     save(withDue(todo, { date: dayKey(day), time: at }, tz), 'day', from)
   }
@@ -272,8 +286,7 @@ export function DuePicker({
         }}
         onInteractOutside={(e) => {
           // A press outside that kept the focus in the time field leaves it here, so its text is read first.
-          const field = time()
-          if (field && field === document.activeElement) field.blur()
+          leaveTime()
           if (!leave()) e.preventDefault()
         }}
       >
@@ -386,7 +399,7 @@ export function DuePicker({
                   className="justify-start text-muted-foreground"
                   onClick={(e) => {
                     // Without the due date, a time typed goes too: one save, but not while it can't be read.
-                    if (typedTime() === null) return
+                    if (pickedTime() === null) return
                     save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
                   }}
                 >
