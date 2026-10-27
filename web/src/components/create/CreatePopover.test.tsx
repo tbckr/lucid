@@ -524,7 +524,8 @@ describe('CreatePopover', () => {
   it("keeps a task's span when its unreadable start date is corrected", async () => {
     const user = userEvent.setup()
     // Dragged over Wednesday, 30 September, 10:15 to 11:15: a task from start to due.
-    const { dialog } = await openPopover({ origin: { ...click, ranged: true } })
+    const { fetch, dialog } = await openPopover({ origin: { ...click, ranged: true } })
+    await user.keyboard('Call')
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     const date = within(dialog).getByRole('combobox', { name: 'Date' })
     await user.click(date)
@@ -534,11 +535,28 @@ describe('CreatePopover', () => {
     await user.click(date)
     await user.keyboard('10/2/2026')
     await user.tab()
-    // Due a day later too, at the same time: shown as a date of its own.
-    const due = within(dialog).getByRole('combobox', { name: 'Due' })
-    await user.click(due)
-    expect(due).toHaveValue('10/2/2026')
+    // Due two days later too, at the same time: on the start's day, so one date says both.
+    expect(within(dialog).queryByRole('combobox', { name: 'Due' })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('11:15 AM')
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
+    const { body } = await posted(fetch)
+    expect(body).toMatchObject({ start: '2026-10-02T08:15:00.000Z', due: '2026-10-02T09:15:00.000Z' })
+  })
+  it("shows no end date of its own while the start date can't be read", async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openPopover()
+    const start = within(dialog).getByRole('combobox', { name: 'Start' })
+    await user.click(start)
+    await user.keyboard('9/x')
+    await user.tab()
+    expect(within(dialog).getByText(/^Enter a date like/)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('combobox', { name: 'End' })).not.toBeInTheDocument()
+    // Corrected, the end moves along to the start's day: the sentence keeps one date.
+    await user.click(start)
+    await user.keyboard('10/2/2026')
+    await user.tab()
+    expect(within(dialog).queryByRole('combobox', { name: 'End' })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('11:15 AM')
   })
   // A start time changed before the switch to a task: the month-cell test above.
   it('keeps a changed due time when switching back to an event', async () => {

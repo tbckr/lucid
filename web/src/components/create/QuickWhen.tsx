@@ -62,9 +62,10 @@ export function QuickWhen({
   const { t } = useTranslation()
   const id = useId()
   // An end or due date on another day shows as a field, and stays once shown: set back to
-  // the start's day, it would vanish under the focus.
-  const endDiffers = event.endDate !== event.startDate
-  const dueDiffers = task.startDate !== '' && task.dueDate !== '' && task.dueDate !== task.startDate
+  // the start's day, it would vanish under the focus. A start date that can't be read is on
+  // no day, and shows none.
+  const endDiffers = isFormDate(event.startDate) && event.endDate !== event.startDate
+  const dueDiffers = isFormDate(task.startDate) && task.dueDate !== '' && task.dueDate !== task.startDate
   const [shown, setShown] = useState({ end: endDiffers, due: dueDiffers })
   if ((endDiffers && !shown.end) || (dueDiffers && !shown.due)) {
     setShown({ end: shown.end || endDiffers, due: shown.due || dueDiffers })
