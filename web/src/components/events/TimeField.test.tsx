@@ -215,6 +215,17 @@ describe('TimeField (FR-09)', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  // Without `field-sizing`, `size` sizes the field: to its text, or to the placeholder it shows while empty.
+  it('is as wide as its text on the tint, and as its placeholder only while empty', async () => {
+    const { user, input } = setup({ value: '16:10', tone: 'tint', none: 'No time', placeholder: 'Add a time' })
+    expect(input).toHaveAttribute('size', String('4:10 PM'.length))
+    await user.click(input)
+    await user.keyboard('{Backspace}')
+    expect(input).toHaveAttribute('size', String('Add a time'.length))
+    await user.keyboard('9')
+    expect(input).toHaveAttribute('size', '1')
+  })
+
   // A form disables its date rows by a fieldset, which no prop of the field says (FR-17).
   it('opens nothing from its chevron in a disabled fieldset', async () => {
     const onChange = vi.fn()

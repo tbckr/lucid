@@ -161,8 +161,8 @@ export function TimeField({
             placeholder={placeholder ?? none}
             disabled={disabled}
             // On the tint and while empty, as wide as its text, or as its `sizes` where they are wider: by
-            // `field-sizing` where the browser has it, else by `size`.
-            size={tint || empty ? Math.max(field.text.length, (placeholder ?? none ?? '').length, 1) : undefined}
+            // `field-sizing` where the browser has it, else by `size`, which counts the placeholder only while it shows.
+            size={tint || empty ? Math.max(field.text === '' ? (placeholder ?? none ?? '').length : field.text.length, 1) : undefined}
             onBlur={(e) => {
               setMoved(false)
               inputProps.onBlur?.(e)

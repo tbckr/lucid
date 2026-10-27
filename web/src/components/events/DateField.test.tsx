@@ -270,6 +270,17 @@ describe('DateField (FR-09)', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  // Without `field-sizing`, `size` sizes the field: to its text, or to the placeholder it shows while empty.
+  it('is as wide as its text, and as its placeholder only while empty', async () => {
+    const { user, input } = setup({ placeholder: 'Add a date somewhere', onClear: { label: 'Remove', clear: vi.fn() } })
+    expect(input).toHaveAttribute('size', String('Fri, Mar 13'.length))
+    await user.click(input)
+    await user.keyboard('{Backspace}')
+    expect(input).toHaveAttribute('size', String('Add a date somewhere'.length))
+    await user.keyboard('3')
+    expect(input).toHaveAttribute('size', '1')
+  })
+
   // A form disables its date rows by a fieldset, which no prop of the field says (FR-17).
   it('opens nothing from its chevron in a disabled fieldset', async () => {
     const onChange = vi.fn()
