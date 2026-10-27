@@ -96,7 +96,7 @@ describe('TimeGridView', () => {
     ['near the bottom', 44, 30],
     // Assistive tech clicks at clientY 0, above the slot.
     ['without a pointer position', -100, 0],
-  ])('starts a one-hour event in the half hour under a click %s', (_, clientY, minute) => {
+  ])('starts a 30-minute event in the half hour under a click %s', (_, clientY, minute) => {
     renderDay()
     const slot = screen.getByRole('button', { name: /9:00 AM$/ })
     fireEvent.click(slot, { clientY })
@@ -104,12 +104,12 @@ describe('TimeGridView', () => {
     expect(create).toMatchObject({
       origin: {
         start: new Date(2026, 8, 25, 9, minute),
-        end: new Date(2026, 8, 25, 10, minute),
+        end: new Date(2026, 8, 25, 9, minute + 30),
         allDay: false,
         granularity: 'time',
         ranged: false,
       },
-      span: { startMin: 540 + minute, endMin: 600 + minute },
+      span: { startMin: 540 + minute, endMin: 570 + minute },
     })
     expect(create?.returnFocus).toBe(slot)
     expect(create?.anchor).toBe(slot.parentElement)
@@ -147,7 +147,7 @@ describe('TimeGridView', () => {
     fireEvent.click(slot, { clientY: toY })
     expect(useUi.getState().create?.origin).toMatchObject({
       start: new Date(2026, 8, 25, 9, minute),
-      end: new Date(2026, 8, 25, 10, minute),
+      end: new Date(2026, 8, 25, 9, minute + 30),
       ranged: false,
     })
   })

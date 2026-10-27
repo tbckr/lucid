@@ -112,7 +112,7 @@ test('a month taller than its window scrolls before it steps (FR-08)', async ({ 
   expect(await main.evaluate((el) => el.scrollTop)).toBe(0)
 })
 
-/** Create a one-hour event today in the day view, starting at `hour` (e.g. "1:00 PM"), and return its block. */
+/** Create a 30-minute event today in the day view, starting at `hour` (e.g. "1:00 PM"), and return its block. */
 async function createAt(page: Page, hour: string, title: string): Promise<Locator> {
   await login(page)
   await page.keyboard.press('d')
@@ -168,7 +168,8 @@ test('dragging an event shows the target time before the drop', async ({ page })
   const title = `E2E drag ${Date.now()}`
   // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls.
   const block = await createAt(page, '1:00 PM', title)
-  await expect(block).toContainText('1 PM – 2 PM')
+  // A 30-minute block is too short to show its end; its name has it.
+  await expect(block).toHaveAccessibleName(`${title}, 1 PM – 1:30 PM`)
 
   // Move down one hour (48 px): the dragged copy shows the new time, and so does the saved event.
   let box = (await block.boundingBox())!
@@ -177,10 +178,10 @@ test('dragging an event shows the target time before the drop', async ({ page })
   await page.mouse.down()
   await page.mouse.move(x, box.y + 20, { steps: 4 })
   await page.mouse.move(x, box.y + 58, { steps: 4 })
-  await expect(block.filter({ hasText: '2 PM – 3 PM' })).toHaveCount(1)
+  await expect(block.and(page.getByRole('button', { name: `${title}, 2 PM – 2:30 PM` }))).toHaveCount(1)
   await page.mouse.up()
   await expect(block).toHaveCount(1)
-  await expect(block).toContainText('2 PM – 3 PM')
+  await expect(block).toHaveAccessibleName(`${title}, 2 PM – 2:30 PM`)
 
   // Drag the bottom edge down 30 minutes (24 px): the block shows the new end time.
   box = (await block.boundingBox())!
@@ -188,9 +189,9 @@ test('dragging an event shows the target time before the drop', async ({ page })
   await page.mouse.down()
   await page.mouse.move(x, box.y + box.height + 7, { steps: 4 })
   await page.mouse.move(x, box.y + box.height + 21, { steps: 4 })
-  await expect(block).toContainText('2 PM – 3:30 PM')
+  await expect(block).toHaveAccessibleName(`${title}, 2 PM – 3 PM`)
   await page.mouse.up()
-  await expect(block).toContainText('2 PM – 3:30 PM')
+  await expect(block).toHaveAccessibleName(`${title}, 2 PM – 3 PM`)
 
   await deleteEvent(page, block, title)
 })
@@ -200,7 +201,8 @@ test('moving an event with the keyboard shows and announces the target time', as
   // From 1 PM, the moves cross the middle of the grid, where dnd-kit scrolls instead of
   // moving. Fast key presses must not get lost while it scrolls.
   const block = await createAt(page, '1:00 PM', title)
-  await expect(block).toContainText('1 PM – 2 PM')
+  // A 30-minute block is too short to show its end; its name has it.
+  await expect(block).toHaveAccessibleName(`${title}, 1 PM – 1:30 PM`)
 
   // Space picks the event up; each arrow key moves it by 30 minutes (NFR-27).
   await block.focus()
@@ -212,11 +214,11 @@ test('moving an event with the keyboard shows and announces the target time', as
   // order, so once one queued now has fired, the sensor listens.
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)))
   for (let i = 0; i < 2; i++) await page.keyboard.press('ArrowDown')
-  await expect(block.filter({ hasText: '2 PM – 3 PM' })).toHaveCount(1)
-  await expect(page.getByRole('status').filter({ hasText: /^New time: .*, 2:00 PM – 3:00 PM\.$/ })).toHaveCount(1)
+  await expect(block.and(page.getByRole('button', { name: `${title}, 2 PM – 2:30 PM` }))).toHaveCount(1)
+  await expect(page.getByRole('status').filter({ hasText: /^New time: .*, 2:00 PM – 2:30 PM\.$/ })).toHaveCount(1)
   await page.keyboard.press('Enter')
   await expect(block).toHaveCount(1)
-  await expect(block).toContainText('2 PM – 3 PM')
+  await expect(block).toHaveAccessibleName(`${title}, 2 PM – 2:30 PM`)
 
   await deleteEvent(page, block, title)
 })
@@ -246,7 +248,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   const startDate = dialog.getByRole('button', { name: /^Start / })
   const startTime = dialog.getByRole('combobox', { name: 'Start time' })
   const endTime = dialog.getByRole('combobox', { name: 'End time' })
-  await expect(endTime).toHaveText('2:00 PM')
+  await expect(endTime).toHaveText('1:30 PM')
   const firstDay = (await startDate.textContent())!
   const draft = page.locator('[data-draft]')
 
@@ -259,7 +261,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.mouse.move(x, box.y + 58, { steps: 4 })
   await page.mouse.up()
   await expect(startTime).toHaveText('2:00 PM')
-  await expect(endTime).toHaveText('3:00 PM')
+  await expect(endTime).toHaveText('2:30 PM')
 
   // Into the next day's column; the popover goes along.
   box = (await draft.boundingBox())!
@@ -281,9 +283,9 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.mouse.down()
   await page.mouse.move(x, box.y + box.height + 7, { steps: 4 })
   await page.mouse.move(x, box.y + box.height + 21, { steps: 4 })
-  await expect(draft).toContainText('2 PM – 3:30 PM')
+  await expect(draft).toContainText('2 PM – 3 PM')
   await page.mouse.up()
-  await expect(endTime).toHaveText('3:30 PM')
+  await expect(endTime).toHaveText('3:00 PM')
 
   // The title kept the focus through the drags.
   await expect(dialog.getByPlaceholder('Add a title')).toBeFocused()
@@ -291,7 +293,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.keyboard.press('Enter')
   await expect(dialog).toBeHidden()
   const block = page.locator('[data-event-key]', { hasText: title })
-  await expect(block).toContainText('2 PM – 3:30 PM')
+  await expect(block).toContainText('2 PM – 3 PM')
   expect((await block.boundingBox())!.x).toBeGreaterThan(box.x - box.width / 2)
 
   await deleteEvent(page, block, title)

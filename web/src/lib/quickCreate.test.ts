@@ -71,7 +71,7 @@ describe('taskWhen', () => {
   })
 
   it.each([
-    ['a month cell', { ...clickWhen, startTime: '09:00', endTime: '10:00' }, { granularity: 'day', ranged: false }],
+    ['a month cell', { ...clickWhen, startTime: '09:00', endTime: '09:30' }, { granularity: 'day', ranged: false }],
     ['the all-day row', { ...clickWhen, allDay: true }, { granularity: 'day', ranged: false }],
   ] as const)('is due on the day, without a time, from %s', (_, when, origin) => {
     expect(taskWhen(when, origin)).toEqual(due('2026-09-30', ''))
@@ -79,7 +79,7 @@ describe('taskWhen', () => {
 
   it('keeps a time set in the popover after a click in a month cell', () => {
     // The cell started the event at 09:00; the user moved it to 14:00.
-    const started = { ...clickWhen, startTime: '09:00', endTime: '10:00' }
+    const started = { ...clickWhen, startTime: '09:00', endTime: '09:30' }
     const month = { granularity: 'day', ranged: false } as const
     expect(taskWhen({ ...clickWhen, startTime: '14:00', endTime: '15:00' }, month, started)).toEqual(due('2026-09-30', '14:00'))
     expect(taskWhen({ ...started, startDate: '2026-10-01', endDate: '2026-10-01' }, month, started)).toEqual(due('2026-10-01', ''))
@@ -109,14 +109,14 @@ describe('eventFromTask', () => {
     expect(eventFromTask(due('2026-10-02', ''), clickWhen)).toEqual({ ...clickWhen, startDate: '2026-10-02', endDate: '2026-10-02' })
   })
 
-  it('turns a remembered all-day event into one hour at the due time', () => {
-    const allDay = { ...clickWhen, allDay: true, startTime: '09:00', endTime: '10:00' }
+  it('turns a remembered all-day event into 30 minutes at the due time', () => {
+    const allDay = { ...clickWhen, allDay: true, startTime: '09:00', endTime: '09:30' }
     expect(eventFromTask(due('2026-09-30', '14:00'), allDay)).toEqual({
       allDay: false,
       startDate: '2026-09-30',
       startTime: '14:00',
       endDate: '2026-09-30',
-      endTime: '15:00',
+      endTime: '14:30',
     })
   })
 
@@ -149,9 +149,9 @@ describe('draftOf', () => {
   })
 
   it('makes a task due on a whole day without a time', () => {
-    // "Create" and `c` start at a default hour on the day, like a month cell.
-    const day: CreateOrigin = { ...click, start: new Date(2026, 8, 30, 9), end: new Date(2026, 8, 30, 10), granularity: 'day' }
-    expect(draftOf(day, TZ)).toMatchObject({ event: { startTime: '09:00' }, task: due('2026-09-30', '') })
+    // "Create" and `c` start at a default time on the day, like a month cell.
+    const day: CreateOrigin = { ...click, start: new Date(2026, 8, 30, 9), end: new Date(2026, 8, 30, 9, 30), granularity: 'day' }
+    expect(draftOf(day, TZ)).toMatchObject({ event: { startTime: '09:00', endTime: '09:30' }, task: due('2026-09-30', '') })
   })
 })
 

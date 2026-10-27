@@ -56,7 +56,7 @@ test('in a browser that reports UTC, a weekly event and task are saved without a
 
   const event = await stored(page, await eventId(page, title))
   expect(event).toMatch(/\r\nDTSTART:\d{8}T090000Z\r\n/)
-  expect(event).toMatch(/\r\nDTEND:\d{8}T100000Z\r\n/)
+  expect(event).toMatch(/\r\nDTEND:\d{8}T093000Z\r\n/)
   expect(event).toContain('RRULE:FREQ=WEEKLY')
   expect(event).not.toContain('TZID')
   expect(event).not.toContain('VTIMEZONE')

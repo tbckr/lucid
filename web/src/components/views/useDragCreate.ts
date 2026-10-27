@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
+import { STEP_MINUTES } from '@/lib/dates'
 import { createRange, DRAG_DISTANCE, PX_PER_MINUTE } from '@/lib/dnd'
 
 interface Gesture {
@@ -22,7 +23,7 @@ function minuteAt(hour: number, e: MouseEvent<HTMLElement>): number {
 
 /**
  * Create events from the hour slots of a time-grid column: a click starts a
- * one-hour event in the 30-minute slot under the pointer, a drag with mouse or
+ * 30-minute event in the slot under the pointer, a drag with mouse or
  * pen covers the slots it crosses (touch scrolls). `draft` is the span to
  * preview while dragging; Escape cancels. `onCreate` gets the slot the
  * gesture ended on and whether it was a drag.
@@ -91,7 +92,7 @@ export function useDragCreate(
       const min = Math.min(hour * 60 + 59, Math.max(hour * 60, minuteAt(hour, e)))
       // The slot a drag from here would start in.
       const { startMin } = createRange(min, min)
-      onCreate(startMin, startMin + 60, { target: e.currentTarget, ranged: false })
+      onCreate(startMin, startMin + STEP_MINUTES, { target: e.currentTarget, ranged: false })
     },
   })
 

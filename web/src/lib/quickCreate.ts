@@ -38,7 +38,7 @@ const ANY_CALENDAR = '-'
 // The preview is no item of a calendar yet.
 const DRAFT_ID = 'draft'
 
-/** The event a click starts: the editor's create values (one hour, or all-day). */
+/** The event a click starts: the editor's create values (30 minutes, or all-day). */
 export function eventWhen(origin: CreateOrigin, timeZone: string): EventWhen {
   const { allDay, startDate, startTime, endDate, endTime } = createFormValues(origin, '', timeZone)
   return { allDay, startDate, startTime, endDate, endTime }
@@ -81,8 +81,8 @@ export function eventFromTask(task: TaskWhen, last: EventWhen): EventWhen {
   const time = task.dueDate ? task.dueTime : task.startTime
   if (!date) return last
   if (!time) return { ...last, startDate: date, ...shiftEnd(last, date, last.startTime) }
-  // An all-day event has no length in hours: it becomes the default hour.
-  const base = last.allDay ? { ...last, allDay: false, endDate: last.startDate, startTime: '09:00', endTime: '10:00' } : last
+  // An all-day event has no length in hours: it becomes the default 30 minutes at 09:00 (FR-09).
+  const base = last.allDay ? { ...last, allDay: false, endDate: last.startDate, startTime: '09:00', endTime: '09:30' } : last
   return { allDay: false, startDate: date, startTime: time, ...shiftEnd(base, date, time) }
 }
 

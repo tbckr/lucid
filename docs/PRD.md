@@ -79,7 +79,7 @@ We use a **Proxy/Middleware Architecture** instead of a Thick Client or Full-Syn
 
 * **FR-07:** Views: Month (Prio 1), Week, Day, Agenda. Where a day or an hour has more entries than fit, tasks are bundled into one entry first, and only events that still don't fit go behind "+N"; both open a list of what they stand for, where entries can be completed, opened and dragged out.
 * **FR-08:** Navigation (Today, Previous, Next). In the month view, a scroll gesture steps one month; a month taller than its window scrolls first.
-* **FR-09:** CRUD (Create, Read, Update, Delete) Events. A save the CalDAV server refuses because the event or task changed elsewhere since the editor opened keeps the editor open with what was entered, says so, and offers to save anyway, which replaces the other change; where the reloaded calendar no longer holds the item, it says to close the editor to see the current version.
+* **FR-09:** CRUD (Create, Read, Update, Delete) Events. A new timed event lasts 30 minutes. A save the CalDAV server refuses because the event or task changed elsewhere since the editor opened keeps the editor open with what was entered, says so, and offers to save anyway, which replaces the other change; where the reloaded calendar no longer holds the item, it says to close the editor to see the current version.
 * **FR-10:** Drag & Drop (Frontend update immediate, Backend request asynchronous). In the time grid, moves and resizes go in 30-minute steps, and a move keeps an entry's minutes past the step (an event at 9:40 lands at 10:10).
 * **FR-11:** All-day vs. time-bound events.
 

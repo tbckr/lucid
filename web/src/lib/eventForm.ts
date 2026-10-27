@@ -57,7 +57,7 @@ export function createFormValues(
     startDate: s.date,
     startTime: defaults.allDay ? '09:00' : s.time,
     endDate: defaults.allDay ? s.date : e.date,
-    endTime: defaults.allDay ? '10:00' : e.time,
+    endTime: defaults.allDay ? '09:30' : e.time,
     location: '',
     description: '',
     recurrence: 'none',
@@ -99,7 +99,7 @@ export function editFormValues(event: CalEvent, timeZone: string): EventFormValu
       startDate: format(event.startsAt, 'yyyy-MM-dd'),
       startTime: '09:00',
       endDate: format(lastDay < event.startsAt ? event.startsAt : lastDay, 'yyyy-MM-dd'),
-      endTime: '10:00',
+      endTime: '09:30',
     }
   }
   const s = utcToZoned(event.startsAt, timeZone)

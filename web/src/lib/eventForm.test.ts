@@ -110,7 +110,7 @@ describe('formToInput', () => {
     const event = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }))
     const input = formToInput({ ...editFormValues(event, TZ), allDay: false }, TZ, event)
     expect(input.start).toBe('2026-09-25T07:00:00.000Z')
-    expect(input.end).toBe('2026-09-25T08:00:00.000Z')
+    expect(input.end).toBe('2026-09-25T07:30:00.000Z')
   })
 
   it('converts all-day values to UTC midnight with exclusive end', () => {
@@ -216,6 +216,13 @@ describe('initial values', () => {
     })
   })
 
+  it('gives a switch from all-day to timed 30 minutes from 09:00 (FR-09)', () => {
+    expect(createFormValues({ start: new Date(2026, 8, 25), end: new Date(2026, 8, 25), allDay: true }, 'c1', TZ)).toMatchObject({
+      startTime: '09:00',
+      endTime: '09:30',
+    })
+  })
+
   it('maps events back to form values', () => {
     const timed = toCalEvent(apiEvent({ rrule: 'FREQ=WEEKLY;BYDAY=MO', recurring: true }))
     expect(editFormValues(timed, TZ)).toMatchObject({
@@ -226,7 +233,13 @@ describe('initial values', () => {
       customRule: 'FREQ=WEEKLY;BYDAY=MO',
     })
     const allDay = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-27T00:00:00Z' }))
-    expect(editFormValues(allDay, TZ)).toMatchObject({ allDay: true, startDate: '2026-09-25', endDate: '2026-09-26' })
+    expect(editFormValues(allDay, TZ)).toMatchObject({
+      allDay: true,
+      startDate: '2026-09-25',
+      startTime: '09:00',
+      endDate: '2026-09-26',
+      endTime: '09:30',
+    })
   })
 })
 
