@@ -210,7 +210,7 @@ export function TimeField({
         align="start"
         sideOffset={4}
         // Gone at once on a commit, so the next Escape or field doesn't meet a list still fading out.
-        className="relative max-h-64 w-auto min-w-(--radix-popover-trigger-width) overflow-y-auto p-1 data-[state=closed]:animate-none"
+        className="relative max-h-64 w-auto min-w-(--radix-popover-trigger-width) overflow-y-auto p-1 data-[state=closed]:animate-none!"
         onOpenAutoFocus={(e) => {
           // The focus stays in the text; the list opens on its marked entry.
           e.preventDefault()

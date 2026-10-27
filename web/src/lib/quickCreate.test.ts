@@ -196,6 +196,20 @@ describe('shiftTask', () => {
   it('moves both dates of a span', () => {
     expect(shiftTask(span, '2026-10-01', '10:00')).toEqual({ ...span, startDate: '2026-10-01', dueDate: '2026-10-01' })
   })
+
+  // FR-09: a start corrected after text that couldn't be read keeps the span it had before.
+  it('keeps the due while the start is unreadable, and the span from the last start that could be read', () => {
+    expect(shiftTask(span, '2026-09-30', '10:4x')).toEqual({ ...span, startTime: '10:4x' })
+    expect(shiftTask(span, '9/x', '10:00')).toEqual({ ...span, startDate: '9/x' })
+    const unread = { ...span, startTime: '10:4x' }
+    const last = { date: '2026-09-30', time: '10:00' }
+    expect(shiftTask(unread, '2026-09-30', '10:40', last)).toEqual({ ...span, startTime: '10:40', dueTime: '12:40' })
+    expect(shiftTask({ ...span, startDate: '9/x' }, '2026-10-01', '10:00', last)).toEqual({
+      ...span,
+      startDate: '2026-10-01',
+      dueDate: '2026-10-01',
+    })
+  })
 })
 
 describe('chooseCalendar', () => {

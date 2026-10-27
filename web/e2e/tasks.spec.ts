@@ -291,7 +291,7 @@ test("more options opens the task editor with the popover's values", async ({ pa
 
   const editor = page.getByRole('dialog', { name: 'New task' })
   await expect(editor.getByPlaceholder('Add a title')).toHaveValue(title)
-  await expect(editor.getByRole('button', { name: /^Due / })).toBeVisible()
+  await expect(editor.getByRole('combobox', { name: 'Due', exact: true })).toBeVisible()
   await editor.getByRole('button', { name: 'Create task' }).click()
   await expect(editor).toBeHidden()
   await expect(page.getByRole('main').locator('[data-task-key]', { hasText: title })).toBeVisible()

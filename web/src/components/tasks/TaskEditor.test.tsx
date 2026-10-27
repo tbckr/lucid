@@ -137,10 +137,11 @@ describe('TaskEditor', () => {
     const user = userEvent.setup()
     const { fetch, dialog } = await openTask(t)
 
-    await user.click(within(dialog).getByRole('button', { name: `${row} Fri, Sep 25` }))
+    await user.click(within(dialog).getByRole('combobox', { name: row }))
     const month = screen.getByRole('dialog', { name: `${row} date` })
     await user.click(within(month).getByRole('button', { name: button }))
-    expect(within(dialog).getByRole('button', { name: `${row} Add a date` })).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: row })).toHaveValue('')
+    expect(within(dialog).getByRole('combobox', { name: row })).toHaveAttribute('placeholder', 'Add a date')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     const keptValue = new Date(t[kept as 'start' | 'due']!).toISOString()
@@ -187,7 +188,7 @@ describe('TaskEditor', () => {
     // Due Friday, 13 March 2026, 14:00 in Berlin.
     const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
 
-    await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Wednesday, March 11th, 2026' }))
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -233,6 +234,73 @@ describe('TaskEditor', () => {
     expect(due).not.toHaveAttribute('aria-invalid')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T13:40:00.000Z', dueAllDay: false })
+  })
+
+  describe('typed dates (FR-09)', () => {
+    beforeEach(() => {
+      // Only the date, as the example in the message is today's: fake timers would stall the requests.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 2, 11, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const dateNote = 'Enter a date like 3/11/2026.'
+
+    it('saves a typed due date with its time', async () => {
+      const user = userEvent.setup()
+      // Due Friday, 13 March 2026, 14:00 in Berlin.
+      const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+      const due = within(dialog).getByRole('combobox', { name: 'Due' })
+      expect(due).toHaveValue('Fri, Mar 13')
+      await user.click(due)
+      await user.keyboard('3/20')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(await saved(fetch)).toMatchObject({ due: '2026-03-20T13:00:00.000Z', dueAllDay: false })
+    })
+
+    it("says what to type for an unreadable due date, and doesn't save", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+      const due = within(dialog).getByRole('combobox', { name: 'Due' })
+      await user.click(due)
+      await user.keyboard('3/45')
+      await user.tab()
+      expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+      expect(due).toHaveAttribute('aria-invalid', 'true')
+      expect(due).toHaveAccessibleDescription(dateNote)
+      // About the date: the time beside it isn't described by it, nor marked.
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      expect(time).toHaveAccessibleDescription('')
+      expect(time).not.toHaveAttribute('aria-invalid')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+      expect(dialog).toBeInTheDocument()
+    })
+
+    it('keeps an order error on the fields it marks while a note below says what to type', async () => {
+      const user = userEvent.setup()
+      // Start 14:00, due 13:00 on Friday, 13 March 2026, in Berlin.
+      const { dialog } = await openTask(todo({ start: '2026-03-13T13:00:00Z', due: '2026-03-13T12:00:00Z' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const order = "The start can't be after the due date."
+      expect(await within(dialog).findByText(order)).toBeInTheDocument()
+      const date = within(dialog).getByRole('combobox', { name: 'Start' })
+      const time = within(dialog).getByRole('combobox', { name: 'Start time' })
+      await user.click(time)
+      await user.keyboard('2:6')
+      await user.tab()
+      const timeNote = 'Enter a time like 9:40 AM.'
+      expect(within(dialog).getByText(timeNote)).toBeInTheDocument()
+      expect(within(dialog).getByText(order)).toBeInTheDocument()
+      // The date is marked by the order, and described by it; the time note is not about it.
+      expect(date).toHaveAttribute('aria-invalid', 'true')
+      expect(date).toHaveAccessibleDescription(order)
+      expect(time).toHaveAccessibleDescription(`${timeNote} ${order}`)
+    })
   })
 
   it('saves a checklist item that was typed but not yet added', async () => {
@@ -550,7 +618,7 @@ describe('TaskEditor', () => {
     it("moves the series' rule with the repeat's new date, and another starts there", async () => {
       const user = userEvent.setup()
       const { dialog } = await openTask(movedRepeat)
-      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Nov 9' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
       const month = screen.getByRole('dialog', { name: 'Due date' })
       await user.click(within(month).getByRole('button', { name: 'Tuesday, November 10th, 2026' }))
       const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
@@ -694,7 +762,7 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(timed)
 
-      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
       const month = screen.getByRole('dialog', { name: 'Due date' })
       expect(within(month).getByRole('button', { name: 'Thursday, October 8th, 2026' })).not.toHaveAttribute('aria-disabled')
       expect(within(month).queryByText(/^Until /)).toBeNull()
@@ -711,7 +779,7 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(series)
 
-      await user.click(within(dialog).getByRole('button', { name: 'Start Add a date' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
       await user.click(screen.getByRole('button', { name: 'Thursday, October 1st, 2026' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
       await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: /^All repeats/ }))
@@ -743,7 +811,7 @@ describe('TaskEditor', () => {
         within(dialog).getByText("Lucid can't read this repeat. Complete and move it in the app that created it."),
       ).toBeInTheDocument()
       expect(within(dialog).getByRole('checkbox', { name: 'Completed' })).toBeDisabled()
-      expect(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' })).toBeDisabled()
+      expect(within(dialog).getByRole('combobox', { name: 'Due' })).toBeDisabled()
       expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Repeats by a rule from another app')
       expect(dialog).not.toHaveTextContent(/FREQ/)
 
@@ -786,7 +854,7 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(last)
 
-      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
       const month = screen.getByRole('dialog', { name: 'Due date' })
       await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -804,7 +872,7 @@ describe('TaskEditor', () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(series)
 
-        await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Tuesday, October 6th, 2026' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -942,7 +1010,7 @@ describe('TaskEditor', () => {
         const { fetch, dialog } = await openTask(timed, undefined, later(timed, '2026-10-08T07:00:00Z'))
 
         // Thursday 9:00 to Friday 10:00.
-        await user.click(within(dialog).getByRole('button', { name: 'Due Thu, Oct 8' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Friday, October 9th, 2026' }))
         await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
         await user.click(screen.getByRole('option', { name: '10:00 AM' }))
@@ -1034,7 +1102,7 @@ describe('TaskEditor', () => {
         expect(within(dialog).getByText(text)).toBeInTheDocument()
         expect(within(dialog).getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(text)
 
-        await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Tuesday, October 6th, 2026' }))
         const moves = "Moves all repeats. With attendees, a repeat can't become a task of its own."
         expect(within(dialog).getByText(moves)).toBeInTheDocument()
@@ -1076,7 +1144,7 @@ describe('TaskEditor', () => {
         const user = userEvent.setup()
         const { fetch, dialog } = await openTask(last)
 
-        await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Friday, October 16th, 2026' }))
         expect(within(dialog).getByRole('button', { name: 'Save' })).not.toHaveAccessibleDescription()
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -1116,21 +1184,21 @@ describe('TaskEditor', () => {
         const { fetch, dialog } = await openTask(monthly, undefined, later(monthly, '2026-11-15T00:00:00Z'))
         const refused = "Can't move. The series stays on its days."
 
-        await user.click(within(dialog).getByRole('button', { name: 'Due Sun, Nov 15' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Monday, November 16th, 2026' }))
         // A limit is no error (spec §2): said in the muted foreground, the field not marked.
         const said = within(dialog).getByText(refused)
         expect(said).toHaveClass('text-muted-foreground')
         expect(said).not.toHaveClass('text-destructive')
-        const field = within(dialog).getByRole('button', { name: 'Due Mon, Nov 16' })
+        const field = within(dialog).getByRole('combobox', { name: 'Due' })
         expect(field).toHaveAccessibleDescription(refused)
-        expect(field).not.toHaveClass('border-destructive')
+        expect(field).not.toHaveAttribute('aria-invalid')
         expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
         await user.type(within(dialog).getByPlaceholderText('Add a title'), '{Enter}')
         expect(within(dialog).queryByRole('alertdialog')).toBeNull()
         expect(puts(fetch)).toHaveLength(0)
 
-        await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Nov 16' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Sunday, November 15th, 2026' }))
         expect(within(dialog).queryByText(refused)).toBeNull()
         expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled()
@@ -1242,7 +1310,7 @@ describe('TaskEditor', () => {
         await user.click(within(dialog).getByRole('radio', { name: 'High' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))
         within(dialog).getByRole('alertdialog', { name: changeQuestion })
-        await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
         await user.click(screen.getByRole('button', { name: 'Tuesday, October 6th, 2026' }))
         expect(within(dialog).queryByRole('alertdialog')).toBeNull()
 
@@ -1258,7 +1326,7 @@ describe('TaskEditor', () => {
       const interval = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
       const { fetch, dialog } = await openTask(interval)
 
-      await user.click(within(dialog).getByRole('button', { name: 'Due Mon, Oct 5' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
       const month = screen.getByRole('dialog', { name: 'Due date' })
       await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))

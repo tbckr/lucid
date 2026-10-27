@@ -340,7 +340,7 @@ describe('CreatePopover', () => {
         { anchor: thursday, span: { startMin: 840, endMin: 930 } },
       )
     })
-    expect(within(dialog).getByRole('button', { name: /^Start Thu, Oct 1/ })).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Start' })).toHaveDisplayValue(/^Thu, Oct 1/)
     expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('2:00 PM')
     expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('3:30 PM')
     await waitFor(() => {
@@ -440,14 +440,90 @@ describe('CreatePopover', () => {
     const user = userEvent.setup()
     const late = { ...click, start: new Date(2026, 8, 30, 23, 30), end: new Date(2026, 9, 1, 0, 30) }
     const { dialog } = await openPopover({ origin: late })
-    const end = within(dialog).getByRole('button', { name: /^End Thu, Oct 1/ })
+    const end = within(dialog).getByRole('combobox', { name: 'End' })
+    expect(end).toHaveDisplayValue(/^Thu, Oct 1/)
     await user.click(end)
     await user.click(within(screen.getByRole('dialog', { name: 'End date' })).getByRole('button', { name: /September 30th/ }))
-    // Back on the start's day: the field stays where the focus is.
-    const same = within(dialog).getByRole('button', { name: /^End Wed, Sep 30/ })
+    // Back on the start's day: the field stays where the focus is, with the day picked.
+    const same = within(dialog).getByRole('combobox', { name: 'End' })
+    expect(same).toHaveValue('9/30/2026')
     await waitFor(() => {
       expect(same).toHaveFocus()
     })
+    await user.tab()
+    expect(same).toHaveDisplayValue(/^Wed, Sep 30/)
+  })
+  it('says at once what to type for an unreadable date, about the date alone', async () => {
+    const user = userEvent.setup()
+    const late = { ...click, start: new Date(2026, 8, 30, 23, 30), end: new Date(2026, 9, 1, 0, 30) }
+    const { fetch, dialog } = await openPopover({ origin: late })
+    await user.keyboard('Review')
+    const end = within(dialog).getByRole('combobox', { name: 'End' })
+    await user.click(end)
+    await user.keyboard('10/x')
+    await user.tab()
+    const note = /^Enter a date like \d+\/\d+\/\d{4}\.$/
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(end).toHaveAttribute('aria-invalid', 'true')
+    expect(end).toHaveAccessibleDescription(note)
+    // The end time beside it is fine: not marked, and not described by a note on the date.
+    const endTime = within(dialog).getByRole('combobox', { name: 'End time' })
+    expect(endTime).not.toHaveAttribute('aria-invalid')
+    expect(endTime).toHaveAccessibleDescription('')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  })
+  it("doesn't describe the end date by a note on a time", async () => {
+    const user = userEvent.setup()
+    const late = { ...click, start: new Date(2026, 8, 30, 23, 30), end: new Date(2026, 9, 1, 0, 30) }
+    const { dialog } = await openPopover({ origin: late })
+    const endTime = within(dialog).getByRole('combobox', { name: 'End time' })
+    await user.click(endTime)
+    await user.keyboard('11:7')
+    await user.tab()
+    const note = 'Enter a time like 9:40 AM.'
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(endTime).toHaveAccessibleDescription(note)
+    const end = within(dialog).getByRole('combobox', { name: 'End' })
+    expect(end).not.toHaveAttribute('aria-invalid')
+    expect(end).toHaveAccessibleDescription('')
+  })
+  it('keeps the length when an unreadable start is corrected', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openPopover()
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    const end = within(dialog).getByRole('combobox', { name: 'End time' })
+    await user.click(start)
+    await user.keyboard('9:4x')
+    await user.tab()
+    // The end stays while the start can't be read.
+    expect(end).toHaveValue('11:15 AM')
+    await user.click(start)
+    await user.keyboard('940')
+    await user.tab()
+    // The hour the event lasted before the unreadable step.
+    expect(end).toHaveValue('10:40 AM')
+  })
+  it("keeps a task's span when its unreadable start date is corrected", async () => {
+    const user = userEvent.setup()
+    // Dragged over Wednesday, 30 September, 10:15 to 11:15: a task from start to due.
+    const { dialog } = await openPopover({ origin: { ...click, ranged: true } })
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    const date = within(dialog).getByRole('combobox', { name: 'Date' })
+    await user.click(date)
+    await user.keyboard('9/x')
+    await user.tab()
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('11:15 AM')
+    await user.click(date)
+    await user.keyboard('10/2/2026')
+    await user.tab()
+    // Due a day later too, at the same time: shown as a date of its own.
+    const due = within(dialog).getByRole('combobox', { name: 'Due' })
+    await user.click(due)
+    expect(due).toHaveValue('10/2/2026')
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('11:15 AM')
   })
   // A start time changed before the switch to a task: the month-cell test above.
   it('keeps a changed due time when switching back to an event', async () => {

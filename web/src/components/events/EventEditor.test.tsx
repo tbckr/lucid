@@ -1,7 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { endpoints } from '@/lib/api/endpoints'
@@ -229,6 +229,138 @@ describe('typed times (FR-09)', () => {
   })
 })
 
+describe('typed dates (FR-09)', () => {
+  beforeEach(() => {
+    // Only the date, as the example in the message is today's: fake timers would stall the requests.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 2, 11, 12))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    useUi.getState().openEditor(null)
+    vi.restoreAllMocks()
+  })
+
+  const posts = (fetch: Awaited<ReturnType<typeof openEditor>>['fetch']) =>
+    fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
+  /** Lets a submit that shouldn't have happened reach the server mock. */
+  const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+  const dateNote = 'Enter a date like 3/11/2026.'
+
+  it('saves a typed start date and keeps the length', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
+    await user.keyboard('3/12')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(posts(fetch)).toHaveLength(1)
+    })
+    // A day later, start and end: 11:00-12:00 in Berlin.
+    expect(bodyOf(posts(fetch)[0]![1])).toMatchObject({ start: '2026-03-12T10:00:00.000Z', end: '2026-03-12T11:00:00.000Z' })
+  })
+
+  it("says what to type for an unreadable date and doesn't save", async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start' })
+    await user.click(start)
+    await user.keyboard('13/45')
+    await user.tab()
+    // At once, not only after Save.
+    expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+    expect(start).toHaveValue('13/45')
+    expect(start).toHaveAttribute('aria-invalid', 'true')
+    expect(start).toHaveAccessibleDescription(dateNote)
+    // The note is about the date: the time beside it isn't described by it.
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveAccessibleDescription('')
+    expect(within(dialog).getByRole('combobox', { name: 'End' })).toHaveValue('Wed, Mar 11')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await settle()
+    expect(posts(fetch)).toHaveLength(0)
+    expect(dialog).toBeInTheDocument()
+  })
+
+  it('says it for an end date, and marks only the end date', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const end = within(dialog).getByRole('combobox', { name: 'End' })
+    await user.click(end)
+    await user.keyboard('3/x{Enter}')
+    expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+    expect(end).toHaveAttribute('aria-invalid', 'true')
+    expect(end).toHaveAccessibleDescription(dateNote)
+    const endTime = within(dialog).getByRole('combobox', { name: 'End time' })
+    expect(endTime).not.toHaveAttribute('aria-invalid')
+    expect(endTime).toHaveAccessibleDescription('')
+  })
+
+  it('keeps the length when an unreadable start time is corrected', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    const end = within(dialog).getByRole('combobox', { name: 'End time' })
+    await user.click(start)
+    await user.keyboard('9:4x')
+    await user.tab()
+    // The end stays while the start can't be read.
+    expect(end).toHaveValue('12:00 PM')
+    await user.click(start)
+    await user.keyboard('940')
+    await user.tab()
+    // The hour the event lasted before the unreadable step.
+    expect(end).toHaveValue('10:40 AM')
+  })
+
+  it('keeps the length when an unreadable start date is corrected', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start' })
+    const end = within(dialog).getByRole('combobox', { name: 'End' })
+    await user.click(start)
+    await user.keyboard('13/45')
+    await user.tab()
+    expect(end).toHaveValue('Wed, Mar 11')
+    await user.click(start)
+    await user.keyboard('3/13')
+    await user.tab()
+    expect(end).toHaveValue('Fri, Mar 13')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(posts(fetch)).toHaveLength(1)
+    })
+    expect(bodyOf(posts(fetch)[0]![1])).toMatchObject({ start: '2026-03-13T10:00:00.000Z', end: '2026-03-13T11:00:00.000Z' })
+  })
+
+  it('names the repeat presets after the last readable start date', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
+    await user.keyboard('13/45')
+    await user.tab()
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    expect(screen.getByRole('option', { name: 'Every week on Wednesday' })).toBeInTheDocument()
+  })
+
+  it('Escape in a date field restores it and keeps the editor open', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start' })
+    await user.click(start)
+    await user.keyboard('4/2')
+    expect(screen.getByRole('dialog', { name: 'Start date' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(start).toHaveValue('3/11/2026')
+    expect(screen.queryByRole('dialog', { name: 'Start date' })).toBeNull()
+    expect(dialog).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+})
+
 describe('EventEditor', () => {
   afterEach(() => {
     useUi.getState().openEditor(null)
@@ -240,9 +372,9 @@ describe('EventEditor', () => {
     const { fetch, dialog } = await openEditor(create)
     await user.type(within(dialog).getByPlaceholderText('Add a title'), 'Review')
 
-    await user.click(within(dialog).getByRole('button', { name: /^Start Wed, Mar 11/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Friday, March 13th, 2026' }))
-    expect(within(dialog).getByRole('button', { name: /^End Fri, Mar 13/ })).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'End' })).toHaveDisplayValue(/^Fri, Mar 13/)
     expect(within(dialog).getByText('1 hr')).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
@@ -465,7 +597,7 @@ describe('EventEditor', () => {
       }),
     )
     const { dialog } = await openEditor({ mode: 'edit', event })
-    await user.click(within(dialog).getByRole('button', { name: /^Start Mon, Nov 9/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Tuesday, November 10th, 2026' }))
     expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Wednesday')
   })
@@ -585,7 +717,7 @@ describe('EventEditor', () => {
     )
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
-    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Sep 25/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Saturday, September 26th, 2026' }))
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -649,11 +781,11 @@ describe('EventEditor', () => {
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
     expect(within(dialog).queryByText(hint)).toBeNull()
 
-    await user.click(within(dialog).getByRole('button', { name: /^Start Thu, Oct 15/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Friday, October 16th, 2026' }))
     expect(within(dialog).getByText(hint)).toBeInTheDocument()
 
-    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Oct 16/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Thursday, October 15th, 2026' }))
     expect(within(dialog).queryByText(hint)).toBeNull()
 
@@ -671,7 +803,7 @@ describe('EventEditor', () => {
     )
     const { dialog, fetch } = await openEditor({ mode: 'edit', event })
 
-    await user.click(within(dialog).getByRole('button', { name: /^Start Fri, Sep 25/ }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
     await user.click(screen.getByRole('button', { name: 'Saturday, September 26th, 2026' }))
     await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
     await user.click(screen.getByRole('option', { name: 'Every day' }))

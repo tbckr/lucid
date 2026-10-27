@@ -28,6 +28,7 @@ import {
   type RuleModel,
 } from '@/lib/recurrence'
 import { describeRRule } from '@/lib/rrule'
+import { isFormDate, unreadableNote } from '@/lib/unreadable'
 
 export interface RecurrenceDialogProps {
   open: boolean
@@ -132,7 +133,9 @@ function RecurrenceForm({
   const [endKind, setEndKind] = useState(initial.end.kind)
   const [countText, setCountText] = useState(String(initial.end.kind === 'count' ? initial.end.count : 10))
   const [count, setCount] = useState(initial.end.kind === 'count' ? initial.end.count : 10)
-  const [until, setUntil] = useState(initial.end.kind === 'until' ? initial.end.date : dayKey(addMonths(start, 3)))
+  // The end date field keeps what is typed; the model keeps the last date it could read (FR-09).
+  const [untilText, setUntilText] = useState(initial.end.kind === 'until' ? initial.end.date : dayKey(addMonths(start, 3)))
+  const [until, setUntil] = useState(untilText)
 
   // The yearly editor offers one day of the chosen month.
   const yearDay = Math.min(days.find((d) => d > 0) ?? start.getDate(), monthLength(month))
@@ -149,8 +152,10 @@ function RecurrenceForm({
 
   const intervalInvalid = toCount(intervalText) === null
   const countInvalid = endKind === 'count' && toCount(countText) === null
+  // What to type where the end date field holds text it couldn't read, before whether the date comes too early.
+  const untilUnread = endKind === 'until' ? unreadableNote(t, prefs, now, [{ date: untilText }]) : undefined
   const untilBeforeNext = endKind === 'until' && next !== undefined && until < dayKey(next)
-  const untilInvalid = (endKind === 'until' && until < dayKey(start)) || untilBeforeNext
+  const untilInvalid = !!untilUnread || (endKind === 'until' && until < dayKey(start)) || untilBeforeNext
 
   const weekOrder = Array.from({ length: 7 }, (_, i) => (prefs.weekStartsOn + i) % 7)
   // 2023-01-01 was a Sunday.
@@ -401,9 +406,10 @@ function RecurrenceForm({
               id={`${id}-until-date`}
               labelledBy={`${id}-until-label`}
               label={t('recurrence.editor.endDate')}
-              value={until}
+              value={untilText}
               onChange={(d) => {
-                setUntil(d)
+                setUntilText(d)
+                if (isFormDate(d)) setUntil(d)
                 setEndKind('until')
               }}
               prefs={prefs}
@@ -415,9 +421,10 @@ function RecurrenceForm({
           </div>
           {untilInvalid && (
             <p id={`${id}-until-error`} role="alert" className="ml-7 text-sm text-destructive">
-              {untilBeforeNext
-                ? t('recurrence.editor.untilBeforeNext', { next: formatPickerDate(next, prefs, now) })
-                : t('recurrence.editor.untilBeforeStart')}
+              {untilUnread ??
+                (untilBeforeNext
+                  ? t('recurrence.editor.untilBeforeNext', { next: formatPickerDate(next, prefs, now) })
+                  : t('recurrence.editor.untilBeforeStart'))}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">

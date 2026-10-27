@@ -119,9 +119,14 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
   const titleError = errorOf('title')
   // An end or due before the start, said once the form was sent.
   const orderError = errorOf('endDate', 'startDate', 'dueDate')
-  // What to type where a shown time couldn't be read, said at once, not only once the form was sent (FR-09).
+  // What to type where a shown date or time couldn't be read, said at once, not only once the form was sent
+  // (FR-09); a date first, as the field couldn't read it, else a time, else the order of the dates.
+  const shownDates = kind === 'event' ? [event.startDate, event.endDate] : [task.startDate, task.dueDate]
   const shownTimes = kind === 'event' ? (event.allDay ? [] : [event.startTime, event.endTime]) : [task.startTime, task.dueTime]
-  const whenError = unreadableNote(t, prefs, now, shownTimes.map((time) => ({ time }))) ?? orderError
+  const dateNote = unreadableNote(t, prefs, now, shownDates.map((date) => ({ date })))
+  const timeNote = unreadableNote(t, prefs, now, shownTimes.map((time) => ({ time })))
+  const whenError = dateNote ?? timeNote ?? orderError
+  const whenAbout = dateNote ? 'date' : timeNote ? 'time' : 'order'
 
   const switchTo = (next: CreateKind) => {
     const switched = switchDraft({ ...begun, event, task }, next)
@@ -238,8 +243,7 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
                 prefs={prefs}
                 now={now}
                 timeZone={tz}
-                invalid={!!orderError}
-                describedBy={whenError ? `${id}-when-error` : undefined}
+                error={whenError ? { id: `${id}-when-error`, about: whenAbout } : undefined}
               />
             </div>
             {whenError && (

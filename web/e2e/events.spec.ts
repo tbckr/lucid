@@ -245,11 +245,11 @@ test('dragging the draft of the create popover changes the times it creates', as
   // is inert for Playwright's actions, so the drags use the mouse.
   await page.locator('button[aria-label$=" 1:00 PM"]').first().click({ position: { x: 20, y: 4 } })
   const dialog = page.getByRole('dialog', { name: 'New event' })
-  const startDate = dialog.getByRole('button', { name: /^Start / })
+  const startDate = dialog.getByRole('combobox', { name: 'Start', exact: true })
   const startTime = dialog.getByRole('combobox', { name: 'Start time' })
   const endTime = dialog.getByRole('combobox', { name: 'End time' })
   await expect(endTime).toHaveValue('1:30 PM')
-  const firstDay = (await startDate.textContent())!
+  const firstDay = await startDate.inputValue()
   const draft = page.locator('[data-draft]')
 
   // Down one hour (48 px), as an event moves.
@@ -272,7 +272,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   x += box.width + 8
   await page.mouse.move(x, box.y + 10, { steps: 4 })
   await page.mouse.up()
-  await expect(startDate).not.toHaveText(firstDay)
+  await expect(startDate).not.toHaveValue(firstDay)
   await expect(startTime).toHaveValue('2:00 PM')
   await expect.poll(async () => (await draft.boundingBox())!.x).toBeGreaterThan(box.x + box.width / 2)
   await expect.poll(async () => (await dialog.boundingBox())!.x).toBeGreaterThan(popover.x + box.width / 2)
@@ -751,4 +751,31 @@ test('create an event with a custom repeat', async ({ page }) => {
   const details = page.getByRole('dialog', { name: title })
   await expect(details).toContainText(sentence)
   await expect(details).not.toContainText('FREQ')
+})
+
+// FR-09, NFR-27: a commit that puts a note into the editor, or takes one out, happens while the focus is on its way
+// to the next field; it still gets there, rather than the dialog keeping it and Tab starting over at its top.
+test('Tab moves on from a date or time the field could not read, and from its correction', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  const start = dialog.getByRole('combobox', { name: 'Start', exact: true })
+  const startTime = dialog.getByRole('combobox', { name: 'Start time' })
+  await start.click()
+  await page.keyboard.type('13/45')
+  await page.keyboard.press('Tab')
+  await expect(startTime).toBeFocused()
+  await expect(dialog.getByText(/^Enter a date like/)).toBeVisible()
+  await page.keyboard.press('Shift+Tab')
+  await expect(start).toBeFocused()
+  await page.keyboard.type('11/2')
+  await page.keyboard.press('Tab')
+  await expect(startTime).toBeFocused()
+  await expect(dialog.getByText(/^Enter a date like/)).toHaveCount(0)
+  await page.keyboard.type('9:4x')
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByRole('combobox', { name: 'End', exact: true })).toBeFocused()
+  // Escape closes the editor: no month or list on its way out is left to take it.
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
 })

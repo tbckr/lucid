@@ -123,10 +123,20 @@ export function switchDraft(draft: Draft, to: CreateKind): Draft {
     : { ...draft, event: eventFromTask(draft.task, draft.event) }
 }
 
-/** Move a task to `date` and `time`: a single date directly, a span keeping its length. */
-export function shiftTask(task: TaskWhen, date: string, time: string): TaskWhen {
+/**
+ * Move a task to `date` and `time`: a single date directly, a span keeping its
+ * length. The length is measured from `from`, the last start that could be
+ * read (FR-09): a start corrected after text its field couldn't read keeps the
+ * span it had before; while the start can't be read, the due stays.
+ */
+export function shiftTask(
+  task: TaskWhen,
+  date: string,
+  time: string,
+  from: { date: string; time: string } = { date: task.startDate, time: task.startTime },
+): TaskWhen {
   if (task.startDate && task.dueDate) {
-    const span = { allDay: task.startTime === '', startDate: task.startDate, startTime: task.startTime, endDate: task.dueDate, endTime: task.dueTime }
+    const span = { allDay: from.time === '', startDate: from.date, startTime: from.time, endDate: task.dueDate, endTime: task.dueTime }
     const end = shiftEnd(span, date, time)
     return { startDate: date, startTime: time, dueDate: end.endDate, dueTime: end.endTime }
   }

@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { DateField } from '@/components/events/DateField'
 import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
 import { TimeField } from '@/components/events/TimeField'
+import { useReadableStart } from '@/components/events/useTypedField'
 import { skippedTime } from '@/lib/dates'
 import { shiftEnd } from '@/lib/eventForm'
 import { type FormatPrefs } from '@/lib/format'
 import { shiftTask, type CreateKind, type EventWhen, type TaskWhen } from '@/lib/quickCreate'
-import { isFormTime } from '@/lib/unreadable'
+import { isFormDate, isFormTime } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 
 /** A time summer time skips, and the one it is saved as, with the id of its note. */
@@ -18,13 +19,24 @@ interface Note {
 }
 
 /**
+ * The line below the sentence that says what is wrong with it (FR-09): what to
+ * type where a date or a time field holds text it couldn't read, else an error
+ * of the order of the end or due, with the id it describes the fields by.
+ */
+export interface WhenError {
+  id: string
+  about: 'date' | 'time' | 'order'
+}
+
+/**
  * When the new entry happens, as the sentence the details popover shows
  * ("Wed, Sep 30 10:15 AM – 11:15 AM", "Due Wed, Sep 30 10:15 AM"), each part a
- * quiet field on the tint. Moving the start keeps the length (FR-09, FR-16).
- * A time summer time skips on its date is said below, with the time it is
- * saved as, in `timeZone` (#10, FR-18). `invalid` and `describedBy` name an
- * error of the end or due said below the line, which also describes a time
- * the field couldn't read (FR-09).
+ * quiet field on the tint. Moving the start keeps the length, also across a
+ * start that couldn't be read for a while (FR-09, FR-16). A time summer time
+ * skips on its date is said below, with the time it is saved as, in
+ * `timeZone` (#10, FR-18). `error` is the line said below: a field is marked
+ * and described by it only where it is about that field, its unreadable text
+ * or, for the end or due, the order.
  */
 export function QuickWhen({
   kind,
@@ -35,8 +47,7 @@ export function QuickWhen({
   prefs,
   now,
   timeZone,
-  invalid,
-  describedBy,
+  error,
 }: {
   kind: CreateKind
   event: EventWhen
@@ -46,8 +57,7 @@ export function QuickWhen({
   prefs: FormatPrefs
   now: Date
   timeZone: string
-  invalid?: boolean
-  describedBy?: string | undefined
+  error?: WhenError | undefined
 }) {
   const { t } = useTranslation()
   const id = useId()
@@ -65,9 +75,29 @@ export function QuickWhen({
     const saved = skippedTime(date, time, timeZone)
     return saved ? { id: `${id}-${which}-skipped`, time, saved } : null
   }
-  // The line below that says what to type describes a time its field couldn't read too (FR-09).
-  const timeNotes = (time: string, note: Note | null) =>
-    [time !== '' && !isFormTime(time) && describedBy, note?.id].filter(Boolean).join(' ') || undefined
+  // The start the length is kept from: the last one that could be read (FR-09).
+  const eventStart = useReadableStart(
+    event.startDate,
+    event.startTime,
+    isFormDate(event.startDate) && (event.allDay || isFormTime(event.startTime)),
+  )
+  const taskStart = useReadableStart(
+    task.startDate,
+    task.startTime,
+    isFormDate(task.startDate) && (task.startTime === '' || isFormTime(task.startTime)),
+  )
+  // The end or due fields an error of the order marks.
+  const invalid = error?.about === 'order'
+  // The line below describes a field where it is about that field: its text it couldn't read, or the
+  // order of the end or due (`marked`) (FR-09).
+  const about = (part: 'date' | 'time', text: string, marked: boolean) =>
+    error &&
+    ((error.about === part && text !== '' && !(part === 'date' ? isFormDate(text) : isFormTime(text))) || (marked && invalid))
+      ? error.id
+      : undefined
+  const dateNotes = (date: string, marked: boolean) => about('date', date, marked)
+  const timeNotes = (time: string, note: Note | null, marked: boolean) =>
+    [about('time', time, marked), note?.id].filter(Boolean).join(' ') || undefined
   const withNotes = (when: ReactNode, ...notes: (Note | null)[]) => (
     <>
       {when}
@@ -81,7 +111,8 @@ export function QuickWhen({
 
   if (kind === 'event') {
     const moveStart = (date: string, time: string) => {
-      onEvent({ ...event, startDate: date, startTime: time, ...shiftEnd(event, date, time) })
+      const from = { ...event, startDate: eventStart.date, startTime: eventStart.time }
+      onEvent({ ...event, startDate: date, startTime: time, ...shiftEnd(from, date, time) })
     }
     const start = event.allDay ? null : skipped('start', event.startDate, event.startTime)
     const end = event.allDay ? null : skipped('end', event.endDate, event.endTime)
@@ -97,6 +128,7 @@ export function QuickWhen({
           }}
           prefs={prefs}
           now={now}
+          describedBy={dateNotes(event.startDate, false)}
           tone={tint}
         />
         {event.allDay ? (
@@ -110,7 +142,7 @@ export function QuickWhen({
                 moveStart(event.startDate, v)
               }}
               prefs={prefs}
-              describedBy={timeNotes(event.startTime, start)}
+              describedBy={timeNotes(event.startTime, start, false)}
               aria-label={t('event.startTime')}
               tone={tint}
             />
@@ -127,7 +159,7 @@ export function QuickWhen({
                 prefs={prefs}
                 now={now}
                 invalid={invalid}
-                describedBy={describedBy}
+                describedBy={dateNotes(event.endDate, true)}
                 tone={tint}
               />
             )}
@@ -138,7 +170,7 @@ export function QuickWhen({
               }}
               prefs={prefs}
               invalid={invalid}
-              describedBy={timeNotes(event.endTime, end)}
+              describedBy={timeNotes(event.endTime, end, true)}
               aria-label={t('event.endTime')}
               tone={tint}
             />
@@ -168,10 +200,11 @@ export function QuickWhen({
           label={t('tasks.start')}
           value={task.startDate}
           onChange={(d) => {
-            onTask(shiftTask(task, d, task.startTime))
+            onTask(shiftTask(task, d, task.startTime, taskStart))
           }}
           prefs={prefs}
           now={now}
+          describedBy={dateNotes(task.startDate, false)}
           tone={tint}
         />
         <span className={cn(range, shown.due && 'flex-wrap')}>
@@ -179,10 +212,10 @@ export function QuickWhen({
             <TimeField
               value={task.startTime}
               onChange={(v) => {
-                onTask(shiftTask(task, task.startDate, v))
+                onTask(shiftTask(task, task.startDate, v, taskStart))
               }}
               prefs={prefs}
-              describedBy={timeNotes(task.startTime, start)}
+              describedBy={timeNotes(task.startTime, start, false)}
               aria-label={t('tasks.startTime')}
               tone={tint}
             />
@@ -200,7 +233,7 @@ export function QuickWhen({
               prefs={prefs}
               now={now}
               invalid={invalid}
-              describedBy={describedBy}
+              describedBy={dateNotes(task.dueDate, true)}
               tone={tint}
             />
           )}
@@ -212,7 +245,7 @@ export function QuickWhen({
               }}
               prefs={prefs}
               invalid={invalid}
-              describedBy={timeNotes(task.dueTime, due)}
+              describedBy={timeNotes(task.dueTime, due, true)}
               aria-label={t('tasks.dueTime')}
               tone={tint}
             />
@@ -251,7 +284,7 @@ export function QuickWhen({
         prefs={prefs}
         now={now}
         invalid={invalid}
-        describedBy={describedBy}
+        describedBy={dateNotes(date, true)}
         tone={tint}
       />
       <TimeField
@@ -262,7 +295,7 @@ export function QuickWhen({
         none={t('tasks.noTime')}
         placeholder={t('tasks.addTime')}
         prefs={prefs}
-        describedBy={timeNotes(time, note)}
+        describedBy={timeNotes(time, note, false)}
         aria-label={which === 'due' ? t('tasks.dueTime') : t('tasks.startTime')}
         tone={tint}
       />

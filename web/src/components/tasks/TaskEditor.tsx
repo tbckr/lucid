@@ -23,6 +23,7 @@ import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
 import { TimeField } from '@/components/events/TimeField'
+import { useReadableStart } from '@/components/events/useTypedField'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { Button } from '@/components/ui/button'
@@ -86,7 +87,7 @@ import {
   priorityValue,
   type PriorityLevel,
 } from '@/lib/tasks'
-import { isFormTime, unreadableNote } from '@/lib/unreadable'
+import { isFormDate, isFormTime, unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
@@ -220,9 +221,10 @@ export function TaskEditor({
     name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence', 'customRule'],
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
-  // A time field holding text it couldn't read (FR-09): the form can't be saved, and nothing is read
-  // from it until it can.
-  const readable = [startTime, dueTime].every((time) => time === '' || isFormTime(time))
+  // A date or time field holding text it couldn't read (FR-09): the form can't be saved, and nothing is
+  // read from it until it can.
+  const readableDate = (date: string, time: string) => (date === '' || isFormDate(date)) && (time === '' || isFormTime(time))
+  const readable = readableDate(startDate, startTime) && readableDate(dueDate, dueTime)
   // Overdue as the task list will show it once saved (FR-14).
   const entered = readable
     ? formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz, undefined, openedDates)
@@ -234,8 +236,11 @@ export function TaskEditor({
   const ruleUnsupported = todo?.ruleUnsupported ?? false
   // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
   const recursOn = todo?.recurring && shownTaskRule(todo, tz) === null ? taskRuleClock(todo) : null
-  // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it.
-  const anchorDay = startDate ? dayAt(startDate, startTime) : dueDate ? dayAt(dueDate, dueTime) : now
+  // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it, from the
+  // last one that could be read while its field holds text it couldn't (FR-09).
+  const [anchorDate, anchorTime] = startDate ? [startDate, startTime] : [dueDate, dueTime]
+  const anchor = useReadableStart(anchorDate, anchorTime, readableDate(anchorDate, anchorTime))
+  const anchorDay = anchor.date ? dayAt(anchor.date, anchor.time) : now
   // The series' rule as it opened recurs from the repeat's place in the rule instead, as far from there as the
   // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override
   // moved it; a changed rule starts over at the dates entered (FR-17), as does one for a series of dates.
@@ -472,13 +477,17 @@ export function TaskEditor({
   const dateRow = (which: Which) => {
     const { date, time } = values[which]
     const other = values[DATES[which].other].date
-    const error = msg(formState.errors[DATES[which].date]?.message)
-    // What to type where the time can't be read, at once, not only after Save (FR-09).
-    const unread = date ? unreadableNote(t, prefs, now, [{ time }]) : undefined
+    // What to type where the date or the time can't be read, at once, not only after Save (FR-09): about the
+    // date where that can't be read, else about the time, and describing that field alone.
+    const unread = date ? unreadableNote(t, prefs, now, [{ date, time }]) : undefined
+    const unreadOn = unread && (isFormDate(date) ? 'time' : 'date')
+    // An error of the dates, such as a start after the due; a date the field couldn't read is said by its note.
+    const raw = formState.errors[DATES[which].date]?.message
+    const error = raw === 'validation.date' ? undefined : msg(raw)
     // Why the series can't follow the dates: a limit, not an error, so said muted, with the field unmarked (FR-17).
     const refusal =
       !error && refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined
-    const note = unread ?? error ?? refusal
+    const note = error ?? refusal
     // A time summer time skips on its date, and the one it is saved as (#10, FR-18).
     const saved = time ? skippedTime(date, time, tz) : null
     // The label keeps its own column, so on narrow screens the time wraps below the date.
@@ -503,11 +512,14 @@ export function TaskEditor({
               },
             }}
             placeholder={readOnly || ruleUnsupported ? t('tasks.noDate') : t('tasks.addDate')}
-            month={other ? parseDayKey(other) : undefined}
+            month={isFormDate(other) ? parseDayKey(other) : undefined}
             prefs={prefs}
             now={now}
             invalid={!!error}
-            describedBy={note ? `${id}-${which}-error` : undefined}
+            describedBy={
+              [unreadOn === 'date' && `${id}-${which}-unread`, note && `${id}-${which}-error`].filter(Boolean).join(' ') ||
+              undefined
+            }
           />
           {date && (
             <TimeField
@@ -519,17 +531,23 @@ export function TaskEditor({
               placeholder={t('tasks.addTime')}
               prefs={prefs}
               invalid={!!error}
-              describedBy={[unread && `${id}-${which}-error`, saved && `${id}-${which}-skipped`].filter(Boolean).join(' ') || undefined}
+              describedBy={
+                [unreadOn === 'time' && `${id}-${which}-unread`, error && `${id}-${which}-error`, saved && `${id}-${which}-skipped`]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
               aria-label={t(`tasks.${which}Time`)}
             />
           )}
           {which === 'due' && overdue && <span className="text-sm font-medium text-destructive">{t('tasks.overdue')}</span>}
         </div>
+        {unread && (
+          <p id={`${id}-${which}-unread`} className="col-start-2 text-sm text-destructive">
+            {unread}
+          </p>
+        )}
         {note && (
-          <p
-            id={`${id}-${which}-error`}
-            className={cn('col-start-2 text-sm', unread || error ? 'text-destructive' : 'text-muted-foreground')}
-          >
+          <p id={`${id}-${which}-error`} className={cn('col-start-2 text-sm', error ? 'text-destructive' : 'text-muted-foreground')}>
             {note}
           </p>
         )}

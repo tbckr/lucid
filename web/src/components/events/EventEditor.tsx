@@ -58,13 +58,14 @@ import {
   type ScopeNotes,
   type ScopeResult,
 } from '@/lib/scope'
-import { unreadableNote } from '@/lib/unreadable'
+import { isFormDate, isFormTime, unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
 import { SkippedTimeNote } from './SkippedTimeNote'
 import { TimeField } from './TimeField'
+import { useReadableStart } from './useTypedField'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
 export function EventEditor({
@@ -175,10 +176,13 @@ function EditorForm({
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
   const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
+  // The start as far as it can be read: while its field holds text it couldn't read, the last one that
+  // could, which the end keeps its length from (FR-09).
+  const readStart = useReadableStart(startDate, startTime, isFormDate(startDate) && (allDay || isFormTime(startTime)))
   // Where the repeat recurs from, with its time: a rule's hours repeat at its minute (FR-17). For an
   // occurrence its place in the rule, as far from there as the form moves it, where a save moves the
   // series (`eventRuleStart`), not where an exception moved it; else the start as the form shows it.
-  const entered = allDay ? parseDayKey(startDate) : dayAt(startDate, startTime)
+  const entered = allDay ? parseDayKey(readStart.date) : dayAt(readStart.date, readStart.time)
   // A time summer time skips on its date, and the one it is saved as, said under its row (#10, FR-18).
   const startSaved = allDay ? null : skippedTime(startDate, startTime, tz)
   const endSaved = allDay ? null : skippedTime(endDate, endTime, tz)
@@ -212,8 +216,9 @@ function EditorForm({
     openTaskEditor({ mode: 'create', switched: true, draft: switchDraft(draft, 'task') })
   }
 
+  // Moving the start keeps the length, from the last start that could be read (FR-09).
   const onStartChange = (date: string, time: string) => {
-    const next = shiftEnd(getValues(), date, time)
+    const next = shiftEnd({ ...getValues(), startDate: readStart.date, startTime: readStart.time }, date, time)
     setValue('startDate', date, { shouldDirty: true })
     setValue('startTime', time, { shouldDirty: true })
     setValue('endDate', next.endDate, { shouldDirty: true, shouldValidate: formState.isSubmitted })
@@ -336,10 +341,13 @@ function EditorForm({
     )
   }
 
-  // What to type where a time field holds text it couldn't read, said below its row at once, not
-  // only after Save (FR-09). A time All day hides isn't asked for.
-  const startNote = allDay ? undefined : unreadableNote(t, prefs, now, [{ time: startTime }])
-  const endNote = allDay ? undefined : unreadableNote(t, prefs, now, [{ time: endTime }])
+  // What to type where a date or time field holds text it couldn't read, said below its row at once,
+  // not only after Save (FR-09). A time All day hides isn't asked for. The note is about the date where
+  // that can't be read, else about the time, and describes that field alone.
+  const shown = (date: string, time: string) => (allDay ? [{ date }] : [{ date, time }])
+  const startNote = unreadableNote(t, prefs, now, shown(startDate, startTime))
+  const endNote = unreadableNote(t, prefs, now, shown(endDate, endTime))
+  const noteOn = (date: string) => (isFormDate(date) ? 'time' : 'date')
 
   // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
   // with the form: the watched fields above re-render the editor whenever the answer can change.
@@ -352,9 +360,9 @@ function EditorForm({
       : null
 
   const titleError = err('title')
-  // An end before the start, which is only judged once both times can be read.
-  const endOrder = err('endDate')
-  const endError = endNote ?? endOrder
+  // An end before the start, which is only judged once every date and time can be read; an end date the
+  // field couldn't read is said by its note.
+  const endOrder = formState.errors.endDate?.message === 'validation.endBeforeStart' ? err('endDate') : undefined
   // For a series, saving only moves the time zone while the rule or the all-day flag changes
   // too (spec §4); until then, both "Only this event" and "All events" keep the series' own
   // zone, so the notice would be misleading.
@@ -450,7 +458,7 @@ function EditorForm({
                 }}
                 prefs={prefs}
                 now={now}
-                describedBy={startNote ? `${id}-start-error` : undefined}
+                describedBy={startNote && noteOn(startDate) === 'date' ? `${id}-start-error` : undefined}
               />
               {!allDay && (
                 <TimeField
@@ -459,7 +467,10 @@ function EditorForm({
                     onStartChange(getValues('startDate'), v)
                   }}
                   prefs={prefs}
-                  describedBy={described(startNote && `${id}-start-error`, startSaved && `${id}-start-skipped`)}
+                  describedBy={described(
+                    startNote && noteOn(startDate) === 'time' && `${id}-start-error`,
+                    startSaved && `${id}-start-skipped`,
+                  )}
                   aria-label={t('event.startTime')}
                 />
               )}
@@ -491,12 +502,14 @@ function EditorForm({
                     labelledBy={`${id}-ends`}
                     label={t('event.endDate')}
                     value={field.value}
-                    onChange={field.onChange}
+                    onChange={(d) => {
+                      field.onChange(d)
+                    }}
                     prefs={prefs}
                     now={now}
                     quiet={field.value === startDate}
                     invalid={!!endOrder}
-                    describedBy={endOrder ? `${id}-end-error` : undefined}
+                    describedBy={described(endNote && noteOn(field.value) === 'date' && `${id}-end-error`, endOrder && `${id}-end-order`)}
                   />
                 )}
               />
@@ -512,7 +525,11 @@ function EditorForm({
                       }}
                       prefs={prefs}
                       invalid={!!endOrder}
-                      describedBy={described(endError && `${id}-end-error`, endSaved && `${id}-end-skipped`)}
+                      describedBy={described(
+                        endNote && noteOn(endDate) === 'time' && `${id}-end-error`,
+                        endOrder && `${id}-end-order`,
+                        endSaved && `${id}-end-skipped`,
+                      )}
                       aria-label={t('event.endTime')}
                     />
                   )}
@@ -531,9 +548,14 @@ function EditorForm({
                 className="text-muted-foreground"
               />
             )}
-            {endError && (
+            {endNote && (
               <p id={`${id}-end-error`} className="text-sm text-destructive">
-                {endError}
+                {endNote}
+              </p>
+            )}
+            {endOrder && (
+              <p id={`${id}-end-order`} className="text-sm text-destructive">
+                {endOrder}
               </p>
             )}
             <div className="flex items-center gap-2 pt-1">

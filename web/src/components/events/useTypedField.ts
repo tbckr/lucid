@@ -3,11 +3,31 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type FocusEvent,
   type InputHTMLAttributes,
   type KeyboardEvent,
   type MouseEvent,
   type RefObject,
 } from 'react'
+
+// The one move of the focus `followFocus` waits to check: the document has one focus, and a later move replaces
+// an earlier one still waiting, which would otherwise take the focus back.
+let following: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Sends the focus on to `next`, where it was going when the field was left, if the commit took it elsewhere
+ * (NFR-27). A commit that takes a node out of a Radix dialog or modal popover, such as a note that no longer
+ * applies, does so while the focus is on its way, on the body: the dialog's focus trap then keeps the focus
+ * itself, and the next Tab would start over at its top.
+ */
+function followFocus(next: EventTarget | null) {
+  clearTimeout(following)
+  if (!(next instanceof HTMLElement)) return
+  following = setTimeout(() => {
+    const at = document.activeElement
+    if (at !== next && next.isConnected && at instanceof HTMLElement && at.contains(next)) next.focus()
+  })
+}
 
 /** How a typed field's value was committed: Enter, a pick in its popover, or leaving the field (FR-09). */
 export type CommitVia = 'enter' | 'pick' | 'blur'
@@ -60,6 +80,11 @@ export function useTypedField(o: {
   restore: () => void
   /** Writes `text` into the field as if typed, without opening the popover: an entry the arrow keys reach. */
   setText: (text: string) => void
+  /**
+   * Leaves the field for `next`, as a blur of the input does: for a popover the focus can go into (the date
+   * field's month).
+   */
+  leave: (next: EventTarget | null) => void
   inputProps: InputHTMLAttributes<HTMLInputElement> & { ref: RefObject<HTMLInputElement | null> }
 } {
   const { value, canonical, restText, editText, read, optional, onChange } = o
@@ -108,6 +133,13 @@ export function useTypedField(o: {
     selectAll.current = true
   }
 
+  const leave = (next: EventTarget | null) => {
+    commit('blur')
+    setFocused(false)
+    setDraft(null)
+    followFocus(next)
+  }
+
   const inputProps = {
     ref,
     type: 'text',
@@ -120,10 +152,8 @@ export function useTypedField(o: {
       setDraft(null)
       selectAll.current = true
     },
-    onBlur: () => {
-      commit('blur')
-      setFocused(false)
-      setDraft(null)
+    onBlur: (e: FocusEvent<HTMLInputElement>) => {
+      leave(e.relatedTarget)
     },
     onChange: (e: ChangeEvent<HTMLInputElement>) => {
       setDraft({ text: e.target.value, edited: true })
@@ -170,6 +200,20 @@ export function useTypedField(o: {
     setText: (next: string) => {
       setDraft({ text: next, edited: true })
     },
+    leave,
     inputProps,
   }
+}
+
+/**
+ * The last start, date and time, that could be read (FR-09): the start itself
+ * while `readable`, else the one before its field took text it couldn't read.
+ * A start corrected after such text moves the end from there, so the entry
+ * keeps its length across the unreadable step; while the start can't be read,
+ * the end stays.
+ */
+export function useReadableStart(date: string, time: string, readable: boolean): { date: string; time: string } {
+  const [last, setLast] = useState({ date, time })
+  if (readable && (last.date !== date || last.time !== time)) setLast({ date, time })
+  return readable ? { date, time } : last
 }

@@ -1,22 +1,36 @@
-import { format } from 'date-fns'
 import { ChevronDownIcon, XIcon } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { MiniMonth } from '@/components/layout/MiniMonth'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { parseDayKey } from '@/lib/dates'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { dayKey, parseDayKey } from '@/lib/dates'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
+import { formatTypedDate, readDate } from '@/lib/typedDate'
+import { isFormDate } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { onTint } from './EditorRow'
-
-const dateRe = /^\d{4}-\d{2}-\d{2}$/
+import { useTypedField, type CommitVia } from './useTypedField'
 
 /**
- * Date input of the event and task editors: a button with the date in the
- * user's format ("Wed, Mar 11") that opens a month to pick from. The button is
- * named by `labelledBy` plus its own text, e.g. "Start Wed, Mar 11". Without a
- * value it reads as `placeholder`, as quiet as the other optional fields; with
- * `onClear`, the month offers to remove the date.
+ * Date field of the editors, the create popover and the repeat editor
+ * (FR-09): the date in the user's format at rest ("Wed, Mar 11"), its numbers
+ * while focused ("3/11/2026"), typed and read on Enter or when left
+ * (`readDate`, numbers only), or picked from the month below it. The month
+ * follows the typing: a readable date shows there, marked, before it is
+ * committed. Parts left out come from the date in the field, else from the
+ * month the picker opens on (`month`), else from today.
+ *
+ * Without a value it reads as `placeholder`, as quiet as the other optional
+ * fields. With `onClear` the date can be left out: emptying the text clears
+ * it, and the month offers to remove it. Text it can't read goes up as typed
+ * through `onChange` and marks the field; a day `isDisabled` refuses is read
+ * all the same, for the form to say why.
+ *
+ * A combobox with a dialog popup (NFR-27), named by its row (`labelledBy`):
+ * ArrowDown moves into the month on the typed or chosen day, Escape there
+ * returns to the text; Escape restores the last value and closes the month,
+ * not the dialog around it.
  */
 export function DateField({
   id,
@@ -37,9 +51,9 @@ export function DateField({
   footer,
 }: {
   id: string
-  /** "yyyy-MM-dd". */
+  /** "yyyy-MM-dd", "", or text the field couldn't read. */
   value: string
-  onChange: (value: string) => void
+  onChange: (value: string, via: CommitVia) => void
   /** Name of the month popover, e.g. "Start date". */
   label: string
   labelledBy: string
@@ -51,9 +65,9 @@ export function DateField({
   describedBy?: string | undefined
   /** Text without a value, e.g. "Add a date". */
   placeholder?: string
-  /** Month the picker opens on without a value; defaults to `now`. */
+  /** Month the picker opens on without a value, and where a typed date takes the parts left out; defaults to `now`. */
   month?: Date | undefined
-  /** Removes the date; shown below the month as `onClear.label`. */
+  /** Removes the date, also when the text is emptied; shown below the month as `onClear.label`. */
   onClear?: { label: string; clear: () => void } | undefined
   /** On a calendar's tint: reads as text until hovered or focused. */
   tone?: 'tint'
@@ -62,56 +76,187 @@ export function DateField({
   /** Extra content below the month, e.g. a note on what picking a day does; passed through to `MiniMonth`. */
   footer?: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const day = dateRe.test(value) ? parseDayKey(value) : null
+  const day = isFormDate(value) ? parseDayKey(value) : null
+  const field = useTypedField({
+    value,
+    canonical: isFormDate,
+    restText: (v) => formatPickerDate(parseDayKey(v), prefs, now),
+    editText: (v) => formatTypedDate(parseDayKey(v), prefs),
+    read: (text) => readDate(text, { prefs, base: day ?? month ?? now }),
+    optional: onClear !== undefined,
+    onChange: (v, via) => {
+      if (v === '') onClear?.clear()
+      else onChange(v, via)
+    },
+  })
+  const { inputProps, preview } = field
+  const input = inputProps.ref
+  const anchor = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  // ArrowDown opened the month to move into it.
+  const intoMonth = useRef(false)
+  // The width at rest, kept while typing, so the field doesn't shrink to the shorter numbers.
+  const [restWidth, setRestWidth] = useState<number | null>(null)
+  const open = field.open
+  const tint = tone === 'tint'
+  const empty = value === ''
+  const popupId = `${id}-month`
+
+  // The day the month shows and marks: what a commit would take now, else the date in the field, else the month
+  // it opens on. One Date per day, as the month starts over on every new one.
+  const shown = preview !== null && preview !== '' ? preview : day ? value : dayKey(month ?? now)
+  const shownDay = useMemo(() => parseDayKey(shown), [shown])
+
+  const inMonth = (node: EventTarget | null) => node instanceof Node && content.current?.contains(node) === true
+  const focusDay = () => content.current?.querySelector<HTMLElement>('[data-day][tabindex="0"]')?.focus()
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && !e.nativeEvent.isComposing) {
+      // Into the month, on the typed or chosen day; with Alt too (NFR-27).
+      e.preventDefault()
+      if (open) {
+        focusDay()
+      } else {
+        intoMonth.current = true
+        field.setOpen(true)
+      }
+      return
+    }
+    // Tab leaves the field, for the next one in the form, not for the month the page holds after it.
+    if (e.key === 'Tab' && open) {
+      flushSync(() => {
+        field.setOpen(false)
+      })
+    }
+    inputProps.onKeyDown?.(e)
+  }
+
+  // A pick from the month, or its removal: the focus goes back to the text, which shows what was taken.
+  const pick = (next: string) => {
+    input.current?.focus()
+    field.commit('pick', next)
+  }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          id={id}
-          aria-labelledby={`${labelledBy} ${id}`}
-          aria-describedby={describedBy}
-          className={cn(
-            'tabular flex h-9 items-center gap-2 rounded-md border border-input bg-surface px-3 text-sm whitespace-nowrap transition-[color,box-shadow] outline-none hover:bg-muted/60 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40',
-            quiet && 'text-muted-foreground',
-            !day && 'border-transparent bg-transparent text-muted-foreground hover:border-input hover:bg-transparent',
-            // A button cannot be aria-invalid; the message it describes carries the error.
-            invalid && 'border-destructive',
-            tone === 'tint' && onTint,
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        field.setOpen(next)
+      }}
+    >
+      <PopoverAnchor asChild>
+        <div ref={anchor} className="relative inline-flex">
+          <input
+            {...inputProps}
+            id={id}
+            role="combobox"
+            inputMode="numeric"
+            aria-labelledby={labelledBy}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            aria-controls={open ? popupId : undefined}
+            aria-invalid={field.unreadable || invalid ? true : undefined}
+            aria-describedby={describedBy}
+            placeholder={placeholder}
+            // As wide as its text: by `field-sizing` where the browser has it, else by `size`.
+            size={Math.max(field.text === '' ? (placeholder ?? '').length : field.text.length, 1)}
+            style={restWidth !== null ? { minWidth: restWidth } : undefined}
+            onFocus={(e) => {
+              // Back from the month: the text stays as it was.
+              if (inMonth(e.relatedTarget)) {
+                e.currentTarget.select()
+                return
+              }
+              setRestWidth(e.currentTarget.offsetWidth)
+              inputProps.onFocus?.(e)
+            }}
+            onBlur={(e) => {
+              // Into the month: the field isn't left.
+              if (inMonth(e.relatedTarget)) return
+              setRestWidth(null)
+              inputProps.onBlur?.(e)
+            }}
+            onKeyDown={onKeyDown}
+            className={cn(
+              'tabular field-sizing-content h-9 min-w-0 rounded-md border border-input bg-surface px-3 text-sm transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
+              'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25',
+              'disabled:cursor-not-allowed disabled:opacity-50',
+              quiet && !field.focused && 'text-muted-foreground',
+              !tint && !empty && 'pr-8',
+              empty && 'border-transparent bg-transparent hover:border-input',
+              tint && [onTint, 'placeholder:text-current/75'],
+            )}
+          />
+          {!tint && !empty && (
+            // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
+            // takes the keyboard (ArrowDown opens).
+            <span
+              aria-hidden
+              className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground"
+              onMouseDown={(e) => {
+                e.preventDefault()
+              }}
+              onClick={() => {
+                if (input.current?.matches(':disabled')) return
+                input.current?.focus()
+                field.setOpen(true)
+              }}
+            >
+              <ChevronDownIcon className="size-4 opacity-60" />
+            </span>
           )}
-        >
-          {day ? formatPickerDate(day, prefs, now) : (placeholder ?? value)}
-          {day && tone !== 'tint' && <ChevronDownIcon className="size-4 opacity-60" aria-hidden />}
-        </button>
-      </PopoverTrigger>
+        </div>
+      </PopoverAnchor>
       <PopoverContent
-        ref={contentRef}
-        align="start"
-        className="w-64 p-2"
+        ref={content}
+        id={popupId}
         aria-label={label}
+        align="start"
+        // Gone at once on a commit, so the next Escape or field doesn't meet a month still fading out.
+        className="w-64 p-2 data-[state=closed]:animate-none!"
         onOpenAutoFocus={(e) => {
-          // Start on the chosen day, not on the month buttons.
+          // The focus stays in the text, unless ArrowDown opened the month to move into it.
           e.preventDefault()
-          contentRef.current?.querySelector<HTMLElement>('[data-day][tabindex="0"]')?.focus()
+          if (intoMonth.current) focusDay()
+          intoMonth.current = false
+        }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+        }}
+        onInteractOutside={(e) => {
+          // A click into the text keeps the month open.
+          if (e.target instanceof Node && anchor.current?.contains(e.target)) e.preventDefault()
+        }}
+        onEscapeKeyDown={() => {
+          // Only the month's layer takes this Escape: the dialog around stays (NFR-27). From the month, the
+          // focus goes back to the text.
+          if (inMonth(document.activeElement)) input.current?.focus()
+          field.restore()
+        }}
+        onMouseDown={(e) => {
+          // A press in the month keeps the focus where it is, so the text isn't left for it.
+          e.preventDefault()
+        }}
+        onBlur={(e) => {
+          // The focus left the month, and not for the text: the field is left.
+          if (inMonth(e.relatedTarget) || e.relatedTarget === input.current) return
+          setRestWidth(null)
+          field.leave(e.relatedTarget)
         }}
       >
         <MiniMonth
-          date={day ?? month ?? now}
+          date={shownDay}
           now={now}
           range={null}
           prefs={prefs}
           emphasis="selected"
           onSelect={(d) => {
-            onChange(format(d, 'yyyy-MM-dd'))
-            setOpen(false)
+            pick(dayKey(d))
           }}
           isDisabled={isDisabled}
           footer={footer}
         />
-        {onClear && day && (
+        {onClear && !empty && (
           <div className="mt-2 border-t pt-2">
             <Button
               type="button"
@@ -119,8 +264,7 @@ export function DateField({
               size="sm"
               className="w-full justify-start text-muted-foreground"
               onClick={() => {
-                onClear.clear()
-                setOpen(false)
+                pick('')
               }}
             >
               <XIcon aria-hidden />

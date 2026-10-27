@@ -98,6 +98,41 @@ describe('RecurrenceDialog', () => {
     expect(onDone).toHaveBeenCalledWith('FREQ=WEEKLY;COUNT=4')
   })
 
+  it('says what to type for an unreadable end date', async () => {
+    // Only the date, as the example in the message is today's: the start, here.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(start)
+    try {
+      const { dialog, onDone, user } = open('FREQ=WEEKLY')
+      const until = within(dialog).getByRole('combobox', { name: 'On' })
+      await user.click(until)
+      await user.keyboard('13/45')
+      await user.tab()
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Enter a date like 3/11/2026.')
+      expect(until).toHaveAttribute('aria-invalid', 'true')
+      expect(until).toHaveAccessibleDescription('Enter a date like 3/11/2026.')
+      // Typing a date chooses the end by date; the rule stays as it was until the date can be read.
+      expect(within(dialog).getByRole('radio', { name: 'On' })).toBeChecked()
+      expect(within(dialog).getByRole('button', { name: 'Done' })).toBeDisabled()
+
+      await user.click(until)
+      await user.keyboard('4/1{Enter}')
+      expect(within(dialog).queryByRole('alert')).toBeNull()
+      await user.click(within(dialog).getByRole('button', { name: 'Done' }))
+      expect(onDone).toHaveBeenCalledWith('FREQ=WEEKLY;UNTIL=20260401')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('takes a typed end date before the start, and says why it refuses it', async () => {
+    const { dialog, user } = open('FREQ=WEEKLY')
+    await user.click(within(dialog).getByRole('combobox', { name: 'On' }))
+    await user.keyboard('3/1/2026{Enter}')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('The end date is before the start.')
+    expect(within(dialog).getByRole('button', { name: 'Done' })).toBeDisabled()
+  })
+
   it('refuses an end before the start', () => {
     const { dialog } = open('FREQ=WEEKLY;UNTIL=20260301')
     expect(within(dialog).getByText('The end date is before the start.')).toBeInTheDocument()
