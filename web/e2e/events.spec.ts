@@ -786,6 +786,39 @@ test('typing a start time and date in the editor saves them', async ({ page }) =
   await expect(block).toHaveAccessibleName(`${title}, 9:40 AM – 10:10 AM`)
 })
 
+/**
+ * Open the editor of a new event on Friday, October 2, 2026, starting at 11:00 AM: the page's clock is fixed at
+ * 10:30 AM in Berlin, the time zone of the config. "10/2/2026", the date's numbers, is wider than "Fri, Oct 2".
+ */
+async function newEventOnOctober2(page: Page): Promise<Locator> {
+  await page.clock.setFixedTime(new Date('2026-10-02T08:30:00Z'))
+  await login(page)
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'New event' })
+  await expect(dialog.getByRole('combobox', { name: 'Start', exact: true })).toHaveValue('Fri, Oct 2')
+  await expect(dialog.getByRole('combobox', { name: 'Start time' })).toHaveValue('11:00 AM')
+  await dialog.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  return dialog
+}
+
+// FR-09: the date field is as wide at rest as its numbers are while focused, and keeps that width for text it can't
+// read, so the time beside it stays where it is.
+test("a date field moves nothing beside it as it takes the focus or text it can't read", async ({ page }) => {
+  const dialog = await newEventOnOctober2(page)
+  const start = dialog.getByRole('combobox', { name: 'Start', exact: true })
+  const startTime = dialog.getByRole('combobox', { name: 'Start time' })
+  const left = async () => (await startTime.boundingBox())!.x
+  const atRest = await left()
+
+  await start.click()
+  await expect(start).toHaveValue('10/2/2026')
+  expect(await left()).toBe(atRest)
+  await page.keyboard.type('13/45')
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByText(/^Enter a date like/)).toBeVisible()
+  expect(await left()).toBe(atRest)
+})
+
 // FR-09, NFR-27: a commit that puts a note into the editor, or takes one out, happens while the focus is on its way
 // to the next field; it still gets there, rather than the dialog keeping it and Tab starting over at its top.
 test('Tab moves on from a date or time the field could not read, and from its correction', async ({ page }) => {

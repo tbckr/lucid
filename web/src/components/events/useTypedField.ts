@@ -59,7 +59,9 @@ interface Draft {
  * A click or tap opens the popover, typing and ArrowDown too; focus by Tab
  * doesn't (NFR-27). `preview` is what a commit would take now (`''` for an
  * optional field emptied), `null` while the text can't be read: the popover
- * follows it before anything is committed.
+ * follows it before anything is committed. `lastRead` is the last value the
+ * field could read (`''` before there was one), which it keeps to while its
+ * text can't be read, such as for its width.
  */
 export function useTypedField(o: {
   value: string
@@ -76,6 +78,7 @@ export function useTypedField(o: {
   setOpen: (open: boolean) => void
   preview: string | null
   unreadable: boolean
+  lastRead: string
   commit: (via: CommitVia, value?: string) => void
   restore: () => void
   /** Writes `text` into the field as if typed, without opening the popover: an entry the arrow keys reach. */
@@ -92,6 +95,8 @@ export function useTypedField(o: {
   const [focused, setFocused] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [open, setOpen] = useState(false)
+  const [lastRead, setLastRead] = useState(canonical(value) ? value : '')
+  if (canonical(value) && value !== lastRead) setLastRead(value)
   // Select all once the text the render shows is in the input.
   const selectAll = useRef(false)
   // A press that focuses the field: its release selects all, as browsers place the caret there.
@@ -195,6 +200,7 @@ export function useTypedField(o: {
     setOpen,
     preview,
     unreadable,
+    lastRead,
     commit,
     restore,
     setText: (next: string) => {

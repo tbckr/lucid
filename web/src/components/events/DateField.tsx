@@ -1,5 +1,5 @@
 import { ChevronDownIcon, XIcon } from 'lucide-react'
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { MiniMonth } from '@/components/layout/MiniMonth'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { formatPickerDate, type FormatPrefs } from '@/lib/format'
 import { formatTypedDate, readDate } from '@/lib/typedDate'
 import { isFormDate } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { onTint } from './EditorRow'
+import { FieldSizer, onTint } from './EditorRow'
 import { useTypedField, type CommitVia } from './useTypedField'
 
 /**
@@ -95,12 +95,22 @@ export function DateField({
   const content = useRef<HTMLDivElement>(null)
   // ArrowDown opened the month to move into it.
   const intoMonth = useRef(false)
-  // The width at rest, kept while typing, so the field doesn't shrink to the shorter numbers.
-  const [restWidth, setRestWidth] = useState<number | null>(null)
   const open = field.open
   const tint = tone === 'tint'
   const empty = value === ''
   const popupId = `${id}-month`
+  // What the width of the text depends on, also for the texts it is at least as wide as.
+  const metrics = cn('tabular border-x px-3 text-sm', !tint && !empty && 'pr-8', tint && 'px-1.5 text-base font-medium')
+  // At least as wide as the last date the field could read, as it shows at rest, so neither shorter numbers typed nor
+  // text it can't read move what follows it; in the editors also as wide as that date's numbers, so the focus doesn't
+  // either. On the tint the numbers may widen it: their room, held at rest, would part the sentence. While empty, at
+  // least as wide as its placeholder, which the first digits typed replace (FR-09).
+  const lastDay = field.lastRead === '' ? null : parseDayKey(field.lastRead)
+  const sizes = empty
+    ? [placeholder ?? '']
+    : lastDay
+      ? [formatPickerDate(lastDay, prefs, now), ...(tint ? [] : [formatTypedDate(lastDay, prefs)])]
+      : []
 
   // The day the month shows and marks: what a commit would take now, else the date in the field, else the month
   // it opens on. One Date per day, as the month starts over on every new one.
@@ -145,7 +155,7 @@ export function DateField({
       }}
     >
       <PopoverAnchor asChild>
-        <div ref={anchor} className="relative inline-flex">
+        <div ref={anchor} className="relative inline-flex flex-col">
           <input
             {...inputProps}
             id={id}
@@ -158,35 +168,34 @@ export function DateField({
             aria-invalid={field.unreadable || invalid ? true : undefined}
             aria-describedby={describedBy}
             placeholder={placeholder}
-            // As wide as its text: by `field-sizing` where the browser has it, else by `size`.
+            // As wide as its text, or as its `sizes` where they are wider: by `field-sizing` where the browser has it,
+            // else by `size`.
             size={Math.max(field.text === '' ? (placeholder ?? '').length : field.text.length, 1)}
-            style={restWidth !== null ? { minWidth: restWidth } : undefined}
             onFocus={(e) => {
               // Back from the month: the text stays as it was.
               if (inMonth(e.relatedTarget)) {
                 e.currentTarget.select()
                 return
               }
-              setRestWidth(e.currentTarget.offsetWidth)
               inputProps.onFocus?.(e)
             }}
             onBlur={(e) => {
               // Into the month: the field isn't left.
               if (inMonth(e.relatedTarget)) return
-              setRestWidth(null)
               inputProps.onBlur?.(e)
             }}
             onKeyDown={onKeyDown}
             className={cn(
-              'tabular field-sizing-content h-9 min-w-0 rounded-md border border-input bg-surface px-3 text-sm transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
+              metrics,
+              'field-sizing-content h-9 min-w-0 rounded-md border-y border-input bg-surface transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
               'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25',
               'disabled:cursor-not-allowed disabled:opacity-50',
               quiet && !field.focused && 'text-muted-foreground',
-              !tint && !empty && 'pr-8',
               empty && 'border-transparent bg-transparent hover:border-input',
               tint && [onTint, 'placeholder:text-current/75'],
             )}
           />
+          <FieldSizer texts={sizes} className={metrics} />
           {!tint && !empty && (
             // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
             // takes the keyboard (ArrowDown opens).
@@ -240,7 +249,6 @@ export function DateField({
         onBlur={(e) => {
           // The focus left the month, and not for the text: the field is left.
           if (inMonth(e.relatedTarget) || e.relatedTarget === input.current) return
-          setRestWidth(null)
           field.leave(e.relatedTarget)
         }}
       >

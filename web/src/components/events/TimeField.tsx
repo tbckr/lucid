@@ -7,7 +7,7 @@ import { formatClock, type FormatPrefs } from '@/lib/format'
 import { readTime } from '@/lib/typedTime'
 import { isFormTime } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { onTint } from './EditorRow'
+import { FieldSizer, onTint } from './EditorRow'
 import { useTypedField, type CommitVia } from './useTypedField'
 
 const OPTIONS = timeOptions(STEP_MINUTES)
@@ -87,11 +87,15 @@ export function TimeField({
   const list = useRef<HTMLDivElement>(null)
   // The arrow keys moved the highlight, which `aria-activedescendant` then names; typing hands it back to the text.
   const [moved, setMoved] = useState(false)
-  // The width at rest on the tint, kept while typing, so the line doesn't jump.
-  const [restWidth, setRestWidth] = useState<number | null>(null)
   const open = field.open && !disabled
   const tint = tone === 'tint'
   const empty = value === '' && none !== undefined
+  // What the width of the text depends on, also for the texts it is at least as wide as.
+  const metrics = cn('tabular border-x px-3 text-sm', !tint && !empty && 'pr-8', tint && 'px-1.5 text-base font-medium')
+  // On the tint, at least as wide as the last time it could read, so neither a shorter time typed nor text it can't
+  // read moves the rest of the line. While empty, at least as wide as its placeholder, which the first digits typed
+  // replace (FR-09).
+  const sizes = empty ? [placeholder ?? none] : tint && field.lastRead !== '' ? [clock(field.lastRead)] : []
 
   // The grid, with a saved or typed time off it in its sorted place.
   const times = useMemo(() => {
@@ -136,7 +140,7 @@ export function TimeField({
         <div
           ref={anchor}
           className={cn(
-            'relative inline-flex',
+            'relative inline-flex flex-col',
             !tint && !empty && (prefs.hourCycle === '12h' ? 'w-[7rem]' : 'w-[5.75rem]'),
           )}
         >
@@ -155,15 +159,10 @@ export function TimeField({
             aria-describedby={describedBy}
             placeholder={placeholder ?? none}
             disabled={disabled}
-            // On the tint and while empty, as wide as its text: by `field-sizing` where the browser has it, else by `size`.
+            // On the tint and while empty, as wide as its text, or as its `sizes` where they are wider: by
+            // `field-sizing` where the browser has it, else by `size`.
             size={tint || empty ? Math.max(field.text.length, (placeholder ?? none ?? '').length, 1) : undefined}
-            style={tint && restWidth !== null ? { minWidth: restWidth } : undefined}
-            onFocus={(e) => {
-              if (tint) setRestWidth(e.currentTarget.offsetWidth)
-              inputProps.onFocus?.(e)
-            }}
             onBlur={(e) => {
-              setRestWidth(null)
               setMoved(false)
               inputProps.onBlur?.(e)
             }}
@@ -173,15 +172,16 @@ export function TimeField({
             }}
             onKeyDown={onKeyDown}
             className={cn(
-              'tabular h-9 w-full min-w-0 rounded-md border border-input bg-surface px-3 text-sm transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
+              metrics,
+              'h-9 w-full min-w-0 rounded-md border-y border-input bg-surface transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
               'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25',
               'disabled:cursor-not-allowed disabled:opacity-50',
-              !tint && !empty && 'pr-8',
               (tint || empty) && 'field-sizing-content',
               empty && 'border-transparent bg-transparent hover:border-input',
               tint && [onTint, 'placeholder:text-current/75'],
             )}
           />
+          <FieldSizer texts={sizes} className={metrics} />
           {!tint && !empty && (
             // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
             // takes the keyboard (ArrowDown opens).

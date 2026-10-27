@@ -60,6 +60,32 @@ test('checklist items are shown and editable', async ({ page }) => {
   await expect(dialog).toBeHidden()
 })
 
+// FR-09: an empty date or time field is as wide as its placeholder, also once the first digits typed replace it.
+test('an empty date or time field keeps its width as typing starts', async ({ page }) => {
+  await login(page)
+  // A due date without a time, and no start.
+  await page.getByRole('button', { name: 'Edit task: Buy milk' }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit task' })
+  await editor.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+  for (const [name, typed] of [
+    ['Start', '3'],
+    ['Due time', '9'],
+  ] as const) {
+    const field = editor.getByRole('combobox', { name, exact: true })
+    await expect(field).toHaveValue('')
+    const width = (await field.boundingBox())!.width
+    await field.click()
+    await page.keyboard.type(typed)
+    await expect(field).toHaveValue(typed)
+    expect((await field.boundingBox())!.width).toBe(width)
+    // Back to empty, the editor stays open.
+    await page.keyboard.press('Escape')
+    await expect(field).toHaveValue('')
+  }
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(editor).toBeHidden()
+})
+
 test('rename a task and move its due date in the list', async ({ page }) => {
   // Tomorrow is then a Saturday, which shows the task in its cell.
   await quietFriday(page)
