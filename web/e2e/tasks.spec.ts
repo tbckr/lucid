@@ -218,6 +218,37 @@ test('create a task from a click in the day view', async ({ page }) => {
   await expect(taskList(page)).toContainText(title)
 })
 
+// FR-09: the time list is a layer of its own above the modal popover, and takes the mouse there.
+test('a time typed or picked in the create popover', async ({ page }) => {
+  const title = `E2E typed due ${Date.now()}`
+  const popover = await newTaskAt(page, '2:00 PM')
+  await popover.getByPlaceholder('Add a title').fill(title)
+  const dueTime = popover.getByRole('combobox', { name: 'Due time' })
+
+  // Typed: Enter takes it, and doesn't create the task yet.
+  await dueTime.click()
+  await page.keyboard.type('4:10 PM')
+  await page.keyboard.press('Enter')
+  await expect(dueTime).toHaveValue('4:10 PM')
+  await expect(popover).toBeVisible()
+
+  // Picked: the list opens on the typed time, in its place among the half hours. The page outside the
+  // popover is inert for Playwright's actions, so the pick uses the mouse.
+  await dueTime.click()
+  const list = page.getByRole('listbox', { name: 'Due time' })
+  await expect(list.getByRole('option', { name: '4:10 PM', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const option = list.getByRole('option', { name: '5:30 PM', exact: true })
+  await option.scrollIntoViewIfNeeded()
+  const box = (await option.boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(dueTime).toHaveValue('5:30 PM')
+  await expect(list).toBeHidden()
+
+  await popover.getByRole('button', { name: 'Create task' }).click()
+  await expect(popover).toBeHidden()
+  await expect(page.getByRole('main').locator('[data-task-key]', { hasText: title })).toContainText('5:30 PM')
+})
+
 test('dragging a task in the day view moves its due time', async ({ page }) => {
   const title = `E2E drag task ${Date.now()}`
   // 1 PM keeps the pointer away from the edges, where dnd-kit auto-scrolls.

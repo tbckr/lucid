@@ -753,6 +753,39 @@ test('create an event with a custom repeat', async ({ page }) => {
   await expect(details).not.toContainText('FREQ')
 })
 
+// FR-09: a time is read to the minute, a date from its numbers in the order of the user's language.
+test('typing a start time and date in the editor saves them', async ({ page }) => {
+  const title = `E2E typed ${Date.now()}`
+  // In the morning, so "9:40" without AM or PM stays in the morning half of the day, as the start it replaces.
+  const block = await createAt(page, '10:00 AM', title)
+  const tomorrow = await page.evaluate(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toLocaleDateString('en-US')
+  })
+
+  await block.click()
+  await page.getByRole('dialog', { name: title }).getByRole('button', { name: 'Edit event' }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit event' })
+  const startTime = editor.getByRole('combobox', { name: 'Start time' })
+  await startTime.click()
+  await page.keyboard.type('9:40')
+  // Enter takes the time and leaves the editor open; the end keeps the event's length.
+  await page.keyboard.press('Enter')
+  await expect(startTime).toHaveValue('9:40 AM')
+  await expect(editor.getByRole('combobox', { name: 'End time' })).toHaveValue('10:10 AM')
+  // Leaving the date for Save takes it too.
+  await editor.getByRole('combobox', { name: 'Start', exact: true }).click()
+  await page.keyboard.type(tomorrow)
+  await editor.getByRole('button', { name: 'Save' }).click()
+  await expect(editor).toBeHidden()
+  await expect(block).toHaveCount(0)
+
+  // Tomorrow, at the typed minute. Half an hour is too short a block to show its end; its name has it.
+  await page.getByRole('button', { name: 'Next period' }).click()
+  await expect(block).toHaveCount(1)
+  await expect(block).toHaveAccessibleName(`${title}, 9:40 AM – 10:10 AM`)
+})
+
 // FR-09, NFR-27: a commit that puts a note into the editor, or takes one out, happens while the focus is on its way
 // to the next field; it still gets there, rather than the dialog keeping it and Tab starting over at its top.
 test('Tab moves on from a date or time the field could not read, and from its correction', async ({ page }) => {
