@@ -97,6 +97,9 @@ export function DuePicker({
   // render.
   const pending = useRef<string | null>(null)
   const [typed, setTyped] = useState<string | null>(null)
+  // Whether the time field passed a commit up in the key press or click under way: on Enter or a pick of the
+  // value it has already, it passes none, and the time typed and not saved yet is saved then (FR-14).
+  const committed = useRef(false)
   // Where the focus goes once the question gives way to the month again (NFR-27).
   const back = useRef<HTMLElement | null>(null)
   const { dueDate, dueTime } = taskToForm(todo, tz)
@@ -329,7 +332,25 @@ export function DuePicker({
           </div>
           {dueDate && (
             <div className="mt-2 grid gap-1 border-t pt-2">
-              <div className="flex items-center gap-2 pl-2.5">
+              {/* Enter in the field or a pick in its list (React passes the click on out of the list's portal) on the
+                  time pending: the field passes nothing up for the value it has, so the row saves it, as a close
+                  would (FR-14). */}
+              {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- listens to the time field inside, which takes the keyboard itself (NFR-27) */}
+              <div
+                className="flex items-center gap-2 pl-2.5"
+                onKeyDownCapture={() => {
+                  committed.current = false
+                }}
+                onClickCapture={() => {
+                  committed.current = false
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && !committed.current) leave()
+                }}
+                onClick={(e) => {
+                  if (e.target instanceof Element && e.target.closest('[role="option"]') && !committed.current) leave()
+                }}
+              >
                 <ClockIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <TimeField
                   id={timeId}
@@ -338,6 +359,7 @@ export function DuePicker({
                     // Typed until saved (FR-14): Enter or a pick saves a time at once; left, it waits for a
                     // day, a shortcut, a removal or the close that follows; text the field can't read waits to
                     // be corrected. Typed back to the saved time, it has nothing to save.
+                    committed.current = true
                     const changed = value !== dueTime
                     hold(changed ? value : null)
                     if (via !== 'blur' && changed && (value === '' || isFormTime(value))) {

@@ -147,6 +147,44 @@ describe('DuePicker', () => {
     expect(dialog).not.toBeInTheDocument()
   })
 
+  it('saves a pending time on Enter after coming back to the field', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    await user.tab()
+    await user.tab({ shift: true })
+    expect(time).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(dialog).not.toBeInTheDocument()
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves a pending time when the same entry is picked', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    await user.tab()
+    expect(onChange).not.toHaveBeenCalled()
+    await user.click(time)
+    await user.click(screen.getByRole('option', { name: '18:40' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(dialog).not.toBeInTheDocument()
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+
   it('saves nothing for a time typed back to the saved one', async () => {
     useSettings.setState({ timeFormat: '24h' })
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
