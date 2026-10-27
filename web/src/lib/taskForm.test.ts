@@ -120,6 +120,43 @@ describe('taskForm', () => {
     })
   })
 
+  // A field passes text it couldn't read up as typed (FR-09): the form refuses that text, and reads nothing from it.
+  describe("text a field couldn't read", () => {
+    const issues = (schema: ReturnType<typeof buildTaskFormSchema>, x: unknown) =>
+      schema.safeParse(x).error?.issues.map((i) => [i.path.join('.'), i.message])
+    const v = taskToForm(todo(), TZ)
+
+    it.each([
+      ['due time', { dueTime: '8:4x' }, ['dueTime', 'validation.time']],
+      ['start time', { startTime: '9:4x', dueTime: '' }, ['startTime', 'validation.time']],
+      ['due date', { dueDate: '10/4' }, ['dueDate', 'validation.date']],
+      ['start date', { startDate: '2026-10-6', startTime: '', dueTime: '' }, ['startDate', 'validation.date']],
+    ])('refuses an unreadable %s as such, not as out of order', (_, typed, want) => {
+      // Start and due on Monday, 5 October 2026, at 9:00 or all day: in order, until a field holds text it couldn't
+      // read, which reads as out of order as a time (midnight) or a date (by its characters).
+      const x = { ...v, startDate: '2026-10-05', startTime: '09:00', dueDate: '2026-10-05', dueTime: '09:00', ...typed }
+      expect(issues(taskFormSchema, x)).toEqual([want])
+    })
+
+    it.each([
+      [
+        'time of a series',
+        todo({ due: '2026-10-05T07:00:00Z', rrule: 'FREQ=WEEKLY', recurring: true, recurrenceId: '2026-10-05T07:00:00Z' }),
+        { dueTime: '9:4x' },
+        ['dueTime', 'validation.time'],
+      ],
+      [
+        'date of a task with a zone of its own',
+        todo({ due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' }),
+        { dueDate: '11/4x' },
+        ['dueDate', 'validation.date'],
+      ],
+    ])('refuses an unreadable %s given a new repeat as such, without writing the rule', (_, original, typed, want) => {
+      const x = { ...taskToForm(original, TZ), recurrence: 'daily' as const, ...typed }
+      expect(issues(buildTaskFormSchema({ original, timeZone: TZ }), x)).toEqual([want])
+    })
+  })
+
   describe('withDue', () => {
     it('moves a start after the new due date back to it at the times saved on the night summer time starts', () => {
       // 02:45 to 03:15 on the 28th, moved to the 29th: 02:45 is saved as 03:45, after 03:15.

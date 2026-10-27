@@ -284,6 +284,21 @@ describe('TaskEditor', () => {
       expect(dialog).toBeInTheDocument()
     })
 
+    it('says only what to type for an unreadable due time, not that the start comes after it', async () => {
+      const user = userEvent.setup()
+      // Start 9:00, due 10:00 on Friday, 13 March 2026, in Berlin.
+      const { fetch, dialog } = await openTask(todo({ start: '2026-03-13T08:00:00Z', due: '2026-03-13T09:00:00Z' }))
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(time)
+      await user.keyboard('8:4x')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+      expect(time).toHaveAccessibleDescription('Enter a time like 9:40 AM.')
+      expect(within(dialog).queryByText("The start can't be after the due date.")).toBeNull()
+      expect(within(dialog).getByRole('combobox', { name: 'Start' })).not.toHaveAttribute('aria-invalid')
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+    })
+
     it('keeps an order error on the fields it marks while a note below says what to type', async () => {
       const user = userEvent.setup()
       // Start 14:00, due 13:00 on Friday, 13 March 2026, in Berlin.
@@ -684,6 +699,34 @@ describe('TaskEditor', () => {
       await user.click(select)
       expect(screen.getByRole('option', { name: 'Every month on day 11' })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'Custom…' })).toBeNull()
+    })
+
+    // FR-09: a time the field couldn't read is said by its note alone; nothing is read from it, not even for the rule
+    // the new repeat writes, and the form stays as usable as before.
+    it('says only what to type for an unreadable time of a series given a new repeat, and saves once it reads', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(timed)
+      const repeat = within(dialog).getByRole('combobox', { name: 'Repeat' })
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(repeat)
+      await user.click(screen.getByRole('option', { name: 'Every day' }))
+      await user.click(time)
+      await user.keyboard('9:4x')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+
+      const note = 'Enter a time like 9:40 AM.'
+      expect(time).toHaveAccessibleDescription(note)
+      expect(repeat).toHaveAccessibleDescription('')
+      expect(within(dialog).getByRole('combobox', { name: 'Due' })).not.toHaveAttribute('aria-invalid')
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      expect(puts(fetch)).toHaveLength(0)
+
+      await user.click(time)
+      await user.keyboard('940')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const { body } = await wrote(fetch, 'PUT')
+      expect(body).toMatchObject({ due: '2026-10-05T07:40:00.000Z', dueAllDay: false, rrule: 'FREQ=DAILY' })
     })
 
     it('asks for a date before a task repeats', async () => {

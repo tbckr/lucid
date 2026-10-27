@@ -6,6 +6,7 @@ import { dayAt, dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zon
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { ruleInZone, taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
+import { isFormDate, isFormTime } from './unreadable'
 
 const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
 const optionalTime = z.union([z.literal(''), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'validation.time')])
@@ -41,6 +42,11 @@ const taskFormShape = {
 export function buildTaskFormSchema(edit?: { original: Todo; timeZone: string }) {
   const original = edit?.original
   return z.object(taskFormShape).superRefine((v, ctx) => {
+    // Text a date or time field couldn't read is refused as such, above (FR-09): nothing is read from it, neither
+    // the rule a changed repeat writes nor the order of the dates, until it can be.
+    const readable =
+      [v.startDate, v.dueDate].every((d) => d === '' || isFormDate(d)) &&
+      [v.startTime, v.dueTime].every((t) => t === '' || isFormTime(t))
     // A rule recurs from the start, else the due date (FR-17). Removing a rule needs
     // no date, so this only fires while a rule stays set, and only when the rule is
     // the one being set, or a dated series just lost both its dates: an untouched
@@ -50,7 +56,7 @@ export function buildTaskFormSchema(edit?: { original: Todo; timeZone: string })
     const changed = edit ? repeatChanged(v, edit.timeZone, edit.original) : v.recurrence !== 'none'
     if (v.recurrence !== 'none' && v.startDate === '' && v.dueDate === '' && (changed || clearedDatedSeries)) {
       ctx.addIssue({ code: 'custom', message: 'validation.repeatNeedsDate', path: ['recurrence'] })
-    } else if (edit && changed && writtenRule(v, edit.timeZone, edit.original) === null) {
+    } else if (edit && changed && readable && writtenRule(v, edit.timeZone, edit.original) === null) {
       ctx.addIssue({ code: 'custom', message: 'validation.repeatOtherZone', path: ['recurrence'] })
     }
     if (v.dueTime !== '' && v.dueDate === '') {
@@ -59,7 +65,7 @@ export function buildTaskFormSchema(edit?: { original: Todo; timeZone: string })
     if (v.startTime !== '' && v.startDate === '') {
       ctx.addIssue({ code: 'custom', message: 'validation.dateForTime', path: ['startDate'] })
     }
-    if (v.startDate === '' || v.dueDate === '') return
+    if (!readable || v.startDate === '' || v.dueDate === '') return
     // RFC 5545: DTSTART and DUE share a value type, and DUE is not before DTSTART (FR-16). Times
     // compare at the times saved, in the browser's zone, which the editors convert in: one summer
     // time skips counts where it is saved, an hour later (#10, FR-18).
