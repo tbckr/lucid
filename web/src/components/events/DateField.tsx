@@ -192,7 +192,7 @@ export function DateField({
             onKeyDown={onKeyDown}
             className={cn(
               metrics,
-              'field-sizing-content h-9 min-w-0 rounded-md border-y border-input bg-surface transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
+              'peer field-sizing-content h-9 min-w-0 rounded-md border-y border-input bg-surface transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
               'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 aria-invalid:border-destructive aria-invalid:ring-destructive/25',
               'disabled:cursor-not-allowed disabled:opacity-50',
               quiet && !field.focused && 'text-muted-foreground',
@@ -203,15 +203,15 @@ export function DateField({
           <FieldSizer texts={sizes} className={metrics} />
           {!tint && !empty && (
             // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
-            // takes the keyboard (ArrowDown opens).
+            // takes the keyboard (ArrowDown opens). Dimmed with the text while a fieldset around disables it: it opens
+            // nothing then (FR-17).
             <span
               aria-hidden
-              className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground"
+              className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
               onMouseDown={(e) => {
                 e.preventDefault()
               }}
               onClick={() => {
-                if (input.current?.matches(':disabled')) return
                 input.current?.focus()
                 field.setOpen(true)
               }}

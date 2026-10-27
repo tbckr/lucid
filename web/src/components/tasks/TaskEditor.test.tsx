@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -115,6 +115,9 @@ async function openConflicted(t: Todo, current: Todo | null) {
   renderWithProviders(<EditorDialog />)
   return { fetch, dialog: await screen.findByRole('dialog', { name: 'Edit task' }) }
 }
+
+/** The chevron beside a date or time field: a target of the mouse only, outside the accessibility tree. */
+const chevronOf = (field: HTMLElement) => field.parentElement!.querySelector('svg')!.parentElement!
 
 /** The `If-Match` of each write, in order. */
 function writtenEtags(fetch: { mock: { calls: [RequestInfo | URL, RequestInit?][] } }): string[] {
@@ -825,6 +828,28 @@ describe('TaskEditor', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
       expect(await saved(fetch)).toMatchObject({ rrule: '' })
+    })
+
+    // FR-17: a series whose rule Lucid can't read can only be kept or removed, not moved; a read-only list changes
+    // nothing. The fieldset that disables the dates disables the targets beside their texts too.
+    it.each([
+      ['a rule Lucid cannot read', { rrule: 'FREQ=SOMETIMES', ruleUnsupported: true, recurrenceId: null, next: null }, calendar()],
+      ['a read-only list', {}, calendar({ readOnly: true })],
+    ])('opens neither the month nor the time list from the chevrons of %s', async (_, own, list) => {
+      const { dialog } = await openTask({ ...timed, ...own }, list)
+      const date = within(dialog).getByRole('combobox', { name: 'Due' })
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      expect(time).toBeDisabled()
+
+      // A browser disables only the form controls in the fieldset; user-event takes the chevrons for disabled too.
+      fireEvent.click(chevronOf(time))
+      expect(screen.queryByRole('listbox')).toBeNull()
+      expect(time).toHaveAttribute('aria-expanded', 'false')
+      fireEvent.click(chevronOf(date))
+      expect(screen.queryByRole('dialog', { name: 'Due date' })).toBeNull()
+      expect(date).toHaveAttribute('aria-expanded', 'false')
+      expect(time).toHaveValue('9:00 AM')
+      expect(date).toHaveValue('Mon, Oct 5')
     })
 
     it('saves an unrelated edit on a dateless series without touching its rule', async () => {

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { de } from 'date-fns/locale/de'
 import { enUS } from 'date-fns/locale/en-US'
@@ -23,6 +23,9 @@ function setup(props: Props = {}) {
 }
 
 const options = () => within(screen.getByRole('listbox')).getAllByRole('option')
+
+/** The chevron beside `input`: a target of the mouse only, outside the accessibility tree. */
+const chevronOf = (input: HTMLElement) => input.parentElement!.querySelector('svg')!.parentElement!
 
 describe('TimeField (FR-09)', () => {
   it('commits a typed time on Enter', async () => {
@@ -210,6 +213,24 @@ describe('TimeField (FR-09)', () => {
     await user.keyboard('10{Enter}')
     expect(onChange).toHaveBeenCalledWith('10:00', 'enter')
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  // A form disables its date rows by a fieldset, which no prop of the field says (FR-17).
+  it('opens nothing from its chevron in a disabled fieldset', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <fieldset disabled>
+        <TimeField value="09:00" onChange={onChange} prefs={us} aria-label="Start time" />
+      </fieldset>,
+    )
+    const input = screen.getByRole('combobox', { name: 'Start time' })
+    // A browser disables only the form controls in the fieldset; user-event takes the chevron for disabled too.
+    fireEvent.click(chevronOf(input))
+    await user.click(input)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('is a combobox for the numeric keyboard', () => {

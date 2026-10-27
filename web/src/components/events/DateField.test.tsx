@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { enUS } from 'date-fns/locale/en-US'
 import { type ComponentProps } from 'react'
@@ -268,6 +268,25 @@ describe('DateField (FR-09)', () => {
     await user.keyboard('3/14{Enter}')
     expect(onChange).toHaveBeenCalledWith('2026-03-14', 'enter')
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  // A form disables its date rows by a fieldset, which no prop of the field says (FR-17).
+  it('opens nothing from its chevron in a disabled fieldset', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <fieldset disabled>
+        <span id="starts">Start</span>
+        <DateField id="start" labelledBy="starts" label="Start date" value="2026-03-13" onChange={onChange} prefs={us} now={now} />
+      </fieldset>,
+    )
+    const input = screen.getByRole('combobox', { name: 'Start' })
+    // A browser disables only the form controls in the fieldset; user-event takes the chevron for disabled too.
+    fireEvent.click(input.parentElement!.querySelector('svg')!.parentElement!)
+    await user.click(input)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('is a combobox for the numeric keyboard, named by its row and showing its value', () => {

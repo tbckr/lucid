@@ -75,6 +75,7 @@ export function useTypedField(o: {
   text: string
   focused: boolean
   open: boolean
+  /** Opens or closes the popover; it doesn't open while the field is disabled, by a prop or a fieldset around. */
   setOpen: (open: boolean) => void
   preview: string | null
   unreadable: boolean
@@ -114,6 +115,13 @@ export function useTypedField(o: {
     selectAll.current = false
     if (ref.current === document.activeElement) ref.current?.select()
   })
+
+  // A fieldset around the field can disable it, which no prop says: then nothing opens its popover, so nothing is
+  // picked there either, as on a series Lucid can only keep or remove (FR-17).
+  const openIf = (next: boolean) => {
+    if (next && ref.current?.matches(':disabled')) return
+    setOpen(next)
+  }
 
   const restore = () => {
     setOpen(false)
@@ -162,7 +170,7 @@ export function useTypedField(o: {
     },
     onChange: (e: ChangeEvent<HTMLInputElement>) => {
       setDraft({ text: e.target.value, edited: true })
-      setOpen(true)
+      openIf(true)
     },
     onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => {
       if (e.nativeEvent.isComposing) return
@@ -172,7 +180,7 @@ export function useTypedField(o: {
         commit('enter')
       } else if (e.key === 'ArrowDown' && !open) {
         e.preventDefault()
-        setOpen(true)
+        openIf(true)
       }
     },
     onMouseDown: (e: MouseEvent<HTMLInputElement>) => {
@@ -189,7 +197,7 @@ export function useTypedField(o: {
       }
     },
     onClick: () => {
-      setOpen(true)
+      openIf(true)
     },
   }
 
@@ -197,7 +205,7 @@ export function useTypedField(o: {
     text,
     focused,
     open,
-    setOpen,
+    setOpen: openIf,
     preview,
     unreadable,
     lastRead,
