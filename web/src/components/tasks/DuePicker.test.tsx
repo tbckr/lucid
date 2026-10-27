@@ -395,6 +395,75 @@ describe('DuePicker', () => {
       expect(dialog).not.toBeInTheDocument()
     })
 
+    it('keeps a typed time when the series question is cancelled', async () => {
+      useSettings.setState({ timeFormat: '24h' })
+      const { user, onChange, onScope, dialog } = await open(series)
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      const friday = within(dialog).getByRole('button', { name: 'Friday, October 9th, 2026' })
+      await user.click(time)
+      await user.keyboard('1840')
+      await user.click(friday)
+      // Asked already, a click outside leaves the question to its answer.
+      await user.click(document.body)
+      expect(within(dialog).getByRole('alertdialog', { name: question })).toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      expect(friday).toHaveFocus()
+      expect(time).toHaveValue('18:40')
+      await user.click(friday)
+      await user.keyboard('{Escape}')
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      expect(time).toHaveValue('18:40')
+      expect(onChange).not.toHaveBeenCalled()
+      expect(onScope).not.toHaveBeenCalled()
+
+      await user.click(friday)
+      await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
+      expect(onScope).toHaveBeenCalledTimes(1)
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ due: '2026-10-09T16:40:00.000Z', dueAllDay: false }))
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('keeps a time entered when its question is cancelled', async () => {
+      useSettings.setState({ timeFormat: '24h' })
+      const { user, onScope, dialog } = await open(series)
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(time)
+      await user.keyboard('1840{Enter}')
+      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(time).toHaveValue('18:40')
+      expect(onScope).not.toHaveBeenCalled()
+
+      // Asked again as the picker closes.
+      await user.click(document.body)
+      await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
+      expect(onScope).toHaveBeenCalledTimes(1)
+      // Monday, Oct 5, at 18:40 Berlin time.
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ due: '2026-10-05T16:40:00.000Z', dueAllDay: false }))
+    })
+
+    it("keeps a typed time when the series can't move there", async () => {
+      useSettings.setState({ timeFormat: '24h' })
+      const { user, onChange, onScope, dialog } = await open({ ...monthly, hasAttendees: true })
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(time)
+      await user.keyboard('1840')
+      await user.click(within(dialog).getByRole('button', { name: 'Friday, October 16th, 2026' }))
+      expect(within(dialog).getByText("Can't move. The series stays on its days.")).toBeInTheDocument()
+      expect(time).toHaveValue('18:40')
+      expect(onChange).not.toHaveBeenCalled()
+      expect(onScope).not.toHaveBeenCalled()
+
+      // On its own day, the time moves all repeats: saved as the picker closes.
+      await user.click(document.body)
+      expect(onScope).toHaveBeenCalledTimes(1)
+      // Thursday, Oct 15, at 18:40 Berlin time.
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ due: '2026-10-15T16:40:00.000Z', dueAllDay: false }))
+      expect(onChange).not.toHaveBeenCalled()
+      expect(dialog).not.toBeInTheDocument()
+    })
+
     // FR-17: an all-day series given a time writes it in the browser's zone, where the server then reads the move:
     // 08:00 on the 15th in Tokyo is still the 15th there, though 23:00 on the 14th in UTC.
     it('gives an all-day series a time on its day east of UTC, and names the zone', async () => {
