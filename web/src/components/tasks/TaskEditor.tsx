@@ -22,7 +22,7 @@ import { RepeatField } from '@/components/recurrence/RepeatField'
 import { DateField } from '@/components/events/DateField'
 import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
-import { TimeSelect } from '@/components/events/TimeSelect'
+import { TimeField } from '@/components/events/TimeField'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { Button } from '@/components/ui/button'
@@ -86,6 +86,7 @@ import {
   priorityValue,
   type PriorityLevel,
 } from '@/lib/tasks'
+import { isFormTime, unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
@@ -219,9 +220,14 @@ export function TaskEditor({
     name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence', 'customRule'],
   })
   const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
+  // A time field holding text it couldn't read (FR-09): the form can't be saved, and nothing is read
+  // from it until it can.
+  const readable = [startTime, dueTime].every((time) => time === '' || isFormTime(time))
   // Overdue as the task list will show it once saved (FR-14).
-  const entered = formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz, undefined, openedDates)
-  const overdue = isOverdue(entered, now)
+  const entered = readable
+    ? formToTodoInput({ ...getValues(), completed, startDate, startTime, dueDate, dueTime }, tz, undefined, openedDates)
+    : null
+  const overdue = entered !== null && isOverdue(entered, now)
   const setOpts = { shouldDirty: true, shouldValidate: formState.isSubmitted }
 
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
@@ -234,7 +240,7 @@ export function TaskEditor({
   // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override
   // moved it; a changed rule starts over at the dates entered (FR-17), as does one for a series of dates.
   const keptRule = buildRRule(opened.recurrence, opened.customRule)
-  const keptStart = repeat && keptRule ? taskRuleStart(repeat, entered) : null
+  const keptStart = repeat && keptRule && entered ? taskRuleStart(repeat, entered) : null
   const kept = keptStart ? { rule: keptRule, start: keptStart } : undefined
 
   useEffect(() => {
@@ -440,7 +446,7 @@ export function TaskEditor({
   // What Save reaches where there is no choice, said in the footer before it is pressed, or why the
   // series can't follow the dates, said under them (FR-17). Live with the form: the watched dates,
   // repeat and check re-render the editor whenever the answer can change.
-  const live = readOnly ? null : planSave(getValues())
+  const live = readOnly || !readable ? null : planSave(getValues())
   const hint =
     live && repeat ? taskScopeHint(t, live.result, live.action, live.input.rrule?.trim() === '', repeat.at) : null
   const refused = live?.result.options.length === 0 ? live.result.reason : undefined
@@ -467,10 +473,12 @@ export function TaskEditor({
     const { date, time } = values[which]
     const other = values[DATES[which].other].date
     const error = msg(formState.errors[DATES[which].date]?.message)
+    // What to type where the time can't be read, at once, not only after Save (FR-09).
+    const unread = date ? unreadableNote(t, prefs, now, [{ time }]) : undefined
     // Why the series can't follow the dates: a limit, not an error, so said muted, with the field unmarked (FR-17).
     const refusal =
       !error && refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined
-    const note = error ?? refusal
+    const note = unread ?? error ?? refusal
     // A time summer time skips on its date, and the one it is saved as (#10, FR-18).
     const saved = time ? skippedTime(date, time, tz) : null
     // The label keeps its own column, so on narrow screens the time wraps below the date.
@@ -502,7 +510,7 @@ export function TaskEditor({
             describedBy={note ? `${id}-${which}-error` : undefined}
           />
           {date && (
-            <TimeSelect
+            <TimeField
               value={time}
               onChange={(v) => {
                 setValue(DATES[which].time, v, setOpts)
@@ -511,7 +519,7 @@ export function TaskEditor({
               placeholder={t('tasks.addTime')}
               prefs={prefs}
               invalid={!!error}
-              describedBy={saved ? `${id}-${which}-skipped` : undefined}
+              describedBy={[unread && `${id}-${which}-error`, saved && `${id}-${which}-skipped`].filter(Boolean).join(' ') || undefined}
               aria-label={t(`tasks.${which}Time`)}
             />
           )}
@@ -520,7 +528,7 @@ export function TaskEditor({
         {note && (
           <p
             id={`${id}-${which}-error`}
-            className={cn('col-start-2 text-sm', error ? 'text-destructive' : 'text-muted-foreground')}
+            className={cn('col-start-2 text-sm', unread || error ? 'text-destructive' : 'text-muted-foreground')}
           >
             {note}
           </p>

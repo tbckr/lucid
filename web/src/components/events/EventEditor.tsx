@@ -58,12 +58,13 @@ import {
   type ScopeNotes,
   type ScopeResult,
 } from '@/lib/scope'
+import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
 import { SkippedTimeNote } from './SkippedTimeNote'
-import { TimeSelect } from './TimeSelect'
+import { TimeField } from './TimeField'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
 export function EventEditor({
@@ -335,17 +336,25 @@ function EditorForm({
     )
   }
 
+  // What to type where a time field holds text it couldn't read, said below its row at once, not
+  // only after Save (FR-09). A time All day hides isn't asked for.
+  const startNote = allDay ? undefined : unreadableNote(t, prefs, now, [{ time: startTime }])
+  const endNote = allDay ? undefined : unreadableNote(t, prefs, now, [{ time: endTime }])
+
   // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
   // with the form: the watched fields above re-render the editor whenever the answer can change.
-  // Only for an occurrence of a series, so a single event's values aren't read before they are
-  // validated.
+  // Only for an occurrence of a series, and while every field can be read, so a single event's
+  // values aren't read before they are validated.
   const formValues = getValues()
-  const hint = occurrence
-    ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, occurrence)), recurrence === 'none')
-    : null
+  const hint =
+    occurrence && !startNote && !endNote
+      ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, occurrence)), recurrence === 'none')
+      : null
 
   const titleError = err('title')
-  const endError = err('endDate')
+  // An end before the start, which is only judged once both times can be read.
+  const endOrder = err('endDate')
+  const endError = endNote ?? endOrder
   // For a series, saving only moves the time zone while the rule or the all-day flag changes
   // too (spec §4); until then, both "Only this event" and "All events" keep the series' own
   // zone, so the notice would be misleading.
@@ -441,19 +450,25 @@ function EditorForm({
                 }}
                 prefs={prefs}
                 now={now}
+                describedBy={startNote ? `${id}-start-error` : undefined}
               />
               {!allDay && (
-                <TimeSelect
+                <TimeField
                   value={startTime}
                   onChange={(v) => {
                     onStartChange(getValues('startDate'), v)
                   }}
                   prefs={prefs}
-                  describedBy={startSaved ? `${id}-start-skipped` : undefined}
+                  describedBy={described(startNote && `${id}-start-error`, startSaved && `${id}-start-skipped`)}
                   aria-label={t('event.startTime')}
                 />
               )}
             </div>
+            {startNote && (
+              <p id={`${id}-start-error`} className="text-sm text-destructive">
+                {startNote}
+              </p>
+            )}
             {startSaved && (
               <SkippedTimeNote
                 id={`${id}-start-skipped`}
@@ -480,8 +495,8 @@ function EditorForm({
                     prefs={prefs}
                     now={now}
                     quiet={field.value === startDate}
-                    invalid={!!endError}
-                    describedBy={endError ? `${id}-end-error` : undefined}
+                    invalid={!!endOrder}
+                    describedBy={endOrder ? `${id}-end-error` : undefined}
                   />
                 )}
               />
@@ -490,12 +505,14 @@ function EditorForm({
                   control={control}
                   name="endTime"
                   render={({ field }) => (
-                    <TimeSelect
+                    <TimeField
                       value={field.value}
-                      onChange={field.onChange}
+                      onChange={(v) => {
+                        field.onChange(v)
+                      }}
                       prefs={prefs}
-                      invalid={!!endError}
-                      describedBy={endSaved ? `${id}-end-skipped` : undefined}
+                      invalid={!!endOrder}
+                      describedBy={described(endError && `${id}-end-error`, endSaved && `${id}-end-skipped`)}
                       aria-label={t('event.endTime')}
                     />
                   )}
@@ -626,4 +643,9 @@ function EditorForm({
       </DialogFooter>
     </form>
   )
+}
+
+/** The ids of the notes that describe a field, or none. */
+function described(...ids: (string | false | null | undefined)[]): string | undefined {
+  return ids.filter(Boolean).join(' ') || undefined
 }

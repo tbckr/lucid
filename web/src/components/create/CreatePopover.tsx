@@ -26,6 +26,7 @@ import {
   type CreateWhen,
 } from '@/lib/quickCreate'
 import { formToTodoInput, taskFormSchema } from '@/lib/taskForm'
+import { unreadableNote } from '@/lib/unreadable'
 import { useSettings } from '@/stores/settings'
 import { useUi, type CreateState } from '@/stores/ui'
 import { KindSwitch } from './KindSwitch'
@@ -116,7 +117,11 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
     return m ? t(m as 'validation.date') : undefined
   }
   const titleError = errorOf('title')
-  const whenError = errorOf('endDate', 'startDate', 'dueDate')
+  // An end or due before the start, said once the form was sent.
+  const orderError = errorOf('endDate', 'startDate', 'dueDate')
+  // What to type where a shown time couldn't be read, said at once, not only once the form was sent (FR-09).
+  const shownTimes = kind === 'event' ? (event.allDay ? [] : [event.startTime, event.endTime]) : [task.startTime, task.dueTime]
+  const whenError = unreadableNote(t, prefs, now, shownTimes.map((time) => ({ time }))) ?? orderError
 
   const switchTo = (next: CreateKind) => {
     const switched = switchDraft({ ...begun, event, task }, next)
@@ -233,7 +238,7 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
                 prefs={prefs}
                 now={now}
                 timeZone={tz}
-                invalid={!!whenError}
+                invalid={!!orderError}
                 describedBy={whenError ? `${id}-when-error` : undefined}
               />
             </div>

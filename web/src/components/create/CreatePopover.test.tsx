@@ -151,7 +151,7 @@ describe('CreatePopover', () => {
     expect(dialog).toHaveAccessibleName('New task')
     expect(within(dialog).getByPlaceholderText('Add a title')).toHaveValue('Call')
     expect(within(dialog).getByText('Due')).toBeInTheDocument()
-    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('10:15 AM')
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('10:15 AM')
     expect(within(dialog).getByRole('combobox', { name: 'Task list' })).toHaveTextContent('Tasks')
 
     await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
@@ -223,12 +223,51 @@ describe('CreatePopover', () => {
     const origin = { ...click, start: new Date(2026, 2, 29, 1), end: new Date(2026, 2, 29, 3) }
     const { dialog } = await openPopover({ origin })
     await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
-    await user.click(option('2:30 AM'))
+    await user.keyboard('2:30{Enter}')
     const note = "Clocks go forward on this day: 2:30 AM doesn't exist and is saved as 3:30 AM."
     expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveAccessibleDescription(note)
 
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveAccessibleDescription(note)
+  })
+
+  it('says at once what to type for an unreadable time', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openPopover()
+    await user.keyboard('Review')
+    const end = within(dialog).getByRole('combobox', { name: 'End time' })
+    await user.click(end)
+    await user.keyboard('11:7')
+    await user.tab()
+    // Without a submit first.
+    const note = 'Enter a time like 9:40 AM.'
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(end).toHaveAttribute('aria-invalid', 'true')
+    expect(end).toHaveAccessibleDescription(note)
+    // The start time isn't the one in question.
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).not.toHaveAttribute('aria-invalid')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+
+    await user.click(end)
+    await user.keyboard('11:45{Enter}')
+    expect(within(dialog).queryByText(note)).toBeNull()
+  })
+
+  it('Escape in a time field restores it and keeps the popover open; a second one closes it', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openPopover()
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(start)
+    await user.keyboard('5')
+    await user.keyboard('{Escape}')
+    expect(start).toHaveValue('10:15 AM')
+    expect(start).toHaveFocus()
+    expect(useUi.getState().create).not.toBeNull()
+    await user.keyboard('{Escape}')
+    expect(useUi.getState().create).toBeNull()
   })
 
   it('hands the values to the event editor', async () => {
@@ -302,8 +341,8 @@ describe('CreatePopover', () => {
       )
     })
     expect(within(dialog).getByRole('button', { name: /^Start Thu, Oct 1/ })).toBeInTheDocument()
-    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('2:00 PM')
-    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveTextContent('3:30 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('2:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('3:30 PM')
     await waitFor(() => {
       expect(measured).toHaveBeenCalled()
     })
@@ -393,9 +432,9 @@ describe('CreatePopover', () => {
     }
     const { dialog } = await openPopover({ origin: month })
     await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
-    await user.click(option('2:00 PM'))
+    await user.keyboard('2pm{Enter}')
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
-    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('2:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('2:00 PM')
   })
   it('shows the end date of an event that runs past midnight, and keeps it while it is edited', async () => {
     const user = userEvent.setup()
@@ -416,11 +455,11 @@ describe('CreatePopover', () => {
     const { dialog } = await openPopover()
     await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
     await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
-    await user.click(option('4:00 PM'))
+    await user.keyboard('16{Enter}')
     // Back as an event: at the task's time, with the event's length.
     await user.click(within(dialog).getByRole('radio', { name: 'Event' }))
-    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('4:00 PM')
-    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveTextContent('5:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('4:00 PM')
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('5:00 PM')
   })
   it('renders once per keystroke of the title', async () => {
     const onRender = vi.fn<ProfilerOnRenderCallback>()

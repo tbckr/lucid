@@ -205,6 +205,36 @@ describe('TaskEditor', () => {
     expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T00:00:00.000Z', dueAllDay: true })
   })
 
+  it('says what to type for an unreadable due time', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+    const due = within(dialog).getByRole('combobox', { name: 'Due time' })
+    expect(due).toHaveValue('2:00 PM')
+
+    await user.click(due)
+    await user.keyboard('2:6')
+    await user.tab()
+    // At once, below the row, and the field says it is the one.
+    const note = 'Enter a time like 9:40 AM.'
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(due).toHaveValue('2:6')
+    expect(due).toHaveAttribute('aria-invalid', 'true')
+    expect(due).toHaveAccessibleDescription(note)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+    expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+
+    // A readable time takes the note away and saves.
+    await user.click(due)
+    await user.keyboard('1440')
+    await user.tab()
+    expect(within(dialog).queryByText(note)).toBeNull()
+    expect(due).not.toHaveAttribute('aria-invalid')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T13:40:00.000Z', dueAllDay: false })
+  })
+
   it('saves a checklist item that was typed but not yet added', async () => {
     const user = userEvent.setup()
     const { fetch, dialog } = await openTask(todo({ checklist: [{ text: '2 liters', done: false }] }))
@@ -933,7 +963,7 @@ describe('TaskEditor', () => {
           shown: { start: null, startAllDay: false, due: '2026-10-08T07:00:00Z', dueAllDay: false },
         }
         const { fetch, dialog } = await openTask(series, undefined, thursday)
-        expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveTextContent('9:00 AM')
+        expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('9:00 AM')
 
         await user.click(within(dialog).getByRole('radio', { name: 'High' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))

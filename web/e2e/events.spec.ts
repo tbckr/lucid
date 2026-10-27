@@ -153,8 +153,8 @@ test('dragging in the empty grid creates an event over the covered slots', async
 
   // The create popover opens over the dragged span.
   const dialog = page.getByRole('dialog', { name: 'New event' })
-  await expect(dialog.getByRole('combobox', { name: 'Start time' })).toHaveText('1:00 PM')
-  await expect(dialog.getByRole('combobox', { name: 'End time' })).toHaveText('2:30 PM')
+  await expect(dialog.getByRole('combobox', { name: 'Start time' })).toHaveValue('1:00 PM')
+  await expect(dialog.getByRole('combobox', { name: 'End time' })).toHaveValue('2:30 PM')
   await dialog.getByPlaceholder('Add a title').fill(title)
   await dialog.getByRole('button', { name: 'Create event' }).click()
   await expect(dialog).toBeHidden()
@@ -248,7 +248,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   const startDate = dialog.getByRole('button', { name: /^Start / })
   const startTime = dialog.getByRole('combobox', { name: 'Start time' })
   const endTime = dialog.getByRole('combobox', { name: 'End time' })
-  await expect(endTime).toHaveText('1:30 PM')
+  await expect(endTime).toHaveValue('1:30 PM')
   const firstDay = (await startDate.textContent())!
   const draft = page.locator('[data-draft]')
 
@@ -260,8 +260,8 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.mouse.move(x, box.y + 20, { steps: 4 })
   await page.mouse.move(x, box.y + 58, { steps: 4 })
   await page.mouse.up()
-  await expect(startTime).toHaveText('2:00 PM')
-  await expect(endTime).toHaveText('2:30 PM')
+  await expect(startTime).toHaveValue('2:00 PM')
+  await expect(endTime).toHaveValue('2:30 PM')
 
   // Into the next day's column; the popover goes along.
   box = (await draft.boundingBox())!
@@ -273,7 +273,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.mouse.move(x, box.y + 10, { steps: 4 })
   await page.mouse.up()
   await expect(startDate).not.toHaveText(firstDay)
-  await expect(startTime).toHaveText('2:00 PM')
+  await expect(startTime).toHaveValue('2:00 PM')
   await expect.poll(async () => (await draft.boundingBox())!.x).toBeGreaterThan(box.x + box.width / 2)
   await expect.poll(async () => (await dialog.boundingBox())!.x).toBeGreaterThan(popover.x + box.width / 2)
 
@@ -285,7 +285,7 @@ test('dragging the draft of the create popover changes the times it creates', as
   await page.mouse.move(x, box.y + box.height + 21, { steps: 4 })
   await expect(draft).toContainText('2 PM – 3 PM')
   await page.mouse.up()
-  await expect(endTime).toHaveText('3:00 PM')
+  await expect(endTime).toHaveValue('3:00 PM')
 
   // The title kept the focus through the drags.
   await expect(dialog.getByPlaceholder('Add a title')).toBeFocused()

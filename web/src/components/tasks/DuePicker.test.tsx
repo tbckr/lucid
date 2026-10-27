@@ -74,6 +74,35 @@ describe('DuePicker', () => {
     expect(dialog).toBeInTheDocument()
   })
 
+  it('saves a typed time on Enter and stays open', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1740{Enter}')
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '17:40'), dueAllDay: false }))
+    expect(dialog).toBeInTheDocument()
+    expect(time).toHaveFocus()
+  })
+
+  it('says below the time what to type, and saves nothing', async () => {
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('9:4x{Enter}')
+    const note = 'Enter a time like 9:40 AM.'
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+    expect(time).toHaveValue('9:4x')
+    expect(time).toHaveAttribute('aria-invalid', 'true')
+    expect(time).toHaveAccessibleDescription(note)
+    expect(onChange).not.toHaveBeenCalled()
+
+    await user.keyboard('9:40{Enter}')
+    expect(within(dialog).queryByText(note)).toBeNull()
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '09:40') }))
+  })
+
   it('picks a day in the month', async () => {
     const { user, onChange } = await open(todo())
     await user.click(screen.getByRole('button', { name: format(new Date(), 'PPPP') }))

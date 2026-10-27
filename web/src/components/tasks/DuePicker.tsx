@@ -1,7 +1,7 @@
 import { CalendarIcon, ClockIcon, XIcon } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { TimeSelect } from '@/components/events/TimeSelect'
+import { TimeField } from '@/components/events/TimeField'
 import { MiniMonth } from '@/components/layout/MiniMonth'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
@@ -27,6 +27,7 @@ import {
 import { type ShiftReason } from '@/lib/seriesShift'
 import { taskToForm, withDue } from '@/lib/taskForm'
 import { datesChanged, dueShortcuts, isOverdue } from '@/lib/tasks'
+import { isFormTime, unreadableNote } from '@/lib/unreadable'
 
 /**
  * Where a change in the picker came from, which decides what follows once it
@@ -83,6 +84,8 @@ export function DuePicker({
   const [asking, setAsking] = useState<Asking | null>(null)
   // Why the series can't follow the last pick, said below the month (FR-17).
   const [refused, setRefused] = useState<ShiftReason | null>(null)
+  // A time typed that couldn't be read: it stays in the field, said below it, and nothing is saved (FR-09).
+  const [unread, setUnread] = useState<string | null>(null)
   // Where the focus goes once the question gives way to the month again (NFR-27).
   const back = useRef<HTMLElement | null>(null)
   const { dueDate, dueTime } = taskToForm(todo, tz)
@@ -105,6 +108,10 @@ export function DuePicker({
     back.current?.focus()
     back.current = null
   }, [asking])
+
+  // Closed, the picker forgets it.
+  if (!open && unread !== null) setUnread(null)
+  const unreadNote = unreadableNote(t, prefs, now, [{ time: unread ?? '' }])
 
   const time = () => document.getElementById(timeId)
 
@@ -259,18 +266,29 @@ export function DuePicker({
             <div className="mt-2 grid gap-1 border-t pt-2">
               <div className="flex items-center gap-2 pl-2.5">
                 <ClockIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <TimeSelect
+                <TimeField
                   id={timeId}
-                  value={dueTime}
+                  value={unread ?? dueTime}
                   onChange={(value) => {
+                    if (value !== '' && !isFormTime(value)) {
+                      setUnread(value)
+                      return
+                    }
+                    setUnread(null)
                     save(withDue(todo, { date: dueDate, time: value }, tz), 'time', time())
                   }}
                   prefs={prefs}
                   none={t('tasks.noTime')}
                   placeholder={t('tasks.addTime')}
+                  describedBy={unreadNote ? `${timeId}-error` : undefined}
                   aria-label={t('tasks.dueTime')}
                 />
               </div>
+              {unreadNote && (
+                <p id={`${timeId}-error`} className="pl-8.5 text-xs font-medium text-destructive">
+                  {unreadNote}
+                </p>
+              )}
               {/* A repeating task needs a date to repeat from: a series without a start keeps its due date (FR-17). */}
               {!(todo.recurring && !todo.start) && (
                 <Button

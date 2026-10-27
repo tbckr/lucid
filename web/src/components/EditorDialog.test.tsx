@@ -82,8 +82,8 @@ describe('EditorDialog', () => {
     await user.click(kind('Event'))
     const dialog = await screen.findByRole('dialog', { name: 'New event' })
     expect(within(dialog).getByRole('button', { name: /^Start Wed, Mar 11/ })).toBeInTheDocument()
-    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveTextContent('9:00 AM')
-    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveTextContent('9:30 AM')
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('9:00 AM')
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('9:30 AM')
   })
 
   it("takes the sidebar's list for the task rather than the event's calendar", async () => {

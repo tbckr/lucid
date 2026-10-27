@@ -20,15 +20,22 @@ export const eventFormSchema = z
     calendarId: z.string().min(1, 'validation.calendarRequired'),
     allDay: z.boolean(),
     startDate: z.string().regex(dateRe, 'validation.date'),
-    startTime: z.string().regex(timeRe, 'validation.time'),
+    // Checked below, only where they are shown: a time All day hides can't keep the event from
+    // being saved, even one its field couldn't read (FR-09).
+    startTime: z.string(),
     endDate: z.string().regex(dateRe, 'validation.date'),
-    endTime: z.string().regex(timeRe, 'validation.time'),
+    endTime: z.string(),
     location: z.string().max(1024, 'validation.tooLong'),
     description: z.string().max(64 * 1024, 'validation.tooLong'),
     recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']),
     customRule: z.string().max(1024, 'validation.tooLong'),
   })
   .superRefine((v, ctx) => {
+    if (!v.allDay) {
+      for (const path of ['startTime', 'endTime'] as const) {
+        if (!timeRe.test(v[path])) ctx.addIssue({ code: 'custom', message: 'validation.time', path: [path] })
+      }
+    }
     if (!dateRe.test(v.startDate) || !dateRe.test(v.endDate)) return
     // At the times saved, in the browser's zone, which the editors convert in: a time summer
     // time skips counts where it is saved, an hour later (#10, FR-18).
@@ -232,8 +239,8 @@ export function formDuration(
   return minutes >= 0 ? { minutes } : null
 }
 
-/** Time options in 15-minute steps (value "HH:mm"). */
-export function timeOptions(step = 15): string[] {
+/** The times of a day in steps of `step` minutes ("HH:mm"), as the time fields list them (FR-09). */
+export function timeOptions(step: number): string[] {
   const out: string[] = []
   for (let m = 0; m < 24 * 60; m += step) {
     out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)

@@ -2,11 +2,12 @@ import { useId, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DateField } from '@/components/events/DateField'
 import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
-import { TimeSelect } from '@/components/events/TimeSelect'
+import { TimeField } from '@/components/events/TimeField'
 import { skippedTime } from '@/lib/dates'
 import { shiftEnd } from '@/lib/eventForm'
 import { type FormatPrefs } from '@/lib/format'
 import { shiftTask, type CreateKind, type EventWhen, type TaskWhen } from '@/lib/quickCreate'
+import { isFormTime } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 
 /** A time summer time skips, and the one it is saved as, with the id of its note. */
@@ -21,7 +22,9 @@ interface Note {
  * ("Wed, Sep 30 10:15 AM – 11:15 AM", "Due Wed, Sep 30 10:15 AM"), each part a
  * quiet field on the tint. Moving the start keeps the length (FR-09, FR-16).
  * A time summer time skips on its date is said below, with the time it is
- * saved as, in `timeZone` (#10, FR-18).
+ * saved as, in `timeZone` (#10, FR-18). `invalid` and `describedBy` name an
+ * error of the end or due said below the line, which also describes a time
+ * the field couldn't read (FR-09).
  */
 export function QuickWhen({
   kind,
@@ -62,6 +65,9 @@ export function QuickWhen({
     const saved = skippedTime(date, time, timeZone)
     return saved ? { id: `${id}-${which}-skipped`, time, saved } : null
   }
+  // The line below that says what to type describes a time its field couldn't read too (FR-09).
+  const timeNotes = (time: string, note: Note | null) =>
+    [time !== '' && !isFormTime(time) && describedBy, note?.id].filter(Boolean).join(' ') || undefined
   const withNotes = (when: ReactNode, ...notes: (Note | null)[]) => (
     <>
       {when}
@@ -98,13 +104,13 @@ export function QuickWhen({
         ) : (
           // A range ending on another day may break at its dash; others wrap as a whole.
           <span className={cn(range, shown.end && 'flex-wrap')}>
-            <TimeSelect
+            <TimeField
               value={event.startTime}
               onChange={(v) => {
                 moveStart(event.startDate, v)
               }}
               prefs={prefs}
-              describedBy={start?.id}
+              describedBy={timeNotes(event.startTime, start)}
               aria-label={t('event.startTime')}
               tone={tint}
             />
@@ -125,14 +131,14 @@ export function QuickWhen({
                 tone={tint}
               />
             )}
-            <TimeSelect
+            <TimeField
               value={event.endTime}
               onChange={(v) => {
                 onEvent({ ...event, endTime: v })
               }}
               prefs={prefs}
               invalid={invalid}
-              describedBy={end?.id}
+              describedBy={timeNotes(event.endTime, end)}
               aria-label={t('event.endTime')}
               tone={tint}
             />
@@ -170,13 +176,13 @@ export function QuickWhen({
         />
         <span className={cn(range, shown.due && 'flex-wrap')}>
           {task.startTime && (
-            <TimeSelect
+            <TimeField
               value={task.startTime}
               onChange={(v) => {
                 onTask(shiftTask(task, task.startDate, v))
               }}
               prefs={prefs}
-              describedBy={start?.id}
+              describedBy={timeNotes(task.startTime, start)}
               aria-label={t('tasks.startTime')}
               tone={tint}
             />
@@ -199,14 +205,14 @@ export function QuickWhen({
             />
           )}
           {task.dueTime && (
-            <TimeSelect
+            <TimeField
               value={task.dueTime}
               onChange={(v) => {
                 onTask({ ...task, dueTime: v })
               }}
               prefs={prefs}
               invalid={invalid}
-              describedBy={due?.id}
+              describedBy={timeNotes(task.dueTime, due)}
               aria-label={t('tasks.dueTime')}
               tone={tint}
             />
@@ -248,7 +254,7 @@ export function QuickWhen({
         describedBy={describedBy}
         tone={tint}
       />
-      <TimeSelect
+      <TimeField
         value={time}
         onChange={(v) => {
           onTask(shiftTask(task, date, v))
@@ -256,7 +262,7 @@ export function QuickWhen({
         none={t('tasks.noTime')}
         placeholder={t('tasks.addTime')}
         prefs={prefs}
-        describedBy={note?.id}
+        describedBy={timeNotes(time, note)}
         aria-label={which === 'due' ? t('tasks.dueTime') : t('tasks.startTime')}
         tone={tint}
       />

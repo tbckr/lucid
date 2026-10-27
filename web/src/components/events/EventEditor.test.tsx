@@ -128,6 +128,107 @@ describe('a time summer time skips', () => {
   })
 })
 
+describe('typed times (FR-09)', () => {
+  afterEach(() => {
+    useUi.getState().openEditor(null)
+    vi.restoreAllMocks()
+  })
+
+  const posts = (fetch: Awaited<ReturnType<typeof openEditor>>['fetch']) =>
+    fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
+  /** Lets a submit that shouldn't have happened reach the server mock. */
+  const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+  const typedNote = 'Enter a time like 9:40 AM.'
+
+  it('saves a time typed and left by clicking Save', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.keyboard('940')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(posts(fetch)).toHaveLength(1)
+    })
+    // 9:40 in Berlin, and the hour the event lasted.
+    expect(bodyOf(posts(fetch)[0]![1])).toMatchObject({ start: '2026-03-11T08:40:00.000Z', end: '2026-03-11T09:40:00.000Z' })
+  })
+
+  it('Enter in a time field commits without saving', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(start)
+    await user.keyboard('940{Enter}')
+    await settle()
+    expect(posts(fetch)).toHaveLength(0)
+    expect(start).toHaveValue('9:40 AM')
+    expect(start).toHaveFocus()
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('10:40 AM')
+  })
+
+  it("says what to type for an unreadable time and doesn't save", async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(start)
+    await user.keyboard('9:4x')
+    await user.tab()
+    // At once, not only after Save.
+    expect(within(dialog).getByText(typedNote)).toBeInTheDocument()
+    expect(start).toHaveValue('9:4x')
+    expect(start).toHaveAttribute('aria-invalid', 'true')
+    expect(start).toHaveAccessibleDescription(typedNote)
+    expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('12:00 PM')
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await settle()
+    expect(posts(fetch)).toHaveLength(0)
+    expect(dialog).toBeInTheDocument()
+  })
+
+  it('says it for an end time too, before the end error', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const end = within(dialog).getByRole('combobox', { name: 'End time' })
+    await user.click(end)
+    await user.keyboard('noon{Enter}')
+    expect(within(dialog).getByText(typedNote)).toBeInTheDocument()
+    expect(end).toHaveAttribute('aria-invalid', 'true')
+    expect(end).toHaveAccessibleDescription(typedNote)
+  })
+
+  it("an unreadable time hidden by All day doesn't block saving", async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openEditor(create)
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.keyboard('9:4x')
+    await user.tab()
+    await user.click(within(dialog).getByRole('switch', { name: 'All day' }))
+    expect(within(dialog).queryByText(typedNote)).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+    await waitFor(() => {
+      expect(posts(fetch)).toHaveLength(1)
+    })
+    expect(bodyOf(posts(fetch)[0]![1])).toMatchObject({ allDay: true })
+  })
+
+  it('Escape in a time field restores it and keeps the editor open', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const start = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(start)
+    await user.keyboard('5')
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(start).toHaveValue('11:00 AM')
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(dialog).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+})
+
 describe('EventEditor', () => {
   afterEach(() => {
     useUi.getState().openEditor(null)

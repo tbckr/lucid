@@ -55,6 +55,16 @@ describe('eventFormSchema', () => {
     expect(eventFormSchema.safeParse({ ...base, allDay: true, endDate: '2026-03-27' }).success).toBe(false)
   })
 
+  // A time All day hides can't block saving, even one the field couldn't read (FR-09).
+  it('reads the times of timed events only', () => {
+    expect(eventFormSchema.safeParse({ ...base, allDay: true, startTime: '9:4x', endTime: '' }).success).toBe(true)
+    const r = eventFormSchema.safeParse({ ...base, startTime: '9:4x', endTime: '' })
+    expect(r.error?.issues.map((i) => [i.message, i.path[0]])).toEqual([
+      ['validation.time', 'startTime'],
+      ['validation.time', 'endTime'],
+    ])
+  })
+
   it('validates formats and required calendar', () => {
     const r = eventFormSchema.safeParse({ ...base, startTime: '25:00', endDate: 'x', calendarId: '' })
     const messages = r.error?.issues.map((i) => i.message)
@@ -345,9 +355,10 @@ describe('formDuration', () => {
 
 describe('timeOptions', () => {
   it('lists the day in steps', () => {
-    const opts = timeOptions(15)
-    expect(opts).toHaveLength(96)
+    const opts = timeOptions(30)
+    expect(opts).toHaveLength(48)
     expect(opts[0]).toBe('00:00')
-    expect(opts.at(-1)).toBe('23:45')
+    expect(opts[1]).toBe('00:30')
+    expect(opts.at(-1)).toBe('23:30')
   })
 })
