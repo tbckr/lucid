@@ -325,6 +325,13 @@ describe('shiftEnd', () => {
     expect(shiftEnd({ ...base, startDate: '' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
     expect(shiftEnd({ ...base, startTime: '' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
   })
+
+  // FR-09: an end its field couldn't read stays as typed, for its note to say what to type, as a start does.
+  it('keeps an end that is unreadable as it is', () => {
+    expect(shiftEnd({ ...base, endDate: '3/x' }, '2026-04-01', '09:00')).toEqual({ endDate: '3/x', endTime: '09:30' })
+    expect(shiftEnd({ ...base, allDay: true, endDate: '3/x' }, '2026-04-01', '09:00')).toEqual({ endDate: '3/x', endTime: '09:30' })
+    expect(shiftEnd({ ...base, endTime: '9:3x' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '9:3x' })
+  })
 })
 
 describe('formDuration', () => {

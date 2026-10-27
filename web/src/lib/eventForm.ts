@@ -194,14 +194,15 @@ export function occurrenceInput(input: EventInput): OccurrenceInput {
 
 /**
  * When the start moves, keep the event's duration (Google Calendar behaviour).
- * Returns the new end date/time strings.
+ * Returns the new end date/time strings. A start or an end its field couldn't
+ * read leaves the end as it is (FR-09): its note still says what to type.
  */
 export function shiftEnd(
   prev: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'>,
   nextStartDate: string,
   nextStartTime: string,
 ): { endDate: string; endTime: string } {
-  if (!dateRe.test(prev.startDate) || !dateRe.test(nextStartDate)) {
+  if (!dateRe.test(prev.startDate) || !dateRe.test(nextStartDate) || !dateRe.test(prev.endDate)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
   }
   if (prev.allDay) {

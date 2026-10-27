@@ -333,6 +333,36 @@ describe('typed dates (FR-09)', () => {
     expect(bodyOf(posts(fetch)[0]![1])).toMatchObject({ start: '2026-03-13T10:00:00.000Z', end: '2026-03-13T11:00:00.000Z' })
   })
 
+  it('keeps an unreadable end as typed when the start moves', async () => {
+    const user = userEvent.setup()
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => {
+      errors.push(e.error)
+    }
+    window.addEventListener('error', onError)
+    try {
+      const { dialog } = await openEditor(create)
+      const end = within(dialog).getByRole('combobox', { name: 'End' })
+      await user.click(end)
+      await user.keyboard('3/x{Enter}')
+      const startTime = within(dialog).getByRole('combobox', { name: 'Start time' })
+      await user.click(startTime)
+      await user.keyboard('2pm{Enter}')
+      expect(errors).toEqual([])
+      expect(startTime).toHaveValue('2:00 PM')
+      // The end stays as typed, and still says what to type.
+      expect(end).toHaveValue('3/x')
+      expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+      await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
+      await user.keyboard('3/12{Enter}')
+      expect(errors).toEqual([])
+      expect(end).toHaveValue('3/x')
+      expect(within(dialog).getByRole('button', { name: 'Create event' })).toBeEnabled()
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+  })
+
   it('names the repeat presets after the last readable start date', async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor(create)

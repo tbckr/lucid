@@ -506,6 +506,21 @@ describe('CreatePopover', () => {
     // The hour the event lasted before the unreadable step.
     expect(end).toHaveValue('10:40 AM')
   })
+  it("keeps a task's due as typed when its start moves while the due can't be read", async () => {
+    const user = userEvent.setup()
+    // Dragged over Wednesday, 30 September, 10:15 to 11:15: a task from start to due.
+    const { dialog } = await openPopover({ origin: { ...click, ranged: true } })
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    const dueTime = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(dueTime)
+    await user.keyboard('11:x{Enter}')
+    const startTime = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(startTime)
+    await user.keyboard('10:45{Enter}')
+    expect(startTime).toHaveValue('10:45 AM')
+    expect(dueTime).toHaveValue('11:x')
+    expect(within(dialog).getByText('Enter a time like 9:40 AM.')).toBeInTheDocument()
+  })
   it("keeps a task's span when its unreadable start date is corrected", async () => {
     const user = userEvent.setup()
     // Dragged over Wednesday, 30 September, 10:15 to 11:15: a task from start to due.

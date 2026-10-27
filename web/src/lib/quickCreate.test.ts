@@ -210,6 +210,13 @@ describe('shiftTask', () => {
       dueDate: '2026-10-01',
     })
   })
+
+  it('keeps a due that is unreadable as it is when the start moves', () => {
+    expect(shiftTask({ ...span, dueDate: '9/x' }, '2026-10-01', '10:00')).toEqual({ ...span, startDate: '2026-10-01', dueDate: '9/x' })
+    expect(shiftTask({ ...span, dueTime: '12:x' }, '2026-09-30', '11:00')).toEqual({ ...span, startTime: '11:00', dueTime: '12:x' })
+    const allDay = { startDate: '2026-09-30', startTime: '', dueDate: '9/x', dueTime: '' }
+    expect(shiftTask(allDay, '2026-10-01', '')).toEqual({ ...allDay, startDate: '2026-10-01' })
+  })
 })
 
 describe('chooseCalendar', () => {
