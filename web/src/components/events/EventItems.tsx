@@ -326,7 +326,7 @@ export function TimedBlock({
 }
 
 /**
- * Handle at the bottom of a timed block to change its end (15-min steps); `draft`: of the create
+ * Handle at the bottom of a timed block to change its end (30-minute steps); `draft`: of the create
  * popover's entry. Gone while the question which events of a series move is open (FR-17).
  */
 export function ResizeHandle({ event, disabled, draft }: { event: CalEvent; disabled: boolean; draft?: true }) {

@@ -22,7 +22,7 @@ function minuteAt(hour: number, e: MouseEvent<HTMLElement>): number {
 
 /**
  * Create events from the hour slots of a time-grid column: a click starts a
- * one-hour event in the 15-minute slot under the pointer, a drag with mouse or
+ * one-hour event in the 30-minute slot under the pointer, a drag with mouse or
  * pen covers the slots it crosses (touch scrolls). `draft` is the span to
  * preview while dragging; Escape cancels. `onCreate` gets the slot the
  * gesture ended on and whether it was a drag.

@@ -240,7 +240,7 @@ interface DropSays {
 
 const NOTHING_SAID: DropSays = { hint: null, limit: null }
 
-/** Snap vertical movement of time-grid items to 15 minutes. */
+/** Snap vertical movement of time-grid items to 30 minutes. */
 const snapTimed: Modifier = ({ transform, active }) => {
   const d = dragData(active?.data.current)
   if (d?.type === 'timed') return { ...transform, y: Math.round(transform.y / SNAP_PX) * SNAP_PX }
@@ -264,7 +264,7 @@ const ARROWS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
 
 /**
  * Keyboard movement (NFR-27): arrows jump to the neighbouring day cell /
- * column; in the time grid, up/down move by 15 minutes.
+ * column; in the time grid, up/down move by 30 minutes.
  */
 const keyboardCoordinates: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
   if (!ARROWS.includes(event.code)) return undefined

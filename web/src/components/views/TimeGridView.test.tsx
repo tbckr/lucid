@@ -91,11 +91,12 @@ describe('TimeGridView', () => {
 
   it.each([
     ['at the top of the slot', 0, 0],
+    ['just before the half hour', 22, 0],
     ['half-way down', 24, 30],
-    ['near the bottom', 44, 45],
+    ['near the bottom', 44, 30],
     // Assistive tech clicks at clientY 0, above the slot.
     ['without a pointer position', -100, 0],
-  ])('starts a one-hour event in the 15-minute block under a click %s', (_, clientY, minute) => {
+  ])('starts a one-hour event in the half hour under a click %s', (_, clientY, minute) => {
     renderDay()
     const slot = screen.getByRole('button', { name: /9:00 AM$/ })
     fireEvent.click(slot, { clientY })

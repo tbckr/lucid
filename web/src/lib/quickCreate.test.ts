@@ -336,8 +336,8 @@ describe('draggedWhen', () => {
   }
 
   it('moves an event, keeping its length', () => {
-    expect(draggedWhen(moved(draft('event', clickWhen), wed, 45), TZ)).toEqual({
-      event: { allDay: false, startDate: '2026-09-30', startTime: '11:00', endDate: '2026-09-30', endTime: '12:00' },
+    expect(draggedWhen(moved(draft('event', clickWhen), wed, 30), TZ)).toEqual({
+      event: { allDay: false, startDate: '2026-09-30', startTime: '10:45', endDate: '2026-09-30', endTime: '11:45' },
     })
   })
 

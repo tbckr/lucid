@@ -32,15 +32,24 @@ describe('dropResult', () => {
     })
   })
 
-  it('moves time-grid items in 15-minute steps', () => {
+  it('moves time-grid items in 30-minute steps', () => {
     const drag = { type: 'timed' as const, event: timed, originDay: day(25) }
     expect(dropResult(drag, { type: 'column', day: day(25) }, 40 * PX_PER_MINUTE)).toEqual({
       kind: 'event',
       event: timed,
-      times: { start: '2026-09-25T08:45:00.000Z', end: '2026-09-25T09:45:00.000Z' },
+      times: { start: '2026-09-25T08:30:00.000Z', end: '2026-09-25T09:30:00.000Z' },
     })
     expect(dropResult(drag, { type: 'column', day: day(26) }, -60 * PX_PER_MINUTE)).toMatchObject({
       times: { start: '2026-09-26T07:00:00.000Z' },
+    })
+  })
+
+  it('moves by the snapped distance, so the minutes past the step stay (FR-10)', () => {
+    // 09:40 local, dragged one step down, lands at 10:10, not on the half hour.
+    const at940 = toCalEvent(apiEvent({ start: '2026-09-25T07:40:00Z', end: '2026-09-25T08:40:00Z' }))
+    const drag = { type: 'timed' as const, event: at940, originDay: day(25) }
+    expect(dropResult(drag, { type: 'column', day: day(25) }, 30 * PX_PER_MINUTE)).toMatchObject({
+      times: { start: '2026-09-25T08:10:00.000Z', end: '2026-09-25T09:10:00.000Z' },
     })
   })
 
@@ -93,18 +102,22 @@ describe('dropResult', () => {
     expect(dropResult({ type: 'timed', event: task, originDay: day(25) }, { type: 'day', day: day(26) }, 0)).toBeNull()
   })
 
-  it('resizes the end, never below 15 minutes', () => {
+  it('resizes the end, never below 30 minutes', () => {
     expect(dropResult({ type: 'resize', event: timed }, null, 30 * PX_PER_MINUTE)).toEqual({
       kind: 'event',
       event: timed,
       times: { start: timed.start, end: '2026-09-25T09:30:00.000Z' },
     })
     expect(dropResult({ type: 'resize', event: timed }, null, -300 * PX_PER_MINUTE)).toMatchObject({
-      times: { end: '2026-09-25T08:15:00.000Z' },
+      times: { end: '2026-09-25T08:30:00.000Z' },
     })
     expect(dropResult({ type: 'resize', event: timed }, null, 2)).toBeNull()
+    // An event shorter than the step, from another client, is never lengthened by dragging its end up.
     const short = toCalEvent(apiEvent({ end: '2026-09-25T08:15:00Z' }))
-    expect(dropResult({ type: 'resize', event: short }, null, -15 * PX_PER_MINUTE)).toBeNull()
+    expect(dropResult({ type: 'resize', event: short }, null, -30 * PX_PER_MINUTE)).toBeNull()
+    expect(dropResult({ type: 'resize', event: short }, null, 30 * PX_PER_MINUTE)).toMatchObject({
+      times: { end: '2026-09-25T08:45:00.000Z' },
+    })
   })
 
   it('acceptsDrop pairs', () => {
@@ -168,13 +181,13 @@ describe('dropResult for a row dragged out of a time-grid list (FR-07, FR-10)', 
     expect(next).toMatchObject({ times: { start: '2026-10-25T08:00:00.000Z', end: '2026-10-25T09:00:00.000Z' } })
   })
 
-  it('snaps the top to 15 minutes and keeps it within the day', () => {
+  it('snaps the top to 30 minutes and keeps it within the day', () => {
     const at = (top: number) => dropResult(listed(due), column(day(25)), 0, top)
-    // 09:07 is below the item's 09:00 start but rounds to it: no change.
-    expect(at(9 * HOUR_HEIGHT + 7 * PX_PER_MINUTE)).toBeNull()
-    expect(at(9 * HOUR_HEIGHT + 8 * PX_PER_MINUTE)).toMatchObject({ input: { due: new Date(2026, 8, 25, 9, 15).toISOString() } })
+    // 09:14 is below the item's 09:00 start but rounds to it: no change.
+    expect(at(9 * HOUR_HEIGHT + 14 * PX_PER_MINUTE)).toBeNull()
+    expect(at(9 * HOUR_HEIGHT + 15 * PX_PER_MINUTE)).toMatchObject({ input: { due: new Date(2026, 8, 25, 9, 30).toISOString() } })
     expect(at(-500)).toMatchObject({ input: { due: new Date(2026, 8, 25, 0).toISOString() } })
-    expect(at(24 * HOUR_HEIGHT + 500)).toMatchObject({ input: { due: new Date(2026, 8, 25, 23, 45).toISOString() } })
+    expect(at(24 * HOUR_HEIGHT + 500)).toMatchObject({ input: { due: new Date(2026, 8, 25, 23, 30).toISOString() } })
   })
 
   it('measures from the first day of an item that began before the day it is listed on', () => {
@@ -440,11 +453,11 @@ describe('createRange', () => {
   it.each([
     ['dragging down', 545, 620, { startMin: 540, endMin: 630 }],
     ['dragging up', 620, 545, { startMin: 540, endMin: 630 }],
-    ['a move within one slot', 545, 550, { startMin: 540, endMin: 555 }],
-    ['a slot boundary, which belongs to the slot below it', 540, 600, { startMin: 540, endMin: 615 }],
-    ['a pointer past midnight', 1430, 1500, { startMin: 1425, endMin: 1440 }],
-    ['a pointer above the day', 10, -30, { startMin: 0, endMin: 15 }],
-  ])('covers every 15-minute slot between press and pointer for %s', (_, anchor, pointer, want) => {
+    ['a move within one slot', 545, 550, { startMin: 540, endMin: 570 }],
+    ['a slot boundary, which belongs to the slot below it', 540, 600, { startMin: 540, endMin: 630 }],
+    ['a pointer past midnight', 1430, 1500, { startMin: 1410, endMin: 1440 }],
+    ['a pointer above the day', 10, -30, { startMin: 0, endMin: 30 }],
+  ])('covers every 30-minute slot between press and pointer for %s', (_, anchor, pointer, want) => {
     expect(createRange(anchor, pointer)).toEqual(want)
   })
 })

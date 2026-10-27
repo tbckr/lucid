@@ -190,7 +190,7 @@ function renderBlock(event: CalEvent, children?: ReactNode, overlay: Overlay = (
   )
 }
 
-/** Moves `item` 15 minutes down with the keyboard (NFR-27). */
+/** Moves `item` 30 minutes down with the keyboard (NFR-27). */
 async function moveDown(item: HTMLElement) {
   item.focus()
   fireEvent.keyDown(item, { code: 'Space', key: ' ' })
@@ -941,9 +941,9 @@ describe('CalendarDnd', () => {
       await act(() => new Promise((resolve) => setTimeout(resolve)))
       fireEvent.keyDown(document, { code: 'ArrowDown', key: 'ArrowDown' })
 
-      // The drag has a target, 15 minutes later the same day, which the whole series can follow.
+      // The drag has a target, 30 minutes later the same day, which the whole series can follow.
       const [data, , hint] = overlay.mock.lastCall ?? []
-      expect(data?.event.startsAt).toEqual(new Date('2026-09-25T08:15:00Z'))
+      expect(data?.event.startsAt).toEqual(new Date('2026-09-25T08:30:00Z'))
       expect(hint).toBeNull()
       expect(screen.getByRole('status')).toHaveTextContent(/^New time: [^.]+\.$/)
       fireEvent.keyDown(document, { code: 'Escape', key: 'Escape' })
@@ -1419,14 +1419,14 @@ describe('CalendarDnd', () => {
       loadCalendars,
     )
 
-    // One step down moves its tile from 9:00 to 9:15: the task is then due at 9:15, not 9:35.
+    // One step down moves its tile from 9:00 to 9:30: the task is then due at 9:30, not 9:50.
     await moveDown(screen.getByRole('button', { name: 'Call, 9:20 AM' }))
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledTimes(1)
     })
     const [url, init] = fetch.mock.calls[0]!
     expect(urlOf(url)).toBe('/api/v1/todos/t9')
-    expect(bodyOf(init)).toMatchObject({ due: '2026-09-25T07:15:00.000Z' })
+    expect(bodyOf(init)).toMatchObject({ due: '2026-09-25T07:30:00.000Z' })
   })
 
   describe('a row dragged out of a time-grid list (FR-07, FR-10)', () => {

@@ -2,7 +2,7 @@ import { addDays, differenceInCalendarDays } from 'date-fns'
 import { type RefObject } from 'react'
 import { type TodoInput } from './api/schemas'
 import { movedTodo, placedOn, shiftedTask, toCalTask, type CalTask, type TaskDates } from './calendarTasks'
-import { atMinutes, minutesOfDay, snapMinutes } from './dates'
+import { atMinutes, minutesOfDay, snapMinutes, STEP_MINUTES } from './dates'
 import { firstDay, movedTimes, withTimes, type CalEvent, type CalItem } from './events'
 import { type Scope } from './scope'
 
@@ -12,7 +12,7 @@ export const DRAG_DISTANCE = 6
 
 export const HOUR_HEIGHT = 48
 export const PX_PER_MINUTE = HOUR_HEIGHT / 60
-export const SNAP_MINUTES = 15
+export const SNAP_MINUTES = STEP_MINUTES
 export const SNAP_PX = SNAP_MINUTES * PX_PER_MINUTE
 
 /**
@@ -54,7 +54,7 @@ const SLOTS_PER_DAY = MINUTES_PER_DAY / SNAP_MINUTES
 
 /**
  * The span a drag in the empty time grid creates, in minutes since midnight:
- * every 15-minute slot from the pressed one to the one under the pointer, in
+ * every 30-minute slot from the pressed one to the one under the pointer, in
  * either direction and within the day.
  */
 export function createRange(anchorMin: number, pointerMin: number): { startMin: number; endMin: number } {
@@ -77,7 +77,7 @@ type MoveDrag = Exclude<DragData, { type: 'resize' }>
 
 /**
  * The offset that puts `item` where a row dropped on the column of `day` with its top `top` px below the column's top
- * lands (FR-07, FR-10): its start at the 15-minute slot there, within the day. The minutes are the ones between
+ * lands (FR-07, FR-10): its start at the 30-minute slot there, within the day. The minutes are the ones between
  * where the item starts on that day and the slot on the day's wall clock, so a change of the UTC offset between the
  * two, on the days clocks go back or forward, doesn't shift the landing by an hour.
  */
@@ -124,7 +124,9 @@ export function dropResult(drag: DragData, drop: DropData | null, deltaY: number
     const minutes = snapMinutes(deltaY / PX_PER_MINUTE, SNAP_MINUTES)
     if (minutes === 0) return null
     const e = drag.event
-    const minEnd = e.startsAt.getTime() + SNAP_MINUTES * 60_000
+    // Never closer than a step to the start, and a shorter event is not lengthened by dragging its end up.
+    const length = e.endsAt.getTime() - e.startsAt.getTime()
+    const minEnd = e.startsAt.getTime() + Math.min(SNAP_MINUTES * 60_000, length)
     const end = Math.max(minEnd, e.endsAt.getTime() + minutes * 60_000)
     if (end === e.endsAt.getTime()) return null
     return { kind: 'event', event: e, times: { start: e.start, end: new Date(end).toISOString() } }

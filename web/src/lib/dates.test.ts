@@ -175,10 +175,9 @@ describe('small helpers', () => {
 
   it('minutes and snapping', () => {
     expect(minutesOfDay(new Date(2026, 0, 1, 13, 45))).toBe(825)
-    expect(snapMinutes(7)).toBe(0)
-    expect(snapMinutes(8)).toBe(15)
-    expect(snapMinutes(-22)).toBe(-15)
-    expect(snapMinutes(44, 30)).toBe(30)
+    expect(snapMinutes(14, 30)).toBe(0)
+    expect(snapMinutes(15, 30)).toBe(30)
+    expect(snapMinutes(-44, 30)).toBe(-30)
     const at = atMinutes(new Date(2026, 2, 29, 18), 9 * 60 + 30)
     expect(at.getHours()).toBe(9)
     expect(at.getMinutes()).toBe(30)

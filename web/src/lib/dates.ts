@@ -144,8 +144,11 @@ export function dayAt(date: string, time: string): Date {
   return m ? atMinutes(parseDayKey(date), Number(m[1]) * 60 + Number(m[2])) : parseDayKey(date)
 }
 
+/** The step lists and gestures offer, in minutes (FR-09, FR-10). */
+export const STEP_MINUTES = 30
+
 /** Round minutes to the nearest step. */
-export function snapMinutes(minutes: number, step = 15): number {
+export function snapMinutes(minutes: number, step: number): number {
   return Math.round(minutes / step) * step
 }
 

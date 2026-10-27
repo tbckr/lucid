@@ -116,7 +116,7 @@ test('a month taller than its window scrolls before it steps (FR-08)', async ({ 
 async function createAt(page: Page, hour: string, title: string): Promise<Locator> {
   await login(page)
   await page.keyboard.press('d')
-  // A click starts the event in the 15-minute block under the pointer: the top one is the full hour.
+  // A click starts the event in the half hour under the pointer: the top one is the full hour.
   await page.getByRole('button', { name: new RegExp(` ${hour}$`) }).click({ position: { x: 20, y: 4 } })
   const dialog = page.getByRole('dialog', { name: 'New event' })
   await dialog.getByPlaceholder('Add a title').fill(title)
@@ -140,7 +140,7 @@ test('dragging in the empty grid creates an event over the covered slots', async
   await login(page)
   await page.keyboard.press('d')
 
-  // Press at 1:05 PM and drag into the 2:15 PM slot (0.8 px per minute): the preview shows the span.
+  // Press at 1:05 PM and drag into the 2:00 PM half hour (0.8 px per minute): the preview shows the span.
   const slot = page.getByRole('button', { name: / 1:00 PM$/ })
   const box = (await slot.boundingBox())!
   const x = box.x + box.width / 2
@@ -202,7 +202,7 @@ test('moving an event with the keyboard shows and announces the target time', as
   const block = await createAt(page, '1:00 PM', title)
   await expect(block).toContainText('1 PM – 2 PM')
 
-  // Space picks the event up; each arrow key moves it by 15 minutes (NFR-27).
+  // Space picks the event up; each arrow key moves it by 30 minutes (NFR-27).
   await block.focus()
   await page.keyboard.press('Space')
   await expect(page.getByRole('status').filter({ hasText: `Picked up ${title}.` })).toHaveCount(1)
@@ -211,7 +211,7 @@ test('moving an event with the keyboard shows and announces the target time', as
   // not wait for that timer, and a busy browser runs input before timers. Timers run in
   // order, so once one queued now has fired, the sensor listens.
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)))
-  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown')
+  for (let i = 0; i < 2; i++) await page.keyboard.press('ArrowDown')
   await expect(block.filter({ hasText: '2 PM – 3 PM' })).toHaveCount(1)
   await expect(page.getByRole('status').filter({ hasText: /^New time: .*, 2:00 PM – 3:00 PM\.$/ })).toHaveCount(1)
   await page.keyboard.press('Enter')
