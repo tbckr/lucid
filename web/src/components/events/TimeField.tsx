@@ -161,7 +161,8 @@ export function TimeField({
             placeholder={placeholder ?? none}
             disabled={disabled}
             // On the tint and while empty, as wide as its text, or as its `sizes` where they are wider: by
-            // `field-sizing` where the browser has it, else by `size`, which counts the placeholder only while it shows.
+            // `field-sizing` where the browser has it, else by `size`, which counts the placeholder only while it
+            // shows.
             size={tint || empty ? Math.max(field.text === '' ? (placeholder ?? none ?? '').length : field.text.length, 1) : undefined}
             onBlur={(e) => {
               setMoved(false)
@@ -185,8 +186,8 @@ export function TimeField({
           <FieldSizer texts={sizes} className={metrics} />
           {!tint && !empty && (
             // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
-            // takes the keyboard (ArrowDown opens). Dimmed with the text while a prop or a fieldset around disables it: it opens
-            // nothing then (FR-17).
+            // takes the keyboard (ArrowDown opens). Dimmed with the text while a prop or a fieldset around disables
+            // it: it opens nothing then (FR-17).
             <span
               aria-hidden
               className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
