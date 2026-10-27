@@ -117,6 +117,13 @@ describe('readTime in the 12-hour clock without a marker', () => {
     ['reads 6:59 as the afternoon in an empty field', '6:59', '', '18:59'],
     ['reads 7:00 as the morning in an empty field', '7:00', '', '07:00'],
     ['reads a current value it does not know like an empty field', '5', 'noon', '17:00'],
+    ['reads an hour with a leading zero as the 24-hour clock', '09:40', '14:00', '09:40'],
+    ['reads four digits with a leading zero as the 24-hour clock', '0940', '14:00', '09:40'],
+    ['reads a bare hour with a leading zero as the 24-hour clock', '09', '14:00', '09:00'],
+    ['reads a leading zero as the 24-hour clock in an empty field', '05', '', '05:00'],
+    ['reads 00:30 as the 24-hour clock', '00:30', '14:00', '00:30'],
+    ['reads three digits without a leading zero by the 12-hour rules', '940', '14:00', '21:40'],
+    ['lets a marker win over a leading zero', '09pm', '14:00', '21:00'],
   ])('%s', (_, text, current, want) => {
     expect(readTime(text, { prefs: us, current })).toBe(want)
   })

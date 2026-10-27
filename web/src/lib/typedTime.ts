@@ -42,15 +42,20 @@ function splitMarker(text: string, prefs: FormatPrefs): { rest: string; half: Ha
   return { rest: text, half: null }
 }
 
-/** Hours and minutes of what is typed without a marker: `9`, `940`, `9:40`, `9.40`, `9h40`, `9h`, `9 40`. */
-function splitDigits(text: string): { hour: number; minute: number } | null {
-  // 940 and 0940: with three or four digits the last two are minutes.
-  const compact = /^(\d{1,2})(\d{2})$/.exec(text)
-  if (compact) return { hour: Number(compact[1]), minute: Number(compact[2]) }
-  // Minutes are always two digits, so that "9:4" is not a guess between 9:04 and 9:40.
-  const spaced = /^(\d{1,2})(?:(?:\s*[:.h]\s*|\s+)(\d{2})|\s*[:.h])?$/.exec(text)
-  if (spaced) return { hour: Number(spaced[1]), minute: Number(spaced[2] ?? 0) }
-  return null
+/**
+ * Hours and minutes of what is typed without a marker: `9`, `940`, `9:40`,
+ * `9.40`, `9h40`, `9h`, `9 40`. `padded`: the hour was written with a leading
+ * zero (`09`), which is 24-hour notation.
+ */
+function splitDigits(text: string): { hour: number; minute: number; padded: boolean } | null {
+  const found =
+    // 940 and 0940: with three or four digits the last two are minutes.
+    /^(\d{1,2})(\d{2})$/.exec(text) ??
+    // Minutes are always two digits, so that "9:4" is not a guess between 9:04 and 9:40.
+    /^(\d{1,2})(?:(?:\s*[:.h]\s*|\s+)(\d{2})|\s*[:.h])?$/.exec(text)
+  if (!found) return null
+  const [, hour = '', minute = '0'] = found
+  return { hour: Number(hour), minute: Number(minute), padded: hour.length === 2 && hour.startsWith('0') }
 }
 
 /** The half of the day a bare hour of 1 to 11 falls in: the field's current one, else 1 to 6 PM and 7 to 11 AM. */
@@ -68,10 +73,12 @@ function halfOf(hour: number, current: string): Half {
  * Reads `9`, `14`, `940`, `0940`, `9:40`, `9.40`, `9h40`, `9h`, and any of
  * them with a day period before or after (`9p`, `9 pm`, `9:40am`, `12a`, or
  * the date-fns locale's own, such as `2:00 nachm.`). Hours run 0 to 23 and
- * minutes 0 to 59; with a marker the hour is 1 to 12. In a 12-hour clock a bare
- * hour of 13 to 23 or 0 is a 24-hour reading, 12 is noon, and 1 to 11 keep the
- * half of the day of `current` (the field's value, or `''`); an empty field
- * reads 1 to 6 as PM and 7 to 11 as AM. The 24-hour clock reads them as typed.
+ * minutes 0 to 59; with a marker the hour is 1 to 12. In a 12-hour clock an
+ * hour without a marker of 13 to 23 or 0 is a 24-hour reading, and so is one
+ * written with a leading zero (`09:40`, `0940`, `05`); 12 is noon, and 1 to 11
+ * written without a leading zero keep the half of the day of `current` (the
+ * field's value, or `''`); an empty field reads 1 to 6 as PM and 7 to 11 as AM.
+ * The 24-hour clock reads them as typed.
  */
 export function readTime(text: string, o: { prefs: FormatPrefs; current: string }): string | null {
   const { rest, half } = splitMarker(squash(text), o.prefs)
@@ -83,7 +90,8 @@ export function readTime(text: string, o: { prefs: FormatPrefs; current: string 
     hour = (hour % 12) + (half === 'pm' ? 12 : 0)
   } else {
     if (hour > 23) return null
-    if (o.prefs.hourCycle === '12h' && hour >= 1 && hour <= 11 && halfOf(hour, o.current) === 'pm') hour += 12
+    const needsHalf = o.prefs.hourCycle === '12h' && !at.padded && hour >= 1 && hour <= 11
+    if (needsHalf && halfOf(hour, o.current) === 'pm') hour += 12
   }
   return `${String(hour).padStart(2, '0')}:${String(at.minute).padStart(2, '0')}`
 }
