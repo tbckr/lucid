@@ -107,10 +107,11 @@ export function TimeField({
   const optionId = (v: string) => `${listId}-${v === '' ? 'none' : v}`
 
   // The marked entry in sight as the typing or the arrow keys move it; the list opens on it (`onOpenAutoFocus`).
+  // Typed, it shows in the middle, between the times around it; moved by the arrow keys, just in sight.
   const marked = preview === null ? null : optionId(preview)
   useEffect(() => {
-    if (open && marked) reveal(list.current, marked, false)
-  }, [open, marked])
+    if (open && marked) reveal(list.current, marked, !moved)
+  }, [open, marked, moved])
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {

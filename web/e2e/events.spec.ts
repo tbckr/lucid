@@ -819,6 +819,18 @@ test("a date field moves nothing beside it as it takes the focus or text it can'
   expect(await left()).toBe(atRest)
 })
 
+// FR-09: the list shows a typed time in its place among the half hours, with the times before and after it.
+test('the time list follows a typed time with the times around it', async ({ page }) => {
+  const dialog = await newEventOnOctober2(page)
+  await dialog.getByRole('combobox', { name: 'Start time' }).click()
+  await page.keyboard.type('1940')
+  const list = page.getByRole('listbox', { name: 'Start time' })
+  await expect(list.getByRole('option', { name: '7:40 PM', exact: true })).toHaveAttribute('aria-selected', 'true')
+  for (const around of ['7:30 PM', '7:40 PM', '8:00 PM']) {
+    await expect(list.getByRole('option', { name: around, exact: true })).toBeInViewport({ ratio: 1 })
+  }
+})
+
 // FR-09, NFR-27: a commit that puts a note into the editor, or takes one out, happens while the focus is on its way
 // to the next field; it still gets there, rather than the dialog keeping it and Tab starting over at its top.
 test('Tab moves on from a date or time the field could not read, and from its correction', async ({ page }) => {
