@@ -881,7 +881,7 @@ event, and the refusal comes as a toast.
 - **A timed series whose start zone changes** (the request names another
   zone, or UTC for a `TZID` or a floating time, or a `TZID` written
   otherwise, such as `/mozilla.org/…/Europe/Berlin`) moves into it **by its
-  wall clock**, whether its rule changes or not (`seriesStartForm`,
+  wall clock**, whether its rule changes or not (`seriesFormsFor`,
   `wallShift`): the change is measured from the edited event's shown start
   on the old zone's clock to the start entered on the new zone's, as a
   change of date and of clock time, and `DTSTART`, every `EXDATE`, `RDATE`
@@ -899,7 +899,10 @@ event, and the refusal comes as a toast.
   moves by the change of date only, and a `PERIOD` value stays as it is. A
   `UNTIL` in UTC goes from its wall clock in the old zone to the moved one
   in the new zone and back to UTC, so a series moved from 18:00 Berlin to
-  18:00 New York time keeps its last event. With a changed rule, the moved
+  18:00 New York time keeps its last event; a floating one, which Lucid
+  reads on the series' wall clock, is written in UTC at its moved wall
+  clock in the new zone, as RFC 5545 section 3.3.10 wants next to a
+  `DTSTART` with a `TZID` or in UTC (`movedUntil`). With a changed rule, the moved
   series takes it as the items below say, read at the edited event in the
   new zone. The edited
   event, also an exception, goes where it was entered, its start and end;

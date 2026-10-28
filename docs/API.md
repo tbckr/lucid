@@ -319,11 +319,12 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
   resolve; UTC; or floating), also when the rule, `allDay` or the dates
   change. A `timezone` that differs (another `TZID`, or UTC against a `TZID`
   or a floating time) moves the series into that zone by its wall clock:
-  `DTSTART`, every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and a UTC `UNTIL`,
-  each read on its wall clock in the old zone, move as the occurrence moved,
-  from its shown start in the old zone to `start` in the new one, and the
+  `DTSTART`, every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and `UNTIL`, each
+  read on its wall clock in the old zone, move as the occurrence moved, from
+  its shown start in the old zone to `start` in the new one, and the
   references take the new `TZID`, or UTC (a date-only value moves by the
-  change of date, a `PERIOD` stays as it is). A New York series at 18:00
+  change of date, a `PERIOD` stays as it is), and a local `UNTIL` is
+  written in UTC. A New York series at 18:00
   saved from an occurrence entered at 18:00 Berlin time is at 18:00 Berlin
   time on every date, also where the two zones are another number of hours
   apart. The edited occurrence, also an exception, goes to `start` and
@@ -331,7 +332,8 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
   `endTimezone` names `DTEND`'s zone; absent, `DTEND` follows a `timezone`
   that is sent, else keeps its own form, and in another zone it keeps its
   exact distance from `DTSTART`. A series made timed takes `timezone`, else
-  UTC; an all-day series, or one made all-day, takes none. A `VTIMEZONE` no
+  UTC; an all-day series, or one made all-day, takes none: its `DTSTART` and
+  `DTEND` stay dates, whatever zones are sent. A `VTIMEZONE` no
   `TZID` refers to any more goes (FR-17, FR-18).
 - `409 conflict`, and nothing is written, where `instanceStart` is no longer
   an occurrence of the series: neither an event of its rule nor one with an

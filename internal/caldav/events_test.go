@@ -2901,6 +2901,96 @@ var endZoneSeries = []string{
 	"RRULE:FREQ=WEEKLY", "END:VEVENT",
 }
 
+// TestMoveAllDaySeriesKeepsDates checks that "all events" moving or
+// resizing an all-day series keeps DTEND, and the edited exception's DTEND,
+// a DATE like DTSTART, also where the request names a zone, as the editor
+// sends "" for an all-day event (RFC 5545 section 3.8.2.2, FR-17, FR-18).
+func TestMoveAllDaySeriesKeepsDates(t *testing.T) {
+	t.Parallel()
+	series := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Gym",
+		"DTSTART;VALUE=DATE:20261103", "DTEND;VALUE=DATE:20261104", "RRULE:FREQ=WEEKLY", "END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Gym",
+		"RECURRENCE-ID;VALUE=DATE:20261110", "DTSTART;VALUE=DATE:20261110", "DTEND;VALUE=DATE:20261111",
+		"END:VEVENT",
+	}
+	for _, c := range []struct {
+		name       string
+		rid        time.Time
+		start, end time.Time
+		has        []string
+	}{
+		{
+			"moved", date(2026, 11, 17, 0, 0), date(2026, 11, 18, 0, 0), date(2026, 11, 19, 0, 0),
+			[]string{
+				"DTSTART;VALUE=DATE:20261104", "DTEND;VALUE=DATE:20261105",
+				"RECURRENCE-ID;VALUE=DATE:20261111", "DTSTART;VALUE=DATE:20261110",
+			},
+		},
+		{
+			"resized from the exception", date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0), date(2026, 11, 13, 0, 0),
+			[]string{
+				"DTSTART;VALUE=DATE:20261104", "DTEND;VALUE=DATE:20261106", "RECURRENCE-ID;VALUE=DATE:20261111",
+				"DTSTART;VALUE=DATE:20261111", "DTEND;VALUE=DATE:20261113",
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", series...)
+			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Second))
+
+			in := seriesUpdate(ev, "Gym", "", c.start, c.end)
+			in.AllDay, in.Timezone = true, ptr("")
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			checkStored(t, "series", stored(t, e, "work", "series.ics"), c.has, []string{"DTSTART:", "DTEND:", "TZID"})
+		})
+	}
+}
+
+// TestUpdateSeriesZoneChangeWritesUntilInUTC checks that a floating series
+// moved into a zone, or into UTC, writes its floating UNTIL in UTC, as RFC
+// 5545 section 3.3.10 asks of a UNTIL next to a DTSTART with a TZID or in
+// UTC, at the instant its moved wall clock is in the new zone, so the series
+// keeps its last event (FR-17, FR-18): Mondays at 09:00 until 11-23 at
+// 09:00, moved into Berlin at 09:00, end at 08:00 UTC.
+func TestUpdateSeriesZoneChangeWritesUntilInUTC(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		zone  string
+		start time.Time
+		has   []string
+	}{
+		{"Europe/Berlin", date(2026, 11, 2, 8, 0), []string{
+			"DTSTART;TZID=Europe/Berlin:20261102T090000", "RRULE:FREQ=WEEKLY;UNTIL=20261123T080000Z\r\n",
+		}},
+		{"UTC", date(2026, 11, 2, 9, 0), []string{"DTSTART:20261102T090000Z", "RRULE:FREQ=WEEKLY;UNTIL=20261123T090000Z\r\n"}},
+	} {
+		t.Run(c.zone, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Sync",
+				"DTSTART:20261102T090000", "DTEND:20261102T100000", "RRULE:FREQ=WEEKLY;UNTIL=20261123T090000",
+				"END:VEVENT")
+			ev := listedAt(t, e, "work", date(2026, 11, 2, 9, 0), date(2026, 11, 2, 0, 0), date(2026, 11, 3, 0, 0))
+
+			in := seriesUpdate(ev, "Sync", "", c.start, c.start.Add(time.Hour))
+			in.Timezone = ptr(c.zone)
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			checkStored(t, "series", stored(t, e, "work", "series.ics"), c.has, []string{"UNTIL=20261123T090000\r\n"})
+			h := c.start.Hour()
+			checkOccurrences(t, listed(t, e, "work", date(2026, 11, 1, 0, 0), date(2026, 12, 1, 0, 0)), seriesEvents("Sync",
+				date(2026, 11, 2, h, 0), date(2026, 11, 9, h, 0), date(2026, 11, 16, h, 0), date(2026, 11, 23, h, 0)))
+		})
+	}
+}
+
 // TestUpdateSeriesEndZone checks that "all events" with an end zone alone
 // rewrites DTEND in it, at its exact distance from DTSTART, and leaves
 // DTSTART in its zone (FR-17, FR-18).
