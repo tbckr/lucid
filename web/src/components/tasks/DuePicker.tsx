@@ -258,7 +258,15 @@ export function DuePicker({
         back.current = null
       }}
     >
-      <PopoverTrigger asChild>
+      <PopoverTrigger
+        asChild
+        onClick={() => {
+          // Its click closes the picker (`onOpenChange`) after this: the time field is left first, as the press before
+          // a click leaves it, so what was typed there is read. A click without that press, as assistive technology
+          // sends one, finds it unread (FR-14). Not on Escape, which drops it.
+          if (open) leaveTime()
+        }}
+      >
         <Button
           variant="ghost"
           size="icon-sm"

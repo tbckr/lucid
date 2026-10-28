@@ -296,6 +296,31 @@ describe('DuePicker', () => {
     expect(dialog).not.toBeInTheDocument()
   })
 
+  // The picker's own button closes it too, also with a click without the press before it (FR-14).
+  it('saves a typed time as its button closes the picker while the time still has the focus', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('1840')
+    fireEvent.click(screen.getByRole('button', { name: 'Change due date: Call' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it("stays open as its button is clicked while the time that still has the focus can't be read", async () => {
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
+    await user.keyboard('18:4x')
+    fireEvent.click(screen.getByRole('button', { name: 'Change due date: Call' }))
+    expect(onChange).not.toHaveBeenCalled()
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getByText('Enter a time like 9:40 AM.')).toBeInTheDocument()
+    expect(time).toHaveFocus()
+  })
+
   it("removes nothing while the time that still has the focus can't be read", async () => {
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
