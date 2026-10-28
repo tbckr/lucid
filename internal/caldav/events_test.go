@@ -1020,7 +1020,7 @@ func listedByID(t *testing.T, e *env, slug, id string, from, to time.Time) domai
 // none sent is UTC ("Z"); a start zone sent is DTSTART's TZID, and DTEND's
 // too unless an end zone is sent, each with its VTIMEZONE; a picked UTC,
 // "Etc/UTC", is a TZID with its VTIMEZONE, which reads back as UTC; "UTC"
-// is "Z" (decision 9). A series takes the zones sent the same way.
+// is "Z" (FR-18). A series takes the zones sent the same way.
 func TestCreateEventZones(t *testing.T) {
 	t.Parallel()
 	start, end := date(2026, 10, 28, 9, 0), date(2026, 10, 28, 17, 0)
@@ -1130,7 +1130,7 @@ func utcDateLines(data string) []string {
 
 // TestUpdateEventKeepsStoredZone checks that a single event saved without
 // zones keeps the ones it is written in, and takes the new times there
-// (FR-18, decision 4).
+// (FR-18).
 func TestUpdateEventKeepsStoredZone(t *testing.T) {
 	t.Parallel()
 	data := updateLondonEvent(t, domain.EventInput{Start: date(2026, 10, 28, 11, 0), End: date(2026, 10, 28, 12, 0)})
@@ -1142,7 +1142,7 @@ func TestUpdateEventKeepsStoredZone(t *testing.T) {
 }
 
 // TestUpdateEventZones checks the zones a save of a single event names
-// (FR-18, decision 4): "" puts it into UTC and drops the VTIMEZONE no one
+// (FR-18): "" puts it into UTC and drops the VTIMEZONE no one
 // refers to any more; an end zone alone moves DTEND only; a rule made
 // without zones keeps its zone for the series.
 func TestUpdateEventZones(t *testing.T) {
@@ -1190,9 +1190,41 @@ func TestUpdateEventZoneChangeSameInstant(t *testing.T) {
 		[]string{"Europe/London"})
 }
 
+// TestUpdateEventKeepsTimezoneWithCommas checks that a save of a single
+// event whose TZID has commas, such as Outlook's display names, keeps the
+// one VTIMEZONE written for it, whether Lucid can resolve the TZID or not
+// (FR-18).
+func TestUpdateEventKeepsTimezoneWithCommas(t *testing.T) {
+	t.Parallel()
+	for name, tzid := range map[string]string{"unresolved": outlookZone, "resolved": "Custom, Zone/Europe/Berlin"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "personal", "single.ics", slices.Concat(outlookTimezone(tzid), []string{
+				"BEGIN:VEVENT", "UID:single", "DTSTAMP:20260101T000000Z", "SUMMARY:Meeting",
+				`DTSTART;TZID="` + tzid + `":20261028T100000`, `DTEND;TZID="` + tzid + `":20261028T110000`,
+				"END:VEVENT",
+			})...)
+			ev := listedByID(t, e, "personal", id, date(2026, 10, 28, 0, 0), date(2026, 10, 29, 0, 0))
+			in := eventInputOf(ev)
+			in.Title = "Renamed"
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+			data := stored(t, e, "personal", "single.ics")
+			checkStored(t, "updated event", data, []string{
+				"SUMMARY:Renamed", "TZID:" + tzid,
+				`DTSTART;TZID="` + tzid + `":20261028T100000`, `DTEND;TZID="` + tzid + `":20261028T110000`,
+			}, nil)
+			if n := strings.Count(data, "BEGIN:VTIMEZONE"); n != 1 {
+				t.Errorf("%d VTIMEZONEs; want the one as written:\n%s", n, data)
+			}
+		})
+	}
+}
+
 // TestUpdateSeriesRuleRemovedKeepsZone checks that a series saved without
 // its rule and without zones is the single event entered in the series'
-// zone (FR-18, decision 3).
+// zone (FR-18).
 func TestUpdateSeriesRuleRemovedKeepsZone(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})

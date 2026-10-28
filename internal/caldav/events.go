@@ -513,7 +513,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	cal := newCalendar()
 	ev := newComponent(ical.CompEvent, uid, now)
 	cal.Children = append(cal.Children, ev)
-	// Without a zone sent, a new event is in UTC (FR-18, decision 4).
+	// Without a zone sent, a new event is in UTC (FR-18).
 	startForm := formFor(in.Timezone, dateForm{})
 	applyEventFields(cal, ev, in, rr, in.Start, in.End, startForm, endFormFor(in.EndTimezone, in.Timezone, startForm))
 
@@ -785,7 +785,7 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		}
 		// Each date keeps its form unless in names a zone for it, also a
 		// single event made recurring, whose zone, if any, the series
-		// takes, and a series whose rule goes (FR-18, decision 3). A timing
+		// takes, and a series whose rule goes (FR-18). A timing
 		// Lucid cannot read, the zero timing, is UTC.
 		startForm := formFor(in.Timezone, oldTm.start.form())
 		applyEventFields(cal, master, in, rr, start, end, startForm, endFormFor(in.EndTimezone, in.Timezone, oldTm.end))

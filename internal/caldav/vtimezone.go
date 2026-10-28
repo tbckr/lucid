@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-ical"
@@ -29,7 +30,7 @@ func ensureVTimezoneAs(cal *ical.Calendar, tzid string, loc *time.Location, year
 // findVTimezone returns the VTIMEZONE of cal with the given TZID, or nil.
 func findVTimezone(cal *ical.Calendar, tzid string) *ical.Component {
 	for _, c := range cal.Children {
-		if c.Name == ical.CompTimezone && text(c.Props, ical.PropTimezoneID) == tzid {
+		if c.Name == ical.CompTimezone && vtimezoneID(c) == tzid {
 			return c
 		}
 	}
@@ -62,8 +63,24 @@ func pruneVTimezones(cal *ical.Calendar) {
 		}
 	}
 	cal.Children = slices.DeleteFunc(cal.Children, func(c *ical.Component) bool {
-		return c.Name == ical.CompTimezone && !used[text(c.Props, ical.PropTimezoneID)]
+		return c.Name == ical.CompTimezone && !used[vtimezoneID(c)]
 	})
+}
+
+// tzidUnescaper undoes the escapes of a TEXT value, see vtimezoneID.
+var tzidUnescaper = strings.NewReplacer(`\\`, `\`, `\;`, ";", `\,`, ",", `\n`, "\n", `\N`, "\n")
+
+// vtimezoneID returns the TZID of the VTIMEZONE c as a TZID parameter names
+// it: its TEXT value unescaped, but not split at commas, as text would. A
+// display name such as Outlook's "(UTC+01:00) Amsterdam, Berlin, …" is
+// written there without escaping its commas, while the parameter quotes it;
+// cut at the first comma it would match no TZID parameter (FR-18).
+func vtimezoneID(c *ical.Component) string {
+	p := c.Props.Get(ical.PropTimezoneID)
+	if p == nil {
+		return ""
+	}
+	return tzidUnescaper.Replace(p.Value)
 }
 
 type transition struct {

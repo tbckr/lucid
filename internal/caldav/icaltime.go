@@ -46,11 +46,11 @@ func (d dateValue) form() dateForm {
 	return dateForm{allDay: d.allDay, floating: d.floating, tzid: d.tzid, param: d.param}
 }
 
-// sentForm returns the form the zone a write names asks for (FR-18,
-// decision 9): UTC ("Z") for "" and "UTC", and for every other name Lucid
-// reads as UTC but "Etc/UTC", which is the UTC a user picked and is written
-// as that TZID, with its VTIMEZONE; else the zone's IANA name as TZID. A
-// name Lucid cannot resolve, which validation turns away, is UTC too.
+// sentForm returns the form the zone a write names asks for (FR-18): UTC
+// ("Z") for "" and "UTC", and for every other name Lucid reads as UTC but
+// "Etc/UTC", which is the UTC a user picked and is written as that TZID,
+// with its VTIMEZONE; else the zone's IANA name as TZID. A name Lucid cannot
+// resolve, which validation turns away, is UTC too.
 func sentForm(zone string) dateForm {
 	if zone == "Etc/UTC" {
 		return dateForm{param: zone}
@@ -64,7 +64,7 @@ func sentForm(zone string) dateForm {
 
 // formFor returns the form a timed date property is written in for the
 // zone sent: kept, the form it has, where none is sent, else the one the
-// zone asks for, see sentForm (FR-18, decision 4).
+// zone asks for, see sentForm (FR-18).
 func formFor(sent *string, kept dateForm) dateForm {
 	if sent == nil {
 		return kept
@@ -74,7 +74,7 @@ func formFor(sent *string, kept dateForm) dateForm {
 
 // endFormFor returns the form DTEND (DUE) is written in, see formFor: that
 // of sentEnd, the end's zone, where sent, else that of sentStart, the
-// start's, where sent, else kept, the end's own (FR-18, decision 4).
+// start's, where sent, else kept, the end's own (FR-18).
 func endFormFor(sentEnd, sentStart *string, kept dateForm) dateForm {
 	if sentEnd != nil {
 		return sentForm(*sentEnd)

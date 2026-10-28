@@ -1643,7 +1643,7 @@ func TestUpdateFollowing(t *testing.T) {
 		},
 		{
 			// N is the single event R, in the series' zone, which a series
-			// keeps when its rule goes (FR-18, decision 3).
+			// keeps when its rule goes (FR-18).
 			name:   "no rule",
 			edit:   func(in *domain.EventInput) { in.RRule = "" },
 			nHas:   []string{"DTSTART;TZID=Europe/Berlin:20250324T090000", "DTEND;TZID=Europe/Berlin:20250324T100000"},

@@ -175,35 +175,98 @@ func TestEnsureVTimezoneOnce(t *testing.T) {
 	}
 }
 
+// outlookZone is a TZID as Outlook writes it, a display name with commas.
+const outlookZone = "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna"
+
+// outlookTimezone is a VTIMEZONE of Central European time as Outlook writes
+// it, with the TZID property value written as tzid, its commas escaped or
+// not.
+func outlookTimezone(tzid string) []string {
+	return []string{
+		"BEGIN:VTIMEZONE", "TZID:" + tzid,
+		"BEGIN:STANDARD", "DTSTART:16010101T030000", "TZOFFSETFROM:+0200", "TZOFFSETTO:+0100",
+		"RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10", "END:STANDARD",
+		"BEGIN:DAYLIGHT", "DTSTART:16010101T020000", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0200",
+		"RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3", "END:DAYLIGHT",
+		"END:VTIMEZONE",
+	}
+}
+
 // TestPruneVTimezones checks that only the VTIMEZONEs a TZID parameter
-// refers to stay, also one of a VALARM's TRIGGER (FR-18).
+// refers to stay, also one of a VALARM's TRIGGER, and one whose TZID has
+// commas, escaped as TEXT or not, as Outlook writes them (FR-18).
 func TestPruneVTimezones(t *testing.T) {
 	t.Parallel()
+	event := func(lines ...string) []string {
+		return slices.Concat([]string{"BEGIN:VEVENT", "UID:a", "DTSTAMP:20260101T000000Z"}, lines, []string{"END:VEVENT"})
+	}
+	alarm := []string{
+		"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Soon",
+		"TRIGGER;VALUE=DATE-TIME;TZID=Europe/Berlin:20261028T094500", "END:VALARM",
+	}
+	outlookStart := `DTSTART;TZID="` + outlookZone + `":20261028T100000`
 	tests := []struct {
 		name  string
-		event []string
+		lines []string
+		want  []string // the TZIDs of the VTIMEZONEs left, as written
 	}{
-		{"start and alarm", []string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND:20261028T100000Z"}},
-		{"alarm only", []string{"DTSTART:20261028T090000Z", "DTEND:20261028T100000Z"}},
+		{
+			name:  "start and alarm",
+			lines: slices.Concat(berlinTimezone, londonTimezone, event(slices.Concat([]string{"DTSTART;TZID=Europe/Berlin:20261028T100000"}, alarm)...)),
+			want:  []string{"Europe/Berlin"},
+		},
+		{
+			name:  "alarm only",
+			lines: slices.Concat(berlinTimezone, londonTimezone, event(slices.Concat([]string{"DTSTART:20261028T090000Z"}, alarm)...)),
+			want:  []string{"Europe/Berlin"},
+		},
+		{
+			name:  "commas unescaped",
+			lines: slices.Concat(outlookTimezone(outlookZone), londonTimezone, event(outlookStart)),
+			want:  []string{outlookZone},
+		},
+		{
+			name:  "commas escaped",
+			lines: slices.Concat(outlookTimezone(strings.ReplaceAll(outlookZone, ",", `\,`)), londonTimezone, event(outlookStart)),
+			want:  []string{strings.ReplaceAll(outlookZone, ",", `\,`)},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cal := mustParse(t, ics(slices.Concat(berlinTimezone, londonTimezone,
-				[]string{"BEGIN:VEVENT", "UID:a", "DTSTAMP:20260101T000000Z"}, tt.event, []string{
-					"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Soon",
-					"TRIGGER;VALUE=DATE-TIME;TZID=Europe/Berlin:20261028T094500", "END:VALARM",
-					"END:VEVENT",
-				})...))
+			cal := mustParse(t, ics(tt.lines...))
 			pruneVTimezones(cal)
 			var zones []string
 			for _, c := range cal.Children {
 				if c.Name == ical.CompTimezone {
-					zones = append(zones, text(c.Props, ical.PropTimezoneID))
+					zones = append(zones, c.Props.Get(ical.PropTimezoneID).Value)
 				}
 			}
-			if !slices.Equal(zones, []string{"Europe/Berlin"}) || mainComponent(cal, ical.CompEvent) == nil {
-				t.Errorf("VTIMEZONEs %q, event %v; want Europe/Berlin and the event", zones, mainComponent(cal, ical.CompEvent) != nil)
+			if !slices.Equal(zones, tt.want) || mainComponent(cal, ical.CompEvent) == nil {
+				t.Errorf("VTIMEZONEs %q, event %v; want %q and the event", zones, mainComponent(cal, ical.CompEvent) != nil, tt.want)
+			}
+		})
+	}
+}
+
+// TestFindVTimezoneWithCommas checks that a VTIMEZONE whose TZID has
+// commas, escaped as TEXT or not, is found by the TZID parameter that names
+// it, so that ensureVTimezoneAs adds no second one (FR-18).
+func TestFindVTimezoneWithCommas(t *testing.T) {
+	t.Parallel()
+	const tzid = "Custom, Zone/Europe/Berlin" // resolves to Europe/Berlin
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	mustNoErr(t, err)
+	for name, written := range map[string]string{"unescaped": tzid, "escaped": strings.ReplaceAll(tzid, ",", `\,`)} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cal := mustParse(t, ics(outlookTimezone(written)...))
+			if findVTimezone(cal, tzid) == nil {
+				t.Errorf("findVTimezone(%q) found nothing for TZID:%s", tzid, written)
+			}
+			ensureVTimezoneAs(cal, tzid, berlin, 2026)
+			if len(cal.Children) != 1 {
+				t.Errorf("got %d components; want the VTIMEZONE as written only", len(cal.Children))
 			}
 		})
 	}
