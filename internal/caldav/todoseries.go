@@ -584,9 +584,10 @@ func (s *todoSeries) roll(cal *ical.Calendar, cur, next todoOcc) error {
 // the master rolls onto next (see roll), also from an occurrence off the rule
 // (see todoOcc.offGrid), whose override goes with the roll. When next lies off
 // the rule, the master stays where it is: cur, off the rule, only loses its
-// override, and cur, an instance, gets an EXDATE (see exclude). It fails with
-// errRuleUnsupported, leaving cal as it was, when the rule cannot be evaluated
-// as roll needs it.
+// override, and cur, an instance, gets an EXDATE (see exclude). A VTIMEZONE
+// only the override that goes referred to goes too (see pruneVTimezones,
+// FR-18). It fails with errRuleUnsupported, leaving cal as it was, when the
+// rule cannot be evaluated as roll needs it.
 func (s *todoSeries) rollPast(cal *ical.Calendar, cur, next todoOcc) error {
 	switch {
 	case next.offGrid && cur.offGrid:
@@ -598,6 +599,7 @@ func (s *todoSeries) rollPast(cal *ical.Calendar, cur, next todoOcc) error {
 			return errRuleUnsupported
 		}
 	}
+	pruneVTimezones(cal)
 	return nil
 }
 
@@ -617,15 +619,21 @@ func (s *todoSeries) exclude(cal *ical.Calendar, occ todoOcc) {
 // series anchored on DUE gets DTSTART = DUE, as RFC 5545 wants DTSTART with
 // RRULE.
 func (s *todoSeries) anchorAt(cal *ical.Calendar, t dateValue) {
+	s.anchorIn(cal, t, s.startForm, s.dueForm)
+}
+
+// anchorIn is anchorAt with DTSTART written in the form start and DUE in the
+// form due, those a write names zones for (see zonesFor, FR-18).
+func (s *todoSeries) anchorIn(cal *ical.Calendar, t dateValue, start, due dateForm) {
 	c := s.master
-	c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, t, s.startForm))
+	c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, t, start))
 	if s.onDue {
-		c.Props.Set(seriesValueProp(cal, ical.PropDue, t, s.dueForm))
+		c.Props.Set(seriesValueProp(cal, ical.PropDue, t, due))
 		c.Props.Del(ical.PropDuration) // invalid without DTSTART; DUE stands
 	} else if c.Props.Get(ical.PropDue) != nil && s.dueOffset != nil {
 		// A DURATION stays: it is relative to DTSTART.
-		due := t.t.Add(*s.dueOffset)
-		setSeriesDate(cal, c, ical.PropDue, &due, s.dueForm)
+		d := t.t.Add(*s.dueOffset)
+		setSeriesDate(cal, c, ical.PropDue, &d, due)
 	}
 }
 
@@ -657,7 +665,14 @@ func (s *todoSeries) event(t time.Time) dateValue {
 //   - a move that adds or removes the time moves them by its change in
 //     date only (see refShift), then rewrites UNTIL and the references in
 //     the new value type, see retypeRefs;
-//   - an UNTIL before the new DTSTART moves onto it.
+//   - an UNTIL before the new DTSTART moves onto it;
+//   - a zone in names for the anchor other than the series' moves the series
+//     into that zone by its wall clock (see zonesFor): the distance runs
+//     from the moved occurrence's wall clock in the series' zone to in's in
+//     the new one, the rule's days follow it as seriesShift says, and so do
+//     the later references, a UTC UNTIL too; the references the move leaves
+//     in place keep their instant, and every RECURRENCE-ID and EXDATE takes
+//     the new form, as DTSTART does (see rezoneRefs).
 //
 // The series' last open occurrence moves to any date instead, on fixed days
 // too: seriesShift does not decide, and the rule ends there, see endAt, so
@@ -693,10 +708,11 @@ func (s *todoSeries) move(cal *ical.Calendar, status string, in domain.TodoInput
 // applyMove applies the move of move to cal and returns the overrides it
 // left in place, neither moved nor dropped, for keepApart (FR-17).
 func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.TodoInput) ([]*ical.Component, error) {
-	start, form := seriesStart(s.master, in, true)
+	start, form := seriesStart(s.master, in)
 	if start == nil {
 		return nil, errRuleNeedsDate
 	}
+	z := s.zonesFor(in)
 	c := s.master
 	p := c.Props.Get(ical.PropRecurrenceRule)
 	evaluable := p != nil && s.err == nil && s.rrule != ""
@@ -706,9 +722,10 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 		return s.moveShown(cal, occ, in)
 	}
 	rid := occ.rid
-	// As writeSeriesDates writes it: at the series' wall clock where it keeps
-	// the time of day of the repeat moved (see enteredAt, #8).
-	at := enteredAt(s.event(rid), *start, s.anchor.loc())
+	// As writeSeriesDates writes it: at the wall clock of the zone the series
+	// goes to, where it keeps the time of day of the repeat moved (see
+	// enteredAt, #8).
+	at := enteredAt(s.event(rid), *start, z.to)
 	to, _ := parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, at, form))
 	rule, before := s.rrule, 0
 	if evaluable && !last {
@@ -731,16 +748,22 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 		stayed = s.overridesWhere(cal, stays)
 		dropExdates(c, func(d dateValue) bool { return stays(d) && notBefore(d, to) })
 	}
-	writeSeriesDates(cal, c, in, true, &at)
+	writeSeriesDates(cal, c, in, &at)
 	var shift func(dateValue) dateValue
 	if evaluable && !last {
-		shift = s.refShift(rid, to)
-		p.Value = movedRule(rule, before, rid, shift)
+		if shift = s.refShift(rid, to, z.to); shift == nil && z.rezone {
+			shift = s.wallMove(0, 0, 0, z.to)
+		}
+		p.Value = movedRule(rule, before, rid, shift, z.rezone)
 	}
 	dropOccurrence(cal, c, occ)
 	c.Props.Del(propKDEPending)
-	if shift != nil {
-		s.shiftRefs(cal, func(d dateValue) bool { return s.placeRef(d, rid) > 0 }, shift)
+	later := func(d dateValue) bool { return s.placeRef(d, rid) > 0 }
+	switch {
+	case z.rezone:
+		s.rezoneRefs(cal, later, shift, form)
+	case shift != nil:
+		s.shiftRefs(cal, later, shift)
 	}
 	s.retypeRefs(cal, to)
 	// The last occurrence ends the rule; else UNTIL never ends before the
@@ -784,6 +807,12 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 // convert, earlier ones too, see retypeRefs. One another app already shows in
 // the other value type keeps the series' type. A move that keeps occ's start
 // (else due), such as a change of its due alone, changes occ's dates only.
+// A zone in names for the anchor other than the series' moves the series
+// into it as move does, by the distance from where occ is shown, on the wall
+// clock of the series' zone, to in's dates on the new zone's, with the
+// references in the new form (see zonesFor and rezoneRefs); one named for
+// the due alone writes DUE in it, from prev on, as a move of no distance.
+//
 // It returns the overrides it left in place, for keepApart, and fails,
 // without changing anything, as move does.
 func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoInput) ([]*ical.Component, error) {
@@ -793,21 +822,27 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		moved.start, moved.startAllDay = in.Due, in.DueAllDay
 	}
 	loc := s.anchor.loc()
+	_, form := seriesStart(s.master, in)
+	z := s.zonesFor(in)
 	shown := dateValue{t: occAnchor(occ).In(loc), allDay: occAnchorAllDay(occ)}
 	dest := dateValue{t: occAnchor(moved), allDay: occAnchorAllDay(moved)}
 	retype := shown.allDay == s.anchor.allDay && dest.allDay != s.anchor.allDay
-	// A time is read on the wall clock of the series' zone, or, where an
-	// all-day series takes it, of the zone it takes, as writeSeriesDates
-	// writes it (see seriesForm): the date the user saved there.
+	// A time is read on the wall clock of the zone the series goes to, its
+	// own or the one in names, or, where an all-day series takes it, of the
+	// zone it takes, as writeSeriesDates writes it (see seriesStart): the
+	// date the user saved there.
 	if retype && !dest.allDay {
-		dest.t = dest.t.In(zoneOf(deref(in.Timezone)))
+		dest.t = dest.t.In(form.zone())
 	} else {
-		dest.t = dest.t.In(loc)
+		dest.t = dest.t.In(z.to)
 	}
-	shift := s.shiftBetween(shown, dest)
-	if shift == nil && !retype {
+	shift := s.shiftBetween(shown, dest, z.to)
+	if shift == nil && !retype && !z.rezone && sameZoneForm(z.due, s.dueForm) {
 		s.setEntryDates(occ.override, moved)
 		return nil, nil
+	}
+	if shift == nil && z.rezone {
+		shift = s.wallMove(0, 0, 0, z.to)
 	}
 	prev, before, err := s.movedFrom(occ)
 	if err != nil {
@@ -826,8 +861,8 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	var dates domain.TodoInput
 	var startAt dateValue
 	if retype {
-		dates, startAt = datesOn(in, civilDate(to.wallIn(loc)))
-		_, form := seriesStart(s.master, dates, true)
+		dates, startAt = datesOn(in, civilDate(to.wallIn(loc)), form.zone())
+		_, form := seriesStart(s.master, dates)
 		start, _ = parseDateProp(seriesValueProp(nil, ical.PropDateTimeStart, startAt, form))
 	}
 	rule, ok := seriesShift(s.rrule, from.wallIn(loc), start.wallIn(start.loc()))
@@ -847,21 +882,26 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		return stays(d) && (s.placeRef(d, prev) == 0 || notBefore(d, to))
 	})
 	if retype {
-		writeSeriesDates(cal, c, dates, true, &startAt)
+		writeSeriesDates(cal, c, dates, &startAt)
 	} else {
-		s.anchorAt(cal, to)
+		s.anchorIn(cal, to, z.start, z.due)
 	}
-	c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, before, prev, shift)
+	c.Props.Get(ical.PropRecurrenceRule).Value = movedRule(rule, before, prev, shift, z.rezone)
 	c.Props.Del(propKDEPending)
-	if shift != nil {
+	switch {
+	case z.rezone:
+		s.rezoneRefs(cal, moves, shift, z.start)
+	case shift != nil:
 		s.shiftRefs(cal, moves, shift)
 	}
 	if occ.offGrid {
-		c.Props.Add(seriesValueProp(cal, ical.PropExceptionDates, to, s.startForm))
+		c.Props.Add(seriesValueProp(cal, ical.PropExceptionDates, to, z.start))
 	}
 	entry := s
 	if retype {
 		s.retypeRefs(cal, start)
+	}
+	if retype || z.rezone || !sameZoneForm(z.due, s.dueForm) {
 		// occ's override takes in's dates in the forms the series has now.
 		entry = newTodoSeries(cal, c)
 	}
@@ -869,30 +909,20 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	return stayed, nil
 }
 
-// zoneOf returns the zone a series writes timed dates in for the zone tz of
-// a request, see seriesForm: tz's, UTC where it has none or Lucid cannot
-// resolve it (FR-17).
-func zoneOf(tz string) *time.Location {
-	if l := loadLocation(tz); l != nil {
-		return l
-	}
-	return time.UTC
-}
-
 // datesOn returns in with its dates moved onto day, a date, by whole days,
 // for a series retyped from an occurrence shown on another day (FR-17): its
-// start, else its due, falls on day at its own wall-clock time in the zone of
-// in (UTC for a date, see seriesForm), and the due keeps its distance to it.
-// It also returns that start, else due, as written there: on its wall clock,
-// also one the zone skips on day (#8).
-func datesOn(in domain.TodoInput, day time.Time) (domain.TodoInput, dateValue) {
+// start, else its due, falls on day at its own wall-clock time in loc, the
+// zone the series writes it in, or in UTC for a date (see seriesStart), and
+// the due keeps its distance to it. It also returns that start, else due, as
+// written there: on its wall clock, also one the zone skips on day (#8).
+func datesOn(in domain.TodoInput, day time.Time, loc *time.Location) (domain.TodoInput, dateValue) {
 	anchor, allDay := in.Start, in.StartAllDay
 	if anchor == nil {
 		anchor, allDay = in.Due, in.DueAllDay
 	}
 	zone := time.UTC
 	if !allDay {
-		zone = zoneOf(deref(in.Timezone))
+		zone = loc
 	}
 	days := int(day.Sub(civilDate(anchor.In(zone))) / (24 * time.Hour))
 	moved := func(t time.Time) dateValue {
@@ -1145,10 +1175,10 @@ func (s *todoSeries) lastBefore(t time.Time) (prev time.Time, before int, err er
 }
 
 // refShift returns how moving the occurrence rid to to, the new anchor as
-// written, moves the references to later occurrences, see shiftBetween
-// (FR-17).
-func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) dateValue {
-	return s.shiftBetween(s.event(rid), to)
+// written in the zone toLoc, moves the references to later occurrences, see
+// shiftBetween (FR-17).
+func (s *todoSeries) refShift(rid time.Time, to dateValue, toLoc *time.Location) func(dateValue) dateValue {
+	return s.shiftBetween(s.event(rid), to, toLoc)
 }
 
 // shiftBetween returns how a move from `from` to `to` moves the values of
@@ -1164,8 +1194,12 @@ func (s *todoSeries) refShift(rid time.Time, to dateValue) func(dateValue) dateV
 // from from's date to to's, each in its own zone: the series' for a time of
 // the series. They keep their value type, which retypeRefs changes
 // afterwards, setting the time of day.
-func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue {
-	loc := s.anchor.loc()
+//
+// A moved time lands on its moved wall clock in toLoc, the series' zone or,
+// on a zone change, the one the series moves into, see wallMove (FR-18):
+// from's wall clock is read in the series' zone, to's in toLoc. It is nil
+// for no change of date or clock time, also where the zone changes.
+func (s *todoSeries) shiftBetween(from, to dateValue, toLoc *time.Location) func(dateValue) dateValue {
 	start, dest := from.wallIn(from.loc()), to.wallIn(to.loc())
 	var months, days, secs int
 	switch strings.ToUpper(rulePart(s.rrule, "FREQ")) {
@@ -1181,6 +1215,17 @@ func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue 
 	if months == 0 && days == 0 && secs == 0 {
 		return nil
 	}
+	return s.wallMove(months, days, secs, toLoc)
+}
+
+// wallMove returns how a move by months, days and secs on the wall clock of
+// the series s moves its values (FR-17, FR-18): a DATE by the months and
+// days, a time from its wall clock in the series' zone, which can be one the
+// zone skips (#8), to the moved one in toLoc, the series' zone or the one a
+// zone change moves it into; with no months, days or seconds, that is the
+// wall clock it keeps in toLoc.
+func (s *todoSeries) wallMove(months, days, secs int, toLoc *time.Location) func(dateValue) dateValue {
+	loc := s.anchor.loc()
 	return func(d dateValue) dateValue {
 		if d.allDay {
 			day := d.t.AddDate(0, months, days)
@@ -1188,7 +1233,7 @@ func (s *todoSeries) shiftBetween(from, to dateValue) func(dateValue) dateValue 
 		}
 		w := d.wallIn(loc)
 		return atWall(time.Date(w.Year(), w.Month()+time.Month(months), w.Day()+days,
-			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), time.UTC), loc)
+			w.Hour(), w.Minute(), w.Second()+secs, w.Nanosecond(), time.UTC), toLoc)
 	}
 }
 
@@ -1205,22 +1250,30 @@ func secondOfDay(t time.Time) int {
 
 // movedRule returns rrule for a series moved from its occurrence rid
 // (FR-17): its COUNT without the before occurrences that preceded rid (see
-// lowerCount); its UNTIL, from rid on, moved by shift (nil: kept). An UNTIL
-// on rid itself makes the moved occurrence the last one, and it stays the
-// last wherever it moves.
-func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) dateValue) string {
+// lowerCount); its UNTIL, from rid on, moved by shift (nil: kept), in its own
+// form. An UNTIL on rid itself makes the moved occurrence the last one, and
+// it stays the last wherever it moves. With toUTC, for a series a zone change
+// moves into a TZID or UTC, a floating UNTIL, which Lucid reads on the
+// series' wall clock, is written in UTC, at the instant of its moved wall
+// clock in the new zone, as RFC 5545 section 3.3.10 wants an UNTIL next to
+// such a DTSTART (see movedUntil, FR-18).
+func movedRule(rrule string, before int, rid time.Time, shift func(dateValue) dateValue, toUTC bool) string {
 	rrule = lowerCount(rrule, before)
 	if shift == nil {
 		return rrule
 	}
+	moved := func(d dateValue) dateValue {
+		if d.t.Before(rid) {
+			return d
+		}
+		return shift(d)
+	}
 	return mapRulePart(rrule, "UNTIL", func(v string) string {
+		if d, err := parseDateValue(v, nil); toUTC && err == nil && d.floating {
+			return moved(d).t.UTC().Format(icalDateTimeUTC)
+		}
 		p := ical.Prop{Value: v}
-		shiftDatePropBy(&p, func(d dateValue) dateValue {
-			if d.t.Before(rid) {
-				return d
-			}
-			return shift(d)
-		})
+		shiftDatePropBy(&p, moved)
 		return p.Value
 	})
 }
@@ -1316,6 +1369,54 @@ func (s *todoSeries) shiftRefs(cal *ical.Calendar, moves func(dateValue) bool, s
 			}
 			return shift(d)
 		})
+	}
+}
+
+// rezoneRefs writes the references of the master of s in cal in the form f
+// of a series whose zone changes, as DTSTART is written (FR-17, FR-18): the
+// RECURRENCE-IDs of its overrides and its EXDATE and RDATE values, so that
+// none is left in another form than DTSTART's, the mixed forms other clients
+// misread (see rezoneRecurrenceRefs). Those moves reports, placed by
+// placeRef, move by shift, as shiftRefs moves them, their overrides' own
+// DTSTART and DUE too, which keep their form; the others, which the write
+// leaves in place, keep their instant, which Lucid matches them by, and
+// their overrides' own dates as they are, as a completed repeat keeps them.
+// With a nil shift none moves. A DATE among them moves as shiftDatePropBy
+// moves it and stays a DATE (see rezoneDateProp).
+func (s *todoSeries) rezoneRefs(cal *ical.Calendar, moves func(dateValue) bool, shift func(dateValue) dateValue, f dateForm) {
+	carry := func(d dateValue) dateValue {
+		if shift != nil && moves(d) {
+			return shift(d)
+		}
+		return d
+	}
+	master := s.master
+	for _, o := range cal.Children {
+		if o == master || o.Name != master.Name {
+			continue
+		}
+		r, err := parseDateProp(o.Props.Get(ical.PropRecurrenceID))
+		if err != nil {
+			continue
+		}
+		if shift != nil && moves(r) {
+			for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
+				vals := o.Props[name]
+				for i := range vals {
+					shiftDatePropBy(&vals[i], shift)
+				}
+			}
+		}
+		vals := o.Props[ical.PropRecurrenceID]
+		for i := range vals {
+			rezoneDateProp(cal, &vals[i], carry, carry, f)
+		}
+	}
+	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
+		vals := master.Props[name]
+		for i := range vals {
+			rezoneDateProp(cal, &vals[i], carry, carry, f)
+		}
 	}
 }
 
@@ -1632,32 +1733,16 @@ func storedForms(c *ical.Component) (start, due dateForm, ok bool) {
 	return dateForm{}, dateForm{}, false
 }
 
-// seriesForm returns the form a series date of the given value type is
-// written in (FR-17): a DATE when all-day; else the stored DATE-TIME form f
-// when keep is set or f has a TZID another client chose; else the zone tz,
-// UTC without one.
-func seriesForm(f dateForm, allDay, keep bool, tz string) dateForm {
-	switch {
-	case allDay:
-		return dateForm{allDay: true}
-	case !f.allDay && (keep || f.param != ""):
-		return f
-	default:
-		return dateForm{tzid: tz}
-	}
-}
-
 // writeSeriesDates writes the start and due of in as DTSTART and DUE of the
 // recurring todo c (FR-10, FR-17). Without a start, DTSTART = DUE, as RFC
-// 5545 wants DTSTART with RRULE; DUE replaces a DURATION. keep keeps the
-// form of the dates c has, else only a TZID stays and timed dates take the
-// zone of in (see seriesForm). at, if set, is in's start, else its due, at
-// the wall clock it is written with, which can be one its zone skips (see
-// enteredAt and datesOn, #8).
-func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool, at *dateValue) {
-	start, startForm := seriesStart(c, in, keep)
-	_, dueForm, ok := storedForms(c)
-	dueForm = seriesForm(dueForm, in.DueAllDay, keep && ok, deref(in.Timezone))
+// 5545 wants DTSTART with RRULE; DUE replaces a DURATION. Each keeps the form
+// c writes it in, also for a new rule and a todo that did not recur yet,
+// unless in names a zone for it, see seriesStart and todoForms (FR-18). at,
+// if set, is in's start, else its due, at the wall clock it is written with,
+// which can be one its zone skips (see enteredAt and datesOn, #8).
+func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, at *dateValue) {
+	start, startForm := seriesStart(c, in)
+	_, dueForm := todoForms(c, in)
 	if at != nil && start != nil {
 		c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, *at, startForm))
 	} else {
@@ -1673,12 +1758,46 @@ func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput
 
 // seriesStart returns the DTSTART writeSeriesDates writes for in on the
 // recurring todo c, in's start, else its due, nil if neither, and the form
-// it writes it in (FR-17).
-func seriesStart(c *ical.Component, in domain.TodoInput, keep bool) (*time.Time, dateForm) {
-	startForm, _, ok := storedForms(c)
+// it writes it in (FR-17, FR-18): the one c writes its anchor in, DTSTART,
+// else DUE, unless in.Timezone names a zone (see formFor), a DATE for a date
+// and UTC for a date given a time without a zone (see dateForm.ofType).
+func seriesStart(c *ical.Component, in domain.TodoInput) (*time.Time, dateForm) {
+	startForm, _, _ := storedForms(c)
 	start, allDay := in.Start, in.StartAllDay
 	if start == nil {
 		start, allDay = in.Due, in.DueAllDay
 	}
-	return start, seriesForm(startForm, allDay, keep && ok, deref(in.Timezone))
+	return start, formFor(in.Timezone, startForm).ofType(allDay)
+}
+
+// seriesZones is where a write of a task series puts its timed dates, see
+// zonesFor (FR-17, FR-18).
+type seriesZones struct {
+	start, due dateForm // the forms of the master's DTSTART and DUE
+	// rezone tells a zone change of the anchor: a zone the write names that
+	// differs from the anchor's form (see sameZoneForm), which moves the
+	// series into to by its wall clock.
+	rezone bool
+	to     *time.Location // the series' zone, or the one it moves into
+}
+
+// zonesFor returns the seriesZones of a move or a new rule of the timed
+// series s for the write in (FR-17, FR-18): its DTSTART (else DUE) and DUE
+// stay in their forms unless in names zones for them, see seriesStart and
+// todoForms. Another anchor zone is a zone change, which moves the series
+// into that zone, and so is the same zone written otherwise, such as
+// Europe/Berlin for /mozilla.org/20050126_1/Europe/Berlin; one named for the
+// due alone changes DUE's form only. An all-day series, or one moved between
+// dates and times, has none: its dates convert instead (see retypeRefs).
+func (s *todoSeries) zonesFor(in domain.TodoInput) seriesZones {
+	_, start := seriesStart(s.master, in)
+	_, due := todoForms(s.master, in)
+	z := seriesZones{start: s.startForm, due: s.dueForm, to: s.anchor.loc()}
+	if !s.anchor.allDay && !start.allDay && !sameZoneForm(start, s.startForm) {
+		z.start, z.rezone, z.to = start, true, start.zone()
+	}
+	if !s.dueForm.allDay && !due.allDay && !sameZoneForm(due, s.dueForm) {
+		z.due = due
+	}
+	return z
 }

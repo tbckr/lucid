@@ -69,7 +69,8 @@ func (s *todoSeries) splitPlace(rid time.Time) (int, error) {
 //     for the other value type (A-11): EXDATE values, and a property left
 //     without values, while a value Lucid cannot read stays (see
 //     dropExdates); and the overrides, by their RECURRENCE-ID, whatever
-//     their own dates: a repeat before rid moved past it stays.
+//     their own dates: a repeat before rid moved past it stays. A VTIMEZONE
+//     only they referred to goes too (see pruneVTimezones, FR-18).
 //
 // It fails, changing nothing, for an rid splitPlace refuses, as
 // domain.ErrSeriesSplitUnsupported. It neither bumps SEQUENCE nor writes:
@@ -89,6 +90,7 @@ func endTodoBefore(cal *ical.Calendar, series *todoSeries, rid time.Time) error 
 	from := series.refsFrom(rid)
 	dropExdates(series.master, from)
 	dropOverrides(cal, series.master, from)
+	pruneVTimezones(cal)
 	return nil
 }
 

@@ -792,3 +792,25 @@ func TestSkipTodoOccurrence(t *testing.T) {
 		checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART:20250317T090000Z", "ATTENDEE:mailto:you@example.com"}, nil)
 	})
 }
+
+// TestDetachIgnoresZones checks that the zones a detach names are not
+// written, a zone being the whole series': the detached task takes its dates
+// in the series' forms, and a zone sent is no change of them, so that a
+// repeat whose dates another app wrote with its start after its due can
+// still be detached unchanged (FR-17, FR-18).
+func TestDetachIgnoresZones(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := seedSeries(t, e, []string{
+		"DTSTART;TZID=Europe/Berlin:20250310T110000", "DUE;TZID=Europe/Berlin:20250310T100000", "RRULE:FREQ=WEEKLY",
+	})
+	got, _ := detachCurrent(t, e, id, func(f *domain.Todo) domain.TodoInput {
+		in := editInput(f)
+		in.Timezone, in.DueTimezone = ptr("America/New_York"), ptr("Asia/Tokyo")
+		return in
+	})
+	checkStored(t, "copy", storedDetached(t, e, &got),
+		[]string{"DTSTART;TZID=Europe/Berlin:20250310T110000", "DUE;TZID=Europe/Berlin:20250310T100000"},
+		[]string{"America/New_York", "Asia/Tokyo"})
+	checkStored(t, "series", storedObject(t, e, id), []string{"DTSTART;TZID=Europe/Berlin:20250317T110000"}, nil)
+}

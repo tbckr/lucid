@@ -1619,3 +1619,38 @@ func TestRestoreTodoSplit(t *testing.T) {
 		}
 	})
 }
+
+// TestUpdateTodoFollowingZoneChange checks that a split with a zone that
+// differs from the series' moves only the new series into it, by its wall
+// clock, as a save of the whole series moves it: from the New York repeat of
+// 11-10 at 18:00, entered at 18:00 Berlin time, the new series is at 18:00
+// in Berlin, without New York's VTIMEZONE, and the series stays in New York
+// (FR-17, FR-18).
+func TestUpdateTodoFollowingZoneChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id, f := seedZoned(t, e, newYorkTimezone,
+		"DTSTART;TZID=America/New_York:20261027T180000", "DUE;TZID=America/New_York:20261027T190000", "RRULE:FREQ=WEEKLY")
+	in := editInput(&f)
+	in.Start, in.Due, in.Timezone = ptr(date(2026, 11, 10, 17, 0)), ptr(date(2026, 11, 10, 18, 0)), ptr("Europe/Berlin")
+	res, _, err := e.svc.UpdateTodoFollowing(t.Context(), id, f.ETag, date(2026, 11, 10, 23, 0), in)
+	mustNoErr(t, err)
+
+	checkStored(t, "N", storedObject(t, e, res.Todo.ID), []string{
+		"DTSTART;TZID=Europe/Berlin:20261110T180000", "DUE;TZID=Europe/Berlin:20261110T190000", "RRULE:FREQ=WEEKLY\r\n",
+		"TZID:Europe/Berlin",
+	}, []string{"America/New_York"})
+	checkStored(t, "S", storedObject(t, e, id), []string{
+		"DTSTART;TZID=America/New_York:20261027T180000", "RRULE:FREQ=WEEKLY;UNTIL=20261110T225959Z\r\n", "TZID:America/New_York",
+	}, []string{"Europe/Berlin"})
+	if n := res.Todo; n.Timezone != "Europe/Berlin" || !sameTime(n.Start, in.Start) {
+		t.Errorf("new series = %+v; want it from 17:00Z in Europe/Berlin", n)
+	}
+	occs, err := e.svc.ListTodoOccurrences(t.Context(), e.cals["tasks"], date(2026, 10, 25, 0, 0), date(2026, 11, 25, 0, 0))
+	mustNoErr(t, err)
+	current, upcoming := domain.OccurrenceCurrent, domain.OccurrenceUpcoming
+	checkTodoOccurrences(t, occs, []time.Time{
+		date(2026, 10, 27, 22, 0), date(2026, 11, 3, 23, 0),
+		date(2026, 11, 10, 17, 0), date(2026, 11, 17, 17, 0), date(2026, 11, 24, 17, 0),
+	}, []string{current, upcoming, current, upcoming, upcoming})
+}

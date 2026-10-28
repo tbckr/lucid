@@ -82,6 +82,20 @@ func endFormFor(sentEnd, sentStart *string, kept dateForm) dateForm {
 	return formFor(sentStart, kept)
 }
 
+// ofType returns the form f gives a value of the type allDay (FR-18): a DATE
+// for a date, whatever zone a write names, as no zone makes a date a
+// date-time; f for a date-time, UTC where f is a DATE's, for a date given a
+// time without a zone.
+func (f dateForm) ofType(allDay bool) dateForm {
+	switch {
+	case allDay:
+		return dateForm{allDay: true}
+	case f.allDay:
+		return dateForm{}
+	}
+	return f
+}
+
 // sameZoneForm reports whether a and b are written alike as far as their
 // zone goes: both DATEs, both floating, both UTC, or both with the same
 // TZID, as written where it was read (FR-18). Equal instants in two zones
@@ -369,16 +383,6 @@ func text(props ical.Props, name string) string {
 		return p.Value
 	}
 	return s
-}
-
-// deref returns the string p points to, "" for nil. The zone fields of an
-// input are pointers (FR-18) but are still read as strings here: an absent
-// zone is "" (UTC on create, the stored zone on a series update), as before.
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // textOr returns the unescaped text value of a property, or fallback if the

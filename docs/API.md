@@ -609,7 +609,10 @@ after `due`; otherwise `400 invalid_input`. An update that keeps the stored
 `start` and `due` skips this check, so todos from other clients can still be
 completed. Writing a todo stores `due` as
 `DUE` and drops `DURATION`; a `start` or `due` equal to the stored value keeps
-the original property, including its `TZID`.
+the original property, including its `TZID`, unless the write names another
+zone for it (see `PUT` below). A write that changes a todo drops the
+`VTIMEZONE`s no `TZID` refers to any more, such as that of a repeat's
+override a completion rolls past (FR-18).
 
 `timezone` is the IANA zone of the todo's anchor, its `DTSTART`, else its
 `DUE`, as its `TZID` names it, like an event's `timezone` for its start: the
@@ -704,9 +707,14 @@ behind, or one past the rule's end. No series can go on from it, so
 
 Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone", "dueTimezone" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
-(`supportsTodos: false`). `timezone` is the IANA zone timed `start`/`due`
-recur in; without it, a series uses UTC. `dueTimezone` is the IANA zone of
-`DUE`, sent like `timezone` (FR-18).
+(`supportsTodos: false`). `timezone` is the IANA zone of a timed `DTSTART`,
+or of `DUE` for a todo without `start`, for a series the zone it recurs in,
+written as `TZID` with a `VTIMEZONE`; absent, `""` or `"UTC"` writes it in
+UTC (`Z`) without either, and `"Etc/UTC"`, UTC picked as a zone, as
+`TZID=Etc/UTC` with its `VTIMEZONE`, which the todo then reports as
+`"UTC"`. `dueTimezone` is the IANA zone of `DUE`, sent like `timezone`;
+absent, `DUE` takes `timezone`. A date (`startAllDay`, `dueAllDay`) takes no
+zone (FR-18).
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 
@@ -720,6 +728,18 @@ absent keeps the stored rule, `""` removes it (the todo becomes a single,
 non-recurring task at the current occurrence's dates), any other value sets
 it. Setting `status` to `COMPLETED` sets `completed`; any other status clears
 it.
+
+For a single todo, and for a series saved without its rule, which becomes
+one, `timezone` and `dueTimezone` name the zones of `DTSTART` and `DUE` as
+for `POST` (`timezone` that of `DUE` for a todo without `start`), but each
+one absent keeps the form its date is written in (a `TZID`, also one the
+server can't resolve, as it is; UTC; or floating), at the new time; an
+absent `dueTimezone` follows a `timezone` that is sent, and a date the todo
+has no property for yet takes the other's form. A zone sent that differs
+from the one a date is written in writes the date there, also at the same
+instant; a date stays a date, whatever zone is sent. A single todo made
+recurring keeps its zones the same way, and the series recurs in its
+anchor's. A `VTIMEZONE` no `TZID` refers to any more goes (FR-18).
 
 For a recurring todo, these edits are handled specially:
 
@@ -758,8 +778,9 @@ For a recurring todo, these edits are handled specially:
   completing one off the rule drops its override. Otherwise the master rolls
   as usual, also from an occurrence off the rule.
 - **Moving the series** (`start`/`due` different from the stored ones): the
-  master's `DTSTART`/`DUE` become the new dates, keeping their written form (a
-  series without `start` recurs on `due`), and the override of the current
+  master's `DTSTART`/`DUE` become the new dates, keeping their written form
+  unless the body names other zones (see "Time zone"; a series without
+  `start` recurs on `due`), and the override of the current
   occurrence goes (but see one another client moved, below). The rule follows
   as far as it can, counted from the current occurrence's `RECURRENCE-ID` to
   the new start in the series' zone: an interval rule stays as it is; a weekly
@@ -814,13 +835,14 @@ For a recurring todo, these edits are handled specially:
   value type changes the series' type, as any move does: the series takes
   the saved dates on the date its rule moves to, and every override,
   `EXDATE` and the `UNTIL` convert as above. A time saved counts on its date
-  in the body's `timezone`, the zone the series takes. One another client
-  already shows in the other value type keeps the series' type.
+  in the zone the series takes, the body's `timezone`, else UTC. One another
+  client already shows in the other value type keeps the series' type.
   A change of its `due` alone changes only the occurrence; the last repeat
   moves to any date as above, wherever it is shown. A move together with a
   new `rrule` starts the series over, and the undo below restores the
   resource: neither is such a move.
-- **Changing `rrule`**: the new rule applies from the current occurrence on;
+- **Changing `rrule`**: the new rule applies from the current occurrence on,
+  in the series' zone unless `timezone` names another (see "Time zone");
   earlier occurrences and completed copies are untouched, except that the
   overrides that stay and an `UNTIL` take the new value type when the dates
   change between all-day and timed, as for a move. The overrides from the
@@ -832,6 +854,28 @@ For a recurring todo, these edits are handled specially:
   as shown: that occurrence's override, if it has one, is laid over the
   series first, its own title, notes, priority and alarms included, and the
   changed fields (see "Changing fields") go over those.
+- **Time zone:** a series has one zone for all its repeats, its anchor's
+  (`DTSTART`, else `DUE`; single todos: see above). Without `timezone`, or
+  with the zone its anchor is written in, it stays in its zone and form (a
+  `TZID`, also one the server can't resolve; UTC; or floating), also when
+  the rule or the dates change. A `timezone` that differs (another `TZID`,
+  or UTC against a `TZID` or a floating time) moves the series into that
+  zone by its wall clock: the current repeat moves from its wall clock as
+  shown, in the old zone, to `start` (else `due`) in the new one, and the
+  rule's days and what refers to later repeats (their overrides with their
+  dates, `EXDATE`s, a UTC `UNTIL`) follow that change of date and clock time
+  as under "Moving the series". A New York series at 18:00 saved at 18:00
+  Berlin time is at 18:00 Berlin time on every date, also where the two
+  zones are another number of hours apart. Every `RECURRENCE-ID` and
+  `EXDATE` takes the new `TZID`, or UTC: those of earlier repeats, such as
+  other clients' completions, at their instant, the overrides keeping their
+  own dates; a floating `UNTIL` is written in UTC. With a new `rrule`, the
+  series starts over at the dates sent, in the new zone. `dueTimezone` names
+  `DUE`'s zone; absent, `DUE` follows a `timezone` that is sent, else keeps
+  its own form, and a `dueTimezone` alone writes `DUE` there at its instant.
+  A series made timed takes `timezone`, else UTC; an all-day series, or one
+  made all-day, takes none: its dates stay dates, whatever zones are sent. A
+  `VTIMEZONE` no `TZID` refers to any more goes (FR-17, FR-18).
 - **Completions from other clients**: when changing or removing `rrule`
   drops an override with `STATUS:COMPLETED`, the backend first creates a
   completed todo of its own for it (`If-None-Match: *`), a clone of the
@@ -870,7 +914,10 @@ Body (`TodoInput`), as for `PUT /todos/{todoId}`, with two exceptions: its
 leave the repeat open (`NEEDS-ACTION`, `IN-PROCESS`, or absent). `COMPLETED`
 or `CANCELLED` is `400 invalid_input`, before anything is read: a repeat is
 completed through `PUT /todos/{todoId}`. `start` is handled as there: a body
-without it, or without any date, takes the repeat's `start`.
+without it, or without any date, takes the repeat's `start`. `timezone` and
+`dueTimezone` are validated as there, but the detached todo takes the body's
+dates in the forms the series writes them: a zone is the whole series'
+(FR-18).
 
 - **The detached todo** is a clone of the repeat as stored, as for a
   completed copy (see `PUT /todos/{todoId}` above), with a new `id`/`uid`.
@@ -969,7 +1016,11 @@ the new series as `PUT /todos/{todoId}` changes a series from its current
 repeat, which the repeat is in the new series: new dates move it, the rule
 following as far as it can (see "Moving the series" there). The body carries
 the series' fields, `title`, `description`, `checklist` and `priority` as the
-todo has them, with the user's edits, and only the changed ones apply: a
+todo has them, with the user's edits. A `timezone` that differs from the
+series' moves the new series alone into that zone, as `PUT /todos/{todoId}`
+moves a series (see "Time zone" there), from the repeat as shown; the series
+keeps its zone, and each keeps only the `VTIMEZONE`s its `TZID`s refer to
+(FR-18). Of the fields, only the changed ones apply: a
 field counts as changed when it differs from the series' (the checklist by
 the text of its items), and goes into the new series and into the repeat's
 override, if it has one; the others stay as the new series inherited them,

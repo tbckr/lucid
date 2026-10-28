@@ -1537,7 +1537,7 @@ func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, mv *series
 	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
 		vals := master.Props[name]
 		for i := range vals {
-			rezoneDateProp(cal, &vals[i], mv, f)
+			rezoneDateProp(cal, &vals[i], mv.carry, mv.shift, f)
 		}
 	}
 	for _, c := range cal.Children {
@@ -1546,25 +1546,26 @@ func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, mv *series
 		}
 		vals := c.Props[ical.PropRecurrenceID]
 		for i := range vals {
-			rezoneDateProp(cal, &vals[i], mv, f)
+			rezoneDateProp(cal, &vals[i], mv.carry, mv.shift, f)
 		}
 	}
 }
 
-// rezoneDateProp writes the DATE-TIME values of p carried by mv in the form
-// f, see rezoneRecurrenceRefs. A property with a value of another type, a
-// DATE or a PERIOD, or one that does not parse, moves as shiftDatePropBy
-// moves it, since its values share its parameters.
-func rezoneDateProp(cal *ical.Calendar, p *ical.Prop, mv *seriesMove, f dateForm) {
+// rezoneDateProp writes the DATE-TIME values of p moved by carry in the form
+// f, see rezoneRecurrenceRefs and todoSeries.rezoneRefs (FR-18). A property
+// with a value of another type, a DATE or a PERIOD, or one that does not
+// parse, moves as shiftDatePropBy moves it by shift, since its values share
+// its parameters.
+func rezoneDateProp(cal *ical.Calendar, p *ical.Prop, carry, shift func(dateValue) dateValue, f dateForm) {
 	parts := strings.Split(p.Value, ",")
 	tzid := ""
 	for i, v := range parts {
 		d, err := parseDateValue(v, p.Params)
 		if err != nil || d.allDay {
-			shiftDatePropBy(p, mv.shift)
+			shiftDatePropBy(p, shift)
 			return
 		}
-		q := seriesValueProp(cal, p.Name, mv.carry(d), f)
+		q := seriesValueProp(cal, p.Name, carry(d), f)
 		parts[i], tzid = q.Value, q.Params.Get(ical.ParamTimezoneID)
 	}
 	if tzid == "" {

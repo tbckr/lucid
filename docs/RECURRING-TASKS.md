@@ -1155,6 +1155,21 @@ its date (see Reading), so it takes the new time of day on that date too,
 and keeps excluding or changing that occurrence. The later ones first move
 by the change in date.
 
+A series keeps its zone and form (a `TZID`, UTC or floating) through every
+move and new rule, unless the save names another zone for its anchor
+(`timezone`). Then it moves into that zone by its wall clock, as an event
+series does (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)): the distance
+runs from the current occurrence's wall clock as shown, in the old zone, to
+the dates saved in the new one, so a New York series at 18:00 saved at 18:00
+Berlin time is at 18:00 Berlin time on every date, and the rule and the
+later references follow it as above, a UTC `UNTIL` too. Every
+`RECURRENCE-ID` and `EXDATE` takes the new `TZID` (or UTC), as mixed forms
+are what other clients misread: those of earlier occurrences, such as other
+apps' completions, at their instant, with their overrides' own dates as they
+are. A floating `UNTIL` is written in UTC there, and the old zone's
+`VTIMEZONE` goes once nothing refers to it. A zone named for the due alone
+(`dueTimezone`) writes `DUE` there at its instant, and moves nothing.
+
 A repeat at a time its zone skips, such as 02:30 on the night Berlin
 changes to summer time, shows an hour later, at 03:30, as RFC 5545 reads
 that time (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md), "What the
@@ -1205,11 +1220,11 @@ it stays where it is. Saved between all-day and timed, an occurrence shown
 in the series' own value type changes the series' value type, as any move
 does: the series takes the dates saved, on the date its rule moves to, and
 every reference converts as above, earlier ones too. A time saved counts on
-its date in the zone the series takes, the browser's. One another app
-already shows in the other value type keeps the series' type: only that
-occurrence was of it. A change of the due alone changes only the occurrence
-another app moved. The last repeat moves to any date, as above, wherever it
-is shown.
+its date in the zone the series takes, the one the save names, else UTC.
+One another app already shows in the other value type keeps the series'
+type: only that occurrence was of it. A change of the due alone changes
+only the occurrence another app moved. The last repeat moves to any date,
+as above, wherever it is shown.
 
 **Undo** restores the todo's resource exactly as it was read before the
 write that returned `undoToken` (a snapshot, kept server-side under the
@@ -1244,14 +1259,14 @@ or failing CalDAV server keeps the snapshot, so the client can retry
 (`502`).
 
 **Setting or changing a rule** applies it from the current occurrence on: its
-dates become `DTSTART` and `DUE`, and a task that did not recur yet writes
-timed dates with the browser's time zone as `TZID` (and a `VTIMEZONE`), like
-a recurring event. Overrides from the current occurrence on go; earlier
-ones, the completed occurrences, stay. The old rule's `EXDATE`s go too: they
-would remove the new rule's occurrences on the same dates. A rule needs a
-start or due date. The editor only sends a rule the user changed: a preset
-writes a stored rule in its own words, which would count as a new rule and
-start the series over.
+dates become `DTSTART` and `DUE`, in the forms they are written in, also for
+a task that did not recur yet, or in the zones the save names, as a `TZID`
+with its `VTIMEZONE`, like a recurring event. Overrides from the current
+occurrence on go; earlier ones, the completed occurrences, stay. The old
+rule's `EXDATE`s go too: they would remove the new rule's occurrences on the
+same dates. A rule needs a start or due date. The editor only sends a rule
+the user changed: a preset writes a stored rule in its own words, which
+would count as a new rule and start the series over.
 
 What a rule leaves to the series' start, the weekday of `FREQ=WEEKLY` or the
 day of `FREQ=MONTHLY` (RFC 5545 section 3.3.10), comes from where it recurs

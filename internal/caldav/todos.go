@@ -328,13 +328,13 @@ func (s *service) CreateTodo(ctx context.Context, calendarID string, in domain.T
 	cal := newCalendar()
 	c := newComponent(ical.CompToDo, uid, now)
 	cal.Children = append(cal.Children, c)
+	// Timed dates are written in the zones in names, else in UTC, a series
+	// like an event's: it recurs at its zone's wall-clock time (FR-17, FR-18).
 	if rr == "" {
-		applyTodoDates(c.Props, in)
+		applyTodoDates(cal, c, in)
 	} else {
-		// A series is written like an event's: timed dates in the browser's
-		// zone, so that it recurs at the same wall-clock time (FR-17).
 		c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
-		writeSeriesDates(cal, c, in, false, nil)
+		writeSeriesDates(cal, c, in, nil)
 	}
 	applyTodoFields(c, in, now)
 
@@ -474,7 +474,7 @@ type todoEdit struct {
 func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in domain.TodoInput) (todoEdit, error) {
 	e := todoEdit{cur: cur, in: in, series: newTodoSeries(cal, c)}
 	var err error
-	if e.unchanged, err = fillTodoDates(cur, &e.in); err != nil {
+	if e.unchanged, err = fillTodoDates(cur, c, &e.in); err != nil {
 		return todoEdit{}, err
 	}
 	if e.rule, e.rr, err = ruleEditOf(c, e.in); err != nil {
@@ -513,6 +513,10 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 // completes that occurrence, see completeOccurrence, which writes. The last
 // occurrence has no next one to roll to: its fields complete the series
 // itself.
+//
+// The dates keep their forms unless in names zones for them, see todoForms
+// and todoSeries.zonesFor, and a VTIMEZONE the edit leaves without a TZID
+// referring to it goes (see pruneVTimezones, FR-18).
 //
 // It fails, with the dates and fields as they were, for a completion of a
 // series whose rule Lucid cannot evaluate (errRuleUnsupported), and for a
@@ -569,7 +573,7 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 
 	switch {
 	case series == nil:
-		applyTodoDates(c.Props, e.in)
+		applyTodoDates(cal, c, e.in)
 	case e.rule == ruleKeep && !e.unchanged:
 		// A move the rule cannot follow, or one onto a repeat another app
 		// changed, fails before anything is written; an undo restores the
@@ -590,21 +594,23 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 		applyEditedFields(nil, ov, e.in, e.cur)
 		applyTodoFields(c, e.in, now)
 	}
+	pruneVTimezones(cal)
 	return series, false, nil
 }
 
-// fillTodoDates fills in the dates a change of the todo cur, as read, leaves
-// out of in (FR-16): a body without start keeps cur's, for clients that
-// predate it, and so does a recurring todo sent without any date, as RFC 5545
-// requires DTSTART with RRULE; for an open series, cur's dates are those of
-// its current occurrence. It reports whether in then has cur's dates, and
-// checks them only where it does not, so that todos from other clients can
-// still be completed.
-func fillTodoDates(cur domain.Todo, in *domain.TodoInput) (unchanged bool, err error) {
+// fillTodoDates fills in the dates a change of the todo cur, read from c,
+// leaves out of in (FR-16): a body without start keeps cur's, for clients
+// that predate it, and so does a recurring todo sent without any date, as
+// RFC 5545 requires DTSTART with RRULE; for an open series, cur's dates are
+// those of its current occurrence. It reports whether in then has cur's dates
+// in the zones c writes them in, a zone change being a change of the dates
+// (see zonesChange, FR-18), and checks them only where it does not, so that
+// todos from other clients can still be completed.
+func fillTodoDates(cur domain.Todo, c *ical.Component, in *domain.TodoInput) (unchanged bool, err error) {
 	if in.StartOmitted || (in.Start == nil && in.Due == nil && cur.Recurring) {
 		in.Start, in.StartAllDay = cur.Start, cur.StartAllDay
 	}
-	if sameDates(cur, *in) {
+	if sameDates(cur, *in) && !zonesChange(c, *in) {
 		return true, nil
 	}
 	return false, in.ValidateDates()
@@ -704,10 +710,14 @@ func newTodoRule(in domain.TodoInput) (string, error) {
 // before (see convertDoneOverrides); the EXDATEs go too, as they would
 // exclude the new rule's instances on the old rule's dates (A-17); completed
 // overrides before it stay as history, and with an UNTIL they take the
-// value type of in's dates when it changes (see retypeRefs). A todo that
-// did not recur yet takes the zone of in for timed dates without a TZID. A
-// todo detached from another series (see propDetachedFrom) loses that origin:
-// with a rule it is a series of its own.
+// value type of in's dates when it changes (see retypeRefs). The dates keep
+// their forms, also those of a todo that did not recur yet, unless in names
+// zones for them (see writeSeriesDates, FR-18); where the series' zone
+// changes, the RECURRENCE-IDs of the overrides that stay are written in its
+// new form at their instant, and the overrides keep their own dates (see
+// todoSeries.zonesFor and rezoneRefs). A todo detached from another series (see
+// propDetachedFrom) loses that origin: with a rule it is a series of its
+// own.
 func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todoOcc, rr string, in domain.TodoInput) {
 	if s != nil {
 		dropOverrides(cal, c, s.refsFrom(from.rid))
@@ -716,19 +726,27 @@ func setTodoRule(cal *ical.Calendar, c *ical.Component, s *todoSeries, from todo
 	c.Props.Del(ical.PropExceptionDates)
 	c.Props.Set(rawProp(ical.PropRecurrenceRule, rr))
 	// A start (else due) saved at the time of day the occurrence shows keeps
-	// the series' wall clock, also one its zone skips (see enteredAt, #8).
+	// the series' wall clock, also one its zone skips (see enteredAt, #8),
+	// read in the zone the series goes to.
 	var at *dateValue
+	var z seriesZones
+	if s != nil {
+		z = s.zonesFor(in)
+	}
 	if start := cmp.Or(in.Start, in.Due); s != nil && start != nil {
-		v := enteredAt(s.event(from.rid), *start, s.anchor.loc())
+		v := enteredAt(s.event(from.rid), *start, z.to)
 		at = &v
 	}
-	writeSeriesDates(cal, c, in, s != nil, at)
+	writeSeriesDates(cal, c, in, at)
 	c.Props.Del(propKDEPending)
 	// With a rule the todo is a series of its own, no longer the copy of a
 	// repeat of another one.
 	c.Props.Del(propDetachedFrom)
 	if to, err := parseDateProp(c.Props.Get(ical.PropDateTimeStart)); s != nil && err == nil {
 		s.retypeRefs(cal, to)
+		if z.rezone {
+			s.rezoneRefs(cal, nil, nil, z.start)
+		}
 	}
 }
 
@@ -1077,7 +1095,9 @@ func (s *todoSeries) setEntryDates(c *ical.Component, occ todoOcc) {
 
 // entryCalendar returns a calendar of its own for c, an entry cloned from a
 // series in src, with the VTIMEZONEs its DTSTART and DUE refer to (FR-17):
-// src's, which Lucid may not be able to generate, else generated ones.
+// src's, which Lucid may not be able to generate, else generated ones, also
+// for a TZID that resolves to UTC, such as Etc/UTC, as RFC 5545 section
+// 3.2.19 asks one for each TZID (FR-18).
 func entryCalendar(src *ical.Calendar, c *ical.Component) *ical.Calendar {
 	cal := newCalendar()
 	for _, name := range []string{ical.PropDateTimeStart, ical.PropDue} {
@@ -1091,7 +1111,7 @@ func entryCalendar(src *ical.Calendar, c *ical.Component) *ical.Calendar {
 		}
 		if tz := findVTimezone(src, tzid); tz != nil {
 			cal.Children = append(cal.Children, tz)
-		} else if loc := loadLocation(tzid); loc != nil && loc != time.UTC {
+		} else if loc := loadLocation(tzid); loc != nil {
 			if d, err := parseDateProp(p); err == nil {
 				ensureVTimezoneAs(cal, tzid, loc, d.t.In(loc).Year())
 			}
@@ -1244,15 +1264,43 @@ func markCompleted(c *ical.Component, now time.Time) {
 	c.Props.Set(rawProp(ical.PropPercentComplete, "100"))
 }
 
-// applyTodoDates writes the start and due of in (FR-16).
-func applyTodoDates(props ical.Props, in domain.TodoInput) {
-	setTodoDate(props, ical.PropDateTimeStart, in.Start, in.StartAllDay)
-	setTodoDate(props, ical.PropDue, in.Due, in.DueAllDay)
+// applyTodoDates writes the start and due of in into the todo c in cal, a
+// single one, each in the form todoForms gives it (FR-16, FR-18).
+func applyTodoDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput) {
+	start, due := todoForms(c, in)
+	setTodoDate(cal, c.Props, ical.PropDateTimeStart, in.Start, in.StartAllDay, start)
+	setTodoDate(cal, c.Props, ical.PropDue, in.Due, in.DueAllDay, due)
 	// A DURATION read before is written back as DUE.
-	props.Del(ical.PropDuration)
+	c.Props.Del(ical.PropDuration)
 }
 
-// sameDates reports whether in carries the start and due cur already has.
+// todoForms returns the forms the start and due of in are written in on the
+// todo c (FR-18): DTSTART keeps the form c writes it in unless in.Timezone
+// names a zone, and DUE unless in.DueTimezone names one, else in.Timezone
+// (see formFor, endFormFor), which for a todo without a start names the zone
+// of its anchor, DUE, that way. A date c lacks so far takes the other's
+// form (see storedForms), a new todo's UTC. A date stays a DATE whatever
+// zone in names, and a date given a time without a zone is UTC (see
+// dateForm.ofType).
+func todoForms(c *ical.Component, in domain.TodoInput) (start, due dateForm) {
+	keptStart, keptDue, _ := storedForms(c)
+	return formFor(in.Timezone, keptStart).ofType(in.StartAllDay), endFormFor(in.DueTimezone, in.Timezone, keptDue).ofType(in.DueAllDay)
+}
+
+// zonesChange reports whether in names a zone for a timed start or due that
+// the todo c writes in another, see sameZoneForm: a zone change, which
+// writes the date anew, also at an instant c has (FR-18). A zone named for a
+// date, or for a date given a time, changes no zone.
+func zonesChange(c *ical.Component, in domain.TodoInput) bool {
+	keptStart, keptDue, ok := storedForms(c)
+	start, due := todoForms(c, in)
+	changes := func(f, kept dateForm) bool { return !f.allDay && !kept.allDay && !sameZoneForm(f, kept) }
+	return ok && (in.Start != nil && changes(start, keptStart) || in.Due != nil && changes(due, keptDue))
+}
+
+// sameDates reports whether in carries the start and due cur already has, at
+// the same instants and of the same value types; zonesChange tells whether
+// it names other zones for them.
 func sameDates(cur domain.Todo, in domain.TodoInput) bool {
 	return sameInstant(cur.Start, in.Start) && cur.StartAllDay == in.StartAllDay &&
 		sameInstant(cur.Due, in.Due) && cur.DueAllDay == in.DueAllDay
@@ -1265,18 +1313,21 @@ func sameInstant(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
-// setTodoDate sets or removes a date property. An unchanged value keeps the
-// stored property, so completing a task from another client does not rewrite
-// its TZID-anchored DTSTART/DUE to UTC.
-func setTodoDate(props ical.Props, name string, t *time.Time, allDay bool) {
+// setTodoDate sets the date property name to t in the form f, see
+// seriesDateProp, which adds the VTIMEZONE of a TZID to cal, or removes it
+// for a nil t (FR-16, FR-18). A value it has in that form keeps the stored
+// property, so completing a task from another client does not rewrite its
+// DTSTART/DUE; one a zone change puts into another form is written anew,
+// also at the instant it has.
+func setTodoDate(cal *ical.Calendar, props ical.Props, name string, t *time.Time, allDay bool, f dateForm) {
 	if t == nil {
 		props.Del(name)
 		return
 	}
-	if d, err := parseDateProp(props.Get(name)); err == nil && d.allDay == allDay && d.t.Equal(*t) {
+	if d, err := parseDateProp(props.Get(name)); err == nil && d.allDay == allDay && d.t.Equal(*t) && sameZoneForm(d.form(), f) {
 		return
 	}
-	props.Set(newDateProp(name, *t, allDay, nil))
+	props.Set(seriesDateProp(cal, name, *t, f))
 }
 
 // checklistLine matches a Markdown task list item.

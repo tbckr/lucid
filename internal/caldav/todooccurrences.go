@@ -162,7 +162,10 @@ func requireOpen(in domain.TodoInput) error {
 // writeCreatedThenMaster (A-01).
 //
 // in.RRule is the series' and ignored, and in's dates are filled in as
-// UpdateTodo fills them in, see fillTodoDates. At the series' last repeat,
+// UpdateTodo fills them in, see fillTodoDates. Its zones are not written: the
+// task takes in's dates in the forms the series writes them (see
+// setEntryDates), as a zone is the whole series', which "only this one" does
+// not change (FR-18). At the series' last repeat,
 // with no next one to roll to, "only this one" is all of it: UpdateTodo with
 // in. A status of in that completes or cancels the repeat is refused before
 // anything is read (errRepeatNotOpen), and so are, before anything is
@@ -201,7 +204,9 @@ func (s *service) DetachTodoOccurrence(ctx context.Context, todoID, etag string,
 		return s.UpdateTodo(ctx, todoID, etag, in)
 	case repeatCurrent:
 	}
-	if _, err := fillTodoDates(tr.todo, &in); err != nil {
+	// Not written, a zone sent is no change of the dates (FR-18).
+	in.Timezone, in.DueTimezone = nil, nil
+	if _, err := fillTodoDates(tr.todo, tr.master, &in); err != nil {
 		return domain.Todo{}, nil, err
 	}
 	t, detached, err := s.writeOffCurrent(ctx, tr.objPath, tr.calPath, etag, tr.cal, tr.master, tr.series, in, false)
