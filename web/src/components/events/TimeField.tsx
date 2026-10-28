@@ -112,8 +112,8 @@ export function TimeField({
   const optionId = (v: string) => `${listId}-${v}`
 
   // The marked entry in sight as the typing or the arrow keys move it; the list opens on it (`onOpenAutoFocus`).
-  // Typed, it shows in the middle, between the times around it; moved by the arrow keys, just in sight. No time marks
-  // none: the ✕ removes it, not the list.
+  // Typed, it shows in the middle, between the times around it; moved by the arrow keys, just in sight. Without a
+  // time, no entry is marked: the ✕ removes the time, not the list.
   const marked = preview === null || preview === '' ? null : optionId(preview)
   useEffect(() => {
     if (open && marked) reveal(list.current, marked, !moved)
@@ -181,7 +181,8 @@ export function TimeField({
               'disabled:cursor-not-allowed disabled:opacity-50',
               (tint || empty) && 'field-sizing-content',
               empty && 'border-transparent bg-transparent hover:border-input',
-              tint && [onTint, 'placeholder:text-current/75'],
+              // The outline stays while the pointer is on the ✕, which lies over the text's end.
+              tint && [onTint, 'placeholder:text-current/75 group-hover/field:border-current/25'],
             )}
           />
           <FieldSizer texts={sizes} className={metrics} />

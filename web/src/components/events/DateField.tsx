@@ -200,7 +200,8 @@ export function DateField({
               'disabled:cursor-not-allowed disabled:opacity-50',
               quiet && !field.focused && 'text-muted-foreground',
               empty && 'border-transparent bg-transparent hover:border-input',
-              tint && [onTint, 'placeholder:text-current/75'],
+              // The outline stays while the pointer is on the ✕, which lies over the text's end.
+              tint && [onTint, 'placeholder:text-current/75 group-hover/field:border-current/25'],
             )}
           />
           <FieldSizer texts={sizes} className={metrics} />
