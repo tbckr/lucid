@@ -196,12 +196,11 @@ describe('TaskEditor', () => {
     expect(await saved(fetch)).toMatchObject({ start: '2026-03-11T13:00:00.000Z', startAllDay: false })
   })
 
-  it('makes a due date all-day with "No time"', async () => {
+  it("makes a due date all-day with its time's ✕", async () => {
     const user = userEvent.setup()
     const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
 
-    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
-    await user.click(screen.getByRole('option', { name: 'No time' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T00:00:00.000Z', dueAllDay: true })

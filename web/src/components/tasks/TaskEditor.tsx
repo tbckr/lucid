@@ -532,7 +532,7 @@ export function TaskEditor({
               onChange={(v) => {
                 setValue(DATES[which].time, v, setOpts)
               }}
-              none={t('tasks.noTime')}
+              clearLabel={which === 'start' ? t('tasks.removeStartTime') : t('tasks.removeDueTime')}
               placeholder={t('tasks.addTime')}
               prefs={prefs}
               invalid={!!error}

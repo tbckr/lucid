@@ -350,6 +350,14 @@ describe('DuePicker', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '09:40') }))
   })
 
+  it('removes the time with its ✕ and stays open', async () => {
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: allDay(addDays(new Date(), 1)), dueAllDay: true }))
+    expect(dialog).toBeInTheDocument()
+  })
+
   it('picks a day in the month', async () => {
     const { user, onChange } = await open(todo())
     await user.click(screen.getByRole('button', { name: format(new Date(), 'PPPP') }))

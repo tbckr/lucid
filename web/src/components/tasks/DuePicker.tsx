@@ -402,7 +402,7 @@ export function DuePicker({
                     }
                   }}
                   prefs={prefs}
-                  none={t('tasks.noTime')}
+                  clearLabel={t('tasks.removeDueTime')}
                   placeholder={t('tasks.addTime')}
                   describedBy={unreadNote ? `${timeId}-error` : undefined}
                   aria-label={t('tasks.dueTime')}

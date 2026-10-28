@@ -217,6 +217,20 @@ describe('CreatePopover', () => {
     expect(onShortcut).not.toHaveBeenCalled()
   })
 
+  it('removes the due time of a new task with its ✕', async () => {
+    useSettings.setState({ taskList: 'stable-c3' })
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openPopover()
+    await user.keyboard('Call')
+    await user.click(within(dialog).getByRole('radio', { name: 'Task' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Create task' }))
+    const { body } = await posted(fetch)
+    expect(body).toMatchObject({ title: 'Call', due: '2026-09-30T00:00:00.000Z', dueAllDay: true })
+  })
+
   it('says that a start summer time skips is saved an hour later, for an event and a task', async () => {
     const user = userEvent.setup()
     // 01:00 on 29 March 2026, the night Berlin skips 02:00 to 03:00.

@@ -91,15 +91,52 @@ describe('TimeField (FR-09)', () => {
     expect(all.at(-1)).toHaveTextContent('11:30 PM')
   })
 
-  it('offers no time first where the time can be left out', async () => {
-    const { user, input } = setup({ value: '', none: 'No time', placeholder: 'Add a time' })
+  it('offers only times, also where the time can be left out', async () => {
+    const { user, input } = setup({ value: '', clearLabel: 'Remove start time', placeholder: 'Add a time' })
     expect(input).toHaveValue('')
     expect(input).toHaveAttribute('placeholder', 'Add a time')
+    // Empty and optional: neither a chevron nor a ✕ at its end.
+    expect(input.parentElement!.querySelector('svg')).toBeNull()
     await user.click(input)
     const all = options()
-    expect(all).toHaveLength(49)
-    expect(all[0]).toHaveTextContent('No time')
-    expect(all[0]).toHaveAttribute('aria-selected', 'true')
+    expect(all).toHaveLength(48)
+    expect(all[0]).toHaveTextContent('12:00 AM')
+    expect(all.filter((o) => o.getAttribute('aria-selected') === 'true')).toHaveLength(0)
+    expect(input).not.toHaveAttribute('aria-activedescendant')
+    await user.keyboard('{ArrowDown}')
+    expect(input).toHaveValue('12:00 AM')
+  })
+
+  it('removes an optional time with its ✕', async () => {
+    const { user, onChange, input } = setup({ clearLabel: 'Remove start time' })
+    const x = screen.getByRole('button', { name: 'Remove start time' })
+    // A target of the pointer, as the chevron is: the keyboard empties the text instead (NFR-27).
+    expect(x).toHaveAttribute('tabindex', '-1')
+    await user.click(x)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('', 'pick')
+    expect(input).toHaveFocus()
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  it('drops a typed time with its ✕', async () => {
+    const { user, onChange, input } = setup({ clearLabel: 'Remove start time' })
+    await user.click(input)
+    await user.keyboard('10')
+    await user.click(screen.getByRole('button', { name: 'Remove start time' }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('', 'pick')
+  })
+
+  it('shows the chevron, not a ✕, for a required time', () => {
+    const { input } = setup()
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(chevronOf(input)).toHaveAttribute('aria-hidden')
+  })
+
+  it('has its ✕ on the tint too', () => {
+    setup({ value: '16:10', tone: 'tint', clearLabel: 'Remove start time', placeholder: 'Add a time' })
+    expect(screen.getByRole('button', { name: 'Remove start time' })).toBeInTheDocument()
   })
 
   it('shows a typed time in its place in the list', async () => {
@@ -190,7 +227,7 @@ describe('TimeField (FR-09)', () => {
   })
 
   it('clears an optional time when emptied', async () => {
-    const optional = setup({ none: 'No time' })
+    const optional = setup({ clearLabel: 'Remove start time' })
     await optional.user.click(optional.input)
     await optional.user.keyboard('{Backspace}')
     await optional.user.tab()
@@ -236,7 +273,7 @@ describe('TimeField (FR-09)', () => {
 
   // Without `field-sizing`, `size` sizes the field: to its text, or to the placeholder it shows while empty.
   it('is as wide as its text on the tint, and as its placeholder only while empty', async () => {
-    const { user, input } = setup({ value: '16:10', tone: 'tint', none: 'No time', placeholder: 'Add a time' })
+    const { user, input } = setup({ value: '16:10', tone: 'tint', clearLabel: 'Remove start time', placeholder: 'Add a time' })
     expect(input).toHaveAttribute('size', String('4:10 PM'.length))
     await user.click(input)
     await user.keyboard('{Backspace}')
@@ -260,6 +297,18 @@ describe('TimeField (FR-09)', () => {
     await user.click(input)
     expect(screen.queryByRole('listbox')).toBeNull()
     expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('removes nothing from its ✕ in a disabled fieldset', () => {
+    const onChange = vi.fn()
+    render(
+      <fieldset disabled>
+        <TimeField value="09:00" onChange={onChange} prefs={us} aria-label="Start time" clearLabel="Remove start time" />
+      </fieldset>,
+    )
+    // user-event refuses a disabled target; a click without its checks shows the guard is the field's own (FR-17).
+    fireEvent.click(screen.getByRole('button', { name: 'Remove start time' }))
     expect(onChange).not.toHaveBeenCalled()
   })
 

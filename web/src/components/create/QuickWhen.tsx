@@ -290,7 +290,7 @@ export function QuickWhen({
         onChange={(v) => {
           onTask(shiftTask(task, date, v))
         }}
-        none={t('tasks.noTime')}
+        clearLabel={which === 'due' ? t('tasks.removeDueTime') : t('tasks.removeStartTime')}
         placeholder={t('tasks.addTime')}
         prefs={prefs}
         describedBy={timeNotes(time, note, false)}
