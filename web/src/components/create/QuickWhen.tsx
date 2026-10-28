@@ -75,7 +75,7 @@ export function QuickWhen({
     const saved = skippedTime(date, time, timeZone)
     return saved ? { id: `${id}-${which}-skipped`, time, saved } : null
   }
-  // The start the length is kept from: the last one that could be read (FR-09).
+  // The start the length is kept from: the last one that could be read; without one, the end or due stays (FR-09).
   const eventStart = useReadableStart(
     event.startDate,
     event.startTime,
@@ -111,7 +111,7 @@ export function QuickWhen({
 
   if (kind === 'event') {
     const moveStart = (date: string, time: string) => {
-      const from = { ...event, startDate: eventStart.date, startTime: eventStart.time }
+      const from = eventStart ? { ...event, startDate: eventStart.date, startTime: eventStart.time } : event
       onEvent({ ...event, startDate: date, startTime: time, ...shiftEnd(from, date, time) })
     }
     const start = event.allDay ? null : skipped('start', event.startDate, event.startTime)
@@ -200,7 +200,7 @@ export function QuickWhen({
           label={t('tasks.start')}
           value={task.startDate}
           onChange={(d) => {
-            onTask(shiftTask(task, d, task.startTime, taskStart))
+            onTask(shiftTask(task, d, task.startTime, taskStart ?? undefined))
           }}
           prefs={prefs}
           now={now}
@@ -212,7 +212,7 @@ export function QuickWhen({
             <TimeField
               value={task.startTime}
               onChange={(v) => {
-                onTask(shiftTask(task, task.startDate, v, taskStart))
+                onTask(shiftTask(task, task.startDate, v, taskStart ?? undefined))
               }}
               prefs={prefs}
               describedBy={timeNotes(task.startTime, start, false)}

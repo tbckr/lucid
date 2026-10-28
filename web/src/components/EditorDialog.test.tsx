@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Calendar } from '@/lib/api/schemas'
@@ -284,6 +284,69 @@ describe('EditorDialog', () => {
       })
       expect(titleField()).toHaveValue('Task')
       expect(within(dialog).getByRole('combobox', { name: 'Due' })).toHaveDisplayValue(/^Sun, Sep 27/)
+    })
+  })
+
+  // The other editor mounts with the text the field couldn't read, and has no start of its own that could be read
+  // (FR-09). 1 January 1970, where a day key that can't be read falls back to, was a Thursday.
+  describe('a switch with a date its field could not read', () => {
+    beforeEach(() => {
+      // Only the date: today is Wednesday, 11 March 2026. Fake timers would stall the requests.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 2, 11, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // "Create" on Friday, 13 March 2026: 09:00-09:30.
+    const friday = newDraft(new Date(2026, 2, 13), new Date(2026, 2, 11, 12))
+
+    it('names the repeat presets of the task after today, without another date that can be read', async () => {
+      const user = userEvent.setup()
+      await open({ mode: 'create', draft: friday })
+      await user.click(screen.getByRole('combobox', { name: 'Start' }))
+      await user.keyboard('13/45')
+      await user.tab()
+      await user.click(kind('Task'))
+      const dialog = await screen.findByRole('dialog', { name: 'New task' })
+      expect(within(dialog).getByRole('combobox', { name: 'Due' })).toHaveValue('13/45')
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      expect(screen.getByRole('option', { name: 'Every week on Wednesday' })).toBeInTheDocument()
+    })
+
+    it('names the repeat presets of the event after its end', async () => {
+      const user = userEvent.setup()
+      await open({ mode: 'create', draft: friday })
+      await user.click(kind('Task'))
+      await user.click(await screen.findByRole('combobox', { name: 'Due' }))
+      await user.keyboard('13/45')
+      await user.tab()
+      await user.click(kind('Event'))
+      const dialog = await screen.findByRole('dialog', { name: 'New event' })
+      expect(within(dialog).getByRole('combobox', { name: 'Start' })).toHaveValue('13/45')
+      expect(within(dialog).getByRole('combobox', { name: 'End' })).toHaveValue('Fri, Mar 13')
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      expect(screen.getByRole('option', { name: 'Every week on Friday' })).toBeInTheDocument()
+    })
+
+    // No start was read in the event, so there is no length to keep: the end isn't moved after the end itself.
+    it('keeps the end of the event where its start is read for the first time', async () => {
+      const user = userEvent.setup()
+      await open({ mode: 'create', draft: friday })
+      await user.click(kind('Task'))
+      await user.click(await screen.findByRole('combobox', { name: 'Due' }))
+      await user.keyboard('13/45')
+      await user.tab()
+      await user.click(kind('Event'))
+      const dialog = await screen.findByRole('dialog', { name: 'New event' })
+      await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
+      await user.keyboard('3/12')
+      await user.tab()
+      expect(within(dialog).getByRole('combobox', { name: 'Start' })).toHaveValue('Thu, Mar 12')
+      expect(within(dialog).getByRole('combobox', { name: 'End' })).toHaveValue('Fri, Mar 13')
+      expect(within(dialog).getByRole('combobox', { name: 'End time' })).toHaveValue('9:30 AM')
     })
   })
 

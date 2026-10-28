@@ -237,9 +237,14 @@ export function TaskEditor({
   // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
   const recursOn = todo?.recurring && shownTaskRule(todo, tz) === null ? taskRuleClock(todo) : null
   // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it, from the
-  // last one that could be read while its field holds text it couldn't (FR-09).
-  const [anchorDate, anchorTime] = startDate ? [startDate, startTime] : [dueDate, dueTime]
-  const anchor = useReadableStart(anchorDate, anchorTime, readableDate(anchorDate, anchorTime))
+  // last one that could be read while its field holds text it couldn't (FR-09). Without one, as after a switch of
+  // the kind with a date its field couldn't read, from the other date, else today: never from the day such text
+  // falls back to, 1 January 1970.
+  const [anchorDate, anchorTime, otherDate, otherTime] = startDate
+    ? [startDate, startTime, dueDate, dueTime]
+    : [dueDate, dueTime, startDate, startTime]
+  const readAnchor = useReadableStart(anchorDate, anchorTime, readableDate(anchorDate, anchorTime))
+  const anchor = readAnchor ?? (isFormDate(otherDate) ? { date: otherDate, time: otherTime } : { date: '', time: '' })
   const anchorDay = anchor.date ? dayAt(anchor.date, anchor.time) : now
   // The series' rule as it opened recurs from the repeat's place in the rule instead, as far from there as the
   // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override

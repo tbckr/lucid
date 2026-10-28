@@ -29,7 +29,7 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
-import { dayAt, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
+import { dayAt, dayKey, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
 import {
   editFormValues,
   eventFormSchema,
@@ -182,7 +182,11 @@ function EditorForm({
   // Where the repeat recurs from, with its time: a rule's hours repeat at its minute (FR-17). For an
   // occurrence its place in the rule, as far from there as the form moves it, where a save moves the
   // series (`eventRuleStart`), not where an exception moved it; else the start as the form shows it.
-  const entered = allDay ? parseDayKey(readStart.date) : dayAt(readStart.date, readStart.time)
+  // Without a start that could be read, as after a switch of the kind with a start date its field
+  // couldn't read, the end, else today: never the day such text falls back to, 1 January 1970 (FR-09).
+  const anchor =
+    readStart ?? (isFormDate(endDate) ? { date: endDate, time: endTime } : { date: dayKey(now), time: startTime })
+  const entered = allDay ? parseDayKey(anchor.date) : dayAt(anchor.date, anchor.time)
   // A time summer time skips on its date, and the one it is saved as, said under its row (#10, FR-18).
   const startSaved = allDay ? null : skippedTime(startDate, startTime, tz)
   const endSaved = allDay ? null : skippedTime(endDate, endTime, tz)
@@ -216,9 +220,11 @@ function EditorForm({
     openTaskEditor({ mode: 'create', switched: true, draft: switchDraft(draft, 'task') })
   }
 
-  // Moving the start keeps the length, from the last start that could be read (FR-09).
+  // Moving the start keeps the length, from the last start that could be read; without one, the end stays
+  // (FR-09).
   const onStartChange = (date: string, time: string) => {
-    const next = shiftEnd({ ...getValues(), startDate: readStart.date, startTime: readStart.time }, date, time)
+    const from = readStart ? { startDate: readStart.date, startTime: readStart.time } : {}
+    const next = shiftEnd({ ...getValues(), ...from }, date, time)
     setValue('startDate', date, { shouldDirty: true })
     setValue('startTime', time, { shouldDirty: true })
     setValue('endDate', next.endDate, { shouldDirty: true, shouldValidate: formState.isSubmitted })

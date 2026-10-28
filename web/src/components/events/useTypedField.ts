@@ -221,13 +221,14 @@ export function useTypedField(o: {
 
 /**
  * The last start, date and time, that could be read (FR-09): the start itself
- * while `readable`, else the one before its field took text it couldn't read.
- * A start corrected after such text moves the end from there, so the entry
- * keeps its length across the unreadable step; while the start can't be read,
- * the end stays.
+ * while `readable`, else the one before its field took text it couldn't read,
+ * or `null` while there was none, as in an editor a switch of the kind opened
+ * with such text. A start corrected after such text moves the end from there,
+ * so the entry keeps its length across the unreadable step; while the start
+ * can't be read, and when it is first read, the end stays.
  */
-export function useReadableStart(date: string, time: string, readable: boolean): { date: string; time: string } {
-  const [last, setLast] = useState({ date, time })
-  if (readable && (last.date !== date || last.time !== time)) setLast({ date, time })
+export function useReadableStart(date: string, time: string, readable: boolean): { date: string; time: string } | null {
+  const [last, setLast] = useState(readable ? { date, time } : null)
+  if (readable && (last?.date !== date || last.time !== time)) setLast({ date, time })
   return readable ? { date, time } : last
 }
