@@ -65,6 +65,15 @@ describe('eventFormSchema', () => {
     ])
   })
 
+  // The forms' shape, but no day the calendar has (FR-09): refused as a date, not read as the day it would roll over to.
+  it.each([
+    ['startDate', '2026-02-31'],
+    ['endDate', '2026-13-45'],
+  ])("refuses a %s in the forms' shape that doesn't exist", (path, value) => {
+    const r = eventFormSchema.safeParse({ ...base, [path]: value })
+    expect(r.error?.issues.map((i) => [i.message, i.path[0]])).toEqual([['validation.date', path]])
+  })
+
   it('validates formats and required calendar', () => {
     const r = eventFormSchema.safeParse({ ...base, startTime: '25:00', endDate: 'x', calendarId: '' })
     const messages = r.error?.issues.map((i) => i.message)
@@ -332,6 +341,13 @@ describe('shiftEnd', () => {
     expect(shiftEnd({ ...base, allDay: true, endDate: '3/x' }, '2026-04-01', '09:00')).toEqual({ endDate: '3/x', endTime: '09:30' })
     expect(shiftEnd({ ...base, endTime: '9:3x' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '9:3x' })
   })
+
+  // A date in the forms' shape that doesn't exist can't be read either (FR-09).
+  it("keeps the end for a date in the forms' shape that doesn't exist", () => {
+    expect(shiftEnd({ ...base, endDate: '2026-02-31' }, '2026-04-01', '09:00')).toEqual({ endDate: '2026-02-31', endTime: '09:30' })
+    expect(shiftEnd(base, '2026-13-45', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
+    expect(shiftEnd({ ...base, allDay: true }, '2026-02-31', '09:00')).toEqual({ endDate: '2026-03-28', endTime: '09:30' })
+  })
 })
 
 describe('formDuration', () => {
@@ -357,6 +373,8 @@ describe('formDuration', () => {
     expect(formDuration({ ...base, allDay: true, endDate: '2026-03-27' })).toBeNull()
     expect(formDuration({ ...base, endDate: '' })).toBeNull()
     expect(formDuration({ ...base, startTime: '9' })).toBeNull()
+    expect(formDuration({ ...base, startDate: '2026-02-31' })).toBeNull()
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-04-31' })).toBeNull()
   })
 })
 

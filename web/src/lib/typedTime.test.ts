@@ -117,6 +117,7 @@ describe('readTime in the 12-hour clock without a marker', () => {
     ['reads 6:59 as the afternoon in an empty field', '6:59', '', '18:59'],
     ['reads 7:00 as the morning in an empty field', '7:00', '', '07:00'],
     ['reads a current value it does not know like an empty field', '5', 'noon', '17:00'],
+    ['reads a current value in the shape of a time that is none like an empty field', '9', '25:00', '09:00'],
     ['reads an hour with a leading zero as the 24-hour clock', '09:40', '14:00', '09:40'],
     ['reads four digits with a leading zero as the 24-hour clock', '0940', '14:00', '09:40'],
     ['reads a bare hour with a leading zero as the 24-hour clock', '09', '14:00', '09:00'],

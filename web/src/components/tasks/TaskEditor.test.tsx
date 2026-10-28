@@ -294,6 +294,23 @@ describe('TaskEditor', () => {
       expect(dialog).toBeInTheDocument()
     })
 
+    // The forms' own shape, which en-US doesn't read, but no day the calendar has (FR-09).
+    it("says what to type for a due date in the forms' shape that doesn't exist, and doesn't save", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+      const due = within(dialog).getByRole('combobox', { name: 'Due' })
+      await user.click(due)
+      await user.keyboard('2026-02-31')
+      await user.tab()
+      expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+      expect(due).toHaveValue('2026-02-31')
+      expect(due).toHaveAttribute('aria-invalid', 'true')
+      expect(due).toHaveAccessibleDescription(dateNote)
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+    })
+
     it('says only what to type for an unreadable due time, not that the start comes after it', async () => {
       const user = userEvent.setup()
       // Start 9:00, due 10:00 on Friday, 13 March 2026, in Berlin.

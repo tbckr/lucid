@@ -29,7 +29,7 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Calendar, type EventInput } from '@/lib/api/schemas'
-import { dayAt, parseDayKey, skippedTime } from '@/lib/dates'
+import { dayAt, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
 import {
   editFormValues,
   eventFormSchema,
@@ -58,7 +58,7 @@ import {
   type ScopeNotes,
   type ScopeResult,
 } from '@/lib/scope'
-import { isFormDate, isFormTime, unreadableNote } from '@/lib/unreadable'
+import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'

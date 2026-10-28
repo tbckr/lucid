@@ -1,14 +1,20 @@
 import { addDays, differenceInCalendarDays, format } from 'date-fns'
 import { z } from 'zod'
 import { type EventInput, type OccurrenceInput } from './api/schemas'
-import { dayAt, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zonedToUtcAfter } from './dates'
+import {
+  dayAt,
+  isFormDate,
+  isFormTime,
+  localDateToUtc,
+  parseDayKey,
+  utcToZoned,
+  zonedToUtc,
+  zonedToUtcAfter,
+} from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { eventRuleClock, ruleInZone } from './seriesShift'
-
-const dateRe = /^\d{4}-\d{2}-\d{2}$/
-const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
 
 /**
  * Event editor form. Messages are i18n keys resolved by the form.
@@ -19,11 +25,11 @@ export const eventFormSchema = z
     title: z.string().max(1024, 'validation.tooLong'),
     calendarId: z.string().min(1, 'validation.calendarRequired'),
     allDay: z.boolean(),
-    startDate: z.string().regex(dateRe, 'validation.date'),
+    startDate: z.string().refine(isFormDate, 'validation.date'),
     // Checked below, only where they are shown: a time All day hides can't keep the event from
     // being saved, even one its field couldn't read (FR-09).
     startTime: z.string(),
-    endDate: z.string().regex(dateRe, 'validation.date'),
+    endDate: z.string().refine(isFormDate, 'validation.date'),
     endTime: z.string(),
     location: z.string().max(1024, 'validation.tooLong'),
     description: z.string().max(64 * 1024, 'validation.tooLong'),
@@ -33,15 +39,15 @@ export const eventFormSchema = z
   .superRefine((v, ctx) => {
     if (!v.allDay) {
       for (const path of ['startTime', 'endTime'] as const) {
-        if (!timeRe.test(v[path])) ctx.addIssue({ code: 'custom', message: 'validation.time', path: [path] })
+        if (!isFormTime(v[path])) ctx.addIssue({ code: 'custom', message: 'validation.time', path: [path] })
       }
     }
-    if (!dateRe.test(v.startDate) || !dateRe.test(v.endDate)) return
+    if (!isFormDate(v.startDate) || !isFormDate(v.endDate)) return
     // At the times saved, in the browser's zone, which the editors convert in: a time summer
     // time skips counts where it is saved, an hour later (#10, FR-18).
     const endBeforeStart = v.allDay
       ? v.endDate < v.startDate
-      : timeRe.test(v.startTime) && timeRe.test(v.endTime) && dayAt(v.endDate, v.endTime) < dayAt(v.startDate, v.startTime)
+      : isFormTime(v.startTime) && isFormTime(v.endTime) && dayAt(v.endDate, v.endTime) < dayAt(v.startDate, v.startTime)
     if (endBeforeStart) {
       ctx.addIssue({ code: 'custom', message: 'validation.endBeforeStart', path: ['endDate'] })
     }
@@ -202,14 +208,14 @@ export function shiftEnd(
   nextStartDate: string,
   nextStartTime: string,
 ): { endDate: string; endTime: string } {
-  if (!dateRe.test(prev.startDate) || !dateRe.test(nextStartDate) || !dateRe.test(prev.endDate)) {
+  if (!isFormDate(prev.startDate) || !isFormDate(nextStartDate) || !isFormDate(prev.endDate)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
   }
   if (prev.allDay) {
     const span = Math.max(0, differenceInCalendarDays(parseDayKey(prev.endDate), parseDayKey(prev.startDate)))
     return { endDate: format(addDays(parseDayKey(nextStartDate), span), 'yyyy-MM-dd'), endTime: prev.endTime }
   }
-  if (!timeRe.test(prev.startTime) || !timeRe.test(prev.endTime) || !timeRe.test(nextStartTime)) {
+  if (!isFormTime(prev.startTime) || !isFormTime(prev.endTime) || !isFormTime(nextStartTime)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
   }
   const duration = Math.max(0, wallClockMs(prev.endDate, prev.endTime) - wallClockMs(prev.startDate, prev.startTime))
@@ -230,12 +236,12 @@ function wallClockMs(date: string, time: string): number {
 export function formDuration(
   v: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'>,
 ): Duration | null {
-  if (!dateRe.test(v.startDate) || !dateRe.test(v.endDate)) return null
+  if (!isFormDate(v.startDate) || !isFormDate(v.endDate)) return null
   if (v.allDay) {
     const days = differenceInCalendarDays(parseDayKey(v.endDate), parseDayKey(v.startDate)) + 1
     return days > 0 ? { days } : null
   }
-  if (!timeRe.test(v.startTime) || !timeRe.test(v.endTime)) return null
+  if (!isFormTime(v.startTime) || !isFormTime(v.endTime)) return null
   const minutes = (wallClockMs(v.endDate, v.endTime) - wallClockMs(v.startDate, v.startTime)) / 60_000
   return minutes >= 0 ? { minutes } : null
 }

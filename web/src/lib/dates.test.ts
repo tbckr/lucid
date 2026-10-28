@@ -6,6 +6,8 @@ import {
   dayKey,
   eachDay,
   fetchRange,
+  isFormDate,
+  isFormTime,
   localDateToUtc,
   minutesOfDay,
   monthGrid,
@@ -132,6 +134,8 @@ describe('DST safety', () => {
     expect(skippedTime('2026-10-25', '02:30', 'Europe/Berlin')).toBeNull()
     expect(skippedTime('2026-03-29', '', 'Europe/Berlin')).toBeNull()
     expect(skippedTime('', '02:30', 'Europe/Berlin')).toBeNull()
+    // The forms' shape, but no day the calendar has: no time on it is skipped (FR-09).
+    expect(skippedTime('2026-13-45', '02:30', 'Europe/Berlin')).toBeNull()
   })
 
   it("utcToZoned reads another zone's wall clock also where the browser's zone skips it", () => {
@@ -203,6 +207,32 @@ describe('movedAs', () => {
   // Summer time ends on 25 October: the wall clock moves, not the instant.
   it('moves on the wall clock across a change of summer time', () => {
     expect(movedAs(new Date(2026, 9, 24, 10), new Date(2026, 9, 24, 10), new Date(2026, 9, 26, 10))).toEqual(new Date(2026, 9, 26, 10))
+  })
+})
+
+describe('isFormDate, isFormTime', () => {
+  it('accept the forms\' values only', () => {
+    expect(isFormDate('2026-10-28')).toBe(true)
+    expect(isFormDate('28.10.2026')).toBe(false)
+    expect(isFormTime('09:40')).toBe(true)
+    expect(isFormTime('23:59')).toBe(true)
+    expect(isFormTime('24:00')).toBe(false)
+    expect(isFormTime('9:40')).toBe(false)
+    expect(isFormTime('')).toBe(false)
+  })
+
+  // The forms' shape, but no day the calendar has: read as a date, it would be another day (FR-09).
+  it.each([
+    ['2026-02-28', true],
+    ['2026-02-29', false],
+    ['2028-02-29', true],
+    ['2026-13-01', false],
+    ['2026-02-31', false],
+    ['2026-00-10', false],
+    ['2026-10-00', false],
+    ['2026-12-31', true],
+  ])('isFormDate(%s) is %s', (value, want) => {
+    expect(isFormDate(value)).toBe(want)
   })
 })
 

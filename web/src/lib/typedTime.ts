@@ -1,3 +1,4 @@
+import { isFormTime } from './dates'
 import { formatClock, type FormatPrefs } from './format'
 
 /** The example the error message gives: 9:40 as the field would show it (FR-09). */
@@ -60,8 +61,7 @@ function splitDigits(text: string): { hour: number; minute: number; padded: bool
 
 /** The half of the day a bare hour of 1 to 11 falls in: the field's current one, else 1 to 6 PM and 7 to 11 AM. */
 function halfOf(hour: number, current: string): Half {
-  const held = /^(\d{2}):\d{2}$/.exec(current)
-  if (held) return Number(held[1]) >= 12 ? 'pm' : 'am'
+  if (isFormTime(current)) return Number(current.slice(0, 2)) >= 12 ? 'pm' : 'am'
   return hour <= 6 ? 'pm' : 'am'
 }
 

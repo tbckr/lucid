@@ -12,7 +12,7 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
 import { currentRepeat, type TaskRepeat } from '@/lib/calendarTasks'
-import { dayKey, parseDayKey } from '@/lib/dates'
+import { dayKey, isFormTime, parseDayKey } from '@/lib/dates'
 import { formatPickerDate } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import {
@@ -27,7 +27,7 @@ import {
 import { type ShiftReason } from '@/lib/seriesShift'
 import { taskToForm, withDue } from '@/lib/taskForm'
 import { datesChanged, dueShortcuts, isOverdue } from '@/lib/tasks'
-import { isFormTime, unreadableNote } from '@/lib/unreadable'
+import { unreadableNote } from '@/lib/unreadable'
 
 /**
  * Where a change in the picker came from, which decides what follows once it

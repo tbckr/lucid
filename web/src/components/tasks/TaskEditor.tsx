@@ -53,7 +53,7 @@ import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
 import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
-import { dayAt, parseDayKey, skippedTime } from '@/lib/dates'
+import { dayAt, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { buildRRule, RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
@@ -87,7 +87,7 @@ import {
   priorityValue,
   type PriorityLevel,
 } from '@/lib/tasks'
-import { isFormDate, isFormTime, unreadableNote } from '@/lib/unreadable'
+import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'

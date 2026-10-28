@@ -2,14 +2,24 @@ import { addDays, differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 import { type Todo, type TodoInput } from './api/schemas'
 import { anchorOf, type TaskDates } from './calendarTasks'
-import { dayAt, dayKey, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zonedToUtcAfter } from './dates'
+import {
+  dayAt,
+  dayKey,
+  isFormDate,
+  isFormTime,
+  localDateToUtc,
+  parseDayKey,
+  utcToZoned,
+  zonedToUtc,
+  zonedToUtcAfter,
+} from './dates'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { ruleInZone, taskRuleClock } from './seriesShift'
 import { todoToInput } from './tasks'
-import { isFormDate, isFormTime } from './unreadable'
 
-const optionalDate = z.union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.date')])
-const optionalTime = z.union([z.literal(''), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'validation.time')])
+// A date or time the task may leave out: empty, or as the forms hold it (FR-09).
+const optionalDate = z.string().refine((v) => v === '' || isFormDate(v), 'validation.date')
+const optionalTime = z.string().refine((v) => v === '' || isFormTime(v), 'validation.time')
 
 const taskFormShape = {
   title: z.string().trim().min(1, 'validation.titleRequired').max(1024, 'validation.tooLong'),

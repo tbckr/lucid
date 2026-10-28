@@ -282,6 +282,36 @@ describe('typed dates (FR-09)', () => {
     expect(dialog).toBeInTheDocument()
   })
 
+  // The forms' own shape, which en-US doesn't read, but no day the calendar has (FR-09).
+  it.each(['2026-13-45', '2026-02-31'])("says what to type for %s, which isn't a day, and doesn't save", async (typed) => {
+    const user = userEvent.setup()
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => {
+      errors.push(e.error)
+    }
+    window.addEventListener('error', onError)
+    try {
+      const { fetch, dialog } = await openEditor(create)
+      const start = within(dialog).getByRole('combobox', { name: 'Start' })
+      await user.click(start)
+      await user.keyboard(typed)
+      await user.tab()
+      expect(errors).toEqual([])
+      expect(within(dialog).getByText(dateNote)).toBeInTheDocument()
+      expect(start).toHaveValue(typed)
+      expect(start).toHaveAttribute('aria-invalid', 'true')
+      expect(start).toHaveAccessibleDescription(dateNote)
+      // Nothing is read from it: the end stays.
+      expect(within(dialog).getByRole('combobox', { name: 'End' })).toHaveValue('Wed, Mar 11')
+      await user.click(within(dialog).getByRole('button', { name: 'Create event' }))
+      await settle()
+      expect(posts(fetch)).toHaveLength(0)
+      expect(errors).toEqual([])
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+  })
+
   it('says it for an end date, and marks only the end date', async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor(create)

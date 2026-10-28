@@ -131,6 +131,9 @@ describe('taskForm', () => {
       ['start time', { startTime: '9:4x', dueTime: '' }, ['startTime', 'validation.time']],
       ['due date', { dueDate: '10/4' }, ['dueDate', 'validation.date']],
       ['start date', { startDate: '2026-10-6', startTime: '', dueTime: '' }, ['startDate', 'validation.date']],
+      // The forms' shape, but no day the calendar has: read, it would be 3 March, or 14 February 2027.
+      ['due date that does not exist', { dueDate: '2026-02-31' }, ['dueDate', 'validation.date']],
+      ['start date that does not exist', { startDate: '2026-13-45' }, ['startDate', 'validation.date']],
     ])('refuses an unreadable %s as such, not as out of order', (_, typed, want) => {
       // Start and due on Monday, 5 October 2026, at 9:00 or all day: in order, until a field holds text it couldn't
       // read, which reads as out of order as a time (midnight) or a date (by its characters).

@@ -11,7 +11,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { usePrefs } from '@/hooks/usePrefs'
-import { dayKey } from '@/lib/dates'
+import { dayKey, isFormDate } from '@/lib/dates'
 import { formatPickerDate } from '@/lib/format'
 import {
   modelFromRule,
@@ -28,7 +28,7 @@ import {
   type RuleModel,
 } from '@/lib/recurrence'
 import { describeRRule } from '@/lib/rrule'
-import { isFormDate, unreadableNote } from '@/lib/unreadable'
+import { unreadableNote } from '@/lib/unreadable'
 
 export interface RecurrenceDialogProps {
   open: boolean

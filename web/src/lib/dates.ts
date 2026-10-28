@@ -93,6 +93,9 @@ export function weekDays(date: Date, weekStartsOn: WeekStart): Date[] {
   return eachDay(visibleRange('week', date, weekStartsOn))
 }
 
+const dayKeyRe = /^(\d{4})-(\d{2})-(\d{2})$/
+const formTimeRe = /^([01]\d|2[0-3]):([0-5]\d)$/
+
 /** yyyy-MM-dd of a local date (stable key for days). */
 export function dayKey(date: Date): string {
   return format(date, 'yyyy-MM-dd')
@@ -100,9 +103,24 @@ export function dayKey(date: Date): string {
 
 /** Parse a yyyy-MM-dd key as local midnight. */
 export function parseDayKey(key: string): Date {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key)
+  const m = dayKeyRe.exec(key)
   if (!m) return new Date(1970, 0, 1)
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+}
+
+/**
+ * Whether `value` is a date as the forms hold it (FR-09): "yyyy-MM-dd", of a
+ * day the calendar has, so `parseDayKey` reads it back as itself. Text a date
+ * field couldn't read goes up as typed, and may have the shape: "2026-02-31"
+ * read as a date would be 3 March, so it is none, and the forms refuse it.
+ */
+export function isFormDate(value: string): boolean {
+  return dayKeyRe.test(value) && dayKey(parseDayKey(value)) === value
+}
+
+/** Whether `value` is a time as the forms hold it, "HH:mm" (FR-09). */
+export function isFormTime(value: string): boolean {
+  return formTimeRe.test(value)
 }
 
 /** All-day events are midnight UTC of the date: map to local midnight of the same calendar date. */
@@ -140,7 +158,7 @@ export function movedAs(date: Date, from: Date, to: Date, byDays = false): Date 
 
 /** A form's "yyyy-MM-dd" date at its "HH:mm" time, as local time; midnight without a valid time. */
 export function dayAt(date: string, time: string): Date {
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time)
+  const m = formTimeRe.exec(time)
   return m ? atMinutes(parseDayKey(date), Number(m[1]) * 60 + Number(m[2])) : parseDayKey(date)
 }
 
@@ -182,7 +200,7 @@ export function zonedToUtcAfter(date: string, time: string, timeZone: string, st
  * `null` where the time exists, a repeated one too, or a value is invalid.
  */
 export function skippedTime(date: string, time: string, timeZone: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null
+  if (!isFormDate(date) || !isFormTime(time)) return null
   const { at, skipped } = resolveWall(date, time, timeZone)
   return skipped ? new Date(wallOf(at, timeZone)).toISOString().slice(11, 16) : null
 }

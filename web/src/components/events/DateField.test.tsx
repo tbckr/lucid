@@ -186,6 +186,23 @@ describe('DateField (FR-09)', () => {
     expect(input).toHaveAttribute('aria-invalid', 'true')
   })
 
+  // The forms' own shape, which en-US doesn't read, but no day the calendar has: shown as typed and marked, not as
+  // the day it would roll over to (FR-09).
+  it("passes a date in the forms' shape that doesn't exist up as typed, and marks it", async () => {
+    const { user, onChange, input, rerender } = setup()
+    await user.click(input)
+    await user.keyboard('2026-13-45{Enter}')
+    expect(onChange).toHaveBeenCalledWith('2026-13-45', 'enter')
+    rerender({ value: '2026-13-45' })
+    expect(input).toHaveValue('2026-13-45')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    await user.tab()
+    expect(input).toHaveValue('2026-13-45')
+    rerender({ value: '2026-02-31' })
+    expect(input).toHaveValue('2026-02-31')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+  })
+
   it('reads the parts left out from the date in the field', async () => {
     const { user, onChange, input } = setup({ value: '2027-01-05' })
     await user.click(input)
