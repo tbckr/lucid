@@ -241,16 +241,17 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
 
 - **Distance:** measured from the occurrence's *shown* start (an exception's
   own start, if the edited occurrence is one), not from `instanceStart`
-  itself, to `start`: the series moves by the same change of date and the
-  same change of clock time, both in the series' own time zone, so it keeps
-  its clock time across a daylight-saving change. The change of date is
-  counted in calendar days, or for a `MONTHLY` or `YEARLY` rule without
-  `BY` parts in calendar months and then days of the month, from
-  `instanceStart` to that date moved by the days the occurrence moved, so
-  its events keep their day of the month. A save that turns the series
-  all-day or timed moves its start by the change of date only, a timed
-  event's date read in the series' zone and an all-day date as sent; a
-  series made timed starts at the clock time of `start` in `timezone`.
+  itself, to `start`: the series moves by the same change of date and the same
+  change of clock time, both in the series' own time zone (into another zone,
+  from the shown start's in the old zone to `start`'s in the new one, see
+  "Time zone"), so it keeps its clock time across a daylight-saving change.
+  The change of date is counted in calendar days, or for a `MONTHLY` or
+  `YEARLY` rule without `BY` parts in calendar months and then days of the
+  month, from `instanceStart` to that date moved by the days the occurrence
+  moved, so its events keep their day of the month. A save that turns the
+  series all-day or timed moves its start by the change of date only, a timed
+  event's date read in the series' zone and an all-day date as sent; a series
+  made timed starts at the clock time of `start` in `timezone`.
 - **Changed rule:** read at the occurrence, at `instanceStart` moved as far
   as the occurrence moves: what it leaves to its start (the weekday of
   `FREQ=WEEKLY`, the day of `FREQ=MONTHLY`, the month and day of
@@ -272,11 +273,15 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
   Fridays sent `FREQ=MONTHLY` from 11-13 gets `FREQ=MONTHLY;BYMONTHDAY=13`.
   Where the rule's `INTERVAL` would count from another period than the
   occurrence's, its first event goes onto the rule as above, and the old one
-  stays as an `RDATE`.
-- **Edited exception:** with the rule and `allDay` unchanged, the edited
-  exception, if there is one, takes `start` and `end`. A save that changes
-  the rule or `allDay` leaves it at its own start and end (only its
-  `RECURRENCE-ID` shifts along with the series).
+  stays as an `RDATE`. A changed rule keeps the series in its own zone,
+  where it is read and written; only a `timezone` that differs moves the
+  series, as under "Time zone", and the rule is then read at the occurrence
+  in the new zone.
+- **Edited exception:** with the rule and `allDay` unchanged, and with a
+  `timezone` that moves the series, the edited exception, if there is one,
+  takes `start` and `end`. Any other save that changes the rule or `allDay`
+  leaves it at its own start and end (only its `RECURRENCE-ID` shifts along
+  with the series).
 - **Fields:** only fields changed against the shown occurrence are written
   into the series and into the edited exception, also where the rule or
   `allDay` changes, so an exception's own title does not replace the
@@ -308,10 +313,26 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
     do: a series on the 15th with `UNTIL=20261231T225959Z` moved to the
     16th gets `UNTIL=20270101T225959Z`. With a change of month, it is
     refused too.
-- **Time zone:** "Only this event" above, and this endpoint when the rule
-  and the `allDay` flag are unchanged, keep the series' own time zone; the
-  request's `timezone` applies to a series save that changes the rule or
-  `allDay` (single events: see above).
+- **Time zone:** a series has one zone for all its events (single events:
+  see above). Without `timezone`, or with the zone the series' `DTSTART` is
+  in, it stays in its zone and form (a `TZID`, also one the server can't
+  resolve; UTC; or floating), also when the rule, `allDay` or the dates
+  change. A `timezone` that differs (another `TZID`, or UTC against a `TZID`
+  or a floating time) moves the series into that zone by its wall clock:
+  `DTSTART`, every `EXDATE`, `RDATE` and `RECURRENCE-ID`, and a UTC `UNTIL`,
+  each read on its wall clock in the old zone, move as the occurrence moved,
+  from its shown start in the old zone to `start` in the new one, and the
+  references take the new `TZID`, or UTC (a date-only value moves by the
+  change of date, a `PERIOD` stays as it is). A New York series at 18:00
+  saved from an occurrence entered at 18:00 Berlin time is at 18:00 Berlin
+  time on every date, also where the two zones are another number of hours
+  apart. The edited occurrence, also an exception, goes to `start` and
+  `end`; other exceptions keep their own start and end, in their own zone.
+  `endTimezone` names `DTEND`'s zone; absent, `DTEND` follows a `timezone`
+  that is sent, else keeps its own form, and in another zone it keeps its
+  exact distance from `DTSTART`. A series made timed takes `timezone`, else
+  UTC; an all-day series, or one made all-day, takes none. A `VTIMEZONE` no
+  `TZID` refers to any more goes (FR-17, FR-18).
 - `409 conflict`, and nothing is written, where `instanceStart` is no longer
   an occurrence of the series: neither an event of its rule nor one with an
   override, as in a view not reloaded since the series changed, such as
@@ -338,7 +359,12 @@ belongs to the series, not the occurrence) and without `instanceStart`:
   "allDay": false, "timezone": "Europe/Berlin", "endTimezone": "Europe/Berlin" }
 ```
 
-`timezone` and `endTimezone` are those of `EventInput` (FR-18).
+`timezone` and `endTimezone` are validated as in `EventInput`, but not
+written: a series has one zone for all its events, so the override's
+`RECURRENCE-ID` and `DTSTART` are written in the form of the series'
+`DTSTART`, and its `DTEND` in that of the series' `DTEND`. A zone changes
+for all events (`PUT /api/v1/events/{eventId}`) or for this and the
+following ones (`…/following/…`) (FR-17, FR-18).
 
 `200` with the changed `Event` (new `etag`), and an `undoToken` if the CalDAV
 server tells the new `etag` and the series has no attendees. Its `modified` is
@@ -394,11 +420,13 @@ UTC, whole seconds, URL-encoded.
 Body: `EventInput`; `instanceStart` is ignored, `recurrenceId` is the edited
 occurrence. The change applies to the new series as
 `PUT /api/v1/events/{eventId}` with `instanceStart` applies it to all events
-(distance, edited exception, fields, time zone, see there). `rrule` is the
-new series' rule: sent as the series has it (`rrule` of the event in the
-list), the new series keeps the rule it inherits, with its lowered `COUNT`,
-so a move does not count as a new rule; `""` makes the new series a single
-event at `start`; any other rule is the new series' own.
+(distance, edited exception, fields, time zone, see there): a `timezone` that
+differs from the series' moves the new series into that zone, while the
+series before it stays in its own. `rrule` is the new series' rule: sent as
+the series has it (`rrule` of the event in the list), the new series keeps
+the rule it inherits, with its lowered `COUNT`, so a move does not count as a
+new rule; `""` makes the new series a single event at `start`; any other rule
+is the new series' own.
 
 At the series' first event (`first` in the event list above) there is nothing
 before it, so this is "all events": it is `PUT /api/v1/events/{eventId}` with

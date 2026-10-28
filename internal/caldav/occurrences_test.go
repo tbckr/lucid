@@ -887,3 +887,22 @@ func TestDeleteOccurrenceErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateOccurrenceKeepsEndZone checks that "only this event" writes the
+// override's DTEND in the zone of the series' DTEND, and its DTSTART in that
+// of the series' DTSTART (FR-17, FR-18).
+func TestUpdateOccurrenceKeepsEndZone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", endZoneSeries...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0))
+
+	_, _, err := e.svc.UpdateOccurrence(t.Context(), id, ev.ETag, *ev.RecurrenceID,
+		domain.OccurrenceInput{Title: "Review", Start: ev.Start.Add(time.Hour), End: ev.End.Add(time.Hour)})
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261110T100000",
+		"DTSTART;TZID=Europe/Berlin:20261110T110000", "DTEND;TZID=Europe/London:20261110T110000",
+	}, []string{"DTEND;TZID=Europe/Berlin"})
+}

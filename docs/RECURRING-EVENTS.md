@@ -747,16 +747,20 @@ event, and the refusal comes as a toast.
   `EXDATE`, built by `newOverride`. A partial copy leaves the event
   untitled in Thunderbird and DAVx⁵, and keeping `RRULE`/`RDATE`/`EXDATE` in
   it gets 400 from Radicale or duplicates in older DAVx⁵.
-- `RECURRENCE-ID`, `DTSTART` and `DTEND` are written in exactly the series'
-  `DTSTART` form (the same `TZID`, `VALUE=DATE` for all-day series), via
-  `seriesDateProp`. Other forms are dropped silently by Nextcloud Calendar,
-  duplicated by InfCloud, misdated by Roundcube, or rejected by Radicale's
-  `expand` (400) and SabreDAV (415).
-- **The series keeps its own time zone.** An "Only this event" write, and
-  an "All events" write whose rule and `allDay` flag are unchanged, use the
-  series' stored `TZID`; the request's `timezone` field only applies to a
-  single (non-recurring) event or to a series save that changes the rule or
-  `allDay`.
+- `RECURRENCE-ID` and `DTSTART` are written in exactly the series'
+  `DTSTART` form (the same `TZID`, `VALUE=DATE` for all-day series), and
+  `DTEND` in the series' `DTEND` form, via `seriesDateProp`. Other forms are
+  dropped silently by Nextcloud Calendar, duplicated by InfCloud, misdated
+  by Roundcube, or rejected by Radicale's `expand` (400) and SabreDAV
+  (415).
+- **The series keeps its own time zone.** A series has one zone for all its
+  events, so an "Only this event" write takes no zone: it writes the
+  override in the series' forms whatever zones the request names. An "All
+  events" or "This and following events" write keeps the series in its
+  zone and form unless the request names another start zone, also when it
+  changes the rule, the `allDay` flag or the dates; one that names another
+  moves the series into that zone (see "All events" below). The request's
+  zones apply as sent only to a single (non-recurring) event.
 - A `recurrenceId` is matched by **instant**, never by text (`findOverride`,
   `isInstance`): this also finds an existing orphaned override, which Lucid
   already shows.
@@ -824,11 +828,15 @@ event, and the refusal comes as a toast.
   instant on the series' wall clock (written back in its own form), a
   floating value, or one with a `TZID` Lucid cannot resolve, on its own
   wall clock. `DTEND` moves as `DTSTART` did, so the series keeps its
-  duration. An absolute duration would put them an hour off whenever a
-  daylight-saving change lies between them and the edited event — a
-  deleted occurrence would come back and an override would be orphaned
-  next to the occurrence it replaces — and a drag from winter into summer
-  time would move the whole series an hour. A save that changes the rule
+  duration, in its own form; one the request gives another zone, or that
+  follows `DTSTART` into another, keeps its exact distance from `DTSTART`
+  there (RFC 5545 section 3.8.5.3). An absolute duration would put them an
+  hour off whenever a daylight-saving change lies between them and the
+  edited event — a deleted occurrence would come back and an override would
+  be orphaned next to the occurrence it replaces — and a drag from winter
+  into summer time would move the whole series an hour. Into another zone,
+  the series moves from the shown start's wall clock in the old zone to the
+  entered one's in the new zone (see below). A save that changes the rule
   moves the same way, counted by the rule the series had; one that changes
   the `allDay` flag moves the references this way too, but `DTSTART` by
   dates (next item).
@@ -838,11 +846,11 @@ event, and the refusal comes as a toast.
   event changes nothing: made all-day, from the edited event's date in the
   series' zone to the date entered, `DTSTART`'s own date read in the
   series' zone too; made timed, from the date shown to the date entered in
-  the request's `timezone`, at the clock time entered there, so every event
-  shows that time. A Berlin series from 2026-09-04 09:00 made all-day from
-  its 11-06 event gets `DTSTART;VALUE=DATE:20260904`; a weekly all-day
-  series from 2026-01-02 made timed from its 04-03 event at 09:00 Berlin
-  time gets `DTSTART;TZID=Europe/Berlin:20260102T090000`.
+  the zone the request names, else in UTC, at the clock time entered there,
+  so every event shows that time. A Berlin series from 2026-09-04 09:00
+  made all-day from its 11-06 event gets `DTSTART;VALUE=DATE:20260904`; a
+  weekly all-day series from 2026-01-02 made timed from its 04-03 event at
+  09:00 Berlin time gets `DTSTART;TZID=Europe/Berlin:20260102T090000`.
 - **A time the series' zone skips**: on the night Berlin changes to summer
   time, the event of a series at 02:30 shows at 03:30, as RFC 5545 reads
   that time (see "What the standards say"). Its rule still has it at 02:30,
@@ -867,38 +875,44 @@ event, and the refusal comes as a toast.
 - `UNTIL` now shifts along too — a fix: previously it stayed in place, so a
   series moved later could lose its last occurrence.
 - A changed `RRULE` or `allDay` flag applies to the whole series as entered,
-  with the request's own `timezone` (see "Only this event" above for the
-  unchanged-rule case). It takes only the changed title, description and
+  in the series' own zone. It takes only the changed title, description and
   location into the series too (`applyChangedEventFields`), so an
   exception's own title stays out of it.
-- A timed series that changes its zone or form that way (into another
-  zone, into UTC, from a floating time, or from a `TZID` written otherwise)
-  goes there **by date** (`zoneMove`): `DTSTART` and every `EXDATE`,
-  `RDATE` and `RECURRENCE-ID` keep their date and clock time, moved by the
-  same number of seconds. That is the difference of the two zones' UTC
-  offsets at the edited event's place in the rule, its `RECURRENCE-ID`,
-  where the editor reads the rule (next item), plus the event's move on the
-  new zone's clock, from where it was shown to where it was entered. An
-  event of the rule is so where it was entered, every value stays with its
-  event, and an exception moved into a week where the zones are another
-  amount apart leaves the series on the days the editor showed. The
-  references take the series' new form, its `TZID` or UTC
-  (`rezoneRecurrenceRefs`), as overrides Lucid writes do; a `DATE` or
-  `PERIOD` value stays as it is, and so do the exceptions' own `DTSTART`
-  and `DTEND`, with the old zone's `VTIMEZONE`. Kept as instants and in
-  their old form, as before, they were off wherever only one of the zones
-  had changed to summer time: a New York series on Tuesday and Thursday at
-  18:00 from 2026-03-17, changed in Berlin from its event on Wednesday
-  11-11 at 00:00 to every two weeks on Wednesday and Friday, got
-  `DTSTART;TZID=Europe/Berlin:20260317T230000` (New York changes to summer
-  time three weeks before Berlin) and so went to 23:00 on every event,
-  while its references, left in New York's `TZID`, matched none of them: a
-  deleted event came back, and an exception showed next to the event it
-  replaces. It now gets `DTSTART;TZID=Europe/Berlin:20260318T000000`. On
-  Berlin's clock from then on, its events in the weeks where the
-  difference is another move with it: those of March, while New York is
-  already on summer time and Berlin not yet, from Tuesday 23:00 to
-  Wednesday 00:00, 19:00 in New York.
+- **A timed series whose start zone changes** (the request names another
+  zone, or UTC for a `TZID` or a floating time, or a `TZID` written
+  otherwise, such as `/mozilla.org/…/Europe/Berlin`) moves into it **by its
+  wall clock**, whether its rule changes or not (`seriesStartForm`,
+  `wallShift`): the change is measured from the edited event's shown start
+  on the old zone's clock to the start entered on the new zone's, as a
+  change of date and of clock time, and `DTSTART`, every `EXDATE`, `RDATE`
+  and `RECURRENCE-ID` and a UTC `UNTIL` move by it, each read on its wall
+  clock in the old zone (a floating value, or one with a `TZID` Lucid
+  cannot resolve, at the instant Lucid matches it by, in UTC) and written on
+  the moved one in the new zone (`carry`). A New York series on Tuesday and
+  Thursday at 18:00 saved from its 11-10 event entered at 18:00 Berlin time
+  is at 18:00 Berlin time on every date; entered on Wednesday 11-11 at
+  19:00, it repeats on Wednesdays and Fridays at 19:00, as any move of its
+  date rotates its weekdays (`seriesShift`). Every value stays with its
+  event, also in the weeks where the two zones are another number of hours
+  apart. The references take the series' new form, its `TZID` or UTC
+  (`rezoneRecurrenceRefs`), as overrides Lucid writes do; a `DATE` value
+  moves by the change of date only, and a `PERIOD` value stays as it is. A
+  `UNTIL` in UTC goes from its wall clock in the old zone to the moved one
+  in the new zone and back to UTC, so a series moved from 18:00 Berlin to
+  18:00 New York time keeps its last event. With a changed rule, the moved
+  series takes it as the items below say, read at the edited event in the
+  new zone. The edited
+  event, also an exception, goes where it was entered, its start and end;
+  the other exceptions keep their own `DTSTART` and `DTEND`, with the old
+  zone's `VTIMEZONE`, which goes once nothing refers to it
+  (`pruneVTimezones`). `DTEND` follows `DTSTART` into the new zone unless
+  the request names a zone of its own for it. Kept as instants and in
+  their old form, the references were off wherever only one of the zones
+  had changed to summer time: a deleted event came back, and an exception
+  showed next to the event it replaces. Measured from the difference of
+  the two zones' UTC offsets at the edited event, as Lucid did while the
+  editor built the rule on the browser's clock (#5), a series edited from
+  an exception in another week moved by another hour than the one entered.
 - The editor shows and builds that rule on the browser's wall clock, where
   the series then recurs. A series from another zone opens on the days it
   shows on (`ruleInZone`, `web/src/lib/seriesShift.ts`, which reads the rule
@@ -1097,7 +1111,8 @@ as entered (`UpdateFollowing`).
   the later events go.
 - **The change** applies to the new series as "All events" applies it from
   R (`applySeriesEdit`, shared with `UpdateEvent`): the same distance,
-  fields and time zone, and the same refusals (see "Which moves are
+  fields and time zone, a start zone other than the series' moving the new
+  series alone into it, and the same refusals (see "Which moves are
   refused" above). A save that sends the series' rule as it is stored,
   compared case-insensitively (RFC 5545 section 3.1), keeps the rule the
   new series inherited, with its lowered `COUNT`, so that a move doesn't

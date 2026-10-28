@@ -664,14 +664,18 @@ func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Tim
 //     moves as the edited event moved and takes the rule rr, read at the
 //     edited event (see startOnRule), and instance is in.Start, or, where
 //     the series no longer shows an event there, its next one (see
-//     shownFrom, #11);
+//     shownFrom, #11); moved is the recurrence ID of an exception edited
+//     with a zone change, which goes where it was entered;
 //   - otherwise, for a single event and a series whose rule goes (rr == ""):
 //     the fields and dates of in, as entered, in the forms DTSTART and DTEND
 //     have, or those the zones in names (see formFor, endFormFor, FR-18),
 //     and both are nil.
 //
-// A VTIMEZONE a changed rule or the last of these leaves without a TZID
-// referring to it goes (see pruneVTimezones).
+// A series stays in its zone and form, whatever else changes, unless in
+// names another start zone: then it moves into that zone by its wall clock,
+// see seriesStartForm and wallShift. Its DTEND is written in the form
+// endFormFor gives (FR-17, FR-18). A VTIMEZONE the change leaves without a
+// TZID referring to it goes (see pruneVTimezones).
 //
 // A move the series cannot follow is domain.ErrSeriesMoveUnsupported, see
 // moveSeries, and cal may be changed in part then: the caller writes nothing.
@@ -679,10 +683,10 @@ func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Tim
 func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.EventInput, rr string, now time.Time) (instance, moved *time.Time, err error) {
 	start, end := in.Start, in.End
 	oldTm, tmErr := parseTiming(master)
-	tz := deref(in.Timezone)
-	if tmErr == nil {
-		tz = cmp.Or(tz, oldTm.start.tzid)
-	}
+	// DTEND keeps its form unless in names a zone for it, or for the start,
+	// which it then follows; a timing Lucid cannot read, the zero timing, is
+	// UTC (FR-18).
+	endForm := endFormFor(in.EndTimezone, in.Timezone, oldTm.end)
 	series := in.InstanceStart != nil && isRecurring(master) && tmErr == nil
 	switch {
 	case series && rr == rruleString(master) && in.AllDay == oldTm.start.allDay:
@@ -700,38 +704,56 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// item 4, FR-17). A changed all-day flag moves DTSTART by dates
 		// instead (see toggledStart); the references keep their value type
 		// and move by the shift (docs/RECURRING-EVENTS.md, Limits). A timed
-		// series that goes into the request's zone, or form, from another
-		// goes there by date, see zoneMove, and its references with it, in
-		// its new form (see rezoneRecurrenceRefs, FR-18). A move the series
-		// cannot follow is refused as in moveSeries, judged on DTSTART and
-		// the references, since the rule is the one entered, and nothing is
-		// written. A changed rule is read at the edited event, where the
-		// editor built it, and DTSTART goes to its first event from where it
-		// moved, see startOnRule, unless it was set off the old rule (see
-		// startsOnRule, #9). Where the rule doesn't fall on the edited event,
-		// that event is gone, while an exception there stays, as every
-		// exception does (#11). Of title, description and location only what
-		// changed from the event as shown goes into the series, see
+		// series stays in its zone and form, also with a changed rule, unless
+		// in names another start zone: then it moves into it by its wall
+		// clock, with its references in its new form (see
+		// rezoneRecurrenceRefs), and the edited event, also an exception,
+		// goes where it was entered (FR-18). A move the series cannot follow
+		// is refused as in moveSeries, judged on DTSTART and the references,
+		// since the rule is the one entered, and nothing is written. A
+		// changed rule is read at the edited event, where the editor built
+		// it, and DTSTART goes to its first event from where it moved, see
+		// startOnRule, unless it was set off the old rule (see startsOnRule,
+		// #9). Where the rule doesn't fall on the edited event, that event is
+		// gone, while an exception there stays, as every exception does
+		// (#11). Of title, description and location only what changed from
+		// the event as shown goes into the series, see
 		// applyChangedEventFields.
 		rid := *in.InstanceStart
 		ov, shown := shownOccurrence(cal, master, oldTm, rid)
-		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start, enteredAt(shown.start, in.Start, oldTm.start.loc()))
+		form, rezone := seriesStartForm(oldTm.start, in)
+		to := oldTm.start.loc()
+		if rezone {
+			to = form.zone()
+		}
+		mv, err := wallShift(rruleString(master), oldTm.start, rid, shown.start, enteredAt(shown.start, in.Start, to), to)
 		if err != nil {
 			return nil, nil, err
 		}
+		toggled := in.AllDay != oldTm.start.allDay
+		if toggled && !in.AllDay {
+			// An all-day series made timed takes the zone in names, else
+			// UTC (FR-18).
+			form = formFor(in.Timezone, dateForm{})
+		}
 		// DTSTART moves on its wall clock as written, which can be one its
-		// zone skips (#8), in the series' zone whatever its form.
+		// zone skips (#8), in the series' zone whatever its form, and into
+		// the zone in names (see carry).
 		shifted := func(v dateValue) (dateValue, error) {
-			if in.AllDay == oldTm.start.allDay {
-				return mv.shift(dateValue{t: v.t, wall: v.wall}), nil
+			if !toggled {
+				return mv.carry(v), nil
 			}
-			return toggledStart(rruleString(master), v, rid, shown.start, in, tz)
+			return toggledStart(rruleString(master), v, rid, shown.start, in, form.zone())
 		}
 		at, err := shifted(oldTm.start)
 		if err != nil {
 			return nil, nil, err
 		}
-		shiftRecurrenceRefs(cal, master, mv.shift)
+		if rezone {
+			rezoneRecurrenceRefs(cal, master, mv, form)
+		} else {
+			shiftRecurrenceRefs(cal, master, mv.shift)
+		}
 		if mv.lost {
 			return nil, nil, errMoveOffMonth
 		}
@@ -740,11 +762,6 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		edited, err := shifted(ruleEvent(rruleString(master), oldTm.start, rid))
 		if err != nil {
 			return nil, nil, err
-		}
-		if loc := seriesZone(tz); !in.AllDay && !oldTm.start.allDay && !writtenIn(oldTm.start.form(), loc) {
-			zm := newZoneMove(oldTm.start.loc(), loc, rid, shown.start.t, in.Start)
-			at, edited = zm.at(at), zm.at(edited)
-			rezoneRecurrenceRefs(cal, master, zm)
 		}
 		// A start set off the old rule stays, and the new rule names what it
 		// leaves to its start as the edited event gives it (see spellOut),
@@ -766,8 +783,7 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 			}
 		}
 		end = at.t.Add(in.End.Sub(in.Start))
-		zone := formIn(seriesZone(tz))
-		applyEventSchedule(cal, master, in, rr, at, end, zone, zone)
+		applyEventSchedule(cal, master, in, rr, at, end, form, endForm)
 		if keptAsDate != nil {
 			if d, err := parseDateProp(master.Props.Get(ical.PropDateTimeStart)); err == nil {
 				master.Props.Add(seriesValueProp(cal, ical.PropRecurrenceDates, *keptAsDate, d.form()))
@@ -775,10 +791,18 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		}
 		listed := shownFrom(cal, master, in.Start)
 		instance = &listed
-		if applyChangedEventFields(master, ov, in) {
+		changed := applyChangedEventFields(master, ov, in)
+		if rezone && ov != nil {
+			setEventDates(cal, ov, in, form, endForm)
+			changed = true
+			if r, err := parseDateProp(ov.Props.Get(ical.PropRecurrenceID)); err == nil {
+				rid := r.t.UTC()
+				moved = &rid
+			}
+		}
+		if changed {
 			bumpChangeProps(ov, now)
 		}
-		pruneVTimezones(cal)
 	default:
 		if rr == "" {
 			removeRecurrence(cal, master)
@@ -788,10 +812,36 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		// takes, and a series whose rule goes (FR-18). A timing
 		// Lucid cannot read, the zero timing, is UTC.
 		startForm := formFor(in.Timezone, oldTm.start.form())
-		applyEventFields(cal, master, in, rr, start, end, startForm, endFormFor(in.EndTimezone, in.Timezone, oldTm.end))
-		pruneVTimezones(cal)
+		applyEventFields(cal, master, in, rr, start, end, startForm, endForm)
 	}
+	pruneVTimezones(cal)
 	return instance, moved, nil
+}
+
+// seriesStartForm returns the form "all events" writes the DTSTART st of a
+// series in for the change in, and whether that is a zone change (FR-17,
+// FR-18): the form in.Timezone asks for, where sent and it differs from
+// st's (see sameZoneForm), else st's own. A zone change moves the series
+// into the new zone by its wall clock (see wallShift). An all-day series,
+// and one made all-day, has none.
+func seriesStartForm(st dateValue, in domain.EventInput) (f dateForm, rezone bool) {
+	if st.allDay || in.AllDay {
+		return st.form(), false
+	}
+	if f = formFor(in.Timezone, st.form()); sameZoneForm(f, st.form()) {
+		return st.form(), false
+	}
+	return f, true
+}
+
+// setEventDates writes in.Start and in.End into the override ov of a series,
+// as its DTSTART in the form start and its DTEND in the form end, and drops
+// a DURATION: the edited exception goes where it was entered (FR-17,
+// FR-18).
+func setEventDates(cal *ical.Calendar, ov *ical.Component, in domain.EventInput, start, end dateForm) {
+	ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, start))
+	ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, end))
+	ov.Props.Del(ical.PropDuration)
 }
 
 // shownOccurrence returns the override of the series master at the
@@ -826,6 +876,13 @@ func instanceTiming(tm timing, rid time.Time) timing {
 //     series' zone, see wallShift. Its rule follows as seriesShift says,
 //     and UNTIL, EXDATE, RDATE and the RECURRENCE-IDs move the same way;
 //     DTEND moves as DTSTART did.
+//   - A start zone in names that differs from the series' moves it into
+//     that zone by its wall clock, from the shown start's in the old zone to
+//     in.Start's in the new one (see seriesStartForm, wallShift), and its
+//     references, a UTC UNTIL apart, take its new form (see
+//     rezoneRecurrenceRefs, FR-18). DTEND is written in the form endFormFor
+//     gives, at its exact distance from DTSTART where that form changes
+//     (RFC 5545 section 3.8.5.3).
 //   - A move the series cannot follow is domain.ErrSeriesMoveUnsupported,
 //     and UpdateEvent writes nothing: one seriesShift refuses (a rule on
 //     fixed days or times), a change of date dateShift refuses, or one that
@@ -834,24 +891,30 @@ func instanceTiming(tm timing, rid time.Time) timing {
 //   - Of title, description, location and duration, only what changed from
 //     the event as shown is written into the series, so an exception's own
 //     title does not replace the series'.
-//   - An exception edited this way takes the change too: in.Start, in.End
-//     and the changed fields. Other exceptions keep their own times and
-//     fields, as with Apple, SOGo, InfCloud and Thunderbird.
+//   - An exception edited this way takes the change too: in.Start, in.End,
+//     in the series' forms, and the changed fields. Other exceptions keep
+//     their own times and fields, as with Apple, SOGo, InfCloud and
+//     Thunderbird.
 func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain.EventInput, now time.Time) (time.Time, error) {
 	rid := in.InstanceStart.UTC()
 	ov, shown := shownOccurrence(cal, master, tm, rid)
 	oldRule := rruleString(master)
-	mv, err := wallShift(oldRule, tm.start, rid, shown.start, enteredAt(shown.start, in.Start, tm.start.loc()))
+	f, rezone := seriesStartForm(tm.start, in)
+	to := tm.start.loc()
+	if rezone {
+		to = f.zone()
+	}
+	mv, err := wallShift(oldRule, tm.start, rid, shown.start, enteredAt(shown.start, in.Start, to), to)
 	if err != nil {
 		return time.Time{}, err
 	}
 	dur := in.End.Sub(in.Start)
 	durChanged := dur != shown.dur.addTo(shown.start.t).Sub(shown.start.t)
 
-	// In the series' zone, on its wall clock as written, which can be one
-	// the zone skips (#8), as seriesShift wants.
-	newStart := mv.shift(tm.start)
-	rule, ok := seriesShift(oldRule, tm.start.wallIn(mv.loc), newStart.wallIn(mv.loc))
+	// On the series' wall clock as written, which can be one its zone skips
+	// (#8), as seriesShift wants, and on the moved one in its new zone.
+	newStart := mv.carry(tm.start)
+	rule, ok := seriesShift(oldRule, tm.start.wallIn(mv.loc), newStart.wallIn(mv.to))
 	if !ok {
 		return time.Time{}, errMoveFixedDays
 	}
@@ -860,7 +923,11 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		shiftDatePropBy(&p, mv.shift)
 		return p.Value
 	})
-	shiftRecurrenceRefs(cal, master, mv.shift)
+	if rezone {
+		rezoneRecurrenceRefs(cal, master, mv, f)
+	} else {
+		shiftRecurrenceRefs(cal, master, mv.shift)
+	}
 	mv.shiftEvents(oldRule, tm.start)
 	if mv.lost {
 		return time.Time{}, errMoveOffMonth
@@ -871,28 +938,33 @@ func moveSeries(cal *ical.Calendar, master *ical.Component, tm timing, in domain
 		master.Props.Set(p)
 	}
 
-	f := tm.start.form()
 	master.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, newStart, f))
-	if durChanged {
+	endForm := endFormFor(in.EndTimezone, in.Timezone, tm.end)
+	hasEnd := master.Props.Get(ical.PropDateTimeEnd) != nil
+	switch {
+	case durChanged:
 		master.Props.Del(ical.PropDuration)
-		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.t.Add(dur), f))
-	} else if p := master.Props.Get(ical.PropDateTimeEnd); p != nil {
+		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, newStart.t.Add(dur), endForm))
+	case (rezone || !sameZoneForm(endForm, tm.end)) && (hasEnd || !sameZoneForm(endForm, f)):
+		// DTEND in another zone, or an end zone of its own for a DURATION,
+		// at its exact distance from DTSTART (FR-18).
+		master.Props.Del(ical.PropDuration)
+		master.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, tm.dur.addTo(newStart.t), endForm))
+	case hasEnd:
 		// DTEND moves as DTSTART did, so the series keeps its duration, also
 		// where a move by months puts the two in months of other lengths.
 		// Without a rule the move counts days, which cannot fail.
-		asStart, _ := wallShift("", tm.start, tm.start.t, tm.start, newStart)
-		shiftDatePropBy(p, asStart.shift)
+		asStart, _ := wallShift("", tm.start, tm.start.t, tm.start, newStart, mv.loc)
+		shiftDatePropBy(master.Props.Get(ical.PropDateTimeEnd), asStart.shift)
 	}
 
 	applyChangedEventFields(master, ov, in)
 
 	if ov != nil {
-		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, f))
-		ov.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, f))
-		ov.Props.Del(ical.PropDuration)
+		setEventDates(cal, ov, in, f, endForm)
 		bumpChangeProps(ov, now)
 	}
-	return mv.shift(ruleEvent(oldRule, tm.start, rid)).t, nil
+	return mv.carry(ruleEvent(oldRule, tm.start, rid)).t, nil
 }
 
 // applyChangedEventFields writes the title, description and location of in
@@ -936,21 +1008,25 @@ var (
 
 // wallShift returns how "all events" moves the values of the series whose
 // rule is rule and whose DTSTART is st when its occurrence rid, shown at
-// from, moves to to (spec section 3 items 1 and 2, FR-17): by the same
+// from, moves to to in the zone toLoc, the series' own or the one a write
+// moves it into (spec section 3 items 1 and 2, FR-17, FR-18): by the same
 // change of date (see dateShift) and the same change of clock time, from the
-// shown start, both measured in the series' zone. The series repeats on that
-// wall clock, so a move by the absolute time in between would put EXDATEs,
-// RECURRENCE-IDs and DTSTART itself an hour off across a daylight-saving
-// change. Each value is read on the wall clock it is written with, which can
-// be one its zone skips (#8). It fails where dateShift does.
-func wallShift(rule string, st dateValue, rid time.Time, from, to dateValue) (*seriesMove, error) {
+// shown start's wall clock in the series' zone to to's in toLoc. The series
+// repeats on that wall clock, so a move by the absolute time in between
+// would put EXDATEs, RECURRENCE-IDs and DTSTART itself an hour off across a
+// daylight-saving change, and, into another zone, wherever the two zones'
+// UTC offsets differ by another amount than at the edited event, which also
+// puts an event near midnight on another date. Each value is read on the
+// wall clock it is written with, which can be one its zone skips (#8). It
+// fails where dateShift does.
+func wallShift(rule string, st dateValue, rid time.Time, from, to dateValue, toLoc *time.Location) (*seriesMove, error) {
 	loc := st.loc()
-	f, t := from.wallIn(loc), to.wallIn(loc)
+	f, t := from.wallIn(loc), to.wallIn(toLoc)
 	change, err := dateShift(rule, st.wallIn(loc), wallClock(rid, loc), f, t)
 	if err != nil {
 		return nil, err
 	}
-	return &seriesMove{loc: loc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.wallIn(loc).Day()}, nil
+	return &seriesMove{loc: loc, to: toLoc, date: change, secs: secondOfDay(t) - secondOfDay(f), day: st.wallIn(loc).Day()}, nil
 }
 
 // enteredAt returns the start at entered for the event shown from, as the
@@ -975,6 +1051,7 @@ func enteredAt(from dateValue, at time.Time, loc *time.Location) dateValue {
 // wallShift (FR-17).
 type seriesMove struct {
 	loc  *time.Location // the series' zone
+	to   *time.Location // the zone it moves into: loc, or the one a write names (FR-18)
 	date dateMove       // the change of date
 	secs int            // the change of clock time, in seconds
 	day  int            // DTSTART's day of the month in the series' zone
@@ -987,18 +1064,33 @@ type seriesMove struct {
 // month the move counts it into (see at, FR-17). A DATE moves by the change
 // of date only. A UTC or TZID value names an instant, which moves with the
 // series' wall clock, from the one it is written with where that is the
-// series' zone, which can be one the zone skips (#8), and is then written in
-// its own form again; a floating value, or one with a TZID Lucid cannot
-// resolve, moves on its own wall clock.
+// series' zone, which can be one the zone skips (#8), into mv.to, and is
+// then written in its own form again; a floating value, or one with a TZID
+// Lucid cannot resolve, moves on its own wall clock, as a floating UNTIL is
+// read on the series' (see ruleInstances).
 func (mv *seriesMove) shift(d dateValue) dateValue {
 	if d.allDay {
 		return mv.at(d.t, 0, time.UTC)
 	}
-	zone := mv.loc
 	if d.floating || d.tzid == "" && d.param != "" {
-		zone = d.t.Location() // its wall clock, read as UTC
+		zone := d.t.Location() // its wall clock, read as UTC
+		return mv.at(d.wallIn(zone), mv.secs, zone)
 	}
-	return mv.at(d.wallIn(zone), mv.secs, zone)
+	return mv.at(d.wallIn(mv.loc), mv.secs, mv.to)
+}
+
+// carry returns the value d moved into mv.to, for a value written in the
+// series' new form, DTSTART or a reference after a zone change (see
+// rezoneRecurrenceRefs, FR-17, FR-18): a DATE by the change of date, any
+// other on the series' wall clock at the instant Lucid reads it as, a
+// floating value or one with a TZID Lucid cannot resolve as UTC, and on the
+// wall clock it is written with where that is the series' zone, which can
+// be one the zone skips (#8).
+func (mv *seriesMove) carry(d dateValue) dateValue {
+	if d.allDay {
+		return mv.at(d.t, 0, time.UTC)
+	}
+	return mv.at(d.wallIn(mv.loc), mv.secs, mv.to)
 }
 
 // at returns w moved by the change of date and then by secs seconds on its
@@ -1110,20 +1202,21 @@ func dateShift(rule string, start, rid, from, to time.Time) (dateMove, error) {
 //     date entered (in.Start's in UTC), DTSTART's own date and rid's read
 //     in the series' zone too;
 //   - made timed, from the all-day date shown to in.Start's date in the
-//     request's zone tz, at in.Start's clock time there, so the series shows
-//     the time entered on both sides of a daylight-saving change.
+//     zone loc the series goes into, the one the write names, else UTC (see
+//     applySeriesEdit, FR-18), at in.Start's clock time there, so the series
+//     shows the time entered on both sides of a daylight-saving change.
 //
 // The timed DTSTART is that wall clock, also one the zone skips, as written
 // (#8). It fails where dateShift does, and where DTSTART's date would land on
 // a day its month lacks (errMoveOffMonth).
-func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in domain.EventInput, tz string) (dateValue, error) {
-	loc := st.loc() // the series' zone, UTC for an all-day series
+func toggledStart(rule string, st dateValue, rid time.Time, from dateValue, in domain.EventInput, loc *time.Location) (dateValue, error) {
+	zone := st.loc() // the series' zone, UTC for an all-day series
 	to := in.Start.UTC()
 	if !in.AllDay {
-		to = in.Start.In(seriesZone(tz))
+		to = in.Start.In(loc)
 	}
-	start := st.wallIn(loc)
-	change, err := dateShift(rule, start, wallClock(rid, loc), from.wallIn(loc), to)
+	start := st.wallIn(zone)
+	change, err := dateShift(rule, start, wallClock(rid, zone), from.wallIn(zone), to)
 	if err != nil {
 		return dateValue{}, err
 	}
@@ -1412,90 +1505,20 @@ func periodsBefore(opt *rrule.ROption, a, s time.Time) time.Time {
 	}
 }
 
-// seriesZone returns the zone applyEventSchedule writes a timed series in
-// for the request's zone tz: the one tz names, else UTC (FR-18).
-func seriesZone(tz string) *time.Location {
-	if loc := loadLocation(tz); loc != nil {
-		return loc
-	}
-	return time.UTC
-}
-
-// formIn returns the form applyEventSchedule writes a series in the zone
-// loc in, the one writtenIn tells: UTC, else loc's name as TZID (FR-18).
-func formIn(loc *time.Location) dateForm {
-	if loc == time.UTC {
-		return dateForm{}
-	}
-	return dateForm{tzid: loc.String()}
-}
-
-// writtenIn reports whether a DATE-TIME of the form f is written as
-// applyEventSchedule writes a series in the zone loc: in UTC, or with loc's
-// name as TZID (FR-18).
-func writtenIn(f dateForm, loc *time.Location) bool {
-	if loc == time.UTC {
-		return f.param == "" && !f.floating
-	}
-	return f.param == loc.String()
-}
-
-// zoneMove carries the values of a timed series whose changed rule moves it
-// from the zone it recurs in to another (FR-17, FR-18), by date: each keeps
-// its date and clock time there, moved by the same number of seconds, so
-// the series recurs on the new zone's wall clock as the editor showed it
-// there (see newZoneMove), and every value stays with its event. Kept as
-// instants, DTSTART and the references would be off wherever the two zones'
-// UTC offsets differ by another amount than at the edited event: by an hour
-// where only one of them has changed to summer time, which also puts an
-// event near midnight on another date, such as a New York series at 18:00
-// seen in Berlin while New York has changed to summer time and Berlin has
-// not.
-type zoneMove struct {
-	from, to *time.Location
-	secs     int // added to the wall clock, see newZoneMove
-}
-
-// newZoneMove returns the zoneMove from the zone from to the zone to for
-// the event at rid in the rule, shown at shown and entered at entered
-// (FR-17): the series is read in to at rid, by the difference of the two
-// zones' UTC offsets there, as the editor reads its rule there (see
-// ruleInZone in web/src/lib/seriesShift.ts), and then moves as the event
-// moved on to's wall clock. An event of the rule is so where it was entered,
-// and an exception moved into a week where the zones are another amount
-// apart leaves the series on the days the editor showed.
-func newZoneMove(from, to *time.Location, rid, shown, entered time.Time) zoneMove {
-	apart := func(t time.Time) int {
-		_, fromOff := t.In(from).Zone()
-		_, toOff := t.In(to).Zone()
-		return toOff - fromOff
-	}
-	return zoneMove{from: from, to: to, secs: apart(rid) + apart(entered) - apart(shown)}
-}
-
-// at returns the value d, read on z.from's wall clock, carried into z.to
-// (see zoneMove): from the wall clock it is written with where that is
-// z.from's, which can be one z.from skips, to one z.to may skip (#8, FR-17,
-// FR-18).
-func (z zoneMove) at(d dateValue) dateValue {
-	w := d.wallIn(z.from)
-	return atWall(time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second()+z.secs, w.Nanosecond(), time.UTC), z.to)
-}
-
 // rezoneRecurrenceRefs carries the DATE-TIME values of EXDATE, RDATE and
-// RECURRENCE-ID by zm and writes them in the series' new form, in UTC or
-// with zm.to's TZID, as applyEventSchedule writes DTSTART (FR-17, FR-18).
-// Left in their own zone, or floating, next to a DTSTART in another, they
-// would be the mixed forms Nextcloud Calendar drops, InfCloud duplicates,
-// Roundcube misdates, and Radicale and SabreDAV reject (see
-// docs/RECURRING-EVENTS.md). A value read as UTC, a floating one or one
-// with a TZID Lucid cannot resolve, is carried as the instant Lucid matches
-// it by. DATE and PERIOD values stay as they are.
-func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, zm zoneMove) {
+// RECURRENCE-ID by mv into its new zone and writes them in the series' new
+// form f, as DTSTART is written (see carry, FR-17, FR-18). Left in their own
+// zone, or floating, next to a DTSTART in another, they would be the mixed
+// forms Nextcloud Calendar drops, InfCloud duplicates, Roundcube misdates,
+// and Radicale and SabreDAV reject (see docs/RECURRING-EVENTS.md). A value
+// read as UTC, a floating one or one with a TZID Lucid cannot resolve, is
+// carried as the instant Lucid matches it by. DATE values move by the change
+// of date, and PERIOD values stay as they are.
+func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, mv *seriesMove, f dateForm) {
 	for _, name := range []string{ical.PropExceptionDates, ical.PropRecurrenceDates} {
 		vals := master.Props[name]
 		for i := range vals {
-			rezoneDateProp(&vals[i], zm)
+			rezoneDateProp(cal, &vals[i], mv, f)
 		}
 	}
 	for _, c := range cal.Children {
@@ -1504,33 +1527,31 @@ func rezoneRecurrenceRefs(cal *ical.Calendar, master *ical.Component, zm zoneMov
 		}
 		vals := c.Props[ical.PropRecurrenceID]
 		for i := range vals {
-			rezoneDateProp(&vals[i], zm)
+			rezoneDateProp(cal, &vals[i], mv, f)
 		}
 	}
 }
 
-// rezoneDateProp writes the DATE-TIME values of p carried by zm, see
-// rezoneRecurrenceRefs. It leaves p as it is if it has a value of another
-// type, a DATE or a PERIOD, which does not parse as a date, since its values
-// share its parameters.
-func rezoneDateProp(p *ical.Prop, zm zoneMove) {
+// rezoneDateProp writes the DATE-TIME values of p carried by mv in the form
+// f, see rezoneRecurrenceRefs. A property with a value of another type, a
+// DATE or a PERIOD, or one that does not parse, moves as shiftDatePropBy
+// moves it, since its values share its parameters.
+func rezoneDateProp(cal *ical.Calendar, p *ical.Prop, mv *seriesMove, f dateForm) {
 	parts := strings.Split(p.Value, ",")
+	tzid := ""
 	for i, v := range parts {
 		d, err := parseDateValue(v, p.Params)
 		if err != nil || d.allDay {
+			shiftDatePropBy(p, mv.shift)
 			return
 		}
-		t := zm.at(d)
-		if zm.to == time.UTC {
-			parts[i] = t.t.UTC().Format(icalDateTimeUTC)
-		} else {
-			parts[i] = t.wallIn(zm.to).Format(icalDateTime)
-		}
+		q := seriesValueProp(cal, p.Name, mv.carry(d), f)
+		parts[i], tzid = q.Value, q.Params.Get(ical.ParamTimezoneID)
 	}
-	if zm.to == time.UTC {
+	if tzid == "" {
 		p.Params.Del(ical.ParamTimezoneID)
 	} else {
-		p.Params.Set(ical.ParamTimezoneID, zm.to.String())
+		p.Params.Set(ical.ParamTimezoneID, tzid)
 	}
 	p.Value = strings.Join(parts, ",")
 }

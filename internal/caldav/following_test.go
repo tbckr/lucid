@@ -1759,6 +1759,39 @@ func TestUpdateFollowingNewRuleIntoAnotherZone(t *testing.T) {
 	}
 }
 
+// TestUpdateFollowingZoneChange checks that a split with a start zone other
+// than the series' moves only the new series into it, by its wall clock,
+// with the rule unchanged (FR-17, FR-18): the New York series split at its
+// event of 11-10 at 18:00, entered at 18:00 Berlin time, goes on at 18:00
+// Berlin time, while the old one stays in New York.
+func TestUpdateFollowingZoneChange(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", nySeries(nil)...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 23, 0), date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0))
+
+	in := eventInputOf(ev)
+	in.Start, in.End, in.Timezone = date(2026, 11, 10, 17, 0), date(2026, 11, 10, 18, 0), ptr("Europe/Berlin")
+	res, _, err := e.svc.UpdateFollowing(t.Context(), id, ev.ETag, *ev.RecurrenceID, in)
+	mustNoErr(t, err)
+
+	_, nData := newSeriesIn(t, e, id)
+	checkStored(t, "N", nData,
+		[]string{"DTSTART;TZID=Europe/Berlin:20261110T180000", "DTEND;TZID=Europe/Berlin:20261110T190000", "RRULE:FREQ=WEEKLY;BYDAY=TU,TH"},
+		[]string{"America/New_York"})
+	checkStored(t, "S", stored(t, e, "work", "series.ics"),
+		[]string{"DTSTART;TZID=America/New_York:20260317T180000"}, []string{"Europe/Berlin"})
+	if !res.Event.Start.Equal(in.Start) {
+		t.Errorf("answer at %v; want %v", res.Event.Start, in.Start)
+	}
+	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 3, 0, 0), date(2026, 11, 13, 0, 0)), []occ{
+		{title: "Call", start: date(2026, 11, 3, 23, 0), end: date(2026, 11, 4, 0, 0), rid: ptr(date(2026, 11, 3, 23, 0))},
+		{title: "Call", start: date(2026, 11, 5, 23, 0), end: date(2026, 11, 6, 0, 0), rid: ptr(date(2026, 11, 5, 23, 0))},
+		{title: "Call", start: date(2026, 11, 10, 17, 0), end: date(2026, 11, 10, 18, 0), rid: ptr(date(2026, 11, 10, 17, 0))},
+		{title: "Call", start: date(2026, 11, 12, 17, 0), end: date(2026, 11, 12, 18, 0), rid: ptr(date(2026, 11, 12, 17, 0))},
+	})
+}
+
 // TestUpdateFollowingNewRuleOffEditedEvent checks that the new series of a
 // split with a changed rule the edited event is no event of starts at that
 // rule's first event from the edited event on, as "all events" moves a

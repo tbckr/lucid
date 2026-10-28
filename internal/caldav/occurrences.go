@@ -183,8 +183,10 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	}
 
 	// Steps 4-5: edit the existing override, or build a full copy of the
-	// series for a new one, with RECURRENCE-ID/DTSTART/DTEND in the series'
-	// form (spec section 2 steps 4-5).
+	// series for a new one, with RECURRENCE-ID and DTSTART in the form of the
+	// series' DTSTART and DTEND in that of its DTEND (spec section 2 steps
+	// 4-5). A series has one zone for all its events: the zones in names are
+	// not written (FR-17, FR-18).
 	f := tm.start.form()
 	if override == nil {
 		// At the wall clock the rule gives the event, which can be one its
@@ -196,7 +198,7 @@ func (s *service) UpdateOccurrence(ctx context.Context, eventID, etag string, re
 	setTextKept(override.Props, ical.PropDescription, in.Description)
 	setTextKept(override.Props, ical.PropLocation, in.Location)
 	override.Props.Set(seriesDateProp(cal, ical.PropDateTimeStart, in.Start, f))
-	override.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, f))
+	override.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, in.End, tm.end))
 	override.Props.Del(ical.PropDuration)
 
 	// Step 6: DTSTAMP, LAST-MODIFIED and SEQUENCE of the override.

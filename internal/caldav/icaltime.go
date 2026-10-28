@@ -90,6 +90,16 @@ func sameZoneForm(a, b dateForm) bool {
 	return a.allDay == b.allDay && a.floating == b.floating && cmp.Or(a.param, a.tzid) == cmp.Or(b.param, b.tzid)
 }
 
+// zone returns the zone a DATE-TIME of the form f is read in: the one its
+// TZID names, else UTC, also for a floating value and a TZID Lucid cannot
+// resolve, as parseDateValue reads them (FR-18).
+func (f dateForm) zone() *time.Location {
+	if loc := loadLocation(cmp.Or(f.tzid, f.param)); loc != nil {
+		return loc
+	}
+	return time.UTC
+}
+
 // loc returns the location recurrences of this value are computed in.
 func (d dateValue) loc() *time.Location {
 	if d.allDay {
