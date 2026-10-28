@@ -247,17 +247,47 @@ describe('DateField (FR-09)', () => {
     expect(input).toHaveValue('Fri, Mar 13')
   })
 
-  it('removes an optional date from the month', async () => {
+  it('removes an optional date with its ✕, keeping the focus in the text', async () => {
+    const clear = vi.fn()
+    const { user, onChange, input } = setup({ onClear: { label: 'Remove start date', clear } })
+    const x = screen.getByRole('button', { name: 'Remove start date' })
+    // A target of the pointer, as the chevron is: the keyboard empties the text instead (NFR-27).
+    expect(x).toHaveAttribute('tabindex', '-1')
+    await user.click(x)
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(input).toHaveFocus()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('drops a typed date with its ✕', async () => {
     const clear = vi.fn()
     const { user, onChange, input } = setup({ onClear: { label: 'Remove start date', clear } })
     await user.click(input)
     await user.keyboard('4/2')
-    await user.click(within(month()).getByRole('button', { name: 'Remove start date' }))
+    // The ✕ in the field, while the month is open below it.
+    await user.click(within(input.parentElement!).getByRole('button', { name: 'Remove start date' }))
     expect(clear).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).toBeNull()
-    // What was typed before goes with it.
     await user.tab()
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('shows its ✕ only for an optional date with a value, the chevron otherwise', () => {
+    const required = setup()
+    expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+    expect(required.input.parentElement!.querySelector('svg')).not.toBeNull()
+    cleanup()
+
+    const { input } = setup({ value: '', onClear: { label: 'Remove start date', clear: vi.fn() }, placeholder: 'Add a date' })
+    expect(screen.queryByRole('button', { name: 'Remove start date' })).toBeNull()
+    expect(input.parentElement!.querySelector('svg')).toBeNull()
+  })
+
+  it('offers no removal below the month', async () => {
+    const { user, input } = setup({ onClear: { label: 'Remove start date', clear: vi.fn() } })
+    await user.click(input)
+    expect(within(month()).queryByRole('button', { name: 'Remove start date' })).toBeNull()
   })
 
   it("takes a typed day that can't be picked, for the form to say why", async () => {
@@ -315,6 +345,28 @@ describe('DateField (FR-09)', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(input).toHaveAttribute('aria-expanded', 'false')
     expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('removes nothing from its ✕ in a disabled fieldset', () => {
+    const clear = vi.fn()
+    render(
+      <fieldset disabled>
+        <span id="starts">Start</span>
+        <DateField
+          id="start"
+          labelledBy="starts"
+          label="Start date"
+          value="2026-03-13"
+          onChange={vi.fn()}
+          onClear={{ label: 'Remove start date', clear }}
+          prefs={us}
+          now={now}
+        />
+      </fieldset>,
+    )
+    // user-event refuses a disabled target; a click without its checks shows the guard is the field's own (FR-17).
+    fireEvent.click(screen.getByRole('button', { name: 'Remove start date' }))
+    expect(clear).not.toHaveBeenCalled()
   })
 
   // The month is portalled out of the fieldset: left open, a pick there would still commit (FR-17).

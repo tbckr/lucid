@@ -1,14 +1,12 @@
-import { ChevronDownIcon, XIcon } from 'lucide-react'
 import { useMemo, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { MiniMonth } from '@/components/layout/MiniMonth'
-import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { dayKey, isFormDate, parseDayKey } from '@/lib/dates'
 import { formatPickerDate, type FormatPrefs } from '@/lib/format'
 import { formatTypedDate, readDate } from '@/lib/typedDate'
 import { cn } from '@/lib/utils'
-import { FieldSizer, onTint } from './EditorRow'
+import { FieldEnd, FieldSizer, onTint } from './EditorRow'
 import { useTypedField, type CommitVia } from './useTypedField'
 
 /**
@@ -21,8 +19,8 @@ import { useTypedField, type CommitVia } from './useTypedField'
  * month the picker opens on (`month`), else from today.
  *
  * Without a value it reads as `placeholder`, as quiet as the other optional
- * fields. With `onClear` the date can be left out: emptying the text clears
- * it, and the month offers to remove it. Text it can't read goes up as typed
+ * fields. With `onClear` the date can be left out: the ✕ in the field removes
+ * it, and emptying the text clears it. Text it can't read goes up as typed
  * through `onChange` and marks the field; a day `isDisabled` refuses is read
  * all the same, for the form to say why.
  *
@@ -66,7 +64,7 @@ export function DateField({
   placeholder?: string
   /** Month the picker opens on without a value, and where a typed date takes the parts left out; defaults to `now`. */
   month?: Date | undefined
-  /** Removes the date, also when the text is emptied; shown below the month as `onClear.label`. */
+  /** Removes the date, by the ✕ in the field named `onClear.label`, or when the text is emptied. */
   onClear?: { label: string; clear: () => void } | undefined
   /** On a calendar's tint: reads as text until hovered or focused. */
   tone?: 'tint'
@@ -99,7 +97,13 @@ export function DateField({
   const empty = value === ''
   const popupId = `${id}-month`
   // What the width of the text depends on, also for the texts it is at least as wide as.
-  const metrics = cn('tabular border-x px-3 text-sm', !tint && !empty && 'pr-8', tint && 'px-1.5 text-base font-medium')
+  // On the tint, the ✕'s room after `px-1.5`, which would win otherwise.
+  const metrics = cn(
+    'tabular border-x px-3 text-sm',
+    !tint && !empty && 'pr-8',
+    tint && 'px-1.5 text-base font-medium',
+    tint && onClear && !empty && 'pr-7',
+  )
   // At least as wide as the last date the field could read, as it shows at rest, so neither shorter numbers typed nor
   // text it can't read move what follows it, and as wide as the numbers of a two-digit day of its month (the 28th),
   // so neither the focus nor a longer day typed does. On the tint only while it has the focus: there the numbers'
@@ -145,7 +149,7 @@ export function DateField({
     inputProps.onKeyDown?.(e)
   }
 
-  // A pick from the month, or its removal: the focus goes back to the text, which shows what was taken.
+  // A pick from the month, or the ✕: the focus goes back to the text, which shows what was taken.
   const pick = (next: string) => {
     input.current?.focus()
     field.commit('pick', next)
@@ -159,7 +163,7 @@ export function DateField({
       }}
     >
       <PopoverAnchor asChild>
-        <div ref={anchor} className="relative inline-flex flex-col">
+        <div ref={anchor} className="group/field relative inline-flex flex-col">
           <input
             {...inputProps}
             id={id}
@@ -200,23 +204,19 @@ export function DateField({
             )}
           />
           <FieldSizer texts={sizes} className={metrics} />
-          {!tint && !empty && (
-            // A target of the mouse only, as the chevron of a select is: the text beside it has the focus and
-            // takes the keyboard (ArrowDown opens). Dimmed with the text while a fieldset around disables it: it opens
-            // nothing then (FR-17).
-            <span
-              aria-hidden
-              className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
-              onMouseDown={(e) => {
-                e.preventDefault()
+          {!empty && (
+            <FieldEnd
+              input={input}
+              clearLabel={onClear?.label}
+              onClear={() => {
+                pick('')
               }}
-              onClick={() => {
+              onOpen={() => {
                 input.current?.focus()
                 field.setOpen(true)
               }}
-            >
-              <ChevronDownIcon className="size-4 opacity-60" />
-            </span>
+              tint={tint}
+            />
           )}
         </div>
       </PopoverAnchor>
@@ -268,22 +268,6 @@ export function DateField({
           isDisabled={isDisabled}
           footer={footer}
         />
-        {onClear && !empty && (
-          <div className="mt-2 border-t pt-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start text-muted-foreground"
-              onClick={() => {
-                pick('')
-              }}
-            >
-              <XIcon aria-hidden />
-              {onClear.label}
-            </Button>
-          </div>
-        )}
       </PopoverContent>
     </Popover>
   )

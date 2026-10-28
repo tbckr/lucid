@@ -135,14 +135,12 @@ describe('TaskEditor', () => {
   it.each([
     ['Start', 'Remove start date', 'start', 'due'],
     ['Due', 'Remove due date', 'due', 'start'],
-  ])('%s: "%s" in the month removes the date together with its time', async (row, button, removed, kept) => {
+  ])('%s: its ✕ "%s" removes the date together with its time', async (row, button, removed, kept) => {
     const t = todo({ title: 'Slides', start: '2026-09-25T07:00:00Z', due: '2026-09-25T09:00:00Z' })
     const user = userEvent.setup()
     const { fetch, dialog } = await openTask(t)
 
-    await user.click(within(dialog).getByRole('combobox', { name: row }))
-    const month = screen.getByRole('dialog', { name: `${row} date` })
-    await user.click(within(month).getByRole('button', { name: button }))
+    await user.click(within(dialog).getByRole('button', { name: button }))
     expect(within(dialog).getByRole('combobox', { name: row })).toHaveValue('')
     expect(within(dialog).getByRole('combobox', { name: row })).toHaveAttribute('placeholder', 'Add a date')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -970,9 +968,7 @@ describe('TaskEditor', () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(last)
 
-      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
-      const month = screen.getByRole('dialog', { name: 'Due date' })
-      await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
       expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
@@ -1442,9 +1438,7 @@ describe('TaskEditor', () => {
       const interval = { ...series, rrule: 'FREQ=WEEKLY;INTERVAL=1', fixedDays: false }
       const { fetch, dialog } = await openTask(interval)
 
-      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
-      const month = screen.getByRole('dialog', { name: 'Due date' })
-      await user.click(within(month).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
       expect(await within(dialog).findByText('A repeating task needs a date.')).toBeInTheDocument()
