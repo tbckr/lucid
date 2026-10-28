@@ -84,9 +84,11 @@ export function TimeField({
   const listId = useId()
   const anchor = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
-  // The arrow keys moved the highlight, which `aria-activedescendant` then names; typing hands it back to the text.
+  // The arrow keys moved the highlight, which `aria-activedescendant` then names; typing hands it back to the text,
+  // and the list closing, however it closes, ends it (NFR-27).
   const [moved, setMoved] = useState(false)
   const open = field.open && !disabled
+  if (!open && moved) setMoved(false)
   const tint = tone === 'tint'
   const empty = value === '' && none !== undefined
   // What the width of the text depends on, also for the texts it is at least as wide as.
@@ -133,7 +135,6 @@ export function TimeField({
       open={open}
       onOpenChange={(next) => {
         field.setOpen(next)
-        if (!next) setMoved(false)
       }}
     >
       <PopoverAnchor asChild>
@@ -163,10 +164,6 @@ export function TimeField({
             // `field-sizing` where the browser has it, else by `size`, which counts the placeholder only while it
             // shows.
             size={tint || empty ? Math.max(field.text === '' ? (placeholder ?? none ?? '').length : field.text.length, 1) : undefined}
-            onBlur={(e) => {
-              setMoved(false)
-              inputProps.onBlur?.(e)
-            }}
             onChange={(e) => {
               setMoved(false)
               inputProps.onChange?.(e)

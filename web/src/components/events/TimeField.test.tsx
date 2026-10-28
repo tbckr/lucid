@@ -141,6 +141,25 @@ describe('TimeField (FR-09)', () => {
     expect(onChange).toHaveBeenCalledWith('08:30', 'enter')
   })
 
+  // The highlight is named only once the arrow keys move it, also in a list opened again after a commit (NFR-27).
+  it.each([
+    ['Enter', async (user: ReturnType<typeof userEvent.setup>) => user.keyboard('{Enter}')],
+    ['a pick', async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('option', { name: '9:30 AM' }))],
+  ])('names no entry in a list opened again after %s, until an arrow key moves', async (_, commit) => {
+    const { user, input } = setup()
+    await user.tab()
+    await user.keyboard('{ArrowDown}{ArrowDown}')
+    expect(input).toHaveAttribute('aria-activedescendant')
+    await commit(user)
+    expect(screen.queryByRole('listbox')).toBeNull()
+    await user.click(input)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    expect(input).not.toHaveAttribute('aria-activedescendant')
+    // On from the time committed, 9:30 AM.
+    await user.keyboard('{ArrowDown}')
+    expect(input).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: '10:00 AM' }).id)
+  })
+
   it('a mouse pick commits', async () => {
     const { user, onChange, input } = setup()
     await user.click(input)
