@@ -1,4 +1,4 @@
-import { CalendarIcon, ClockIcon, XIcon } from 'lucide-react'
+import { CalendarIcon, ClockIcon } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TimeField } from '@/components/events/TimeField'
@@ -47,8 +47,8 @@ interface Asking {
 
 /**
  * The due date of a task in the list, changed in place (FR-14): today,
- * tomorrow or next Monday with the date each one means, a day of the month,
- * the time, or none. A day keeps the time and closes the popover; a new time
+ * tomorrow or next Monday with the date each one means, no date, a day of the
+ * month, or the time. A day keeps the time and closes the popover; a new time
  * keeps it open, so a day can follow.
  *
  * A time typed is saved once: on Enter or a pick in its list at once; left
@@ -162,7 +162,7 @@ export function DuePicker({
     return value
   }
 
-  // The time a day, a shortcut or "Remove due date" saves along (FR-14): what was typed in the time field is read
+  // The time a day, a shortcut or "No date" saves along (FR-14): what was typed in the time field is read
   // first, so it goes with the pick instead of being dropped (`typedTime`).
   const pickedTime = (): string | null => {
     leaveTime()
@@ -338,6 +338,21 @@ export function DuePicker({
                 <span className="tabular text-muted-foreground">{formatPickerDate(p.day, prefs, now)}</span>
               </Button>
             ))}
+            {/* A repeating task needs a date to repeat from: a series without a start keeps its due date (FR-17). */}
+            {dueDate && !(todo.recurring && !todo.start) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="justify-between font-normal"
+                onClick={(e) => {
+                  // Without the due date, a time typed goes too: one save, but not while it can't be read.
+                  if (pickedTime() === null) return
+                  save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
+                }}
+              >
+                {t('tasks.noDate')}
+              </Button>
+            )}
           </div>
           <div className="mt-2 border-t pt-2">
             <MiniMonth
@@ -412,22 +427,6 @@ export function DuePicker({
                 <p id={`${timeId}-error`} className="pl-8.5 text-xs font-medium text-destructive">
                   {unreadNote}
                 </p>
-              )}
-              {/* A repeating task needs a date to repeat from: a series without a start keeps its due date (FR-17). */}
-              {!(todo.recurring && !todo.start) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start text-muted-foreground"
-                  onClick={(e) => {
-                    // Without the due date, a time typed goes too: one save, but not while it can't be read.
-                    if (pickedTime() === null) return
-                    save(withDue(todo, { date: '', time: '' }, tz), 'removal', e.currentTarget)
-                  }}
-                >
-                  <XIcon aria-hidden />
-                  {t('tasks.removeDue')}
-                </Button>
               )}
             </div>
           )}

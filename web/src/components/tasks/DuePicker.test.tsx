@@ -44,6 +44,18 @@ describe('DuePicker', () => {
     expect(picks[2]).toMatch(/^Next week Mon, /)
   })
 
+  it('offers "No date" with the shortcuts, before the month', async () => {
+    const { dialog } = await open(todo({ due: at(1, '09:00') }))
+    const [today, tomorrow, nextWeek, none] = within(dialog)
+      .getAllByRole('button')
+      .map((b) => b.textContent)
+    expect(today).toMatch(/^Today /)
+    expect(tomorrow).toMatch(/^Tomorrow /)
+    expect(nextWeek).toMatch(/^Next week /)
+    expect(none).toBe('No date')
+    expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
+  })
+
   it('moves the due date to tomorrow at its time and closes', async () => {
     const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(-1, '09:00') }))
     await user.click(within(dialog).getByRole('button', { name: /^Tomorrow / }))
@@ -136,8 +148,9 @@ describe('DuePicker', () => {
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
     await user.keyboard('1840')
-    await user.tab()
-    expect(within(dialog).getByRole('button', { name: 'Remove due date' })).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(time).not.toHaveFocus()
+    expect(dialog).toBeInTheDocument()
     expect(time).toHaveValue('18:40')
     expect(onChange).not.toHaveBeenCalled()
 
@@ -153,8 +166,8 @@ describe('DuePicker', () => {
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
     await user.keyboard('1840')
-    await user.tab()
     await user.tab({ shift: true })
+    await user.tab()
     expect(time).toHaveFocus()
     await user.keyboard('{Enter}')
     expect(onChange).toHaveBeenCalledTimes(1)
@@ -172,7 +185,7 @@ describe('DuePicker', () => {
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
     await user.keyboard('1840')
-    await user.tab()
+    await user.tab({ shift: true })
     expect(onChange).not.toHaveBeenCalled()
     await user.click(time)
     await user.click(screen.getByRole('option', { name: '18:40' }))
@@ -191,13 +204,13 @@ describe('DuePicker', () => {
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
     await user.keyboard('1840')
-    await user.tab()
     await user.tab({ shift: true })
+    await user.tab()
     await user.keyboard('0900{Enter}')
     expect(time).toHaveValue('09:00')
     await user.keyboard('1840')
-    await user.tab()
     await user.tab({ shift: true })
+    await user.tab()
     await user.keyboard('0900')
     await user.click(document.body)
     expect(dialog).not.toBeInTheDocument()
@@ -249,7 +262,7 @@ describe('DuePicker', () => {
     const again = screen.getByRole('dialog', { name: 'Due date' })
     await user.click(within(again).getByRole('combobox', { name: 'Due time' }))
     await user.keyboard('1840')
-    await user.tab()
+    await user.tab({ shift: true })
     await user.keyboard('{Escape}')
     expect(again).not.toBeInTheDocument()
     expect(onChange).not.toHaveBeenCalled()
@@ -259,7 +272,7 @@ describe('DuePicker', () => {
     expect(time).toHaveValue('9:00 AM')
   })
 
-  it("saves nothing when a day, a shortcut or Remove due date is picked while the time can't be read", async () => {
+  it("saves nothing when a day, a shortcut or No date is picked while the time can't be read", async () => {
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
@@ -268,7 +281,7 @@ describe('DuePicker', () => {
     for (const pick of [
       within(dialog).getByRole('button', { name: /^Tomorrow / }),
       within(dialog).getByRole('button', { name: format(addDays(new Date(), 1), 'PPPP') }),
-      within(dialog).getByRole('button', { name: 'Remove due date' }),
+      within(dialog).getByRole('button', { name: 'No date' }),
     ]) {
       await user.click(pick)
       expect(onChange).not.toHaveBeenCalled()
@@ -309,6 +322,18 @@ describe('DuePicker', () => {
     expect(dialog).not.toBeInTheDocument()
   })
 
+  // The time is the picker's last control: Tab leaves the picker from it, as a click outside does (FR-14).
+  it('saves a typed time once as Tab leaves the picker', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840')
+    await user.tab()
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
+    expect(dialog).not.toBeInTheDocument()
+  })
+
   it("stays open as its button is clicked while the time that still has the focus can't be read", async () => {
     const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
@@ -326,7 +351,7 @@ describe('DuePicker', () => {
     const time = within(dialog).getByRole('combobox', { name: 'Due time' })
     await user.click(time)
     await user.keyboard('18:4x')
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'No date' }))
     expect(onChange).not.toHaveBeenCalled()
     expect(dialog).toBeInTheDocument()
     expect(within(dialog).getByText('Enter a time like 9:40 AM.')).toBeInTheDocument()
@@ -366,7 +391,7 @@ describe('DuePicker', () => {
 
   it('removes the due date', async () => {
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
-    await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    await user.click(within(dialog).getByRole('button', { name: 'No date' }))
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: null }))
     expect(dialog).not.toBeInTheDocument()
   })
@@ -376,9 +401,9 @@ describe('DuePicker', () => {
     const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
     await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
     await user.keyboard('1840')
-    await user.tab()
+    await user.tab({ shift: true })
     expect(onChange).not.toHaveBeenCalled()
-    await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    await user.click(within(dialog).getByRole('button', { name: 'No date' }))
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: null, dueAllDay: false }))
     expect(dialog).not.toBeInTheDocument()
@@ -389,7 +414,7 @@ describe('DuePicker', () => {
   it('offers neither a time nor a removal without a due date', async () => {
     const { dialog } = await open(todo())
     expect(within(dialog).queryByRole('combobox', { name: 'Due time' })).toBeNull()
-    expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'No date' })).toBeNull()
   })
 
   describe('a series (FR-17)', () => {
@@ -784,13 +809,13 @@ describe('DuePicker', () => {
     it('keeps the due date of a series without a start', async () => {
       const { dialog } = await open(series)
       expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toBeInTheDocument()
-      expect(within(dialog).queryByRole('button', { name: 'Remove due date' })).toBeNull()
+      expect(within(dialog).queryByRole('button', { name: 'No date' })).toBeNull()
     })
 
     it('removes the due date of a series with a start', async () => {
       const dated = { ...series, start: '2026-10-05T00:00:00Z', startAllDay: true }
       const { user, onScope, dialog } = await open(dated)
-      await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+      await user.click(within(dialog).getByRole('button', { name: 'No date' }))
       await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
       expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ start: '2026-10-05T00:00:00Z', due: null }))
     })
