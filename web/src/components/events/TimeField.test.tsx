@@ -263,6 +263,25 @@ describe('TimeField (FR-09)', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  // The list is portalled out of the fieldset: left open, a pick there would still commit (FR-17).
+  it('closes its list when a fieldset around disables it', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const field = (disabled: boolean) => (
+      <fieldset disabled={disabled}>
+        <TimeField value="09:00" onChange={onChange} prefs={us} aria-label="Start time" />
+      </fieldset>
+    )
+    const view = render(field(false))
+    const input = screen.getByRole('combobox', { name: 'Start time' })
+    await user.click(input)
+    expect(screen.getByRole('listbox')).toBeInTheDocument()
+    view.rerender(field(true))
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('is a combobox for the numeric keyboard', () => {
     const { input } = setup()
     expect(input).toHaveAttribute('inputmode', 'numeric')

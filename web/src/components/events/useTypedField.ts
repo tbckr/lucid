@@ -75,7 +75,10 @@ export function useTypedField(o: {
   text: string
   focused: boolean
   open: boolean
-  /** Opens or closes the popover; it doesn't open while the field is disabled, by a prop or a fieldset around. */
+  /**
+   * Opens or closes the popover; it doesn't open while the field is disabled, by a prop or a fieldset around, and
+   * closes once it is.
+   */
   setOpen: (open: boolean) => void
   preview: string | null
   unreadable: boolean
@@ -122,6 +125,12 @@ export function useTypedField(o: {
     if (next && ref.current?.matches(':disabled')) return
     setOpen(next)
   }
+  // One already open closes once the fieldset disables it: the popover is portalled out of the fieldset, so a pick
+  // there would still commit (FR-17).
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- after every render on purpose: any render of the form around can disable the fieldset, which no prop or state of the field follows; it only closes a popover that is open, so it can't loop
+  useLayoutEffect(() => {
+    if (open && ref.current?.matches(':disabled')) setOpen(false)
+  })
 
   const restore = () => {
     setOpen(false)

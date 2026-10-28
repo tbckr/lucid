@@ -317,6 +317,26 @@ describe('DateField (FR-09)', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  // The month is portalled out of the fieldset: left open, a pick there would still commit (FR-17).
+  it('closes its month when a fieldset around disables it', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+    const field = (disabled: boolean) => (
+      <fieldset disabled={disabled}>
+        <span id="starts">Start</span>
+        <DateField id="start" labelledBy="starts" label="Start date" value="2026-03-13" onChange={onChange} prefs={us} now={now} />
+      </fieldset>
+    )
+    const view = render(field(false))
+    const input = screen.getByRole('combobox', { name: 'Start' })
+    await user.click(input)
+    expect(month()).toBeInTheDocument()
+    view.rerender(field(true))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('is a combobox for the numeric keyboard, named by its row and showing its value', () => {
     const { input } = setup({ describedBy: 'note' })
     expect(input).toHaveAttribute('inputmode', 'numeric')
