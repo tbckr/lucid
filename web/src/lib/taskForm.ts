@@ -308,6 +308,22 @@ export function formWithDate(v: TaskFormValues, which: 'start' | 'due', day: str
   return { ...v, [f.date]: day, [f.time]: v[f.date] ? v[f.time] : v[f.other] }
 }
 
+/**
+ * `v` with the time of its start or due date set to `time` (FR-14, FR-16):
+ * with both dates, a time removed from one goes from the other too, and a time
+ * given to one goes to the other where it has none, as RFC 5545 wants a time
+ * on both or neither, and as a change of the due date in the list does
+ * (`withDue`). A time changed, and text that can't be read, leave the other.
+ */
+export function formWithTime(v: TaskFormValues, which: 'start' | 'due', time: string): TaskFormValues {
+  const f = DATE_FIELDS[which]
+  const next = { ...v, [f.time]: time }
+  if (!v.startDate || !v.dueDate) return next
+  if (time === '') return { ...next, [f.other]: '' }
+  if (isFormTime(time) && v[f.other] === '') return { ...next, [f.other]: time }
+  return next
+}
+
 interface Fields {
   date: string
   time: string

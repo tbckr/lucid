@@ -74,6 +74,7 @@ import {
   editedFields,
   formToTodoInput,
   formWithDate,
+  formWithTime,
   seriesEditInput,
   shownTaskRule,
   taskToForm,
@@ -469,6 +470,13 @@ export function TaskEditor({
     setValue(f.date, date, setOpts)
   }
 
+  const setTime = (which: Which, time: string) => {
+    const other = DATES[DATES[which].other].time
+    // A time given or taken goes for the other date too: RFC 5545 wants a time on both or neither.
+    setValue(other, formWithTime(getValues(), which, time)[other], setOpts)
+    setValue(DATES[which].time, time, setOpts)
+  }
+
   const clearDate = (which: Which) => {
     setValue(DATES[which].date, '', setOpts)
     setValue(DATES[which].time, '', setOpts)
@@ -530,7 +538,7 @@ export function TaskEditor({
             <TimeField
               value={time}
               onChange={(v) => {
-                setValue(DATES[which].time, v, setOpts)
+                setTime(which, v)
               }}
               clearLabel={which === 'start' ? t('tasks.removeStartTime') : t('tasks.removeDueTime')}
               placeholder={t('tasks.addTime')}

@@ -206,6 +206,43 @@ describe('TaskEditor', () => {
     expect(await saved(fetch)).toMatchObject({ due: '2026-03-13T00:00:00.000Z', dueAllDay: true })
   })
 
+  // RFC 5545 wants a time on both dates or neither: the editor follows, as the list's due picker does (FR-14, FR-16).
+  it("takes the start's time along with the due time's ✕", async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openTask(todo({ start: '2026-09-24T07:00:00Z', due: '2026-09-25T09:00:00Z' }))
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('')
+    expect(within(dialog).queryByText('Give both dates a time, or neither.')).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await saved(fetch)).toMatchObject({
+      start: '2026-09-24T00:00:00.000Z',
+      startAllDay: true,
+      due: '2026-09-25T00:00:00.000Z',
+      dueAllDay: true,
+    })
+  })
+
+  it('gives the start the time typed for the due date of a task without times', async () => {
+    const user = userEvent.setup()
+    const { fetch, dialog } = await openTask(
+      todo({ start: '2026-09-24T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true }),
+    )
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1800{Enter}')
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('6:00 PM')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await saved(fetch)).toMatchObject({
+      start: '2026-09-24T16:00:00.000Z',
+      startAllDay: false,
+      due: '2026-09-25T16:00:00.000Z',
+      dueAllDay: false,
+    })
+  })
+
   // Save leaves the field, which reads what was typed there: no Enter and no Tab first (FR-09).
   it('saves a due time typed right before Save is clicked', async () => {
     const user = userEvent.setup()

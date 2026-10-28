@@ -6,6 +6,7 @@ import {
   editedFields,
   formToTodoInput,
   formWithDate,
+  formWithTime,
   seriesEditInput,
   shownTaskRule,
   taskFormSchema,
@@ -386,6 +387,36 @@ describe('taskForm', () => {
       expect(formWithDate(v, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '09:00' })
       const noTime = { ...v, dueTime: '', startDate: '2026-10-01', startTime: '' }
       expect(formWithDate(noTime, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '' })
+    })
+  })
+
+  describe('formWithTime', () => {
+    const timed = { ...taskToForm(todo(), TZ), startDate: '2026-03-12', startTime: '10:00', dueDate: '2026-03-13', dueTime: '11:00' }
+    const allDay = { ...timed, startTime: '', dueTime: '' }
+
+    it('takes the time of the other date along when one is removed', () => {
+      expect(formWithTime(timed, 'due', '')).toMatchObject({ startTime: '', dueTime: '' })
+      expect(formWithTime(timed, 'start', '')).toMatchObject({ startTime: '', dueTime: '' })
+    })
+
+    it('gives the other date, without a time, the time one is given', () => {
+      expect(formWithTime(allDay, 'due', '18:00')).toMatchObject({ startTime: '18:00', dueTime: '18:00' })
+      expect(formWithTime(allDay, 'start', '09:30')).toMatchObject({ startTime: '09:30', dueTime: '09:30' })
+    })
+
+    it("keeps the other date's time when a time changes", () => {
+      expect(formWithTime(timed, 'due', '12:00')).toMatchObject({ startTime: '10:00', dueTime: '12:00' })
+    })
+
+    it('changes only its own time with one date', () => {
+      const due = { ...timed, startDate: '', startTime: '' }
+      expect(formWithTime(due, 'due', '')).toMatchObject({ startTime: '', dueTime: '' })
+      const start = { ...allDay, dueDate: '' }
+      expect(formWithTime(start, 'start', '08:00')).toMatchObject({ startTime: '08:00', dueTime: '' })
+    })
+
+    it("leaves the other date alone for text it can't read", () => {
+      expect(formWithTime(allDay, 'due', '18:4x')).toMatchObject({ startTime: '', dueTime: '18:4x' })
     })
   })
 
