@@ -55,9 +55,10 @@ interface Asking {
  * for the rest of the picker, with the day, shortcut or removal picked next,
  * as one change (one question for a series), or else as the picker closes.
  * It stays typed until it is saved, through a question cancelled or a move
- * the series refuses; Escape drops it. Text the time field can't read is
- * said below it and holds every save back: a day, a shortcut, a removal or a
- * close leaves the picker open, on the time.
+ * the series refuses; Escape drops it, and so does the next close once the
+ * series refused it alone, which the line below the month says. Text the
+ * time field can't read is said below it and holds every save back: a day,
+ * a shortcut, a removal or a close leaves the picker open, on the time.
  *
  * With `onScope`, a series moves at its current repeat, the one the list
  * shows (FR-17). Where the move has a choice, the popover asks in place of
@@ -97,6 +98,9 @@ export function DuePicker({
   // render.
   const pending = useRef<string | null>(null)
   const [typed, setTyped] = useState<string | null>(null)
+  // The time typed that the series refused alone, while it stays typed: the line below the month said why, so the
+  // next close drops it instead of trying it again, and the refusal doesn't hold the picker open (FR-14, FR-17).
+  const refusedTime = useRef<string | null>(null)
   // Whether the time field passed a commit up in the key press or click under way: on Enter or a pick of the
   // value it has already, it passes none, and the time typed and not saved yet is saved then (FR-14).
   const committed = useRef(false)
@@ -134,8 +138,10 @@ export function DuePicker({
     if (field && field === document.activeElement) field.blur()
   }
 
+  // Another time typed is another try for the series (FR-17).
   const hold = (value: string | null) => {
     pending.current = value
+    refusedTime.current = null
     setTyped(value)
   }
 
@@ -208,6 +214,7 @@ export function DuePicker({
     } else if (result.reason) {
       // Nothing moves: the day stays unpicked, and the line below the month says why.
       setRefused(result.reason)
+      if (source === 'time') refusedTime.current = pending.current
       return false
     } else {
       // The last repeat acts as a single task.
@@ -231,6 +238,9 @@ export function DuePicker({
     if (pending.current === null) return true
     // Asked about it already: the question stays until it is answered or cancelled.
     if (asking) return false
+    // Refused alone already, which the line below the month said: it closes, which drops the time, without a
+    // second try (FR-14, FR-17).
+    if (pending.current === refusedTime.current) return true
     const at = typedTime()
     if (at === null) return false
     return save(withDue(todo, { date: dueDate, time: at }, tz), 'time', time())

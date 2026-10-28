@@ -571,6 +571,94 @@ describe('DuePicker', () => {
       expect(dialog).not.toBeInTheDocument()
     })
 
+    describe('a time the series refuses (FR-14, FR-17)', () => {
+      // At 9:00 Berlin time on the 15th, the hour fixed by its rule, with attendees: no repeat moves to another time.
+      const atNine = {
+        ...monthly,
+        due: '2026-10-15T07:00:00Z',
+        dueAllDay: false,
+        timezone: TZ,
+        rrule: 'FREQ=MONTHLY;BYMONTHDAY=15;BYHOUR=9',
+        recurrenceId: '2026-10-15T07:00:00Z',
+        next: { start: null, due: '2026-11-15T08:00:00Z' },
+        hasAttendees: true,
+      }
+      const keepsTimes = "Can't move. The series keeps its times."
+
+      it.each([
+        ['click outside', () => document.body],
+        ['click on its button', () => screen.getByRole('button', { name: 'Change due date: Pay rent' })],
+      ])('closes on the next %s after the series refused a typed time, without it', async (_, target) => {
+        useSettings.setState({ timeFormat: '24h' })
+        const { user, onChange, onScope, dialog } = await open(atNine)
+        const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+        await user.click(time)
+        await user.keyboard('1840')
+        await user.click(target())
+        expect(dialog).toBeInTheDocument()
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+        expect(time).toHaveValue('18:40')
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+
+        // The line has said why: the next click closes the picker and drops the time, without a second try.
+        await user.click(target())
+        expect(dialog).not.toBeInTheDocument()
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+        await user.click(screen.getByRole('button', { name: 'Change due date: Pay rent' }))
+        expect(within(screen.getByRole('dialog', { name: 'Due date' })).getByRole('combobox', { name: 'Due time' })).toHaveValue(
+          '09:00',
+        )
+      })
+
+      it('tries a time changed after a refusal again', async () => {
+        useSettings.setState({ timeFormat: '24h' })
+        const { user, onChange, onScope, dialog } = await open(atNine)
+        const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+        await user.click(time)
+        await user.keyboard('1840')
+        await user.click(document.body)
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+
+        // Another time is another try, refused again: the picker stays open once more.
+        await user.click(time)
+        await user.keyboard('1900')
+        await user.click(document.body)
+        expect(dialog).toBeInTheDocument()
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+        expect(time).toHaveValue('19:00')
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+
+        await user.click(document.body)
+        expect(dialog).not.toBeInTheDocument()
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+      })
+
+      it('tries a refused time again in a picker opened anew', async () => {
+        useSettings.setState({ timeFormat: '24h' })
+        const { user, onChange, onScope, dialog } = await open(atNine)
+        await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+        await user.keyboard('1840')
+        await user.click(document.body)
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+        await user.keyboard('{Escape}')
+        expect(dialog).not.toBeInTheDocument()
+
+        await user.click(screen.getByRole('button', { name: 'Change due date: Pay rent' }))
+        const again = screen.getByRole('dialog', { name: 'Due date' })
+        await user.click(within(again).getByRole('combobox', { name: 'Due time' }))
+        await user.keyboard('1840')
+        await user.click(document.body)
+        expect(again).toBeInTheDocument()
+        expect(within(again).getByText(keepsTimes)).toBeInTheDocument()
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+      })
+    })
+
     // FR-17: an all-day series given a time writes it in the browser's zone, where the server then reads the move:
     // 08:00 on the 15th in Tokyo is still the 15th there, though 23:00 on the 14th in UTC.
     it('gives an all-day series a time on its day east of UTC, and names the zone', async () => {
