@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -33,6 +34,36 @@ func findVTimezone(cal *ical.Calendar, tzid string) *ical.Component {
 		}
 	}
 	return nil
+}
+
+// pruneVTimezones removes the VTIMEZONEs of cal that no TZID parameter of
+// another component's properties refers to, its subcomponents' (VALARMs)
+// included, such as that of the zone an event was in before a write put it
+// into another (FR-18): RFC 5545 section 3.2.19 asks for a VTIMEZONE for
+// each TZID used, and one left over would still be read by other clients.
+func pruneVTimezones(cal *ical.Calendar) {
+	used := map[string]bool{}
+	var refer func(c *ical.Component)
+	refer = func(c *ical.Component) {
+		for _, props := range c.Props {
+			for _, p := range props {
+				for _, tzid := range p.Params.Values(ical.ParamTimezoneID) {
+					used[tzid] = true
+				}
+			}
+		}
+		for _, child := range c.Children {
+			refer(child)
+		}
+	}
+	for _, c := range cal.Children {
+		if c.Name != ical.CompTimezone {
+			refer(c)
+		}
+	}
+	cal.Children = slices.DeleteFunc(cal.Children, func(c *ical.Component) bool {
+		return c.Name == ical.CompTimezone && !used[text(c.Props, ical.PropTimezoneID)]
+	})
 }
 
 type transition struct {

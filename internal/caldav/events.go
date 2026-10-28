@@ -513,7 +513,9 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	cal := newCalendar()
 	ev := newComponent(ical.CompEvent, uid, now)
 	cal.Children = append(cal.Children, ev)
-	applyEventFields(cal, ev, in, rr, in.Start, in.End, deref(in.Timezone))
+	// Without a zone sent, a new event is in UTC (FR-18, decision 4).
+	startForm := formFor(in.Timezone, dateForm{})
+	applyEventFields(cal, ev, in, rr, in.Start, in.End, startForm, endFormFor(in.EndTimezone, in.Timezone, startForm))
 
 	o := calObject{path: objectPath(calPath, uid+".ics"), cal: cal}
 	o.etag, err = s.putObject(ctx, o.path, cal, "", true)
@@ -664,7 +666,12 @@ func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Tim
 //     the series no longer shows an event there, its next one (see
 //     shownFrom, #11);
 //   - otherwise, for a single event and a series whose rule goes (rr == ""):
-//     the fields and dates of in, as entered, and both are nil.
+//     the fields and dates of in, as entered, in the forms DTSTART and DTEND
+//     have, or those the zones in names (see formFor, endFormFor, FR-18),
+//     and both are nil.
+//
+// A VTIMEZONE a changed rule or the last of these leaves without a TZID
+// referring to it goes (see pruneVTimezones).
 //
 // A move the series cannot follow is domain.ErrSeriesMoveUnsupported, see
 // moveSeries, and cal may be changed in part then: the caller writes nothing.
@@ -759,7 +766,8 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 			}
 		}
 		end = at.t.Add(in.End.Sub(in.Start))
-		applyEventSchedule(cal, master, in, rr, at, end, tz)
+		zone := formIn(seriesZone(tz))
+		applyEventSchedule(cal, master, in, rr, at, end, zone, zone)
 		if keptAsDate != nil {
 			if d, err := parseDateProp(master.Props.Get(ical.PropDateTimeStart)); err == nil {
 				master.Props.Add(seriesValueProp(cal, ical.PropRecurrenceDates, *keptAsDate, d.form()))
@@ -770,11 +778,18 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 		if applyChangedEventFields(master, ov, in) {
 			bumpChangeProps(ov, now)
 		}
+		pruneVTimezones(cal)
 	default:
 		if rr == "" {
 			removeRecurrence(cal, master)
 		}
-		applyEventFields(cal, master, in, rr, start, end, tz)
+		// Each date keeps its form unless in names a zone for it, also a
+		// single event made recurring, whose zone, if any, the series
+		// takes, and a series whose rule goes (FR-18, decision 3). A timing
+		// Lucid cannot read, the zero timing, is UTC.
+		startForm := formFor(in.Timezone, oldTm.start.form())
+		applyEventFields(cal, master, in, rr, start, end, startForm, endFormFor(in.EndTimezone, in.Timezone, oldTm.end))
+		pruneVTimezones(cal)
 	}
 	return instance, moved, nil
 }
@@ -1406,6 +1421,15 @@ func seriesZone(tz string) *time.Location {
 	return time.UTC
 }
 
+// formIn returns the form applyEventSchedule writes a series in the zone
+// loc in, the one writtenIn tells: UTC, else loc's name as TZID (FR-18).
+func formIn(loc *time.Location) dateForm {
+	if loc == time.UTC {
+		return dateForm{}
+	}
+	return dateForm{tzid: loc.String()}
+}
+
 // writtenIn reports whether a DATE-TIME of the form f is written as
 // applyEventSchedule writes a series in the zone loc: in UTC, or with loc's
 // name as TZID (FR-18).
@@ -1549,32 +1573,32 @@ func (s *service) deleteByID(ctx context.Context, id, etag string) error {
 }
 
 // applyEventFields writes the EventInput fields into c. start/end may differ
-// from in.Start/in.End for series updates; tz is the timezone for recurring
-// timed events.
-func applyEventFields(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start, end time.Time, tz string) {
+// from in.Start/in.End for series updates; startForm and endForm are the
+// forms of a timed DTSTART and DTEND, see applyEventSchedule.
+func applyEventFields(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start, end time.Time, startForm, endForm dateForm) {
 	setText(c.Props, ical.PropSummary, in.Title)
 	setText(c.Props, ical.PropDescription, in.Description)
 	setText(c.Props, ical.PropLocation, in.Location)
-	applyEventSchedule(cal, c, in, rr, dateValue{t: start}, end, tz)
+	applyEventSchedule(cal, c, in, rr, dateValue{t: start}, end, startForm, endForm)
 }
 
 // applyEventSchedule writes the rule rr (unless empty) and the dates of
 // applyEventFields into c, and leaves its title, description and location
-// alone (FR-17). A timed DTSTART in a zone is written with start's wall
-// clock there, which can be one the zone skips (#8).
-func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start dateValue, end time.Time, tz string) {
+// alone (FR-17). A timed DTSTART is written in startForm and DTEND in
+// endForm, each as seriesValueProp writes it (FR-18): a single event's in
+// its own zones, which a write can name, a series' in its zone, so that it
+// recurs on that zone's wall clock across daylight-saving changes. The form
+// of a DATE, such as that of an all-day event made timed, is UTC. A DTSTART
+// in a zone takes start's wall clock there, which can be one the zone skips
+// (#8). Every TZID written gets its VTIMEZONE; removing one no longer
+// referred to is the caller's (see pruneVTimezones).
+func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventInput, rr string, start dateValue, end time.Time, startForm, endForm dateForm) {
 	if rr != "" {
 		p := ical.NewProp(ical.PropRecurrenceRule)
 		p.Value = rr
 		c.Props.Set(p)
 	}
 
-	// Non-recurring events are stored in UTC (FR-18). Recurring timed events
-	// keep their TZID so that the recurrence is DST-correct.
-	var loc *time.Location
-	if rr != "" && !in.AllDay && tz != "" {
-		loc = loadLocation(tz)
-	}
 	c.Props.Del(ical.PropDuration)
 	if in.AllDay {
 		sd, ed := dateOnly(start.t), dateOnly(end)
@@ -1588,15 +1612,14 @@ func applyEventSchedule(cal *ical.Calendar, c *ical.Component, in domain.EventIn
 		c.Props.Set(newDateProp(ical.PropDateTimeEnd, ed, true, nil))
 		return
 	}
-	dtstart := newDateProp(ical.PropDateTimeStart, start.t, false, loc)
-	if loc != nil && loc != time.UTC {
-		dtstart.Value = start.wallIn(loc).Truncate(time.Second).Format(icalDateTime)
+	timed := func(f dateForm) dateForm {
+		if f.allDay {
+			return dateForm{}
+		}
+		return f
 	}
-	c.Props.Set(dtstart)
-	c.Props.Set(newDateProp(ical.PropDateTimeEnd, end, false, loc))
-	if loc != nil && loc != time.UTC {
-		ensureVTimezone(cal, loc, start.wallIn(loc).Year())
-	}
+	c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, start, timed(startForm)))
+	c.Props.Set(seriesDateProp(cal, ical.PropDateTimeEnd, end, timed(endForm)))
 }
 
 // removeRecurrence turns a series into a single event.

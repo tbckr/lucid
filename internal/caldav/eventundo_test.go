@@ -70,21 +70,23 @@ type eventAction struct {
 	do   func(ctx context.Context, e *env, ev domain.Event) (domain.Event, *domain.Snapshot, error)
 }
 
-// eventInputOf is what the frontend sends to save ev as it is shown.
+// eventInputOf is what the frontend sends to save ev as it is shown: no
+// zones, as it sends none it did not change, so the event keeps its own
+// (FR-18).
 func eventInputOf(ev domain.Event) domain.EventInput {
 	return domain.EventInput{
 		Title: ev.Title, Description: ev.Description, Location: ev.Location,
-		Start: ev.Start, End: ev.End, AllDay: ev.AllDay, Timezone: ptr(ev.Timezone),
+		Start: ev.Start, End: ev.End, AllDay: ev.AllDay,
 		RRule: ev.RRule, InstanceStart: ev.RecurrenceID,
 	}
 }
 
 // occurrenceInputOf is what the frontend sends to save ev, shifted by d, as
-// the only one changed.
+// the only one changed, without zones as eventInputOf.
 func occurrenceInputOf(ev domain.Event, d time.Duration) domain.OccurrenceInput {
 	return domain.OccurrenceInput{
 		Title: ev.Title, Description: ev.Description, Location: ev.Location,
-		Start: ev.Start.Add(d), End: ev.End.Add(d), AllDay: ev.AllDay, Timezone: ptr(ev.Timezone),
+		Start: ev.Start.Add(d), End: ev.End.Add(d), AllDay: ev.AllDay,
 	}
 }
 

@@ -1559,13 +1559,15 @@ func withEnd(rrule, end string) string {
 //   - a DATE when f.allDay;
 //   - with f.param as TZID, verbatim, when set: the wall clock in the zone
 //     it resolves to, else the wall clock it was read with (as UTC);
-//   - with f.tzid as TZID, for a zone of Lucid's choosing (a new rule);
+//   - with f.tzid as TZID, for a zone of Lucid's choosing (a new rule) or
+//     one a write names, unless it resolves to UTC;
 //   - floating (a wall clock without "Z") when f.floating;
 //   - else in UTC.
 //
 // A TZID gets a VTIMEZONE in cal unless one with that TZID exists, Lucid
-// cannot resolve it, or cal is nil (see entryCalendar). A nil t removes the
-// property.
+// cannot resolve it, or cal is nil (see entryCalendar), also one that
+// resolves to UTC, such as Etc/UTC, as RFC 5545 section 3.2.19 asks one for
+// each TZID (FR-18). A nil t removes the property.
 func setSeriesDate(cal *ical.Calendar, c *ical.Component, name string, t *time.Time, f dateForm) {
 	if t == nil {
 		c.Props.Del(name)
@@ -1600,7 +1602,7 @@ func seriesValueProp(cal *ical.Calendar, name string, d dateValue, f dateForm) *
 		p := ical.NewProp(name)
 		p.Params.Set(ical.ParamTimezoneID, tzid)
 		p.Value = wall.Truncate(time.Second).Format(icalDateTime)
-		if cal != nil && loc != nil && loc != time.UTC {
+		if cal != nil && loc != nil {
 			ensureVTimezoneAs(cal, tzid, loc, wall.Year())
 		}
 		return p

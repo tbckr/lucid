@@ -175,6 +175,95 @@ func TestEnsureVTimezoneOnce(t *testing.T) {
 	}
 }
 
+// TestPruneVTimezones checks that only the VTIMEZONEs a TZID parameter
+// refers to stay, also one of a VALARM's TRIGGER (FR-18).
+func TestPruneVTimezones(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		event []string
+	}{
+		{"start and alarm", []string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND:20261028T100000Z"}},
+		{"alarm only", []string{"DTSTART:20261028T090000Z", "DTEND:20261028T100000Z"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cal := mustParse(t, ics(slices.Concat(berlinTimezone, londonTimezone,
+				[]string{"BEGIN:VEVENT", "UID:a", "DTSTAMP:20260101T000000Z"}, tt.event, []string{
+					"BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Soon",
+					"TRIGGER;VALUE=DATE-TIME;TZID=Europe/Berlin:20261028T094500", "END:VALARM",
+					"END:VEVENT",
+				})...))
+			pruneVTimezones(cal)
+			var zones []string
+			for _, c := range cal.Children {
+				if c.Name == ical.CompTimezone {
+					zones = append(zones, text(c.Props, ical.PropTimezoneID))
+				}
+			}
+			if !slices.Equal(zones, []string{"Europe/Berlin"}) || mainComponent(cal, ical.CompEvent) == nil {
+				t.Errorf("VTIMEZONEs %q, event %v; want Europe/Berlin and the event", zones, mainComponent(cal, ical.CompEvent) != nil)
+			}
+		})
+	}
+}
+
+// TestZoneForms checks the forms a write's zones ask for (FR-18): a nil
+// zone keeps the form, "" and "UTC" are UTC, "Etc/UTC" its own TZID, any
+// other zone its IANA name; an end without a zone of its own follows the
+// start's; and when two forms are the same zone.
+func TestZoneForms(t *testing.T) {
+	t.Parallel()
+	kept := dateForm{tzid: "Europe/London", param: "/mozilla.org/20050126_1/Europe/London"}
+	for zone, want := range map[string]dateForm{
+		"":              {},
+		"UTC":           {},
+		"GMT":           {},
+		"Etc/UTC":       {param: "Etc/UTC"},
+		"Europe/Berlin": {tzid: "Europe/Berlin"},
+		"Asia/Calcutta": {tzid: "Asia/Calcutta"},
+	} {
+		if got := sentForm(zone); got != want {
+			t.Errorf("sentForm(%q) = %+v; want %+v", zone, got, want)
+		}
+	}
+	berlin := dateForm{tzid: "Europe/Berlin"}
+	for _, tt := range []struct {
+		name      string
+		got, want dateForm
+	}{
+		{"formFor nil", formFor(nil, kept), kept},
+		{"formFor zone", formFor(ptr("Europe/Berlin"), kept), berlin},
+		{"formFor empty", formFor(ptr(""), kept), dateForm{}},
+		{"endFormFor own", endFormFor(ptr("Asia/Tokyo"), ptr("Europe/Berlin"), kept), dateForm{tzid: "Asia/Tokyo"}},
+		{"endFormFor start's", endFormFor(nil, ptr("Europe/Berlin"), kept), berlin},
+		{"endFormFor start's UTC", endFormFor(nil, ptr(""), kept), dateForm{}},
+		{"endFormFor kept", endFormFor(nil, nil, kept), kept},
+	} {
+		if tt.got != tt.want {
+			t.Errorf("%s = %+v; want %+v", tt.name, tt.got, tt.want)
+		}
+	}
+	for _, tt := range []struct {
+		a, b dateForm
+		same bool
+	}{
+		{dateForm{}, dateForm{}, true},
+		{berlin, dateForm{tzid: "Europe/Berlin", param: "Europe/Berlin"}, true},
+		{sentForm("Etc/UTC"), dateForm{tzid: "UTC", param: "Etc/UTC"}, true},
+		{kept, dateForm{tzid: "Europe/London"}, false},
+		{dateForm{}, dateForm{tzid: "UTC", param: "UTC"}, false},
+		{dateForm{}, dateForm{floating: true}, false},
+		{dateForm{}, dateForm{allDay: true}, false},
+		{berlin, dateForm{tzid: "Europe/Paris"}, false},
+	} {
+		if got := sameZoneForm(tt.a, tt.b); got != tt.same || sameZoneForm(tt.b, tt.a) != tt.same {
+			t.Errorf("sameZoneForm(%+v, %+v) = %v; want %v", tt.a, tt.b, got, tt.same)
+		}
+	}
+}
+
 func TestFormatOffset(t *testing.T) {
 	t.Parallel()
 	tests := map[int]string{0: "+0000", 3600: "+0100", -18000: "-0500", 19800: "+0530", 3661: "+010101"}

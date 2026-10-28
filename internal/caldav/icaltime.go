@@ -1,6 +1,7 @@
 package caldav
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"strconv"
@@ -43,6 +44,50 @@ type dateForm struct {
 // form returns the form d was written in.
 func (d dateValue) form() dateForm {
 	return dateForm{allDay: d.allDay, floating: d.floating, tzid: d.tzid, param: d.param}
+}
+
+// sentForm returns the form the zone a write names asks for (FR-18,
+// decision 9): UTC ("Z") for "" and "UTC", and for every other name Lucid
+// reads as UTC but "Etc/UTC", which is the UTC a user picked and is written
+// as that TZID, with its VTIMEZONE; else the zone's IANA name as TZID. A
+// name Lucid cannot resolve, which validation turns away, is UTC too.
+func sentForm(zone string) dateForm {
+	if zone == "Etc/UTC" {
+		return dateForm{param: zone}
+	}
+	loc := loadLocation(zone)
+	if loc == nil || loc == time.UTC {
+		return dateForm{}
+	}
+	return dateForm{tzid: loc.String()}
+}
+
+// formFor returns the form a timed date property is written in for the
+// zone sent: kept, the form it has, where none is sent, else the one the
+// zone asks for, see sentForm (FR-18, decision 4).
+func formFor(sent *string, kept dateForm) dateForm {
+	if sent == nil {
+		return kept
+	}
+	return sentForm(*sent)
+}
+
+// endFormFor returns the form DTEND (DUE) is written in, see formFor: that
+// of sentEnd, the end's zone, where sent, else that of sentStart, the
+// start's, where sent, else kept, the end's own (FR-18, decision 4).
+func endFormFor(sentEnd, sentStart *string, kept dateForm) dateForm {
+	if sentEnd != nil {
+		return sentForm(*sentEnd)
+	}
+	return formFor(sentStart, kept)
+}
+
+// sameZoneForm reports whether a and b are written alike as far as their
+// zone goes: both DATEs, both floating, both UTC, or both with the same
+// TZID, as written where it was read (FR-18). Equal instants in two zones
+// are no same zone.
+func sameZoneForm(a, b dateForm) bool {
+	return a.allDay == b.allDay && a.floating == b.floating && cmp.Or(a.param, a.tzid) == cmp.Or(b.param, b.tzid)
 }
 
 // loc returns the location recurrences of this value are computed in.

@@ -211,10 +211,12 @@ Body (`EventInput`):
 ```
 
 `201` with the created `Event` (not expanded; for recurring events the
-first occurrence). `timezone` is the IANA zone a timed series recurs in,
-written as `TZID` with a `VTIMEZONE`; `""` or `"UTC"` writes it in UTC
-without either. A single event is stored in UTC whatever it names (FR-18).
-`endTimezone` is the IANA zone of `DTEND`, sent like `timezone` (FR-18).
+first occurrence). `timezone` is the IANA zone of a timed event's `DTSTART`,
+for a series the zone it recurs in, written as `TZID` with a `VTIMEZONE`;
+absent, `""` or `"UTC"` writes it in UTC (`Z`) without either, and
+`"Etc/UTC"`, UTC picked as a zone, as `TZID=Etc/UTC` with its `VTIMEZONE`,
+which the event then reports as `"UTC"`. `endTimezone` is the IANA zone of
+`DTEND`, sent like `timezone`; absent, `DTEND` takes `timezone` (FR-18).
 `422 unsupported_component` if the calendar does not accept events
 (`supportsEvents: false`).
 
@@ -227,6 +229,15 @@ applied to the **whole series** ("All events"). `200` with the updated
 series was recurring before the change (a save that removes its rule
 included), the CalDAV server tells its new `etag`, and the series has no
 attendees. A single event gets none.
+
+For a single event, and for a series saved without its rule, which becomes
+one, `timezone` and `endTimezone` name the zones of `DTSTART` and `DTEND` as
+for `POST`, but each one absent keeps the form its date is written in (a
+`TZID`, also one the server can't resolve, as it is; UTC; or floating), at
+the new time; an absent `endTimezone` follows a `timezone` that is sent. A
+single event made recurring keeps its zones the same way, and the series
+recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
+(FR-18).
 
 - **Distance:** measured from the occurrence's *shown* start (an exception's
   own start, if the edited occurrence is one), not from `instanceStart`
@@ -299,8 +310,8 @@ attendees. A single event gets none.
     refused too.
 - **Time zone:** "Only this event" above, and this endpoint when the rule
   and the `allDay` flag are unchanged, keep the series' own time zone; the
-  request's `timezone` applies to single (non-recurring) events and to a
-  series save that changes the rule or `allDay`.
+  request's `timezone` applies to a series save that changes the rule or
+  `allDay` (single events: see above).
 - `409 conflict`, and nothing is written, where `instanceStart` is no longer
   an occurrence of the series: neither an event of its rule nor one with an
   override, as in a view not reloaded since the series changed, such as

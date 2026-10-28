@@ -1642,11 +1642,11 @@ func TestUpdateFollowing(t *testing.T) {
 			recurring: true,
 		},
 		{
-			// N is the single event R, stored in UTC like every single
-			// event (FR-18).
+			// N is the single event R, in the series' zone, which a series
+			// keeps when its rule goes (FR-18, decision 3).
 			name:   "no rule",
 			edit:   func(in *domain.EventInput) { in.RRule = "" },
-			nHas:   []string{"DTSTART:20250324T080000Z", "DTEND:20250324T090000Z"},
+			nHas:   []string{"DTSTART;TZID=Europe/Berlin:20250324T090000", "DTEND;TZID=Europe/Berlin:20250324T100000"},
 			nLacks: []string{"RRULE:FREQ=WEEKLY", "RDATE", "EXDATE"},
 			shownN: []string{"2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup"},
 			answer: "2025-03-24T08:00:00Z/2025-03-24T09:00:00Z Standup",

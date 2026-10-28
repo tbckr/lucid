@@ -837,10 +837,11 @@ func TestCreateEvent(t *testing.T) {
 		wantEvent occ
 	}{
 		{
-			name: "timed non-recurring is stored in UTC",
+			// With a zone, see TestCreateEventZones (FR-18).
+			name: "timed non-recurring without a zone is stored in UTC",
 			in: domain.EventInput{
 				Title: "Lunch", Description: "line1\nline2", Location: "Cafe",
-				Start: date(2025, 3, 5, 11, 0), End: date(2025, 3, 5, 12, 0), Timezone: ptr("Europe/Berlin"),
+				Start: date(2025, 3, 5, 11, 0), End: date(2025, 3, 5, 12, 0),
 			},
 			wantLines: []string{"DTSTART:20250305T110000Z", "DTEND:20250305T120000Z", "DESCRIPTION:line1\\nline2", "SEQUENCE:0"},
 			wantEvent: occ{title: "Lunch", start: date(2025, 3, 5, 11, 0), end: date(2025, 3, 5, 12, 0)},
@@ -999,6 +1000,211 @@ func TestUpdateEventPreservesUnknownProperties(t *testing.T) {
 			t.Errorf("updated object still contains %q:\n%s", gone, data)
 		}
 	}
+}
+
+// listedByID returns the event with the given ID that ListEvents shows in
+// slug's calendar from from to to, its first one for a series.
+func listedByID(t *testing.T, e *env, slug, id string, from, to time.Time) domain.Event {
+	t.Helper()
+	evs := listed(t, e, slug, from, to)
+	for i := range evs {
+		if evs[i].ID == id {
+			return evs[i]
+		}
+	}
+	t.Fatalf("no event %s listed", id)
+	return domain.Event{}
+}
+
+// TestCreateEventZones checks the zones a new event is written in (FR-18):
+// none sent is UTC ("Z"); a start zone sent is DTSTART's TZID, and DTEND's
+// too unless an end zone is sent, each with its VTIMEZONE; a picked UTC,
+// "Etc/UTC", is a TZID with its VTIMEZONE, which reads back as UTC; "UTC"
+// is "Z" (decision 9). A series takes the zones sent the same way.
+func TestCreateEventZones(t *testing.T) {
+	t.Parallel()
+	start, end := date(2026, 10, 28, 9, 0), date(2026, 10, 28, 17, 0)
+	tests := []struct {
+		name          string
+		tz, endTz     *string
+		rrule         string
+		has, lacks    []string
+		zone, endZone string // as listed
+	}{
+		{
+			name: "no zones",
+			has:  []string{"DTSTART:20261028T090000Z", "DTEND:20261028T170000Z"}, lacks: []string{"BEGIN:VTIMEZONE", "TZID"},
+		},
+		{
+			name: "start and end zones", tz: ptr("Europe/Berlin"), endTz: ptr("America/New_York"),
+			has: []string{
+				"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=America/New_York:20261028T130000",
+				"TZID:Europe/Berlin", "TZID:America/New_York",
+			},
+			zone: "Europe/Berlin", endZone: "America/New_York",
+		},
+		{
+			name: "the end follows the start's zone", tz: ptr("Europe/Berlin"),
+			has:   []string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=Europe/Berlin:20261028T180000", "TZID:Europe/Berlin"},
+			lacks: []string{"America"}, zone: "Europe/Berlin", endZone: "Europe/Berlin",
+		},
+		{
+			name: "a picked UTC", tz: ptr("Etc/UTC"),
+			has: []string{
+				"DTSTART;TZID=Etc/UTC:20261028T090000", "DTEND;TZID=Etc/UTC:20261028T170000",
+				"BEGIN:VTIMEZONE", "TZID:Etc/UTC",
+			},
+			zone: "UTC", endZone: "UTC",
+		},
+		{
+			name: "UTC", tz: ptr("UTC"),
+			has: []string{"DTSTART:20261028T090000Z", "DTEND:20261028T170000Z"}, lacks: []string{"BEGIN:VTIMEZONE", "TZID"},
+		},
+		{
+			name: "a series", tz: ptr("Europe/Berlin"), endTz: ptr("Asia/Tokyo"), rrule: "FREQ=WEEKLY",
+			has: []string{
+				"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=Asia/Tokyo:20261029T020000",
+				"TZID:Europe/Berlin", "TZID:Asia/Tokyo",
+			},
+			zone: "Europe/Berlin", endZone: "Asia/Tokyo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// An environment each: a list cached while another subtest
+			// writes could miss its event.
+			e := newEnv(t, caldavtest.Options{})
+			ev, err := e.svc.CreateEvent(t.Context(), e.cals["personal"], domain.EventInput{
+				Title: tt.name, Start: start, End: end, Timezone: tt.tz, EndTimezone: tt.endTz, RRule: tt.rrule,
+			})
+			mustNoErr(t, err)
+			checkStored(t, "created event", storedObject(t, e, ev.ID), tt.has, tt.lacks)
+			got := listedByID(t, e, "personal", ev.ID, date(2026, 10, 28, 0, 0), date(2026, 10, 29, 0, 0))
+			if !got.Start.Equal(start) || !got.End.Equal(end) || got.Timezone != tt.zone || got.EndTimezone != tt.endZone {
+				t.Errorf("listed %v–%v in %q–%q; want %v–%v in %q–%q",
+					got.Start, got.End, got.Timezone, got.EndTimezone, start, end, tt.zone, tt.endZone)
+			}
+		})
+	}
+}
+
+// londonTimezone is a VTIMEZONE of Europe/London as clients write it.
+var londonTimezone = []string{
+	"BEGIN:VTIMEZONE", "TZID:Europe/London",
+	"BEGIN:DAYLIGHT", "DTSTART:19700329T010000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+	"TZOFFSETFROM:+0000", "TZOFFSETTO:+0100", "TZNAME:BST", "END:DAYLIGHT",
+	"BEGIN:STANDARD", "DTSTART:19701025T020000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
+	"TZOFFSETFROM:+0100", "TZOFFSETTO:+0000", "TZNAME:GMT", "END:STANDARD",
+	"END:VTIMEZONE",
+}
+
+// updateLondonEvent seeds a single event from 09:00 to 10:00 in London (on
+// GMT then, so 09:00Z) on 2026-10-28, as another client writes it, saves in
+// over it with title and rule kept, and returns the stored object.
+func updateLondonEvent(t *testing.T, in domain.EventInput) string {
+	t.Helper()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "personal", "single.ics", slices.Concat(londonTimezone, []string{
+		"BEGIN:VEVENT", "UID:single", "DTSTAMP:20260101T000000Z", "SUMMARY:Meeting",
+		"DTSTART;TZID=Europe/London:20261028T090000", "DTEND;TZID=Europe/London:20261028T100000",
+		"END:VEVENT",
+	})...)
+	ev := listedByID(t, e, "personal", id, date(2026, 10, 28, 0, 0), date(2026, 10, 29, 0, 0))
+	in.Title = cmp.Or(in.Title, ev.Title)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+	return storedObject(t, e, id)
+}
+
+// utcDateLines returns the DTSTART and DTEND lines of data in UTC ("Z").
+func utcDateLines(data string) []string {
+	var out []string
+	for line := range strings.SplitSeq(data, "\r\n") {
+		if (strings.HasPrefix(line, "DTSTART") || strings.HasPrefix(line, "DTEND")) && strings.HasSuffix(line, "Z") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// TestUpdateEventKeepsStoredZone checks that a single event saved without
+// zones keeps the ones it is written in, and takes the new times there
+// (FR-18, decision 4).
+func TestUpdateEventKeepsStoredZone(t *testing.T) {
+	t.Parallel()
+	data := updateLondonEvent(t, domain.EventInput{Start: date(2026, 10, 28, 11, 0), End: date(2026, 10, 28, 12, 0)})
+	checkStored(t, "updated event", data,
+		[]string{"DTSTART;TZID=Europe/London:20261028T110000", "DTEND;TZID=Europe/London:20261028T120000", "TZID:Europe/London"}, nil)
+	if utc := utcDateLines(data); len(utc) != 0 {
+		t.Errorf("dates in UTC %q:\n%s", utc, data)
+	}
+}
+
+// TestUpdateEventZones checks the zones a save of a single event names
+// (FR-18, decision 4): "" puts it into UTC and drops the VTIMEZONE no one
+// refers to any more; an end zone alone moves DTEND only; a rule made
+// without zones keeps its zone for the series.
+func TestUpdateEventZones(t *testing.T) {
+	t.Parallel()
+	start, end := date(2026, 10, 28, 11, 0), date(2026, 10, 28, 12, 0)
+	tests := []struct {
+		name       string
+		in         domain.EventInput
+		has, lacks []string
+	}{
+		{
+			name: "no zone", in: domain.EventInput{Start: start, End: end, Timezone: ptr("")},
+			has: []string{"DTSTART:20261028T110000Z", "DTEND:20261028T120000Z"}, lacks: []string{"Europe/London", "BEGIN:VTIMEZONE"},
+		},
+		{
+			name: "an end zone alone", in: domain.EventInput{Start: start, End: end, EndTimezone: ptr("Asia/Tokyo")},
+			has: []string{
+				"DTSTART;TZID=Europe/London:20261028T110000", "DTEND;TZID=Asia/Tokyo:20261028T210000",
+				"TZID:Europe/London", "TZID:Asia/Tokyo",
+			},
+		},
+		{
+			name: "made recurring", in: domain.EventInput{Start: start, End: end, RRule: "FREQ=WEEKLY"},
+			has: []string{"DTSTART;TZID=Europe/London:20261028T110000", "DTEND;TZID=Europe/London:20261028T120000", "RRULE:FREQ=WEEKLY"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checkStored(t, "updated event", updateLondonEvent(t, tt.in), tt.has, tt.lacks)
+		})
+	}
+}
+
+// TestUpdateEventZoneChangeSameInstant checks that a single event saved
+// into another zone at the same instants is written there, and that the
+// old zone's VTIMEZONE goes (FR-18).
+func TestUpdateEventZoneChangeSameInstant(t *testing.T) {
+	t.Parallel()
+	data := updateLondonEvent(t, domain.EventInput{
+		Start: date(2026, 10, 28, 9, 0), End: date(2026, 10, 28, 10, 0), Timezone: ptr("Europe/Lisbon"),
+	})
+	checkStored(t, "updated event", data,
+		[]string{"DTSTART;TZID=Europe/Lisbon:20261028T090000", "DTEND;TZID=Europe/Lisbon:20261028T100000", "TZID:Europe/Lisbon"},
+		[]string{"Europe/London"})
+}
+
+// TestUpdateSeriesRuleRemovedKeepsZone checks that a series saved without
+// its rule and without zones is the single event entered in the series'
+// zone (FR-18, decision 3).
+func TestUpdateSeriesRuleRemovedKeepsZone(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics", nySeries(nil)...)
+	ev := listedAt(t, e, "work", date(2026, 11, 10, 23, 0), date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0))
+	in := seriesUpdate(ev, "Call", "", ev.Start, ev.End)
+	in.RRule = ""
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+	checkStored(t, "event", stored(t, e, "work", "series.ics"),
+		[]string{"DTSTART;TZID=America/New_York:20261110T180000", "DTEND;TZID=America/New_York:20261110T190000"},
+		[]string{"RRULE:FREQ=WEEKLY"})
 }
 
 func TestUpdateRecurringInstance(t *testing.T) {
