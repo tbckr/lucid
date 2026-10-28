@@ -74,7 +74,7 @@ type eventAction struct {
 func eventInputOf(ev domain.Event) domain.EventInput {
 	return domain.EventInput{
 		Title: ev.Title, Description: ev.Description, Location: ev.Location,
-		Start: ev.Start, End: ev.End, AllDay: ev.AllDay, Timezone: ev.Timezone,
+		Start: ev.Start, End: ev.End, AllDay: ev.AllDay, Timezone: ptr(ev.Timezone),
 		RRule: ev.RRule, InstanceStart: ev.RecurrenceID,
 	}
 }
@@ -84,7 +84,7 @@ func eventInputOf(ev domain.Event) domain.EventInput {
 func occurrenceInputOf(ev domain.Event, d time.Duration) domain.OccurrenceInput {
 	return domain.OccurrenceInput{
 		Title: ev.Title, Description: ev.Description, Location: ev.Location,
-		Start: ev.Start.Add(d), End: ev.End.Add(d), AllDay: ev.AllDay, Timezone: ev.Timezone,
+		Start: ev.Start.Add(d), End: ev.End.Add(d), AllDay: ev.AllDay, Timezone: ptr(ev.Timezone),
 	}
 }
 

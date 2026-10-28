@@ -154,7 +154,8 @@ expanded server-side. The range may span at most 366 days.
   "id": "...", "key": "...@2025-01-06T09:00:00Z", "calendarId": "...", "uid": "...",
   "etag": "\"abc\"", "title": "Standup", "description": "", "location": "",
   "start": "2025-01-06T09:00:00Z", "end": "2025-01-06T09:15:00Z", "allDay": false,
-  "timezone": "Europe/Berlin", "rrule": "FREQ=WEEKLY;BYDAY=MO", "recurring": true,
+  "timezone": "Europe/Berlin", "endTimezone": "Europe/Berlin",
+  "rrule": "FREQ=WEEKLY;BYDAY=MO", "recurring": true,
   "recurrenceId": "2025-01-06T09:00:00Z", "modified": false } ] }
 ```
 
@@ -174,6 +175,10 @@ count in (see `PUT` below). It is omitted for a date-time in UTC (`Z`) or
 floating and a `TZID` the backend can't resolve, which it reads in UTC.
 Every event of a series reports the series' zone, also an exception another
 client wrote in another zone.
+
+`endTimezone` is the IANA zone of `DTEND`, else that of `DTSTART`, with the
+same omissions as `timezone`; every event of a series reports the series'
+(FR-18).
 
 `first` is `true` on the occurrence that is the first one of its series
 that the server shows, whatever range was asked for: a range that starts
@@ -199,13 +204,14 @@ Body (`EventInput`):
 
 ```json
 { "title": "Lunch", "description": "", "location": "", "start": "...", "end": "...",
-  "allDay": false, "timezone": "Europe/Berlin", "rrule": "" }
+  "allDay": false, "timezone": "Europe/Berlin", "endTimezone": "Europe/Berlin", "rrule": "" }
 ```
 
 `201` with the created `Event` (not expanded; for recurring events the
 first occurrence). `timezone` is the IANA zone a timed series recurs in,
 written as `TZID` with a `VTIMEZONE`; `""` or `"UTC"` writes it in UTC
 without either. A single event is stored in UTC whatever it names (FR-18).
+`endTimezone` is the IANA zone of `DTEND`, sent like `timezone` (FR-18).
 `422 unsupported_component` if the calendar does not accept events
 (`supportsEvents: false`).
 
@@ -315,8 +321,10 @@ belongs to the series, not the occurrence) and without `instanceStart`:
 
 ```json
 { "title": "Lunch", "description": "", "location": "", "start": "...", "end": "...",
-  "allDay": false, "timezone": "Europe/Berlin" }
+  "allDay": false, "timezone": "Europe/Berlin", "endTimezone": "Europe/Berlin" }
 ```
+
+`timezone` and `endTimezone` are those of `EventInput` (FR-18).
 
 `200` with the changed `Event` (new `etag`), and an `undoToken` if the CalDAV
 server tells the new `etag` and the series has no attendees. Its `modified` is
@@ -566,6 +574,9 @@ below). It is omitted for a date, a date-time in UTC (`Z`) or floating, and
 a `TZID` the backend can't resolve. A series reports its own zone, whatever
 zone another client gave its current occurrence.
 
+`dueTimezone` is the IANA zone of `DUE`, as its `TZID` names it, with the
+same omissions as `timezone` (FR-18).
+
 `rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and
 `recurrenceId` describe a recurring series (VTODO with `RRULE` or `RDATE`,
 FR-17):
@@ -643,10 +654,11 @@ behind, or one past the rule's end. No series can go on from it, so
 
 ### `POST /api/v1/calendars/{calendarId}/todos`
 
-Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone" }` → `201` `Todo`.
+Body (`TodoInput`): `{ "title", "description", "checklist", "start", "startAllDay", "due", "dueAllDay", "priority", "status", "rrule", "timezone", "dueTimezone" }` → `201` `Todo`.
 `422 unsupported_component` if the calendar does not accept todos
 (`supportsTodos: false`). `timezone` is the IANA zone timed `start`/`due`
-recur in; without it, a series uses UTC.
+recur in; without it, a series uses UTC. `dueTimezone` is the IANA zone of
+`DUE`, sent like `timezone` (FR-18).
 
 ### `PUT /api/v1/todos/{todoId}` (header `If-Match`) → `200` `Todo`
 

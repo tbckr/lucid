@@ -1739,7 +1739,7 @@ func TestUpdateFollowingNewRuleIntoAnotherZone(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
 	got := updateFollowing(t, e, weeklyStandup("EXDATE;TZID=Europe/Berlin:20250414T090000"), date(2025, 3, 24, 8, 0),
-		func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO", "America/New_York" })
+		func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO", ptr("America/New_York") })
 	mustNoErr(t, got.err)
 
 	_, nData := newSeriesIn(t, e, got.id)
@@ -1813,7 +1813,7 @@ func TestUpdateFollowingNewRuleOffEditedEvent(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, caldavtest.Options{})
 			got := updateFollowing(t, e, c.lines, c.rid,
-				func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", "Europe/Berlin" })
+				func(in *domain.EventInput) { in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", ptr("Europe/Berlin") })
 			mustNoErr(t, got.err)
 
 			_, nData := newSeriesIn(t, e, got.id)

@@ -438,7 +438,7 @@ func TestRefusedMoveLeavesCalendar(t *testing.T) {
 			t.Parallel()
 			s, cal := testSeries(t, tc.comps...)
 			before := encodeCal(t, cal)
-			err := s.move(cal, "NEEDS-ACTION", domain.TodoInput{Start: &tc.start, Timezone: "Europe/Berlin"})
+			err := s.move(cal, "NEEDS-ACTION", domain.TodoInput{Start: &tc.start, Timezone: ptr("Europe/Berlin")})
 			mustErr(t, err, errMoveOntoRepeat)
 			if after := encodeCal(t, cal); after != before {
 				t.Errorf("calendar after the refused move:\n%s\nwant it as it was:\n%s", after, before)
@@ -478,7 +478,7 @@ func checkMoveShown(t *testing.T, tc moveShownCase) {
 	if !tc.due.IsZero() {
 		in.Due = &tc.due
 	}
-	in.Timezone = cmp.Or(tc.tz, "Europe/Berlin")
+	in.Timezone = ptr(cmp.Or(tc.tz, "Europe/Berlin"))
 	got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 	mustNoErr(t, err)
 	if !sameTime(got.Start, &tc.start) || got.StartAllDay != tc.allDay || got.Next == nil ||
@@ -813,7 +813,7 @@ func TestRuleChangedAtSkippedTime(t *testing.T) {
 	id := seedSeries(t, e, []string{"DTSTART;TZID=Europe/Berlin:20250330T023000", "RRULE:FREQ=DAILY"})
 	f := listedTodo(t, e, id)
 	in := editInput(&f)
-	in.RRule, in.RRuleOmitted, in.Timezone = "FREQ=DAILY;INTERVAL=2", false, "Europe/Berlin"
+	in.RRule, in.RRuleOmitted, in.Timezone = "FREQ=DAILY;INTERVAL=2", false, ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 	mustNoErr(t, err)
 	checkStored(t, "series", storedObject(t, e, id),
@@ -837,7 +837,7 @@ func TestExcludeAtSkippedTime(t *testing.T) {
 // at the instant RFC 5545 section 3.3.5 reads it as (#8, FR-17, FR-18).
 func TestDatesOnSkippedTime(t *testing.T) {
 	t.Parallel()
-	moved, at := datesOn(domain.TodoInput{Start: ptr(date(2025, 3, 28, 1, 30)), Timezone: "Europe/Berlin"}, date(2025, 3, 30, 0, 0))
+	moved, at := datesOn(domain.TodoInput{Start: ptr(date(2025, 3, 28, 1, 30)), Timezone: ptr("Europe/Berlin")}, date(2025, 3, 30, 0, 0))
 	if !at.wall.Equal(date(2025, 3, 30, 2, 30)) || !at.t.Equal(date(2025, 3, 30, 1, 30)) || !sameTime(moved.Start, ptr(date(2025, 3, 30, 1, 30))) {
 		t.Errorf("datesOn = %v, %+v; want the start at 02:30 Berlin time, 2025-03-30T01:30Z", moved.Start, at)
 	}

@@ -1916,7 +1916,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			t.Fatalf("current occurrence = %+v; want 2025-03-11T09:00Z, due at 16:00Z", f)
 		}
 		in := editInput(&f)
-		in.Start, in.Due, in.Timezone = ptr(date(2025, 3, 11, 16, 0)), ptr(date(2025, 3, 11, 17, 0)), "Europe/Berlin"
+		in.Start, in.Due, in.Timezone = ptr(date(2025, 3, 11, 16, 0)), ptr(date(2025, 3, 11, 17, 0)), ptr("Europe/Berlin")
 		got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 		mustNoErr(t, err)
 		if !sameTime(got.Start, in.Start) || !sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2025, 3, 12, 16, 0)), Due: ptr(date(2025, 3, 12, 17, 0))}) {
@@ -2457,7 +2457,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 
 		in = editInput(&allDay)
 		in.Start, in.StartAllDay, in.Due, in.DueAllDay = ptr(date(2025, 3, 13, 8, 0)), false, ptr(date(2025, 3, 13, 9, 0)), false
-		in.Timezone = "Europe/Berlin"
+		in.Timezone = ptr("Europe/Berlin")
 		_, _, err = e.svc.UpdateTodo(t.Context(), id, allDay.ETag, in)
 		mustNoErr(t, err)
 		checkStored(t, "master", storedObject(t, e, id),
@@ -2614,7 +2614,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 			id := seedSeries(t, e, tc.master, tc.overrides...)
 			f := listedTodo(t, e, id)
 			in := editInput(&f)
-			in.Start, in.StartAllDay, in.Timezone = ptr(tc.at), tc.allDay, "Europe/Berlin"
+			in.Start, in.StartAllDay, in.Timezone = ptr(tc.at), tc.allDay, ptr("Europe/Berlin")
 			if f.Due != nil {
 				in.Due, in.DueAllDay = ptr(tc.at), tc.allDay
 			}
@@ -2637,7 +2637,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		f := listedTodo(t, e, id)
 		in := withRule(editInput(&f), "FREQ=WEEKLY")
 		at := date(2025, 3, 11, 8, 0) // 09:00 in Berlin
-		in.Start, in.StartAllDay, in.Due, in.DueAllDay, in.Timezone = &at, false, &at, false, "Europe/Berlin"
+		in.Start, in.StartAllDay, in.Due, in.DueAllDay, in.Timezone = &at, false, &at, false, ptr("Europe/Berlin")
 		_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 		mustNoErr(t, err)
 		checkStored(t, "series", storedObject(t, e, id), []string{
@@ -2766,7 +2766,7 @@ func TestUpdateTodoSeries(t *testing.T) {
 		id := seedSeries(t, e, []string{"DUE:20250310T080000Z"})
 		f := listedTodo(t, e, id)
 		in := withRule(editInput(&f), "FREQ=WEEKLY")
-		in.Timezone = "Europe/Berlin"
+		in.Timezone = ptr("Europe/Berlin")
 		got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 		mustNoErr(t, err)
 		at := date(2025, 3, 10, 8, 0)
@@ -3138,7 +3138,7 @@ func TestMoveFixedDaysBySeriesShift(t *testing.T) {
 			id := seedSeries(t, e, tc.master)
 			f := listedTodo(t, e, id)
 			in := editInput(&f)
-			in.Start, in.StartAllDay, in.Timezone = ptr(tc.at), tc.allDay, tc.tz
+			in.Start, in.StartAllDay, in.Timezone = ptr(tc.at), tc.allDay, ptr(tc.tz)
 			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 			mustNoErr(t, err)
 			checkStored(t, "series", storedObject(t, e, id), tc.want, nil)
@@ -3637,7 +3637,7 @@ func TestMoveRepeatShownElsewhereMovesSeries(t *testing.T) {
 				t.Fatalf("listed series = %+v; want its current repeat shown at %v", f, tc.shown)
 			}
 			in := movedBy(&f, tc.by)
-			in.Timezone = "Europe/Berlin"
+			in.Timezone = ptr("Europe/Berlin")
 			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 			mustNoErr(t, err)
 			if !sameTime(got.Start, &tc.start) || got.Next == nil || !sameTime(got.Next.Start, &tc.next) {
@@ -5373,7 +5373,7 @@ func TestCreateTodoWithRule(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		start, due := date(2025, 3, 10, 8, 0), date(2025, 3, 10, 9, 0)
 		got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{
-			Title: "Standup", Start: &start, Due: &due, RRule: "RRULE:FREQ=WEEKLY", Timezone: "Europe/Berlin",
+			Title: "Standup", Start: &start, Due: &due, RRule: "RRULE:FREQ=WEEKLY", Timezone: ptr("Europe/Berlin"),
 		})
 		mustNoErr(t, err)
 		if !got.Recurring || !sameTime(got.Start, &start) || !sameTime(got.Due, &due) {
@@ -5392,7 +5392,7 @@ func TestCreateTodoWithRule(t *testing.T) {
 		e := newEnv(t, caldavtest.Options{})
 		start, due := date(2025, 3, 10, 8, 0), date(2025, 3, 10, 9, 0)
 		got, err := e.svc.CreateTodo(t.Context(), e.cals["tasks"], domain.TodoInput{
-			Title: "Standup", Start: &start, Due: &due, RRule: "FREQ=WEEKLY", Timezone: "UTC",
+			Title: "Standup", Start: &start, Due: &due, RRule: "FREQ=WEEKLY", Timezone: ptr("UTC"),
 		})
 		mustNoErr(t, err)
 		if !got.Recurring || got.Timezone != "" || !sameTime(got.Start, &start) || !sameTime(got.Due, &due) {

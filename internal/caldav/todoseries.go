@@ -800,7 +800,7 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 	// all-day series takes it, of the zone it takes, as writeSeriesDates
 	// writes it (see seriesForm): the date the user saved there.
 	if retype && !dest.allDay {
-		dest.t = dest.t.In(zoneOf(in.Timezone))
+		dest.t = dest.t.In(zoneOf(deref(in.Timezone)))
 	} else {
 		dest.t = dest.t.In(loc)
 	}
@@ -892,7 +892,7 @@ func datesOn(in domain.TodoInput, day time.Time) (domain.TodoInput, dateValue) {
 	}
 	zone := time.UTC
 	if !allDay {
-		zone = zoneOf(in.Timezone)
+		zone = zoneOf(deref(in.Timezone))
 	}
 	days := int(day.Sub(civilDate(anchor.In(zone))) / (24 * time.Hour))
 	moved := func(t time.Time) dateValue {
@@ -1655,7 +1655,7 @@ func seriesForm(f dateForm, allDay, keep bool, tz string) dateForm {
 func writeSeriesDates(cal *ical.Calendar, c *ical.Component, in domain.TodoInput, keep bool, at *dateValue) {
 	start, startForm := seriesStart(c, in, keep)
 	_, dueForm, ok := storedForms(c)
-	dueForm = seriesForm(dueForm, in.DueAllDay, keep && ok, in.Timezone)
+	dueForm = seriesForm(dueForm, in.DueAllDay, keep && ok, deref(in.Timezone))
 	if at != nil && start != nil {
 		c.Props.Set(seriesValueProp(cal, ical.PropDateTimeStart, *at, startForm))
 	} else {
@@ -1678,5 +1678,5 @@ func seriesStart(c *ical.Component, in domain.TodoInput, keep bool) (*time.Time,
 	if start == nil {
 		start, allDay = in.Due, in.DueAllDay
 	}
-	return start, seriesForm(startForm, allDay, keep && ok, in.Timezone)
+	return start, seriesForm(startForm, allDay, keep && ok, deref(in.Timezone))
 }

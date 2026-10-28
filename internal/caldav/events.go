@@ -508,7 +508,7 @@ func (s *service) CreateEvent(ctx context.Context, calendarID string, in domain.
 	cal := newCalendar()
 	ev := newComponent(ical.CompEvent, uid, now)
 	cal.Children = append(cal.Children, ev)
-	applyEventFields(cal, ev, in, rr, in.Start, in.End, in.Timezone)
+	applyEventFields(cal, ev, in, rr, in.Start, in.End, deref(in.Timezone))
 
 	o := calObject{path: objectPath(calPath, uid+".ics"), cal: cal}
 	o.etag, err = s.putObject(ctx, o.path, cal, "", true)
@@ -667,7 +667,7 @@ func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Tim
 func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.EventInput, rr string, now time.Time) (instance, moved *time.Time, err error) {
 	start, end := in.Start, in.End
 	oldTm, tmErr := parseTiming(master)
-	tz := in.Timezone
+	tz := deref(in.Timezone)
 	if tmErr == nil {
 		tz = cmp.Or(tz, oldTm.start.tzid)
 	}

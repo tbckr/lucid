@@ -101,8 +101,9 @@ type Event struct {
 	Start        time.Time  `json:"start"` // UTC instant; for all-day events midnight UTC of the start date
 	End          time.Time  `json:"end"`   // exclusive; for all-day events midnight UTC of the day after the last day
 	AllDay       bool       `json:"allDay"`
-	Timezone     string     `json:"timezone,omitempty"` // IANA TZID of DTSTART, if any; the series' for each of its events
-	RRule        string     `json:"rrule,omitempty"`    // e.g. "FREQ=WEEKLY;BYDAY=MO"
+	Timezone     string     `json:"timezone,omitempty"`    // IANA TZID of DTSTART, if any; the series' for each of its events
+	EndTimezone  string     `json:"endTimezone,omitempty"` // IANA TZID of DTEND, else DTSTART's; the series' for each of its events (FR-18)
+	RRule        string     `json:"rrule,omitempty"`       // e.g. "FREQ=WEEKLY;BYDAY=MO"
 	Recurring    bool       `json:"recurring"`
 	RecurrenceID *time.Time `json:"recurrenceId,omitempty"` // original start of this occurrence
 	// Modified is true for an occurrence of a series that an override
@@ -137,8 +138,11 @@ type EventInput struct {
 	Start       time.Time `json:"start"`
 	End         time.Time `json:"end"`
 	AllDay      bool      `json:"allDay"`
-	Timezone    string    `json:"timezone,omitempty"`
-	RRule       string    `json:"rrule,omitempty"`
+	// Timezone is DTSTART's zone; nil keeps the stored one. EndTimezone is
+	// DTEND's; nil follows a sent Timezone, else keeps the stored one (FR-18).
+	Timezone    *string `json:"timezone,omitempty"`
+	EndTimezone *string `json:"endTimezone,omitempty"`
+	RRule       string  `json:"rrule,omitempty"`
 	// InstanceStart is only used when updating an occurrence of a recurring
 	// series: it is the RecurrenceID of the occurrence that was edited. The
 	// update is applied to the whole series ("all events"): it moves by the
@@ -157,7 +161,9 @@ type OccurrenceInput struct {
 	Start       time.Time `json:"start"`
 	End         time.Time `json:"end"`
 	AllDay      bool      `json:"allDay"`
-	Timezone    string    `json:"timezone,omitempty"`
+	// Timezone and EndTimezone are those of EventInput (FR-18).
+	Timezone    *string `json:"timezone,omitempty"`
+	EndTimezone *string `json:"endTimezone,omitempty"`
 }
 
 // Validate checks the input for structural problems, the EventInput rules
@@ -165,7 +171,8 @@ type OccurrenceInput struct {
 func (in OccurrenceInput) Validate() error {
 	return EventInput{
 		Title: in.Title, Description: in.Description, Location: in.Location,
-		Start: in.Start, End: in.End, AllDay: in.AllDay, Timezone: in.Timezone,
+		Start: in.Start, End: in.End, AllDay: in.AllDay,
+		Timezone: in.Timezone, EndTimezone: in.EndTimezone,
 	}.Validate()
 }
 
@@ -195,10 +202,21 @@ func (in EventInput) Validate() error {
 		return invalid("start and end are required")
 	case in.End.Before(in.Start):
 		return invalid("end must not be before start")
-	case in.Timezone != "":
-		if _, err := time.LoadLocation(in.Timezone); err != nil {
-			return invalid("unknown timezone")
-		}
+	}
+	if err := validZone(in.Timezone); err != nil {
+		return err
+	}
+	return validZone(in.EndTimezone)
+}
+
+// validZone checks a zone field of an input: absent and "" are valid ("" is
+// UTC, FR-18), anything else must be a zone time.LoadLocation knows.
+func validZone(z *string) error {
+	if z == nil || *z == "" {
+		return nil
+	}
+	if _, err := time.LoadLocation(*z); err != nil {
+		return invalid("unknown timezone")
 	}
 	return nil
 }
@@ -241,7 +259,8 @@ type Todo struct {
 	// DUE, as its TZID names it: the zone a series recurs in, as for
 	// Event.Timezone. It is empty for a date, a date-time in UTC ("Z") or
 	// floating, and a TZID Lucid cannot resolve (FR-16, FR-17).
-	Timezone string `json:"timezone,omitempty"`
+	Timezone    string `json:"timezone,omitempty"`
+	DueTimezone string `json:"dueTimezone,omitempty"` // IANA TZID of DUE (FR-18)
 
 	// RRule, Recurring, FixedDays and RuleUnsupported describe a recurring
 	// series (FR-17). Next is the earliest open occurrence after the current
@@ -332,8 +351,12 @@ type TodoInput struct {
 	// RRule absent means keep the stored rule; "" means remove it (FR-17), see RRuleOmitted.
 	RRule string `json:"rrule"`
 	// RRuleOmitted is set when a JSON body has no "rrule" at all, like StartOmitted.
-	RRuleOmitted bool   `json:"-"`
-	Timezone     string `json:"timezone,omitempty"`
+	RRuleOmitted bool `json:"-"`
+	// Timezone is DTSTART's zone, the anchor's (DUE's) without a start; nil
+	// keeps the stored one. DueTimezone is DUE's; nil follows a sent Timezone,
+	// else keeps the stored one (FR-18).
+	Timezone    *string `json:"timezone,omitempty"`
+	DueTimezone *string `json:"dueTimezone,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly (unknown fields are errors, as for every
@@ -389,10 +412,11 @@ func (in TodoInput) Validate() error {
 	default:
 		return invalid("unknown status")
 	}
-	if in.Timezone != "" {
-		if _, err := time.LoadLocation(in.Timezone); err != nil {
-			return invalid("unknown timezone")
-		}
+	if err := validZone(in.Timezone); err != nil {
+		return err
+	}
+	if err := validZone(in.DueTimezone); err != nil {
+		return err
 	}
 	for _, it := range in.Checklist {
 		if it.Text == "" || len(it.Text) > MaxTitleLen {

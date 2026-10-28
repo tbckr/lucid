@@ -730,7 +730,7 @@ func TestCreateEvent(t *testing.T) {
 			name: "timed non-recurring is stored in UTC",
 			in: domain.EventInput{
 				Title: "Lunch", Description: "line1\nline2", Location: "Cafe",
-				Start: date(2025, 3, 5, 11, 0), End: date(2025, 3, 5, 12, 0), Timezone: "Europe/Berlin",
+				Start: date(2025, 3, 5, 11, 0), End: date(2025, 3, 5, 12, 0), Timezone: ptr("Europe/Berlin"),
 			},
 			wantLines: []string{"DTSTART:20250305T110000Z", "DTEND:20250305T120000Z", "DESCRIPTION:line1\\nline2", "SEQUENCE:0"},
 			wantEvent: occ{title: "Lunch", start: date(2025, 3, 5, 11, 0), end: date(2025, 3, 5, 12, 0)},
@@ -755,7 +755,7 @@ func TestCreateEvent(t *testing.T) {
 			name: "recurring keeps TZID and adds VTIMEZONE",
 			in: domain.EventInput{
 				Title: "Standup", Start: date(2025, 3, 17, 8, 0), End: date(2025, 3, 17, 8, 15),
-				Timezone: "Europe/Berlin", RRule: "RRULE:FREQ=WEEKLY;BYDAY=MO",
+				Timezone: ptr("Europe/Berlin"), RRule: "RRULE:FREQ=WEEKLY;BYDAY=MO",
 			},
 			wantLines: []string{
 				"DTSTART;TZID=Europe/Berlin:20250317T090000", "RRULE:FREQ=WEEKLY;BYDAY=MO",
@@ -769,7 +769,7 @@ func TestCreateEvent(t *testing.T) {
 			name: "recurring in UTC has no TZID and no VTIMEZONE",
 			in: domain.EventInput{
 				Title: "Standup", Start: date(2025, 3, 17, 8, 0), End: date(2025, 3, 17, 8, 15),
-				Timezone: "UTC", RRule: "FREQ=WEEKLY",
+				Timezone: ptr("UTC"), RRule: "FREQ=WEEKLY",
 			},
 			wantLines: []string{"DTSTART:20250317T080000Z", "DTEND:20250317T081500Z", "RRULE:FREQ=WEEKLY"},
 			notLines:  []string{"TZID", "VTIMEZONE"},
@@ -811,7 +811,7 @@ func TestCreateEvent(t *testing.T) {
 		t.Parallel()
 		ev, err := e.svc.CreateEvent(ctx, e.cals["work"], domain.EventInput{
 			Title: "Weekly", Start: date(2025, 3, 24, 8, 0), End: date(2025, 3, 24, 9, 0),
-			Timezone: "Europe/Berlin", RRule: "FREQ=WEEKLY",
+			Timezone: ptr("Europe/Berlin"), RRule: "FREQ=WEEKLY",
 		})
 		mustNoErr(t, err)
 		evs, err := e.svc.ListEvents(ctx, e.cals["work"], date(2025, 3, 30, 0, 0), date(2025, 4, 1, 0, 0))
@@ -1703,7 +1703,7 @@ func TestUpdateSeriesNewRuleReadAtEditedEvent(t *testing.T) {
 			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Second))
 
 			in := seriesUpdate(ev, "Review", "", c.start, c.start.Add(time.Hour))
-			in.RRule, in.Timezone = c.newRule, "Europe/Berlin"
+			in.RRule, in.Timezone = c.newRule, ptr("Europe/Berlin")
 			up, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 			mustNoErr(t, err)
 
@@ -1733,7 +1733,7 @@ func TestUpdateSeriesNewRuleReadAtExceptionsPlace(t *testing.T) {
 	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 11, 0, 0), date(2026, 11, 12, 0, 0))
 
 	in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
-	in.RRule, in.Timezone = "FREQ=MONTHLY", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=MONTHLY", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustNoErr(t, err)
 
@@ -1757,7 +1757,7 @@ func TestUpdateSeriesNewRuleReadInTheNewZone(t *testing.T) {
 	ev := listedAt(t, e, "work", date(2026, 11, 10, 23, 0), date(2026, 11, 10, 23, 0), date(2026, 11, 10, 23, 1))
 
 	in := seriesUpdate(ev, "Call", "", ev.Start, ev.End)
-	in.RRule, in.Timezone = "FREQ=MONTHLY", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=MONTHLY", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustNoErr(t, err)
 
@@ -1819,7 +1819,7 @@ func TestUpdateSeriesNewRuleAllDayReadAtEditedEvent(t *testing.T) {
 			in := seriesUpdate(ev, "Review", "", c.start, end)
 			in.AllDay, in.RRule = c.allDay, "FREQ=MONTHLY"
 			if !c.allDay {
-				in.Timezone = "Europe/Berlin"
+				in.Timezone = ptr("Europe/Berlin")
 			}
 			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 			mustNoErr(t, err)
@@ -1846,7 +1846,7 @@ func TestUpdateSeriesNewRuleStartsAtSkippedTime(t *testing.T) {
 	ev := listedAt(t, e, "work", date(2027, 4, 4, 0, 30), date(2027, 4, 4, 0, 30), date(2027, 4, 4, 0, 31))
 
 	in := seriesUpdate(ev, "Backup", "", ev.Start, ev.End)
-	in.RRule, in.Timezone = "FREQ=WEEKLY", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustNoErr(t, err)
 
@@ -1890,7 +1890,7 @@ func TestUpdateSeriesNewRuleOffEditedEventMovesStart(t *testing.T) {
 			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Minute))
 
 			in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
-			in.RRule, in.Timezone, in.AllDay = c.rule, "Europe/Berlin", ev.AllDay
+			in.RRule, in.Timezone, in.AllDay = c.rule, ptr("Europe/Berlin"), ev.AllDay
 			up, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 			mustNoErr(t, err)
 
@@ -1955,7 +1955,7 @@ func TestUpdateSeriesNewRuleKeepsEditedException(t *testing.T) {
 	ev := listedAt(t, e, "work", date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 0), date(2026, 11, 10, 9, 1))
 
 	in := seriesUpdate(ev, "Review with Kim", "", ev.Start, ev.End)
-	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=FR", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 	mustNoErr(t, err)
 
@@ -2042,7 +2042,7 @@ func TestUpdateSeriesNewRuleKeepsStartOffOldRule(t *testing.T) {
 			ev := listedAt(t, e, "work", c.rid, c.rid, c.rid.Add(time.Minute))
 
 			in := seriesUpdate(ev, "Review", "", ev.Start, ev.End)
-			in.RRule, in.Timezone = c.rule, "Europe/Berlin"
+			in.RRule, in.Timezone = c.rule, ptr("Europe/Berlin")
 			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
 			mustNoErr(t, err)
 
@@ -2259,7 +2259,7 @@ func TestUpdateSeriesNewRuleIntoAnotherZone(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Call", "", date(2026, 11, 10, 23, 0), date(2026, 11, 11, 0, 0))
-	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR", ptr("Europe/Berlin")
 	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -2312,7 +2312,7 @@ func TestUpdateSeriesNewRuleIntoAnotherZoneMoved(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Call", "", date(2026, 11, 3, 22, 0), date(2026, 11, 3, 23, 0))
-	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", ptr("Europe/Berlin")
 	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -2347,7 +2347,7 @@ func TestUpdateSeriesNewRuleIntoAnotherZoneFromException(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Moved", "", evs[0].Start, evs[0].End)
-	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -2411,7 +2411,7 @@ func TestUpdateSeriesNewRuleWithoutZone(t *testing.T) {
 				}
 
 				in := seriesUpdate(evs[0], "Sync", "", date(2027, 1, 18, 8, 0), date(2027, 1, 18, 8, 30))
-				in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", zone.name
+				in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", ptr(zone.name)
 				_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 				mustNoErr(t, err)
 
@@ -2454,7 +2454,7 @@ func TestUpdateSeriesNewRuleIntoUTC(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Sync", "", date(2027, 1, 18, 8, 0), date(2027, 1, 18, 8, 30))
-	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", "UTC"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;BYDAY=MO,TH", ptr("UTC")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -2491,7 +2491,7 @@ func TestUpdateSeriesMadeAllDayKeepsRefs(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Review", "", date(2026, 11, 6, 0, 0), date(2026, 11, 7, 0, 0))
-	in.AllDay, in.Timezone = true, "America/New_York"
+	in.AllDay, in.Timezone = true, ptr("America/New_York")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -3025,7 +3025,7 @@ func TestUpdateSeriesMadeTimedAcrossDSTChange(t *testing.T) {
 
 	// 09:00 Berlin summer time.
 	in := seriesUpdate(evs[0], "Gym", "", date(2026, 4, 3, 7, 0), date(2026, 4, 3, 8, 0))
-	in.Timezone = "Europe/Berlin"
+	in.Timezone = ptr("Europe/Berlin")
 	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 	checkOccurrences(t, []domain.Event{up}, []occ{
@@ -3206,7 +3206,7 @@ func TestUpdateSeriesMadeTimedAtSkippedTime(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Gym", "", date(2026, 4, 5, 0, 30), date(2026, 4, 5, 1, 30))
-	in.Timezone = "Europe/Berlin"
+	in.Timezone = ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -3237,7 +3237,7 @@ func TestUpdateSeriesNewRuleIntoSkippedTime(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Call", "", date(2026, 12, 6, 1, 30), date(2026, 12, 6, 2, 30))
-	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=WEEKLY;INTERVAL=2", ptr("Europe/Berlin")
 	up, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 
@@ -3270,7 +3270,7 @@ func TestUpdateSeriesNewRuleCarriesSkippedExdate(t *testing.T) {
 	}
 
 	in := seriesUpdate(evs[0], "Pill", "", date(2026, 12, 1, 7, 30), date(2026, 12, 1, 8, 30))
-	in.RRule, in.Timezone = "FREQ=DAILY;INTERVAL=1", "Europe/Berlin"
+	in.RRule, in.Timezone = "FREQ=DAILY;INTERVAL=1", ptr("Europe/Berlin")
 	_, _, err := e.svc.UpdateEvent(t.Context(), id, evs[0].ETag, in)
 	mustNoErr(t, err)
 

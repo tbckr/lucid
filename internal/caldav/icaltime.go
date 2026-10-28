@@ -316,6 +316,16 @@ func text(props ical.Props, name string) string {
 	return s
 }
 
+// deref returns the string p points to, "" for nil. The zone fields of an
+// input are pointers (FR-18) but are still read as strings here: an absent
+// zone is "" (UTC on create, the stored zone on a series update), as before.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // textOr returns the unescaped text value of a property, or fallback if the
 // property is absent. A present but empty property returns "": an override
 // can deliberately clear a field without falling back to the master's value
