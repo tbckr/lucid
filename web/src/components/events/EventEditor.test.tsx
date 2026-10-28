@@ -312,6 +312,30 @@ describe('typed dates (FR-09)', () => {
     }
   })
 
+  // Each field that can't be read is described by a note about itself, the date's first (FR-09, NFR-27).
+  it.each([
+    ['Start', 'Start time', '13/45', '9:4x'],
+    ['End', 'End time', '3/x', '9:3x'],
+  ])('says what to type for %s date and time that both cannot be read, each below the row', async (date, time, typedDate, typedTime) => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor(create)
+    const dateField = within(dialog).getByRole('combobox', { name: date })
+    const timeField = within(dialog).getByRole('combobox', { name: time })
+    await user.click(dateField)
+    await user.keyboard(typedDate)
+    await user.tab()
+    await user.click(timeField)
+    await user.keyboard(typedTime)
+    await user.tab()
+    const timeNote = 'Enter a time like 9:40 AM.'
+    expect(dateField).toHaveAttribute('aria-invalid', 'true')
+    expect(dateField).toHaveAccessibleDescription(dateNote)
+    expect(timeField).toHaveAttribute('aria-invalid', 'true')
+    expect(timeField).toHaveAccessibleDescription(timeNote)
+    const notes = within(dialog).getAllByText(/^Enter a (date|time) like/).map((n) => n.textContent)
+    expect(notes).toEqual([dateNote, timeNote])
+  })
+
   it('says it for an end date, and marks only the end date', async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor(create)

@@ -294,6 +294,27 @@ describe('TaskEditor', () => {
       expect(dialog).toBeInTheDocument()
     })
 
+    // Each field that can't be read is described by a note about itself, the date's first (FR-09, NFR-27).
+    it('says what to type for a due date and time that both cannot be read, each below the row', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(todo({ due: '2026-03-13T13:00:00Z' }))
+      const due = within(dialog).getByRole('combobox', { name: 'Due' })
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(due)
+      await user.keyboard('3/45')
+      await user.tab()
+      await user.click(time)
+      await user.keyboard('2:6')
+      await user.tab()
+      const timeNote = 'Enter a time like 9:40 AM.'
+      expect(due).toHaveAttribute('aria-invalid', 'true')
+      expect(due).toHaveAccessibleDescription(dateNote)
+      expect(time).toHaveAttribute('aria-invalid', 'true')
+      expect(time).toHaveAccessibleDescription(timeNote)
+      const notes = within(dialog).getAllByText(/^Enter a (date|time) like/).map((n) => n.textContent)
+      expect(notes).toEqual([dateNote, timeNote])
+    })
+
     // The forms' own shape, which en-US doesn't read, but no day the calendar has (FR-09).
     it("says what to type for a due date in the forms' shape that doesn't exist, and doesn't save", async () => {
       const user = userEvent.setup()

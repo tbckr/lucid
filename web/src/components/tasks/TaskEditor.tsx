@@ -482,10 +482,10 @@ export function TaskEditor({
   const dateRow = (which: Which) => {
     const { date, time } = values[which]
     const other = values[DATES[which].other].date
-    // What to type where the date or the time can't be read, at once, not only after Save (FR-09): about the
-    // date where that can't be read, else about the time, and describing that field alone.
-    const unread = date ? unreadableNote(t, prefs, now, [{ date, time }]) : undefined
-    const unreadOn = unread && (isFormDate(date) ? 'time' : 'date')
+    // What to type where the date or the time can't be read, at once, not only after Save (FR-09): a note about
+    // each, describing its field alone, the date's first where both can't be read (NFR-27).
+    const dateUnread = unreadableNote(t, prefs, now, [{ date }])
+    const timeUnread = date ? unreadableNote(t, prefs, now, [{ time }]) : undefined
     // An error of the dates, such as a start after the due; a date the field couldn't read is said by its note.
     const raw = formState.errors[DATES[which].date]?.message
     const error = raw === 'validation.date' ? undefined : msg(raw)
@@ -522,7 +522,7 @@ export function TaskEditor({
             now={now}
             invalid={!!error}
             describedBy={
-              [unreadOn === 'date' && `${id}-${which}-unread`, note && `${id}-${which}-error`].filter(Boolean).join(' ') ||
+              [dateUnread && `${id}-${which}-date-unread`, note && `${id}-${which}-error`].filter(Boolean).join(' ') ||
               undefined
             }
           />
@@ -537,7 +537,7 @@ export function TaskEditor({
               prefs={prefs}
               invalid={!!error}
               describedBy={
-                [unreadOn === 'time' && `${id}-${which}-unread`, error && `${id}-${which}-error`, saved && `${id}-${which}-skipped`]
+                [timeUnread && `${id}-${which}-time-unread`, error && `${id}-${which}-error`, saved && `${id}-${which}-skipped`]
                   .filter(Boolean)
                   .join(' ') || undefined
               }
@@ -546,9 +546,14 @@ export function TaskEditor({
           )}
           {which === 'due' && overdue && <span className="text-sm font-medium text-destructive">{t('tasks.overdue')}</span>}
         </div>
-        {unread && (
-          <p id={`${id}-${which}-unread`} className="col-start-2 text-sm text-destructive">
-            {unread}
+        {dateUnread && (
+          <p id={`${id}-${which}-date-unread`} className="col-start-2 text-sm text-destructive">
+            {dateUnread}
+          </p>
+        )}
+        {timeUnread && (
+          <p id={`${id}-${which}-time-unread`} className="col-start-2 text-sm text-destructive">
+            {timeUnread}
           </p>
         )}
         {note && (

@@ -507,6 +507,28 @@ describe('CreatePopover', () => {
     expect(end).not.toHaveAttribute('aria-invalid')
     expect(end).toHaveAccessibleDescription('')
   })
+  // Each field that can't be read is described by a line about itself, the date's first (FR-09, NFR-27).
+  it('says what to type for a start date and time that both cannot be read, each on its own line', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openPopover()
+    const date = within(dialog).getByRole('combobox', { name: 'Start' })
+    const time = within(dialog).getByRole('combobox', { name: 'Start time' })
+    await user.click(date)
+    await user.keyboard('9/x')
+    await user.tab()
+    await user.click(time)
+    await user.keyboard('9:4x')
+    await user.tab()
+    const dateNote = /^Enter a date like \d+\/\d+\/\d{4}\.$/
+    const timeNote = 'Enter a time like 9:40 AM.'
+    expect(date).toHaveAttribute('aria-invalid', 'true')
+    expect(date).toHaveAccessibleDescription(dateNote)
+    expect(time).toHaveAttribute('aria-invalid', 'true')
+    expect(time).toHaveAccessibleDescription(timeNote)
+    const notes = within(dialog).getAllByText(/^Enter a (date|time) like/).map((n) => n.textContent)
+    expect(notes).toEqual([expect.stringMatching(dateNote), timeNote])
+  })
+
   it('keeps the length when an unreadable start is corrected', async () => {
     const user = userEvent.setup()
     const { dialog } = await openPopover()

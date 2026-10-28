@@ -18,13 +18,14 @@ interface Note {
 }
 
 /**
- * The line below the sentence that says what is wrong with it (FR-09): what to
- * type where a date or a time field holds text it couldn't read, else an error
- * of the order of the end or due, with the id it describes the fields by.
+ * The ids of the lines below the sentence that say what is wrong with it
+ * (FR-09): what to type where a date field, or a time field, holds text it
+ * couldn't read, and an error of the order of the end or due.
  */
-export interface WhenError {
-  id: string
-  about: 'date' | 'time' | 'order'
+export interface WhenErrors {
+  date?: string
+  time?: string
+  order?: string
 }
 
 /**
@@ -33,9 +34,9 @@ export interface WhenError {
  * quiet field on the tint. Moving the start keeps the length, also across a
  * start that couldn't be read for a while (FR-09, FR-16). A time summer time
  * skips on its date is said below, with the time it is saved as, in
- * `timeZone` (#10, FR-18). `error` is the line said below: a field is marked
- * and described by it only where it is about that field, its unreadable text
- * or, for the end or due, the order.
+ * `timeZone` (#10, FR-18). `errors` are the lines said below: a field is
+ * described by one only where it is about that field, its unreadable text or,
+ * for the end or due, the order, which marks them too.
  */
 export function QuickWhen({
   kind,
@@ -46,7 +47,7 @@ export function QuickWhen({
   prefs,
   now,
   timeZone,
-  error,
+  errors,
 }: {
   kind: CreateKind
   event: EventWhen
@@ -56,7 +57,7 @@ export function QuickWhen({
   prefs: FormatPrefs
   now: Date
   timeZone: string
-  error?: WhenError | undefined
+  errors?: WhenErrors | undefined
 }) {
   const { t } = useTranslation()
   const id = useId()
@@ -87,14 +88,11 @@ export function QuickWhen({
     isFormDate(task.startDate) && (task.startTime === '' || isFormTime(task.startTime)),
   )
   // The end or due fields an error of the order marks.
-  const invalid = error?.about === 'order'
-  // The line below describes a field where it is about that field: its text it couldn't read, or the
-  // order of the end or due (`marked`) (FR-09).
+  const invalid = errors?.order !== undefined
+  // A line below describes a field where it is about that field: its text it couldn't read, or the order of
+  // the end or due (`marked`) (FR-09, NFR-27).
   const about = (part: 'date' | 'time', text: string, marked: boolean) =>
-    error &&
-    ((error.about === part && text !== '' && !(part === 'date' ? isFormDate(text) : isFormTime(text))) || (marked && invalid))
-      ? error.id
-      : undefined
+    text !== '' && !(part === 'date' ? isFormDate(text) : isFormTime(text)) ? errors?.[part] : marked ? errors?.order : undefined
   const dateNotes = (date: string, marked: boolean) => about('date', date, marked)
   const timeNotes = (time: string, note: Note | null, marked: boolean) =>
     [about('time', time, marked), note?.id].filter(Boolean).join(' ') || undefined

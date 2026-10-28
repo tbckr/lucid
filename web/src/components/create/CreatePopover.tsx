@@ -120,13 +120,19 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
   // An end or due before the start, said once the form was sent.
   const orderError = errorOf('endDate', 'startDate', 'dueDate')
   // What to type where a shown date or time couldn't be read, said at once, not only once the form was sent
-  // (FR-09); a date first, as the field couldn't read it, else a time, else the order of the dates.
+  // (FR-09): a line about the dates and one about the times, the date's first, each describing the fields it is
+  // about (NFR-27); else the order of the dates.
   const shownDates = kind === 'event' ? [event.startDate, event.endDate] : [task.startDate, task.dueDate]
   const shownTimes = kind === 'event' ? (event.allDay ? [] : [event.startTime, event.endTime]) : [task.startTime, task.dueTime]
   const dateNote = unreadableNote(t, prefs, now, shownDates.map((date) => ({ date })))
   const timeNote = unreadableNote(t, prefs, now, shownTimes.map((time) => ({ time })))
-  const whenError = dateNote ?? timeNote ?? orderError
-  const whenAbout = dateNote ? 'date' : timeNote ? 'time' : 'order'
+  const lines = (
+    [
+      ['date', dateNote],
+      ['time', timeNote],
+      ['order', dateNote || timeNote ? undefined : orderError],
+    ] as const
+  ).flatMap(([about, text]) => (text ? [{ about, text, id: `${id}-when-${about}-error` }] : []))
 
   const switchTo = (next: CreateKind) => {
     const switched = switchDraft({ ...begun, event, task }, next)
@@ -243,14 +249,14 @@ function CreateForm({ create, when: { event, task } }: { create: CreateState; wh
                 prefs={prefs}
                 now={now}
                 timeZone={tz}
-                error={whenError ? { id: `${id}-when-error`, about: whenAbout } : undefined}
+                errors={Object.fromEntries(lines.map((l) => [l.about, l.id]))}
               />
             </div>
-            {whenError && (
-              <p id={`${id}-when-error`} className="col-start-2 text-sm font-medium text-destructive">
-                {whenError}
+            {lines.map((l) => (
+              <p key={l.about} id={l.id} className="col-start-2 text-sm font-medium text-destructive">
+                {l.text}
               </p>
-            )}
+            ))}
             <div className="col-start-2 flex">
               <Label htmlFor={`${id}-calendar`} className="sr-only">
                 {kind === 'event' ? t('event.calendar') : t('tasks.list')}

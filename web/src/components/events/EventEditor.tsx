@@ -348,12 +348,15 @@ function EditorForm({
   }
 
   // What to type where a date or time field holds text it couldn't read, said below its row at once,
-  // not only after Save (FR-09). A time All day hides isn't asked for. The note is about the date where
-  // that can't be read, else about the time, and describes that field alone.
-  const shown = (date: string, time: string) => (allDay ? [{ date }] : [{ date, time }])
-  const startNote = unreadableNote(t, prefs, now, shown(startDate, startTime))
-  const endNote = unreadableNote(t, prefs, now, shown(endDate, endTime))
-  const noteOn = (date: string) => (isFormDate(date) ? 'time' : 'date')
+  // not only after Save (FR-09). A time All day hides isn't asked for. Each note is about one field and
+  // describes it alone: where both can't be read, the date's comes first (NFR-27).
+  const notesOf = (date: string, time: string) => ({
+    date: unreadableNote(t, prefs, now, [{ date }]),
+    time: allDay ? undefined : unreadableNote(t, prefs, now, [{ time }]),
+  })
+  const startNotes = notesOf(startDate, startTime)
+  const endNotes = notesOf(endDate, endTime)
+  const unread = [startNotes.date, startNotes.time, endNotes.date, endNotes.time].some(Boolean)
 
   // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
   // with the form: the watched fields above re-render the editor whenever the answer can change.
@@ -361,7 +364,7 @@ function EditorForm({
   // values aren't read before they are validated.
   const formValues = getValues()
   const hint =
-    occurrence && !startNote && !endNote
+    occurrence && !unread
       ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, occurrence)), recurrence === 'none')
       : null
 
@@ -464,7 +467,7 @@ function EditorForm({
                 }}
                 prefs={prefs}
                 now={now}
-                describedBy={startNote && noteOn(startDate) === 'date' ? `${id}-start-error` : undefined}
+                describedBy={startNotes.date && `${id}-start-date-error`}
               />
               {!allDay && (
                 <TimeField
@@ -473,19 +476,12 @@ function EditorForm({
                     onStartChange(getValues('startDate'), v)
                   }}
                   prefs={prefs}
-                  describedBy={described(
-                    startNote && noteOn(startDate) === 'time' && `${id}-start-error`,
-                    startSaved && `${id}-start-skipped`,
-                  )}
+                  describedBy={described(startNotes.time && `${id}-start-time-error`, startSaved && `${id}-start-skipped`)}
                   aria-label={t('event.startTime')}
                 />
               )}
             </div>
-            {startNote && (
-              <p id={`${id}-start-error`} className="text-sm text-destructive">
-                {startNote}
-              </p>
-            )}
+            <UnreadNotes notes={startNotes} id={`${id}-start`} />
             {startSaved && (
               <SkippedTimeNote
                 id={`${id}-start-skipped`}
@@ -515,7 +511,7 @@ function EditorForm({
                     now={now}
                     quiet={field.value === startDate}
                     invalid={!!endOrder}
-                    describedBy={described(endNote && noteOn(field.value) === 'date' && `${id}-end-error`, endOrder && `${id}-end-order`)}
+                    describedBy={described(endNotes.date && `${id}-end-date-error`, endOrder && `${id}-end-order`)}
                   />
                 )}
               />
@@ -532,7 +528,7 @@ function EditorForm({
                       prefs={prefs}
                       invalid={!!endOrder}
                       describedBy={described(
-                        endNote && noteOn(endDate) === 'time' && `${id}-end-error`,
+                        endNotes.time && `${id}-end-time-error`,
                         endOrder && `${id}-end-order`,
                         endSaved && `${id}-end-skipped`,
                       )}
@@ -554,11 +550,7 @@ function EditorForm({
                 className="text-muted-foreground"
               />
             )}
-            {endNote && (
-              <p id={`${id}-end-error`} className="text-sm text-destructive">
-                {endNote}
-              </p>
-            )}
+            <UnreadNotes notes={endNotes} id={`${id}-end`} />
             {endOrder && (
               <p id={`${id}-end-order`} className="text-sm text-destructive">
                 {endOrder}
@@ -670,6 +662,27 @@ function EditorForm({
         )}
       </DialogFooter>
     </form>
+  )
+}
+
+/**
+ * What to type in the date and the time field of a row that couldn't read their text (FR-09), the date's
+ * first, each by the id its field is described by: `id` with `-date-error` or `-time-error`.
+ */
+function UnreadNotes({ notes, id }: { notes: { date?: string | undefined; time?: string | undefined }; id: string }) {
+  return (
+    <>
+      {notes.date && (
+        <p id={`${id}-date-error`} className="text-sm text-destructive">
+          {notes.date}
+        </p>
+      )}
+      {notes.time && (
+        <p id={`${id}-time-error`} className="text-sm text-destructive">
+          {notes.time}
+        </p>
+      )}
+    </>
   )
 }
 
