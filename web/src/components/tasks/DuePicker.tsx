@@ -56,7 +56,7 @@ interface Asking {
  * as one change (one question for a series), or else as the picker closes.
  * It stays typed until it is saved, through a question cancelled or a move
  * the series refuses; Escape drops it, and so does the next close once the
- * series refused it alone, which the line below the month says. Text the
+ * series refused it alone, while the line below the month says why. Text the
  * time field can't read is said below it and holds every save back: a day,
  * a shortcut, a removal or a close leaves the picker open, on the time.
  *
@@ -98,8 +98,8 @@ export function DuePicker({
   // render.
   const pending = useRef<string | null>(null)
   const [typed, setTyped] = useState<string | null>(null)
-  // The time typed that the series refused alone, while it stays typed: the line below the month said why, so the
-  // next close drops it instead of trying it again, and the refusal doesn't hold the picker open (FR-14, FR-17).
+  // The time typed that the series refused alone, for as long as the line below the month says why (`refuse`): the
+  // next close drops it instead of trying it again, so the refusal doesn't hold the picker open (FR-14, FR-17).
   const refusedTime = useRef<string | null>(null)
   // Whether the time field passed a commit up in the key press or click under way: on Enter or a pick of the
   // value it has already, it passes none, and the time typed and not saved yet is saved then (FR-14).
@@ -138,11 +138,16 @@ export function DuePicker({
     if (field && field === document.activeElement) field.blur()
   }
 
-  // Another time typed is another try for the series (FR-17).
   const hold = (value: string | null) => {
     pending.current = value
-    refusedTime.current = null
     setTyped(value)
+  }
+
+  // Says below the month why the series can't follow, or nothing (FR-17), with the time typed it refused alone: the
+  // two go together, so a close drops that time only while the line says why, and tries it again once it is gone.
+  const refuse = (reason: ShiftReason | null, alone: string | null = null) => {
+    setRefused(reason)
+    refusedTime.current = alone
   }
 
   // The time a change saves (FR-14): the one typed and not saved yet, else the saved one. Null while the
@@ -191,7 +196,7 @@ export function DuePicker({
   // the focus back if the question is cancelled. False while it asks, or where nothing moves; a time
   // typed then stays typed.
   const save = (input: TodoInput, source: Source, from: HTMLElement | null): boolean => {
-    setRefused(null)
+    refuse(null)
     if (!repeat) {
       send(null, input)
       settle(input, source, null)
@@ -213,8 +218,7 @@ export function DuePicker({
       settle(input, source, only)
     } else if (result.reason) {
       // Nothing moves: the day stays unpicked, and the line below the month says why.
-      setRefused(result.reason)
-      if (source === 'time') refusedTime.current = pending.current
+      refuse(result.reason, source === 'time' ? pending.current : null)
       return false
     } else {
       // The last repeat acts as a single task.
@@ -238,8 +242,8 @@ export function DuePicker({
     if (pending.current === null) return true
     // Asked about it already: the question stays until it is answered or cancelled.
     if (asking) return false
-    // Refused alone already, which the line below the month said: it closes, which drops the time, without a
-    // second try (FR-14, FR-17).
+    // Refused alone, which the line below the month says: it closes, which drops the time, without a second try
+    // (FR-14, FR-17).
     if (pending.current === refusedTime.current) return true
     const at = typedTime()
     if (at === null) return false
@@ -263,7 +267,7 @@ export function DuePicker({
         if (!next && !leave()) return
         setOpen(next)
         setAsking(null)
-        setRefused(null)
+        refuse(null)
         hold(null)
         back.current = null
       }}

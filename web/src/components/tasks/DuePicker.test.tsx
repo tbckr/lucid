@@ -657,6 +657,35 @@ describe('DuePicker', () => {
         expect(onChange).not.toHaveBeenCalled()
         expect(onScope).not.toHaveBeenCalled()
       })
+
+      it('tries a refused time again once its refusal line is gone', async () => {
+        useSettings.setState({ timeFormat: '24h' })
+        const { user, onChange, onScope, dialog } = await open(atNine)
+        const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+        await user.click(time)
+        await user.keyboard('1840')
+        await user.click(document.body)
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+
+        // A day picked with the time asks the series anew: the line that said why the time alone can't move gives way
+        // to the one about the day, here refused too.
+        await user.click(within(dialog).getByRole('button', { name: 'Friday, October 16th, 2026' }))
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+        expect(time).toHaveValue('18:40')
+
+        // So the close tries the time alone again, which is refused again: the picker stays open once more.
+        await user.click(document.body)
+        expect(dialog).toBeInTheDocument()
+        expect(within(dialog).getByText(keepsTimes)).toBeInTheDocument()
+        expect(time).toHaveValue('18:40')
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+
+        await user.click(document.body)
+        expect(dialog).not.toBeInTheDocument()
+        expect(onChange).not.toHaveBeenCalled()
+        expect(onScope).not.toHaveBeenCalled()
+      })
     })
 
     // FR-17: an all-day series given a time writes it in the browser's zone, where the server then reads the move:
