@@ -322,16 +322,34 @@ describe('DuePicker', () => {
     expect(dialog).not.toBeInTheDocument()
   })
 
-  // The time is the picker's last control: Tab leaves the picker from it, as a click outside does (FR-14).
-  it('saves a typed time once as Tab leaves the picker', async () => {
+  // The time is the picker's last control: Tab goes on to its first, and a time typed waits for what follows, as it
+  // does when left for any other part of the picker (FR-14, NFR-27).
+  it('keeps a typed time as Tab goes on to the shortcuts, and saves it once as the picker closes', async () => {
     useSettings.setState({ timeFormat: '24h' })
-    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
-    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(1, '09:00') }))
+    const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+    await user.click(time)
     await user.keyboard('1840')
     await user.tab()
+    expect(within(dialog).getByRole('button', { name: /^Today / })).toHaveFocus()
+    expect(time).toHaveValue('18:40')
+    expect(onChange).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Change due date: Call' }))
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '18:40'), dueAllDay: false }))
     expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('goes on to the shortcuts on Tab from a time saved with Enter', async () => {
+    useSettings.setState({ timeFormat: '24h' })
+    const { user, onChange, dialog } = await open(todo({ due: at(1, '09:00') }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+    await user.keyboard('1840{Enter}')
+    expect(onChange).toHaveBeenCalledTimes(1)
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: /^Today / })).toHaveFocus()
+    expect(dialog).toBeInTheDocument()
   })
 
   it("stays open as its button is clicked while the time that still has the focus can't be read", async () => {

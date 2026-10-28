@@ -89,6 +89,7 @@ export function DuePicker({
   const tz = useMemo(() => browserTimeZone(), [])
   const timeId = useId()
   const content = useRef<HTMLDivElement>(null)
+  const picksGrid = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [asking, setAsking] = useState<Asking | null>(null)
   // Why the series can't follow the last pick, said below the month (FR-17).
@@ -323,7 +324,7 @@ export function DuePicker({
         )}
         {/* Hidden, not gone, while the question asks: the month it shows and the focus come back with it. */}
         <div hidden={asking !== null}>
-          <div className="grid">
+          <div ref={picksGrid} className="grid">
             {picks.map((p) => (
               <Button
                 key={p.label}
@@ -384,7 +385,9 @@ export function DuePicker({
             <div className="mt-2 grid gap-1 border-t pt-2">
               {/* Enter in the field or a pick in its list (React passes the click on out of the list's portal) on the
                   time pending: the field passes nothing up for the value it has, so the row saves it, as a close
-                  would (FR-14). */}
+                  would (FR-14). Tab goes on from the time, the picker's last control, to its first, as the popover
+                  does from a time without its list open: while the list is, the popover leaves Tab to the page, and
+                  the focus would fall out of the picker (NFR-27). */}
               {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- listens to the time field inside, which takes the keyboard itself (NFR-27) */}
               <div
                 className="flex items-center gap-2 pl-2.5"
@@ -396,6 +399,10 @@ export function DuePicker({
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.nativeEvent.isComposing && !committed.current) leave()
+                  if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+                    e.preventDefault()
+                    picksGrid.current?.querySelector('button')?.focus()
+                  }
                 }}
                 onClick={(e) => {
                   if (e.target instanceof Element && e.target.closest('[role="option"]') && !committed.current) leave()
