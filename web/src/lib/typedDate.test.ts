@@ -124,6 +124,11 @@ describe('readDate in the order of the locale', () => {
     ['ug, the day before the month', ug24, '2026-28-10', '2026-10-28'],
     ['ug, four digits', ug24, '2810', '2026-10-28'],
     ['ug, eight digits', ug24, '20262810', '2026-10-28'],
+    ['de, full-width', de24, '２８．１０．２０２６', '2026-10-28'],
+    ['ar, its own digits, as it writes them', ar12, '٢٨\u200f/١٠\u200f/٢٠٢٦', '2026-10-28'],
+    ['ar, its own digits', ar12, '٢٨/١٠/٢٠٢٦', '2026-10-28'],
+    ['fa, its own digits', fa24, '۲۰۲۶/۱۰/۲۸', '2026-10-28'],
+    ['fa, the day in its own digits', fa24, '۲۸', '2026-10-28'],
   ])('%s', (_, p, text, want) => {
     expect(readDate(text, { prefs: p, base })).toBe(want)
   })

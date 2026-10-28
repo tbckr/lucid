@@ -1,4 +1,5 @@
 import { isFormTime } from './dates'
+import { latinDigits } from './digits'
 import { formatClock, type FormatPrefs } from './format'
 
 /** The example the error message gives: 9:40 as the field would show it (FR-09). */
@@ -30,8 +31,12 @@ function markers(prefs: FormatPrefs): [string, Half][] {
   return [...found].sort((a, b) => b[0].length - a[0].length)
 }
 
+/**
+ * Digits of every script and full-width forms as ASCII ones (`latinDigits`), lower case, one space for any run of
+ * white space.
+ */
 function squash(text: string): string {
-  return text.trim().replace(/\s+/g, ' ').toLowerCase()
+  return latinDigits(text).trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
 /** Cuts a marker off the front or the back of the text: what is left, and the half it names. */
@@ -78,7 +83,8 @@ function halfOf(hour: number, current: string): Half {
  * written with a leading zero (`09:40`, `0940`, `05`); 12 is noon, and 1 to 11
  * written without a leading zero keep the half of the day of `current` (the
  * field's value, or `''`); an empty field reads 1 to 6 as PM and 7 to 11 as AM.
- * The 24-hour clock reads them as typed.
+ * The 24-hour clock reads them as typed. Digits of any script and full-width
+ * forms are numbers too (`٩:٤٠`, `９：４０`).
  */
 export function readTime(text: string, o: { prefs: FormatPrefs; current: string }): string | null {
   const { rest, half } = splitMarker(squash(text), o.prefs)

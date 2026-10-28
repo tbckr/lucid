@@ -1,3 +1,4 @@
+import { latinDigits } from './digits'
 import { type FormatPrefs } from './format'
 
 type Part = 'day' | 'month' | 'year'
@@ -42,9 +43,12 @@ function layout(prefs: FormatPrefs): { places: Part[]; words: string[] } {
   return { places, words: words.sort((a, b) => b.length - a.length) }
 }
 
-/** Lower case, one space for any run of white space; the marks that keep right-to-left dates in order are dropped. */
+/**
+ * Digits of every script and full-width forms as ASCII ones (`latinDigits`), lower case, one space for any run of
+ * white space; the marks that keep right-to-left dates in order are dropped.
+ */
 function squash(text: string): string {
-  return text
+  return latinDigits(text)
     .replace(/[\u200e\u200f\u061c]/g, '')
     .trim()
     .replace(/\s+/g, ' ')
@@ -90,7 +94,8 @@ function split(text: string, places: Part[]): [Part, string][] | null {
 /**
  * Reads what a user typed into a date field as the forms' `"yyyy-MM-dd"`, or
  * `null` when it can't be read (FR-09). Numbers only, no words or relative
- * dates.
+ * dates; numbers in the digits of any script and in full-width forms too
+ * (`٢٨/١٠/٢٠٢٦`, `２８．１０．２０２６`).
  *
  * The parts come in the order of the user's locale (`28.10.2026` in de,
  * `10/28/2026` in en-US, `2026-10-28` in sv), separated by `.`, `/`, `-` or

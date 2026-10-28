@@ -28,6 +28,10 @@ describe('readTime in the 24-hour clock', () => {
     ['9 pm', '21:00'],
     ['0', '00:00'],
     ['23:59', '23:59'],
+    // Digits of other scripts and full-width forms are numbers too.
+    ['９：４０', '09:40'],
+    ['٩:٤٠', '09:40'],
+    ['１８４０', '18:40'],
   ])('%j reads as %s', (text, want) => {
     expect(readTime(text, { prefs: de24, current: '' })).toBe(want)
   })
