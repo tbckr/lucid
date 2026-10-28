@@ -176,9 +176,12 @@ floating and a `TZID` the backend can't resolve, which it reads in UTC.
 Every event of a series reports the series' zone, also an exception another
 client wrote in another zone.
 
-`endTimezone` is the IANA zone of `DTEND`, else that of `DTSTART`, with the
-same omissions as `timezone`; every event of a series reports the series'
-(FR-18).
+`endTimezone` is the IANA zone of `DTEND`, as its `TZID` names it, else, for
+an event with a `DURATION` or no end, that of `DTSTART`. It is omitted for an
+end that is a date, a date-time in UTC (`Z`) or floating, or has a `TZID` the
+backend can't resolve, whatever zone `DTSTART` is in. Every event of a series
+reports the series' zone for its end, also an exception another client gave
+an end in another zone (FR-17, FR-18).
 
 `first` is `true` on the occurrence that is the first one of its series
 that the server shows, whatever range was asked for: a range that starts
@@ -574,8 +577,12 @@ below). It is omitted for a date, a date-time in UTC (`Z`) or floating, and
 a `TZID` the backend can't resolve. A series reports its own zone, whatever
 zone another client gave its current occurrence.
 
-`dueTimezone` is the IANA zone of `DUE`, as its `TZID` names it, with the
-same omissions as `timezone` (FR-18).
+`dueTimezone` is the IANA zone of `DUE`, as its `TZID` names it, else, for a
+`due` that is `start + duration`, that of `DTSTART`. It is omitted for a due
+that is a date, a date-time in UTC (`Z`) or floating, or has a `TZID` the
+backend can't resolve, whatever zone `DTSTART` is in. A series reports the
+zone of its own `DUE`, whatever zone another client gave its current
+occurrence (FR-17, FR-18).
 
 `rrule`, `recurring`, `fixedDays`, `ruleUnsupported`, `next` and
 `recurrenceId` describe a recurring series (VTODO with `RRULE` or `RDATE`,

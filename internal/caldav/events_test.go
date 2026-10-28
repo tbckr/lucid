@@ -394,6 +394,116 @@ func TestListEventsOverrideZone(t *testing.T) {
 	}
 }
 
+// TestListEventsReportsEndZone checks that an event reports the zone of its
+// DTEND as endTimezone, DTSTART's where it has a DURATION or no end, and that
+// every event of a series, an exception another client wrote with an end in
+// another zone included, reports the series' (FR-17, FR-18).
+func TestListEventsReportsEndZone(t *testing.T) {
+	t.Parallel()
+	event := func(extra ...string) []string {
+		return append([]string{"BEGIN:VEVENT", "UID:1", "DTSTAMP:20261001T000000Z", "SUMMARY:Call"}, extra...)
+	}
+	for _, tt := range []struct {
+		name          string
+		lines         []string
+		want, wantEnd string
+		wantCount     int
+	}{
+		{
+			"an end in another zone",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=America/New_York:20261028T130000"), "END:VEVENT"),
+			"Europe/Berlin", "America/New_York", 1,
+		},
+		{
+			"an end in the start's zone",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=Europe/Berlin:20261028T180000"), "END:VEVENT"),
+			"Europe/Berlin", "Europe/Berlin", 1,
+		},
+		{
+			"a duration",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DURATION:PT8H"), "END:VEVENT"),
+			"Europe/Berlin", "Europe/Berlin", 1,
+		},
+		{
+			"neither an end nor a duration",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000"), "END:VEVENT"),
+			"Europe/Berlin", "Europe/Berlin", 1,
+		},
+		{
+			"an end in UTC",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND:20261028T170000Z"), "END:VEVENT"),
+			"Europe/Berlin", "", 1,
+		},
+		{
+			"a start in UTC and an end in a zone",
+			append(event("DTSTART:20261028T090000Z", "DTEND;TZID=Asia/Tokyo:20261028T200000"), "END:VEVENT"),
+			"", "Asia/Tokyo", 1,
+		},
+		{
+			"an end in a zone Lucid cannot resolve",
+			append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=Mars/Olympus:20261028T180000"), "END:VEVENT"),
+			"Europe/Berlin", "", 1,
+		},
+		{
+			"an all-day event",
+			append(event("DTSTART;VALUE=DATE:20261028", "DTEND;VALUE=DATE:20261029"), "END:VEVENT"),
+			"", "", 1,
+		},
+		{
+			"a series whose exception ends in another zone",
+			append(append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=America/New_York:20261028T130000",
+				"RRULE:FREQ=WEEKLY;COUNT=3", "END:VEVENT"),
+				"BEGIN:VEVENT", "UID:1", "DTSTAMP:20261001T000000Z", "SUMMARY:Call moved",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20261104T100000",
+				"DTSTART;TZID=Europe/Berlin:20261104T110000", "DTEND;TZID=Asia/Tokyo:20261105T020000"), "END:VEVENT"),
+			"Europe/Berlin", "America/New_York", 3,
+		},
+		{
+			"an exception of a series with a duration",
+			append(append(event("DTSTART;TZID=Europe/Berlin:20261028T100000", "DURATION:PT1H",
+				"RRULE:FREQ=WEEKLY;COUNT=3", "END:VEVENT"),
+				"BEGIN:VEVENT", "UID:1", "DTSTAMP:20261001T000000Z", "SUMMARY:Call moved",
+				"RECURRENCE-ID;TZID=Europe/Berlin:20261104T100000",
+				"DTSTART;TZID=Europe/Berlin:20261104T110000", "DTEND;TZID=Asia/Tokyo:20261105T020000"), "END:VEVENT"),
+			"Europe/Berlin", "Europe/Berlin", 3,
+		},
+		{
+			"an exception without a series",
+			append(event("RECURRENCE-ID;TZID=Europe/Berlin:20261104T100000",
+				"DTSTART;TZID=Europe/Berlin:20261104T110000", "DTEND;TZID=Asia/Tokyo:20261105T020000"), "END:VEVENT"),
+			"Europe/Berlin", "Asia/Tokyo", 1,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := calObject{path: "/user/calendars/c/x.ics", etag: `"1"`, cal: mustParse(t, ics(tt.lines...))}
+			got, err := expandObject(o, objRef{id: "id", calendarID: "cal"}, date(2026, 10, 1, 0, 0), date(2026, 12, 1, 0, 0))
+			mustNoErr(t, err)
+			if len(got) != tt.wantCount {
+				t.Fatalf("got %d events; want %d: %+v", len(got), tt.wantCount, got)
+			}
+			for _, ev := range got {
+				if ev.Timezone != tt.want || ev.EndTimezone != tt.wantEnd {
+					t.Errorf("%s: Timezone = %q, EndTimezone = %q; want %q, %q", ev.Key, ev.Timezone, ev.EndTimezone, tt.want, tt.wantEnd)
+				}
+			}
+		})
+	}
+}
+
+// TestEventAtReportsEndZone checks that the event an edit answers with, which
+// eventAt places, reports the end's zone as the list does (FR-18).
+func TestEventAtReportsEndZone(t *testing.T) {
+	t.Parallel()
+	cal := mustParse(t, ics("BEGIN:VEVENT", "UID:1", "DTSTAMP:20261001T000000Z", "SUMMARY:Call",
+		"DTSTART;TZID=Europe/Berlin:20261028T100000", "DTEND;TZID=America/New_York:20261028T130000", "END:VEVENT"))
+	ev, err := eventAt(calObject{path: "/c/x.ics", cal: cal}, objRef{id: "id", calendarID: "cal"}, cal.Children[0], nil)
+	mustNoErr(t, err)
+	if ev.Timezone != "Europe/Berlin" || ev.EndTimezone != "America/New_York" {
+		t.Errorf("Timezone = %q, EndTimezone = %q; want Europe/Berlin, America/New_York", ev.Timezone, ev.EndTimezone)
+	}
+}
+
 // TestListEventsModified checks that expandObject sets Modified for
 // occurrences an override visibly changes (start, duration, all-day, title,
 // location or description), and not for occurrences it only differs from

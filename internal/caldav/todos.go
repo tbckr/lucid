@@ -49,7 +49,9 @@ func (s *service) ListTodos(ctx context.Context, calendarID string) ([]domain.To
 // reports its current and next occurrence; any todo of the resource, c or one
 // of its overrides, with an ORGANIZER or an ATTENDEE makes it report
 // attendees (FR-16, FR-17). Its zone is that of its anchor, DTSTART, else
-// DUE, as an event's is that of its DTSTART: the zone a series recurs in.
+// DUE, as an event's is that of its DTSTART: the zone a series recurs in. Its
+// due zone is that of DUE, else, for a due that is a start plus a DURATION,
+// that of DTSTART, as an event's end zone is (FR-18).
 func todoFromObject(o calObject, ref objRef, c *ical.Component) domain.Todo {
 	desc, checklist := splitChecklist(text(c.Props, ical.PropDescription))
 	t := domain.Todo{
@@ -71,7 +73,7 @@ func todoFromObject(o calObject, ref objRef, c *ical.Component) domain.Todo {
 	}
 	if d, err := parseDateProp(c.Props.Get(ical.PropDue)); err == nil {
 		due := d.t.UTC()
-		t.Due, t.DueAllDay = &due, d.allDay
+		t.Due, t.DueAllDay, t.DueTimezone = &due, d.allDay, d.tzid
 		if startErr != nil {
 			t.Timezone = d.tzid
 		}
@@ -79,7 +81,7 @@ func todoFromObject(o calObject, ref objRef, c *ical.Component) domain.Todo {
 		// DUE and DURATION are exclusive (RFC 5545); report the end as due (FR-16).
 		if dur, err := parseDuration(p.Value); err == nil {
 			due := dur.addTo(start.t).UTC()
-			t.Due, t.DueAllDay = &due, start.allDay
+			t.Due, t.DueAllDay, t.DueTimezone = &due, start.allDay, start.tzid
 		}
 	}
 	t.Priority = todoPriority(c.Props)

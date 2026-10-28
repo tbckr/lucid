@@ -57,9 +57,12 @@ func (s *service) ListEvents(ctx context.Context, calendarID string, start, end 
 	return events, nil
 }
 
-// timing is the parsed start and duration of a VEVENT.
+// timing is the parsed start and duration of a VEVENT, and the form its end
+// is written in: DTEND's, else, for an event with a DURATION or neither,
+// DTSTART's (FR-18).
 type timing struct {
 	start dateValue
+	end   dateForm
 	dur   span
 }
 
@@ -68,13 +71,14 @@ func parseTiming(c *ical.Component) (timing, error) {
 	if err != nil {
 		return timing{}, fmt.Errorf("DTSTART: %w", err)
 	}
-	tm := timing{start: st}
+	tm := timing{start: st, end: st.form()}
 	switch {
 	case c.Props.Get(ical.PropDateTimeEnd) != nil:
 		en, err := parseDateProp(c.Props.Get(ical.PropDateTimeEnd))
 		if err != nil {
 			return timing{}, fmt.Errorf("DTEND: %w", err)
 		}
+		tm.end = en.form()
 		if st.allDay && en.allDay {
 			tm.dur.days = int(en.t.Sub(st.t).Round(24*time.Hour) / (24 * time.Hour))
 		} else {
@@ -131,6 +135,7 @@ func at(ev domain.Event, tm timing, occStart time.Time) domain.Event {
 	ev.End = tm.dur.addTo(occStart).UTC()
 	ev.AllDay = tm.start.allDay
 	ev.Timezone = tm.start.tzid
+	ev.EndTimezone = tm.end.tzid
 	return ev
 }
 
@@ -234,10 +239,10 @@ func expandObject(o calObject, ref objRef, from, to time.Time) ([]domain.Event, 
 		ev.Modified = overrideModified(c, otm, rid, master, tm)
 		ev.Override = true
 		ev = asOccurrence(at(ev, otm, otm.start.t), rid)
-		// The series' zone, which its rule recurs in and a move of it is
-		// judged in, also for an exception another client wrote in another
+		// The series' zones, which its rule recurs in and a move of it is
+		// judged in, also for an exception another client wrote in others
 		// (#6, FR-17, FR-18).
-		ev.Timezone = tm.start.tzid
+		ev.Timezone, ev.EndTimezone = tm.start.tzid, tm.end.tzid
 		if overlaps(ev, from, to) {
 			out = append(out, ev)
 		}
@@ -786,12 +791,12 @@ func shownOccurrence(cal *ical.Calendar, master *ical.Component, tm timing, rid 
 			return ov, otm
 		}
 	}
-	return ov, timing{start: ruleEvent(rruleString(master), tm.start, rid), dur: tm.dur}
+	return ov, timing{start: ruleEvent(rruleString(master), tm.start, rid), end: tm.end, dur: tm.dur}
 }
 
 // instanceTiming returns the timing of the series tm at its occurrence rid.
 func instanceTiming(tm timing, rid time.Time) timing {
-	return timing{start: dateValue{t: rid.In(tm.start.loc()), allDay: tm.start.allDay, tzid: tm.start.tzid}, dur: tm.dur}
+	return timing{start: dateValue{t: rid.In(tm.start.loc()), allDay: tm.start.allDay, tzid: tm.start.tzid}, end: tm.end, dur: tm.dur}
 }
 
 // moveSeries applies an "all events" edit of the occurrence

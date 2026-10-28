@@ -4253,6 +4253,80 @@ func TestTodoReportsTimezone(t *testing.T) {
 	}
 }
 
+// A task reports the zone of its DUE as dueTimezone, next to the zone of its
+// anchor: DUE's own, also where DTSTART is in another, and DTSTART's where the
+// due is a start plus a DURATION. A series reports its own (FR-16, FR-17,
+// FR-18).
+func TestTodoReportsDueZone(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		master    []string
+		overrides [][]string
+		want      string
+		wantDue   string
+	}{
+		{
+			"a due in another zone than the start",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=America/New_York:20261028T130000"},
+			nil, "Europe/Berlin", "America/New_York",
+		},
+		{
+			"a due in the start's zone",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=Europe/Berlin:20261028T180000"},
+			nil, "Europe/Berlin", "Europe/Berlin",
+		},
+		{"a due alone", []string{"DUE;TZID=Asia/Tokyo:20261028T100000"}, nil, "Asia/Tokyo", "Asia/Tokyo"},
+		{"a prefixed zone", []string{"DUE;TZID=/mozilla.org/20050126_1/Asia/Tokyo:20261028T100000"}, nil, "Asia/Tokyo", "Asia/Tokyo"},
+		{"a due in UTC", []string{"DUE:20261028T100000Z"}, nil, "", ""},
+		{
+			"a start in a zone and a due in UTC",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE:20261028T170000Z"},
+			nil, "Europe/Berlin", "",
+		},
+		{
+			"a start in UTC and a due in a zone",
+			[]string{"DTSTART:20261028T090000Z", "DUE;TZID=America/New_York:20261028T130000"},
+			nil, "", "America/New_York",
+		},
+		{"a floating due", []string{"DUE:20261028T100000"}, nil, "", ""},
+		{"a due date", []string{"DUE;VALUE=DATE:20261028"}, nil, "", ""},
+		{"a due in an unknown zone", []string{"DUE;TZID=Mars/Olympus:20261028T100000"}, nil, "", ""},
+		{
+			"a start and a duration",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DURATION:PT8H"},
+			nil, "Europe/Berlin", "Europe/Berlin",
+		},
+		{"a start only", []string{"DTSTART;TZID=Europe/Berlin:20261028T100000"}, nil, "Europe/Berlin", ""},
+		{"no date", nil, nil, "", ""},
+		{
+			"a series",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=America/New_York:20261028T130000", "RRULE:FREQ=WEEKLY"},
+			nil, "Europe/Berlin", "America/New_York",
+		},
+		{
+			// The series is read from its master, whatever another app put
+			// on its current repeat.
+			"a series whose current repeat another app gave another due zone",
+			[]string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=America/New_York:20261028T130000", "RRULE:FREQ=WEEKLY"},
+			[][]string{{
+				"RECURRENCE-ID;TZID=Europe/Berlin:20261028T100000",
+				"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=Asia/Tokyo:20261029T020000",
+			}},
+			"Europe/Berlin", "America/New_York",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := seedSeries(t, e, tc.master, tc.overrides...)
+			if got := listedTodo(t, e, id); got.Timezone != tc.want || got.DueTimezone != tc.wantDue {
+				t.Errorf("Timezone = %q, DueTimezone = %q; want %q, %q (%+v)", got.Timezone, got.DueTimezone, tc.want, tc.wantDue, got)
+			}
+		})
+	}
+}
+
 // A repeat reports whether its RECURRENCE-ID lies off the rule, as an
 // override another app left there (A-10): no series can go on from it, so a
 // client offers no "this and following" there. The rule's repeats and the

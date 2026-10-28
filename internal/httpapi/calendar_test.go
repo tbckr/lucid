@@ -825,6 +825,32 @@ func TestTodoOriginFieldsAndDetachedCopy(t *testing.T) {
 	}
 }
 
+// An event reports the zone of its end, and a task the zone of its due, next
+// to the zone of its start; both are left out where there is none (FR-18).
+func TestEndAndDueTimezoneInJSON(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil)
+	c := h.login(t)
+	h.svc.events = []domain.Event{
+		{ID: "e1", Key: "e1", Title: "Zoned", Timezone: "Europe/Berlin", EndTimezone: "America/New_York"},
+		{ID: "e2", Key: "e2", Title: "Plain"},
+	}
+	h.svc.todos = []domain.Todo{
+		{ID: "t1", Title: "Zoned", Timezone: "Europe/Berlin", DueTimezone: "Asia/Tokyo"},
+		{ID: "t2", Title: "Plain"},
+	}
+	w := h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars/c1/events?start=2025-01-01T00:00:00Z&end=2025-02-01T00:00:00Z"})
+	decode(t, w, http.StatusOK, nil)
+	if body := w.Body.String(); strings.Count(body, `"endTimezone"`) != 1 || !strings.Contains(body, `"endTimezone":"America/New_York"`) {
+		t.Errorf("events: want the end zone of the zoned event only: %s", body)
+	}
+	w = h.do(t, c, req{method: http.MethodGet, path: "/api/v1/calendars/c1/todos"})
+	decode(t, w, http.StatusOK, nil)
+	if body := w.Body.String(); strings.Count(body, `"dueTimezone"`) != 1 || !strings.Contains(body, `"dueTimezone":"Asia/Tokyo"`) {
+		t.Errorf("todos: want the due zone of the zoned task only: %s", body)
+	}
+}
+
 // A task reports the zone its series recurs in, and a repeat whether it lies
 // off its series' rule; both are left out where they do not apply (FR-17).
 func TestTodoTimezoneAndOffRuleInJSON(t *testing.T) {
