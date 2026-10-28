@@ -190,7 +190,6 @@ export function TimeField({
               input={inputProps.ref}
               clearLabel={clearLabel}
               onClear={() => {
-                inputProps.ref.current?.focus()
                 field.commit('pick', '')
               }}
               onOpen={() => {

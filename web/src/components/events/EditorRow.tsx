@@ -1,5 +1,5 @@
 import { ChevronDownIcon, XIcon } from 'lucide-react'
-import { type ReactNode, type RefObject } from 'react'
+import { useRef, type ReactNode, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 
 // Optional text fields read as plain text until hovered or focused, like the details popover.
@@ -37,6 +37,10 @@ export function FieldSizer({ texts, className }: { texts: string[]; className: s
  * press keeps the focus where it is, and neither acts while a prop or a
  * fieldset around disables the field (FR-17). The field's anchor is
  * `group/field`.
+ *
+ * The ✕ removes, then hands the focus to the text, which says the value is
+ * gone, unless a touch or a pen pressed it: a focus from a tap raises the
+ * on-screen keyboard, which a removal doesn't need.
  */
 export function FieldEnd({
   input,
@@ -45,16 +49,18 @@ export function FieldEnd({
   onOpen,
   tint,
 }: {
-  /** The field's text, checked for `:disabled`. */
+  /** The field's text, checked for `:disabled` and focused after a removal. */
   input: RefObject<HTMLInputElement | null>
   /** Name of the ✕, e.g. "Remove due date"; without it the end is the chevron. */
   clearLabel?: string | undefined
-  /** Removes the value; the ✕'s click. */
+  /** Removes the value; the ✕'s click, before the focus goes to the text. */
   onClear: () => void
   /** Opens the popup; the chevron's click. */
   onOpen: () => void
   tint?: boolean
 }) {
+  // How the ✕ was pressed, for its click: none for a click assistive technology sends without a press.
+  const pressedBy = useRef<string | null>(null)
   if (clearLabel !== undefined) {
     return (
       <button
@@ -68,11 +74,17 @@ export function FieldEnd({
             ? 'invisible w-7 text-current group-focus-within/field:visible group-hover/field:visible pointer-coarse:visible'
             : 'w-8 text-muted-foreground',
         )}
+        onPointerDown={(e) => {
+          pressedBy.current = e.pointerType
+        }}
         onMouseDown={(e) => {
           e.preventDefault()
         }}
         onClick={() => {
+          const by = pressedBy.current
+          pressedBy.current = null
           if (input.current?.matches(':disabled')) return
+          if (by !== 'touch' && by !== 'pen') input.current?.focus()
           onClear()
         }}
       >

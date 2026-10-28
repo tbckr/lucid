@@ -149,7 +149,7 @@ export function DateField({
     inputProps.onKeyDown?.(e)
   }
 
-  // A pick from the month, or the ✕: the focus goes back to the text, which shows what was taken.
+  // A pick from the month: the focus goes back to the text, which shows what was taken.
   const pick = (next: string) => {
     input.current?.focus()
     field.commit('pick', next)
@@ -209,7 +209,7 @@ export function DateField({
               input={input}
               clearLabel={onClear?.label}
               onClear={() => {
-                pick('')
+                field.commit('pick', '')
               }}
               onOpen={() => {
                 input.current?.focus()

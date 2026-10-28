@@ -119,6 +119,16 @@ describe('TimeField (FR-09)', () => {
     expect(screen.queryByRole('listbox')).toBeNull()
   })
 
+  // A focus from a tap would raise the on-screen keyboard, which the removal doesn't need.
+  it('leaves the focus where it is after a tap on its ✕', () => {
+    const { onChange, input } = setup({ clearLabel: 'Remove start time' })
+    const x = screen.getByRole('button', { name: 'Remove start time' })
+    fireEvent.pointerDown(x, { pointerType: 'touch' })
+    fireEvent.click(x)
+    expect(onChange).toHaveBeenCalledWith('', 'pick')
+    expect(input).not.toHaveFocus()
+  })
+
   it('drops a typed time with its ✕', async () => {
     const { user, onChange, input } = setup({ clearLabel: 'Remove start time' })
     await user.click(input)

@@ -260,6 +260,24 @@ describe('DateField (FR-09)', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  // A focus from a tap would raise the on-screen keyboard, which the removal doesn't need.
+  it('leaves the focus where it is after a tap on its ✕', () => {
+    const clear = vi.fn()
+    const { input } = setup({ onClear: { label: 'Remove start date', clear } })
+    const x = screen.getByRole('button', { name: 'Remove start date' })
+    fireEvent.pointerDown(x, { pointerType: 'touch' })
+    fireEvent.click(x)
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(input).not.toHaveFocus()
+  })
+
+  // Assistive technology clicks without a press first: the focus goes to the text, which says the date is gone.
+  it('focuses the text after a click on its ✕ without a press', () => {
+    const { input } = setup({ onClear: { label: 'Remove start date', clear: vi.fn() } })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove start date' }))
+    expect(input).toHaveFocus()
+  })
+
   it('drops a typed date with its ✕', async () => {
     const clear = vi.fn()
     const { user, onChange, input } = setup({ onClear: { label: 'Remove start date', clear } })
