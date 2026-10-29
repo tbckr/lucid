@@ -2991,6 +2991,99 @@ func TestUpdateSeriesZoneChangeWritesUntilInUTC(t *testing.T) {
 	}
 }
 
+// TestUpdateSeriesZoneChangeKeepsDuration checks that a series with a
+// DURATION instead of a DTEND keeps the length of its events when its zone
+// changes (FR-17, FR-18): moved from New York into Berlin, it keeps its
+// DURATION, as DTEND would follow DTSTART into the new zone anyway; with an
+// end zone of its own, Tokyo, it gets a DTEND there, at its exact distance
+// from DTSTART, since RFC 5545 allows only one of the two. Its events are an
+// hour and a half long either way, in Berlin's winter and summer time.
+func TestUpdateSeriesZoneChangeKeepsDuration(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		end        *string
+		has, lacks []string
+	}{
+		{"duration kept", nil, []string{"DTSTART;TZID=Europe/Berlin:20261103T180000", "DURATION:PT1H30M"}, []string{"DTEND"}},
+		{
+			"end zone of its own", ptr("Asia/Tokyo"),
+			[]string{"DTSTART;TZID=Europe/Berlin:20261103T180000", "DTEND;TZID=Asia/Tokyo:20261104T033000"},
+			[]string{"DURATION"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Class",
+				"DTSTART;TZID=America/New_York:20261103T180000", "DURATION:PT1H30M", "RRULE:FREQ=WEEKLY",
+				"END:VEVENT")
+			// 18:00 in New York on winter time, from 11-01.
+			ev := listedAt(t, e, "work", date(2026, 11, 10, 23, 0), date(2026, 11, 10, 0, 0), date(2026, 11, 11, 0, 0))
+
+			in := seriesUpdate(ev, "Class", "", date(2026, 11, 10, 17, 0), date(2026, 11, 10, 18, 30))
+			in.Timezone, in.EndTimezone = ptr("Europe/Berlin"), c.end
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+
+			checkStored(t, "series", stored(t, e, "work", "series.ics"), c.has, c.lacks)
+			class := func(start time.Time) occ {
+				return occ{title: "Class", start: start, end: start.Add(90 * time.Minute), rid: ptr(start)}
+			}
+			checkOccurrences(t, listed(t, e, "work", date(2026, 11, 9, 0, 0), date(2026, 11, 18, 0, 0)), []occ{
+				class(date(2026, 11, 10, 17, 0)), class(date(2026, 11, 17, 17, 0)),
+			})
+			// 18:00 in Berlin on summer time.
+			checkOccurrences(t, listed(t, e, "work", date(2027, 4, 5, 0, 0), date(2027, 4, 7, 0, 0)), []occ{
+				class(date(2027, 4, 6, 16, 0)),
+			})
+		})
+	}
+}
+
+// TestUpdateSeriesZoneChangeAcrossGap checks that a zone change moves an
+// event of the series that sits on a wall clock the old zone skips with the
+// series, read on that wall clock, and puts one on a wall clock the new
+// zone skips where RFC 5545 reads it, an hour later (#8, FR-17, FR-18): the
+// New York series on Sundays at 02:30 from 03-07, whose event of 03-14, the
+// night New York changes to summer time, shows at 03:30 and is an exception
+// at 10:00, moved into Berlin at 02:30, keeps that exception with its event,
+// now at 02:30 Berlin time on 03-14, and has its event of 03-28, the night
+// Berlin changes, at 03:30 there. Read at the instant it shows, 03:30 New
+// York time, the exception's RECURRENCE-ID would name no event in Berlin.
+func TestUpdateSeriesZoneChangeAcrossGap(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	id := e.put(t, "work", "series.ics",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Night",
+		"DTSTART;TZID=America/New_York:20270307T023000", "DTEND;TZID=America/New_York:20270307T033000",
+		"RRULE:FREQ=WEEKLY;COUNT=4", "END:VEVENT",
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Special",
+		"RECURRENCE-ID;TZID=America/New_York:20270314T023000",
+		"DTSTART;TZID=America/New_York:20270314T100000", "DTEND;TZID=America/New_York:20270314T110000",
+		"END:VEVENT")
+	ev := listedAt(t, e, "work", date(2027, 3, 7, 7, 30), date(2027, 3, 7, 0, 0), date(2027, 3, 8, 0, 0))
+
+	in := seriesUpdate(ev, "Night", "", date(2027, 3, 7, 1, 30), date(2027, 3, 7, 2, 30))
+	in.Timezone = ptr("Europe/Berlin")
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), []string{
+		"DTSTART;TZID=Europe/Berlin:20270307T023000", "RECURRENCE-ID;TZID=Europe/Berlin:20270314T023000",
+		// The exception keeps its own time.
+		"DTSTART;TZID=America/New_York:20270314T100000",
+	}, []string{"RECURRENCE-ID;TZID=America/New_York"})
+	checkOccurrences(t, listed(t, e, "work", date(2027, 3, 1, 0, 0), date(2027, 4, 1, 0, 0)), []occ{
+		{title: "Night", start: date(2027, 3, 7, 1, 30), end: date(2027, 3, 7, 2, 30), rid: ptr(date(2027, 3, 7, 1, 30))},
+		{title: "Special", start: date(2027, 3, 14, 14, 0), end: date(2027, 3, 14, 15, 0), rid: ptr(date(2027, 3, 14, 1, 30))},
+		{title: "Night", start: date(2027, 3, 21, 1, 30), end: date(2027, 3, 21, 2, 30), rid: ptr(date(2027, 3, 21, 1, 30))},
+		// The night Berlin skips 02:00 to 03:00: at 03:30 summer time, an hour long as the others.
+		{title: "Night", start: date(2027, 3, 28, 1, 30), end: date(2027, 3, 28, 2, 30), rid: ptr(date(2027, 3, 28, 1, 30))},
+	})
+}
+
 // TestUpdateSeriesEndZone checks that "all events" with an end zone alone
 // rewrites DTEND in it, at its exact distance from DTSTART, and leaves
 // DTSTART in its zone (FR-17, FR-18).

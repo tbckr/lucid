@@ -193,8 +193,10 @@ func outlookTimezone(tzid string) []string {
 }
 
 // TestPruneVTimezones checks that only the VTIMEZONEs a TZID parameter
-// refers to stay, also one of a VALARM's TRIGGER, and one whose TZID has
-// commas, escaped as TEXT or not, as Outlook writes them (FR-18).
+// refers to stay, also one of a VALARM's TRIGGER, one whose TZID has
+// commas, escaped as TEXT or not, as Outlook writes them, and one an
+// override's RECURRENCE-ID alone still names, such as the zone a series
+// was in before a write it kept in place (FR-18).
 func TestPruneVTimezones(t *testing.T) {
 	t.Parallel()
 	event := func(lines ...string) []string {
@@ -219,6 +221,14 @@ func TestPruneVTimezones(t *testing.T) {
 			name:  "alarm only",
 			lines: slices.Concat(berlinTimezone, londonTimezone, event(slices.Concat([]string{"DTSTART:20261028T090000Z"}, alarm)...)),
 			want:  []string{"Europe/Berlin"},
+		},
+		{
+			// The series is in Berlin now; its exception still names its event in London.
+			name: "override in the old zone",
+			lines: slices.Concat(berlinTimezone, londonTimezone, tokyoTimezone,
+				event("DTSTART;TZID=Europe/Berlin:20261028T100000", "RRULE:FREQ=WEEKLY"),
+				event("RECURRENCE-ID;TZID=Europe/London:20261104T090000", "DTSTART:20261104T120000Z")),
+			want: []string{"Europe/Berlin", "Europe/London"},
 		},
 		{
 			name:  "commas unescaped",
