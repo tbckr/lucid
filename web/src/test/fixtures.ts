@@ -20,6 +20,7 @@ export function apiEvent(p: Partial<ApiEvent> = {}): ApiEvent {
     end: '2026-09-25T09:00:00Z',
     allDay: false,
     timezone: 'Europe/Berlin',
+    endTimezone: 'Europe/Berlin',
     rrule: '',
     recurring: false,
     modified: false,

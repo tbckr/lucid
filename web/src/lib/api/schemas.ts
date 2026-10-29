@@ -59,6 +59,8 @@ export const eventSchema = z
     end: isoDateTime,
     allDay: z.boolean(),
     timezone: z.string().optional().default(''),
+    // FR-18: the IANA zone of DTEND, else of DTSTART; left out for an end that is a date, UTC or floating time.
+    endTimezone: z.string().optional().default(''),
     rrule: z.string().optional().default(''),
     recurring: z.boolean(),
     recurrenceId: isoDateTime.nullish(),
@@ -152,6 +154,8 @@ export const todoSchema = z.object({
   recurrenceId: isoDateTime.nullish(),
   // FR-17: the IANA zone of the todo's anchor, which a series recurs in; left out for a date, UTC or floating time.
   timezone: z.string().nullish(),
+  // FR-18: the IANA zone of the todo's DUE, else of DTSTART; left out for a due that is a date, UTC or floating time.
+  dueTimezone: z.string().nullish(),
   // FR-17: true if the series or any override has an ORGANIZER or ATTENDEE, which the server refuses to split or
   // detach from.
   hasAttendees: z.boolean().optional().default(false),
@@ -267,7 +271,10 @@ export interface EventInput {
   start: string
   end: string
   allDay: boolean
-  timezone: string
+  /** IANA zone of DTSTART: absent keeps the stored zone, "" is UTC (FR-18). */
+  timezone?: string
+  /** IANA zone of DTEND, sent like `timezone`: absent follows a `timezone` that is sent, else keeps it (FR-18). */
+  endTimezone?: string
   rrule: string
   /** RecurrenceID of the edited occurrence; only for recurring series. */
   instanceStart?: string
@@ -285,7 +292,10 @@ export interface OccurrenceInput {
   start: string
   end: string
   allDay: boolean
-  timezone: string
+  /** IANA zone of DTSTART: absent keeps the stored zone, "" is UTC (FR-18). */
+  timezone?: string
+  /** IANA zone of DTEND, sent like `timezone`: absent follows a `timezone` that is sent, else keeps it (FR-18). */
+  endTimezone?: string
 }
 
 /** Payload for POST/PUT of todos (domain.TodoInput). */
@@ -301,8 +311,13 @@ export interface TodoInput {
   status: TodoStatus
   /** RFC 5545 RRULE; absent keeps the stored rule, "" removes it (FR-17). */
   rrule?: string
-  /** IANA zone timed start/due recur in; without it, a series uses UTC. */
+  /**
+   * IANA zone of the anchor, DTSTART, else DUE, which a series recurs in: absent keeps the stored zone, "" is UTC
+   * (FR-18).
+   */
   timezone?: string
+  /** IANA zone of DUE, sent like `timezone`: absent follows a `timezone` that is sent, else keeps it (FR-18). */
+  dueTimezone?: string
 }
 
 /** A list item that failed validation, rendered as "Corrupted" placeholder. */

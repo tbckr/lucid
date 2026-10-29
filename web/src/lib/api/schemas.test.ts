@@ -33,6 +33,13 @@ describe('schemas', () => {
     expect(eventSchema.parse(apiEvent({ modified: true })).modified).toBe(true)
   })
 
+  // FR-18: the zone of DTEND, "" where the server leaves it out.
+  it('parses endTimezone, empty when left out', () => {
+    const { endTimezone: _e, ...minimal } = apiEvent()
+    expect(eventSchema.parse(minimal).endTimezone).toBe('')
+    expect(eventSchema.parse(apiEvent({ endTimezone: 'Asia/Tokyo' })).endTimezone).toBe('Asia/Tokyo')
+  })
+
   // #11: an event an override describes keeps its place when the series' repeat changes.
   it('parses override, false when left out', () => {
     expect(eventSchema.parse(apiEvent()).override).toBe(false)
@@ -153,6 +160,13 @@ describe('schemas', () => {
       'Europe/Berlin',
     ])
     expect(todoSchema.safeParse({ ...base, recurrenceId: 'tomorrow' }).success).toBe(false)
+  })
+
+  // FR-18: the zone of a task's DUE, left out where it has none.
+  it('parses dueTimezone, absent when left out', () => {
+    const base = { id: 't', calendarId: 'c', uid: 'u', etag: 'e', title: 'x', priority: 0, status: 'NEEDS-ACTION' }
+    expect(todoSchema.parse(base).dueTimezone).toBeUndefined()
+    expect(todoSchema.parse({ ...base, dueTimezone: 'America/New_York' }).dueTimezone).toBe('America/New_York')
   })
 
   it('updatedTodoSchema keeps the detached copy of a detach, todoSchema strips it', () => {

@@ -38,6 +38,7 @@ import {
   useUpdateFollowing,
   useUpdateOccurrence,
   useUpdateTodo,
+  useZonesInUse,
   type MoveVars,
 } from './queries'
 
@@ -4015,5 +4016,62 @@ describe('useCorruptedItems', () => {
       queryClient.setQueryData(queryKeys.calendars, [calendar()])
     })
     expect(result.current).toBe(first)
+  })
+})
+
+describe('useZonesInUse', () => {
+  function setup(browserZone: string, queryClient = new QueryClient()) {
+    const hook = renderHook(() => useZonesInUse(browserZone), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    })
+    return { queryClient, ...hook }
+  }
+
+  const noCorrupted: CorruptedItem[] = []
+
+  it('is none while nothing is loaded', () => {
+    expect(setup('Europe/Berlin').result.current).toEqual([])
+  })
+
+  it('collects the zones of the loaded events and tasks, both ends of each, other than the browser zone, by city', () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData<EventList>(queryKeys.events('c1', 'a', 'b'), {
+      events: [
+        apiEvent({ timezone: 'Europe/Berlin', endTimezone: 'Asia/Tokyo' }),
+        apiEvent({ timezone: '', endTimezone: '' }),
+        apiEvent({ timezone: 'America/New_York', endTimezone: 'US/Eastern' }),
+      ],
+      corrupted: noCorrupted,
+    })
+    queryClient.setQueryData<TodoList>(queryKeys.todos('c1'), {
+      todos: [
+        todo({ timezone: 'Europe/Berlin', dueTimezone: 'Europe/Lisbon' }),
+        todo({ timezone: null, dueTimezone: undefined }),
+        todo({ timezone: 'Asia/Calcutta' }),
+      ],
+      corrupted: noCorrupted,
+    })
+    // A list of another shape under the task key, the occurrences, carries no zones.
+    queryClient.setQueryData(queryKeys.todoOccurrences('c1', 'a', 'b'), {
+      occurrences: [occurrence()],
+      corrupted: noCorrupted,
+    })
+    const { result } = setup('Europe/Berlin', queryClient)
+    expect(result.current).toEqual(['Asia/Calcutta', 'Europe/Lisbon', 'America/New_York', 'Asia/Tokyo'])
+  })
+
+  it('reads the cache once per mount', () => {
+    const { queryClient, result, rerender } = setup('Europe/Berlin')
+    expect(result.current).toEqual([])
+    act(() => {
+      queryClient.setQueryData<EventList>(queryKeys.events('c1', 'a', 'b'), {
+        events: [apiEvent({ timezone: 'Asia/Tokyo', endTimezone: 'Asia/Tokyo' })],
+        corrupted: noCorrupted,
+      })
+    })
+    rerender()
+    expect(result.current).toEqual([])
   })
 })

@@ -9,7 +9,7 @@ import {
   type QueryCache,
   type QueryClient,
 } from '@tanstack/react-query'
-import { createElement, useCallback, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
@@ -47,6 +47,7 @@ import {
   type Scope,
 } from '@/lib/scope'
 import { datesChanged, isDone, isSeriesCompletion, ruleChanged } from '@/lib/tasks'
+import { zonesInUse } from '@/lib/zones'
 import { useSettings } from '@/stores/settings'
 import { useUi } from '@/stores/ui'
 
@@ -355,6 +356,26 @@ export function useCorruptedItems(): CorruptedItem[] {
   const subscribe = useCallback((onChange: () => void) => cache.subscribe(onChange), [cache])
   const snapshot = useCallback(() => corruptedSnapshot(cache), [cache])
   return useSyncExternalStore(subscribe, snapshot, snapshot)
+}
+
+/**
+ * The zones other than `browserZone` that the events and tasks in the query cache are in (FR-18), for the zone
+ * field's "In your calendars" list: both ends of each, by city, at most eight. Read once per mount, as the list
+ * should not reorder while an editor is open.
+ */
+export function useZonesInUse(browserZone: string): string[] {
+  const qc = useQueryClient()
+  const [zones] = useState(() => {
+    const found: string[] = []
+    for (const [, data] of qc.getQueriesData<EventList>({ queryKey: queryKeys.eventsAll })) {
+      for (const e of data?.events ?? []) found.push(e.timezone, e.endTimezone)
+    }
+    for (const [, data] of qc.getQueriesData<TodoList>({ queryKey: queryKeys.todosAll })) {
+      for (const t of data?.todos ?? []) found.push(t.timezone ?? '', t.dueTimezone ?? '')
+    }
+    return zonesInUse(found, browserZone)
+  })
+  return zones
 }
 
 /* ------------------------------------------------------------------------ */

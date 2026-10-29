@@ -225,6 +225,9 @@ export function previewOf(
     return toCalEvent({
       ...input,
       ...draft,
+      // The draft is drawn, never written: no zone of its own (FR-18).
+      timezone: '',
+      endTimezone: '',
       title,
       key: DRAFT_ID,
       recurring: false,

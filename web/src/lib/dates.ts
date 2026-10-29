@@ -236,7 +236,7 @@ const wallFormats = new Map<string, Intl.DateTimeFormat>()
  * own zone: a wall clock that zone skips comes out an hour off (London's
  * 02:30 at 01:30Z on 2026-03-29 formats as 03:30 in a Berlin browser).
  */
-function wallOf(t: number, timeZone: string): number {
+export function wallOf(t: number, timeZone: string): number {
   let f = wallFormats.get(timeZone)
   if (!f) {
     f = new Intl.DateTimeFormat('en-US', {
