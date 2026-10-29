@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { type TodoInput } from '@/lib/api/schemas'
+import { type Todo, type TodoInput } from '@/lib/api/schemas'
+import { PICKED_UTC } from '@/lib/zones'
 import { todo } from '@/test/fixtures'
 import {
   buildTaskFormSchema,
+  dueFields,
   editedFields,
   formToTodoInput,
   formWithDate,
   formWithTime,
   seriesEditInput,
-  shownTaskRule,
   taskFormSchema,
   taskToForm,
+  taskZonesChanged,
   withDue,
+  withTaskStartZone,
 } from './taskForm'
 
 const TZ = 'Europe/Berlin'
@@ -157,7 +160,7 @@ describe('taskForm', () => {
       ],
     ])('refuses an unreadable %s given a new repeat as such, without writing the rule', (_, original, typed, want) => {
       const x = { ...taskToForm(original, TZ), recurrence: 'daily' as const, ...typed }
-      expect(issues(buildTaskFormSchema({ original, timeZone: TZ }), x)).toEqual([want])
+      expect(issues(buildTaskFormSchema({ original }), x)).toEqual([want])
     })
   })
 
@@ -230,17 +233,30 @@ describe('taskForm', () => {
       })
     })
 
-    // FR-17: a series given a time writes it in the zone of the write, so the date picker names it, as the editor does.
-    it.each([
-      ['a new time', { date: '2026-09-25', time: '09:00' }],
-      ['a new day', { date: '2026-09-26', time: '' }],
-      ['no due date', { date: '', time: '' }],
-    ])('names the zone its times are in, for %s', (_, due) => {
-      expect(withDue(todo({ due: '2026-09-25T00:00:00Z', dueAllDay: true }), due, 'Asia/Tokyo')).toMatchObject({
-        timezone: 'Asia/Tokyo',
+    // FR-17, FR-18: a series given a time takes it in the zone of the write, so the date picker names the browser's
+    // where a series without a time gets one, as the editor does; any other change keeps the zones the task has.
+    describe('zone', () => {
+      const allDay = todo({ due: '2026-09-25T00:00:00Z', dueAllDay: true, rrule: 'FREQ=WEEKLY', recurring: true })
+      const spanning = { ...allDay, start: '2026-09-24T00:00:00Z', startAllDay: true }
+
+      it('names the zone a series without a time is given one in', () => {
+        expect(withDue(allDay, { date: '2026-09-25', time: '09:00' }, 'Asia/Tokyo')).toMatchObject({ timezone: 'Asia/Tokyo' })
+        expect(withDue(spanning, { date: '2026-09-26', time: '09:00' }, 'Asia/Tokyo')).toMatchObject({ timezone: 'Asia/Tokyo' })
+        expect(withDue(todo({ rrule: 'FREQ=WEEKLY', recurring: true }), { date: '2026-09-25', time: '09:00' }, 'Asia/Tokyo')).toMatchObject({
+          timezone: 'Asia/Tokyo',
+        })
       })
-      const spanning = todo({ start: '2026-09-24T00:00:00Z', startAllDay: true, due: '2026-09-25T00:00:00Z', dueAllDay: true })
-      expect(withDue(spanning, due, 'Asia/Tokyo')).toMatchObject({ timezone: 'Asia/Tokyo' })
+
+      it.each([
+        ['a series given a new day', allDay, { date: '2026-09-26', time: '' }],
+        ['a series given no due date', spanning, { date: '', time: '' }],
+        ['a series with a time', { ...allDay, due: '2026-09-25T07:00:00Z', dueAllDay: false }, { date: '2026-09-25', time: '10:00' }],
+        ['a single task given a time', todo({ due: '2026-09-25T00:00:00Z', dueAllDay: true }), { date: '2026-09-25', time: '09:00' }],
+      ])('names none for %s', (_, t, due) => {
+        const input = withDue(t, due, 'Asia/Tokyo')
+        expect(input).not.toHaveProperty('timezone')
+        expect(input).not.toHaveProperty('dueTimezone')
+      })
     })
 
     it('moves a start after the new due date back to it', () => {
@@ -291,10 +307,16 @@ describe('taskForm', () => {
       expect(taskToForm(single, TZ)).toMatchObject({ recurrence: 'none', customRule: '' })
     })
 
-    it('sends a preset with the time zone it repeats in', () => {
+    // FR-18: a timed series needs a zone to keep its time across summer time; a date has none.
+    it('sends a preset with the time zone a timed task repeats in, and none for dates', () => {
       const v = { ...taskToForm(single, TZ), recurrence: 'weekly' as const }
-      expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: 'Europe/Berlin' })
-      expect(formToTodoInput(v, TZ)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: 'Europe/Berlin' })
+      const dates = formToTodoInput(v, TZ, single)
+      expect(dates).toMatchObject({ rrule: 'FREQ=WEEKLY' })
+      expect(dates).not.toHaveProperty('timezone')
+      expect(formToTodoInput(v, TZ)).not.toHaveProperty('timezone')
+      const timed = { ...v, dueTime: '09:00' }
+      expect(formToTodoInput(timed, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: TZ, dueTimezone: TZ })
+      expect(formToTodoInput(timed, TZ)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: TZ, dueTimezone: TZ })
     })
 
     it('removes the rule of a series with "none"', () => {
@@ -347,11 +369,11 @@ describe('taskForm', () => {
       // client can read); an edit that leaves its rule alone must still be savable.
       const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
       const v = { ...taskToForm(dateless, TZ), title: 'Other' }
-      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse(v).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless }).safeParse(v).success).toBe(true)
       // Removing the rule needs no date either.
-      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse({ ...v, recurrence: 'none' as const }).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless }).safeParse({ ...v, recurrence: 'none' as const }).success).toBe(true)
       // Giving it a rule the editor actually writes does.
-      const issues = buildTaskFormSchema({ original: dateless, timeZone: TZ })
+      const issues = buildTaskFormSchema({ original: dateless })
         .safeParse({ ...v, recurrence: 'daily' as const })
         .error?.issues.map((i) => [i.path.join('.'), i.message])
       expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
@@ -362,7 +384,7 @@ describe('taskForm', () => {
       // state as changing the rule: the backend rejects a kept rule without a date either
       // way, so the form must ask before it tries (FR-17).
       const v = { ...taskToForm(series, TZ), startDate: '', startTime: '', dueDate: '', dueTime: '' }
-      const issues = buildTaskFormSchema({ original: series, timeZone: TZ })
+      const issues = buildTaskFormSchema({ original: series })
         .safeParse(v)
         .error?.issues.map((i) => [i.path.join('.'), i.message])
       expect(issues).toContainEqual(['recurrence', 'validation.repeatNeedsDate'])
@@ -372,7 +394,7 @@ describe('taskForm', () => {
       const dateless = todo({ rrule: 'FREQ=WEEKLY', ruleUnsupported: true, recurring: true })
       const v = { ...taskToForm(dateless, TZ), title: 'Other' }
       expect(v).toMatchObject({ startDate: '', dueDate: '' })
-      expect(buildTaskFormSchema({ original: dateless, timeZone: TZ }).safeParse(v).success).toBe(true)
+      expect(buildTaskFormSchema({ original: dateless }).safeParse(v).success).toBe(true)
     })
   })
 
@@ -387,6 +409,18 @@ describe('taskForm', () => {
       expect(formWithDate(v, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '09:00' })
       const noTime = { ...v, dueTime: '', startDate: '2026-10-01', startTime: '' }
       expect(formWithDate(noTime, 'due', '2026-10-07')).toMatchObject({ dueDate: '2026-10-07', dueTime: '' })
+    })
+
+    // FR-18: the time taken means the same moment in the zone it is taken from, not hours apart in another.
+    it("gives a new date the other's time in the other's zone", () => {
+      // From 10:00 Berlin time to 16:00 in New York (22:00 here), its due date removed.
+      const flight = { ...v, startDate: '2026-10-28', startTime: '10:00', startZone: TZ, dueDate: '', dueTime: '', dueZone: 'America/New_York' }
+      expect(formWithDate(flight, 'due', '2026-10-28')).toMatchObject({ dueTime: '10:00', dueZone: TZ })
+      // A date that moves keeps its zone, and one given no time the zone it has.
+      const moved = { ...flight, dueDate: '2026-10-28', dueTime: '16:00' }
+      expect(formWithDate(moved, 'due', '2026-10-29')).toMatchObject({ dueTime: '16:00', dueZone: 'America/New_York' })
+      const day = { ...flight, startTime: '' }
+      expect(formWithDate(day, 'due', '2026-10-28')).toMatchObject({ dueTime: '', dueZone: 'America/New_York' })
     })
   })
 
@@ -417,6 +451,15 @@ describe('taskForm', () => {
 
     it("leaves the other date alone for text it can't read", () => {
       expect(formWithTime(allDay, 'due', '18:4x')).toMatchObject({ startTime: '', dueTime: '18:4x' })
+    })
+
+    // FR-18: the time given goes to the other date in the zone it is given in, where it means the same moment.
+    it('gives the other date the time in the zone it is given in, and keeps the zone of a time changed', () => {
+      const zoned = { ...allDay, startZone: TZ, dueZone: 'America/New_York' }
+      expect(formWithTime(zoned, 'due', '18:00')).toMatchObject({ startTime: '18:00', startZone: 'America/New_York' })
+      const both = { ...timed, startZone: TZ, dueZone: 'America/New_York' }
+      expect(formWithTime(both, 'due', '12:00')).toMatchObject({ startZone: TZ, dueZone: 'America/New_York' })
+      expect(formWithTime(both, 'due', '')).toMatchObject({ startZone: TZ, dueZone: 'America/New_York' })
     })
   })
 
@@ -500,93 +543,266 @@ describe('taskForm', () => {
   })
 })
 
-// A task in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
-describe('a repeat in another time zone', () => {
-  const ny = todo({
-    start: '2026-11-10T23:00:00Z',
-    due: '2026-11-10T23:00:00Z',
-    timezone: 'America/New_York',
-    rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
-    recurring: true,
-    fixedDays: true,
-    recurrenceId: '2026-11-10T23:00:00Z',
-  })
-  const issues = (original: typeof ny, v: unknown) =>
-    buildTaskFormSchema({ original, timeZone: TZ })
+// A task in New York at 18:00 is shown and edited at 18:00 in New York, its rule as stored (FR-17, FR-18).
+describe('time zones', () => {
+  const NY = 'America/New_York'
+  const zoneKeys = (input: TodoInput) => ['timezone', 'dueTimezone'].filter((key) => key in input)
+  const issues = (v: unknown, original?: Todo) =>
+    buildTaskFormSchema(original && { original })
       .safeParse(v)
       .error?.issues.map((i) => [i.path.join('.'), i.message])
+  // Due Tuesday, 27 October 2026, at 18:00 in New York, 23:00 here; weekly.
+  const nyWeekly = todo({
+    due: '2026-10-27T22:00:00Z',
+    dueAllDay: false,
+    timezone: NY,
+    dueTimezone: NY,
+    rrule: 'FREQ=WEEKLY',
+    recurring: true,
+    recurrenceId: '2026-10-27T22:00:00Z',
+  })
+  const nyDue = todo({ due: '2026-10-27T22:00:00Z', timezone: NY, dueTimezone: NY })
+  // From 18:00 to 20:00 in New York on the same day.
+  const nySpan = todo({ start: '2026-10-27T22:00:00Z', due: '2026-10-28T00:00:00Z', timezone: NY, dueTimezone: NY })
 
-  it('opens on the days it shows on', () => {
-    expect(taskToForm(ny, TZ)).toMatchObject({ startDate: '2026-11-11', startTime: '00:00', recurrence: 'custom', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
+  it('opens a New York task in New York', () => {
+    expect(taskToForm(nyWeekly, TZ)).toMatchObject({
+      dueDate: '2026-10-27',
+      dueTime: '18:00',
+      dueZone: NY,
+      recurrence: 'weekly',
+      customRule: '',
+    })
+    expect(taskToForm(nySpan, TZ)).toMatchObject({ startTime: '18:00', startZone: NY, dueTime: '20:00', dueZone: NY })
   })
 
-  it('keeps the stored rule while the repeat is untouched', () => {
-    expect(formToTodoInput({ ...taskToForm(ny, TZ), title: 'Other' }, TZ, ny)).not.toHaveProperty('rrule')
+  it("opens a series without a zone in UTC, and a single task without one in the browser's", () => {
+    const utc = todo({ due: '2026-10-27T22:00:00Z', rrule: 'FREQ=WEEKLY', recurring: true })
+    expect(taskToForm(utc, TZ)).toMatchObject({ dueTime: '22:00', dueZone: 'UTC' })
+    expect(taskToForm(todo({ due: '2026-10-27T22:00:00Z' }), TZ)).toMatchObject({ dueTime: '23:00', dueZone: '' })
+    const allDay = todo({ due: '2026-10-27T00:00:00Z', dueAllDay: true, rrule: 'FREQ=WEEKLY', recurring: true })
+    expect(taskToForm(allDay, TZ)).toMatchObject({ startZone: '', dueZone: '' })
   })
 
-  it('writes a changed rule on the wall clock of the zone the task keeps', () => {
-    const v = { ...taskToForm(ny, TZ), customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
-    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH' })
-    // A plain weekly series, changed in the repeat editor, which names the weekday shown.
-    const weekly = { ...ny, rrule: 'FREQ=WEEKLY', fixedDays: false }
-    const every2 = { ...taskToForm(weekly, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE' }
-    expect(formToTodoInput(every2, TZ, weekly)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+  // The server gives a date the task doesn't have yet the form of the other: a time given it is saved there.
+  it("puts a row without a time in the other row's zone", () => {
+    const v = taskToForm(nyDue, TZ)
+    expect(v).toMatchObject({ startDate: '', startZone: NY })
+    const started = formWithDate(v, 'start', '2026-10-27')
+    expect(started).toMatchObject({ startTime: '18:00', startZone: NY })
+    const input = formToTodoInput(started, TZ, nyDue, nyDue)
+    expect(input.start).toBe('2026-10-27T22:00:00.000Z')
+    expect(zoneKeys(input)).toEqual([])
+    expect(taskToForm(todo({ start: '2026-10-27T22:00:00Z', timezone: NY }), TZ)).toMatchObject({ startZone: NY, dueZone: NY })
   })
 
-  it('writes the rule of a task given dates as built, as dates are the same everywhere', () => {
-    const v = { ...taskToForm(ny, TZ), startTime: '', dueTime: '', customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
-    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' })
+  it("opens a task in a zone the browser doesn't know in the browser's, and keeps it", () => {
+    const mars = todo({ due: '2026-10-27T22:00:00Z', timezone: 'Mars/Olympus', dueTimezone: 'Mars/Olympus' })
+    const v = taskToForm(mars, TZ)
+    expect(v).toMatchObject({ dueTime: '23:00', dueZone: 'Mars/Olympus' })
+    const input = formToTodoInput({ ...v, title: 'Other' }, TZ, mars, mars)
+    expect(zoneKeys(input)).toEqual([])
+    expect(input.due).toBe('2026-10-27T22:00:00.000Z')
   })
 
-  it('writes the rule a single task with a zone of its own is given in that zone', () => {
-    const single = todo({ due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' })
-    const v = { ...taskToForm(single, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' }
-    expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY;BYDAY=TU,TH' })
+  it('sends no zone for an unchanged task', () => {
+    const weekly = formToTodoInput({ ...taskToForm(nyWeekly, TZ), title: 'Other' }, TZ, nyWeekly, nyWeekly)
+    expect(zoneKeys(weekly)).toEqual([])
+    expect(weekly).not.toHaveProperty('rrule')
+    expect(weekly.due).toBe('2026-10-27T22:00:00.000Z')
+    expect(zoneKeys(formToTodoInput(taskToForm(nySpan, TZ), TZ, nySpan, nySpan))).toEqual([])
+    // A name of the browser's zone it has another for is the same zone.
+    const kolkata = todo({ due: '2026-10-27T22:00:00Z', timezone: 'Asia/Kolkata', dueTimezone: 'Asia/Kolkata' })
+    const v = taskToForm(kolkata, 'Asia/Calcutta')
+    expect(taskZonesChanged({ ...v, dueZone: 'Asia/Calcutta' }, v)).toBe(false)
+    expect(zoneKeys(formToTodoInput(v, 'Asia/Calcutta', kolkata, kolkata))).toEqual([])
   })
 
-  // The server starts the rule over at the dates the save sends: what the zones' dates are there decides.
-  it('writes a changed rule at the time the task now has', () => {
-    const v = { ...taskToForm(ny, TZ), startTime: '09:00', dueTime: '09:00', customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }
-    // Wednesday 09:00 here is Wednesday 03:00 in New York.
-    expect(formToTodoInput(v, TZ, ny)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' })
-    // 10:00 here is the same date there too, so the day of the month reads the same.
-    const monthly = { ...v, startTime: '10:00', dueTime: '10:00', customRule: 'FREQ=MONTHLY;BYMONTHDAY=11' }
-    expect(issues(ny, monthly)).toBeUndefined()
-    expect(formToTodoInput(monthly, TZ, ny)).toMatchObject({ rrule: 'FREQ=MONTHLY;BYMONTHDAY=11' })
-    // A series at 10:00 in New York, 16:00 here, moved to 03:00 here: Monday 21:00 there.
-    const morning = { ...ny, rrule: 'FREQ=WEEKLY', start: '2026-11-10T15:00:00Z', due: '2026-11-10T15:00:00Z', recurrenceId: '2026-11-10T15:00:00Z' }
-    const early = { ...taskToForm(morning, TZ), startTime: '03:00', dueTime: '03:00', recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' }
-    expect(formToTodoInput(early, TZ, morning)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO' })
+  it('keeps the clock on a zone change', () => {
+    const v = withTaskStartZone(taskToForm(nySpan, TZ), TZ)
+    expect(v).toMatchObject({ startTime: '18:00', startZone: TZ, dueTime: '20:00', dueZone: TZ })
+    expect(taskZonesChanged(v, taskToForm(nySpan, TZ))).toBe(true)
+    expect(formToTodoInput(v, TZ, nySpan, nySpan)).toMatchObject({
+      start: '2026-10-27T17:00:00.000Z',
+      due: '2026-10-27T19:00:00.000Z',
+      timezone: TZ,
+      dueTimezone: TZ,
+    })
   })
 
-  it('writes the rule a single task is given at its new time', () => {
-    const single = todo({ due: '2026-11-10T23:00:00Z', timezone: 'America/New_York' })
-    const v = { ...taskToForm(single, TZ), dueTime: '09:00', recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;BYDAY=MO,WE' }
-    expect(formToTodoInput(v, TZ, single)).toMatchObject({ rrule: 'FREQ=WEEKLY;BYDAY=MO,WE' })
+  it("keeps the zone of a due in a zone of its own, and sends both once either changes", () => {
+    const tokyo = { ...taskToForm(nySpan, TZ), dueZone: 'Asia/Tokyo' }
+    expect(formToTodoInput(tokyo, TZ, nySpan, nySpan)).toMatchObject({ timezone: NY, dueTimezone: 'Asia/Tokyo' })
+    const moved = withTaskStartZone(tokyo, TZ)
+    expect(moved).toMatchObject({ startZone: TZ, dueZone: 'Asia/Tokyo' })
+    expect(formToTodoInput(moved, TZ, nySpan, nySpan)).toMatchObject({ timezone: TZ, dueTimezone: 'Asia/Tokyo' })
+    // Back in the start's zone, the due follows it again.
+    expect(withTaskStartZone({ ...tokyo, dueZone: NY }, TZ)).toMatchObject({ startZone: TZ, dueZone: TZ })
   })
 
-  // In March 2027 New York is on summer time two weeks before Berlin: 18:00 there is 23:00 here, on the same day.
-  it('reads the rule at the series, also when the editor opens at a later repeat', () => {
-    const later = taskToForm({ ...ny, start: '2027-03-16T22:00:00Z', due: '2027-03-16T22:00:00Z' }, TZ, ny)
-    expect(later).toMatchObject({ startDate: '2027-03-16', startTime: '23:00', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
-    expect(formToTodoInput(later, TZ, ny)).not.toHaveProperty('rrule')
-    expect(issues(ny, later)).toBeUndefined()
+  // FR-18: for a task without a start, `timezone` names the zone of its due, which a sent `dueTimezone` names too.
+  it('a due-only task names its zone as timezone', () => {
+    const v = { ...taskToForm(nyDue, TZ), dueZone: 'Asia/Tokyo' }
+    expect(formToTodoInput(v, TZ, nyDue, nyDue)).toMatchObject({
+      due: '2026-10-27T09:00:00.000Z',
+      timezone: 'Asia/Tokyo',
+      dueTimezone: 'Asia/Tokyo',
+    })
+    const start = todo({ start: '2026-10-27T22:00:00Z', timezone: NY })
+    const tokyo = withTaskStartZone(taskToForm(start, TZ), 'Asia/Tokyo')
+    expect(formToTodoInput(tokyo, TZ, start, start)).toMatchObject({ timezone: 'Asia/Tokyo', dueTimezone: 'Asia/Tokyo' })
   })
 
-  it("refuses a changed rule that doesn't read the same in the task's zone", () => {
-    const monthly = { ...taskToForm(ny, TZ), customRule: 'FREQ=MONTHLY;BYMONTHDAY=11' }
-    expect(issues(ny, monthly)).toContainEqual(['recurrence', 'validation.repeatOtherZone'])
-    expect(formToTodoInput(monthly, TZ, ny)).not.toHaveProperty('rrule')
-    // A preset reads the same anywhere: the series keeps its own day.
-    expect(issues(ny, { ...monthly, recurrence: 'monthly' })).toBeUndefined()
-    expect(formToTodoInput({ ...monthly, recurrence: 'monthly' }, TZ, ny)).toMatchObject({ rrule: 'FREQ=MONTHLY' })
+  it("a new task series sends the browser's zone, a new single task none", () => {
+    const fresh = { ...taskToForm(todo(), TZ), dueDate: '2026-10-28', dueTime: '09:00' }
+    expect(zoneKeys(formToTodoInput(fresh, TZ))).toEqual([])
+    expect(formToTodoInput({ ...fresh, recurrence: 'weekly' }, TZ)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: TZ, dueTimezone: TZ })
+    expect(zoneKeys(formToTodoInput({ ...fresh, dueTime: '', recurrence: 'weekly' }, TZ))).toEqual([])
+    // One picked is sent as it is.
+    expect(formToTodoInput({ ...fresh, startZone: NY, dueZone: NY }, TZ)).toMatchObject({ timezone: NY, dueTimezone: NY })
   })
 
-  it("keeps a rule that doesn't read the same here as it is", () => {
-    const tenth = { ...ny, rrule: 'FREQ=MONTHLY;BYMONTHDAY=10' }
-    expect(shownTaskRule(tenth, TZ)).toBeNull()
-    expect(taskToForm(tenth, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=MONTHLY;BYMONTHDAY=10' })
-    expect(formToTodoInput(taskToForm(tenth, TZ), TZ, tenth)).not.toHaveProperty('rrule')
-    expect(issues(tenth, taskToForm(tenth, TZ))).toBeUndefined()
+  it("makes a series of a task without a zone in the browser's, and of one with a zone in its own", () => {
+    const single = todo({ due: '2026-10-27T22:00:00Z' })
+    const weekly = (t: Todo) => formToTodoInput({ ...taskToForm(t, TZ), recurrence: 'weekly' }, TZ, t, t)
+    expect(weekly(single)).toMatchObject({ rrule: 'FREQ=WEEKLY', timezone: TZ, dueTimezone: TZ })
+    expect(zoneKeys(weekly(nyDue))).toEqual([])
+    // An all-day series given a time, too; a series without a zone keeps UTC.
+    const allDay = todo({ due: '2026-10-27T00:00:00Z', dueAllDay: true, rrule: 'FREQ=WEEKLY', recurring: true })
+    expect(formToTodoInput({ ...taskToForm(allDay, TZ), dueTime: '09:00' }, TZ, allDay, allDay)).toMatchObject({
+      timezone: TZ,
+      dueTimezone: TZ,
+    })
+    const utc = todo({ due: '2026-10-27T22:00:00Z', rrule: 'FREQ=WEEKLY', recurring: true })
+    expect(zoneKeys(formToTodoInput({ ...taskToForm(utc, TZ), dueTime: '09:00' }, TZ, utc, utc))).toEqual([])
+  })
+
+  it('the ✕ of a single task sends UTC', () => {
+    const v = { ...taskToForm(nySpan, TZ), startZone: '', dueZone: '' }
+    expect(formToTodoInput(v, TZ, nySpan, nySpan)).toMatchObject({
+      start: '2026-10-27T17:00:00.000Z',
+      due: '2026-10-27T19:00:00.000Z',
+      timezone: '',
+      dueTimezone: '',
+    })
+  })
+
+  it("the ✕ of a series sends the browser's zone, and UTC once its rule goes", () => {
+    const v = { ...taskToForm(nyWeekly, TZ), startZone: '', dueZone: '' }
+    expect(formToTodoInput(v, TZ, nyWeekly, nyWeekly)).toMatchObject({ timezone: TZ, dueTimezone: TZ })
+    expect(formToTodoInput({ ...v, recurrence: 'none' }, TZ, nyWeekly, nyWeekly)).toMatchObject({
+      rrule: '',
+      timezone: '',
+      dueTimezone: '',
+    })
+  })
+
+  it('a picked UTC is Etc/UTC', () => {
+    const v = { ...taskToForm(nySpan, TZ), startZone: PICKED_UTC, dueZone: PICKED_UTC }
+    expect(formToTodoInput(v, TZ, nySpan, nySpan)).toMatchObject({
+      start: '2026-10-27T18:00:00.000Z',
+      timezone: 'Etc/UTC',
+      dueTimezone: 'Etc/UTC',
+    })
+  })
+
+  it('sends no zone for dates', () => {
+    const v = { ...taskToForm(nySpan, TZ), startTime: '', dueTime: '', startZone: TZ, dueZone: TZ }
+    expect(zoneKeys(formToTodoInput(v, TZ, nySpan, nySpan))).toEqual([])
+  })
+
+  // New York repeats 1:00 to 2:00 on 1 November 2026: 06:30Z is the second 1:30 there (#10).
+  it('keeps the instant of a row as opened while its date, time and zone stay', () => {
+    const t = todo({ due: '2026-11-01T06:30:00Z', timezone: NY, dueTimezone: NY })
+    const v = taskToForm(t, TZ)
+    expect(v).toMatchObject({ dueDate: '2026-11-01', dueTime: '01:30' })
+    expect(formToTodoInput({ ...v, title: 'Other' }, TZ, t, t).due).toBe('2026-11-01T06:30:00.000Z')
+    // Without them, the first 1:30; in another zone, read there.
+    expect(formToTodoInput(v, TZ, t).due).toBe('2026-11-01T05:30:00.000Z')
+    expect(formToTodoInput({ ...v, dueZone: 'Europe/London' }, TZ, t, t).due).toBe('2026-11-01T01:30:00.000Z')
+  })
+
+  it('refuses a start after the due across zones', () => {
+    // 04:00 in New York is 09:00 here; 06:00 there 11:00, in order though earlier on the clock.
+    const v = {
+      ...taskToForm(todo(), TZ),
+      startDate: '2026-10-28',
+      startTime: '10:00',
+      startZone: TZ,
+      dueDate: '2026-10-28',
+      dueTime: '04:00',
+      dueZone: NY,
+    }
+    expect(issues(v)).toContainEqual(['startDate', 'validation.startAfterDue'])
+    expect(issues({ ...v, dueTime: '06:00' })).toBeUndefined()
+  })
+
+  it('a changed repeat of a foreign task is written as built', () => {
+    const v = { ...taskToForm(nyWeekly, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;INTERVAL=2' }
+    expect(issues(v, nyWeekly)).toBeUndefined()
+    const input = formToTodoInput(v, TZ, nyWeekly, nyWeekly)
+    expect(input).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2' })
+    expect(zoneKeys(input)).toEqual([])
+    // Also one on a day of the month, which falls on other dates here.
+    const monthly = { ...v, customRule: 'FREQ=MONTHLY;BYMONTHDAY=27' }
+    expect(issues(monthly, nyWeekly)).toBeUndefined()
+    expect(formToTodoInput(monthly, TZ, nyWeekly, nyWeekly)).toMatchObject({ rrule: 'FREQ=MONTHLY;BYMONTHDAY=27' })
+  })
+
+  it("ends a rule at the end of its last day in the task's zone", () => {
+    const v = { ...taskToForm(nyWeekly, TZ), recurrence: 'custom' as const, customRule: 'FREQ=WEEKLY;UNTIL=20261231' }
+    expect(formToTodoInput(v, TZ, nyWeekly, nyWeekly)).toMatchObject({ rrule: 'FREQ=WEEKLY;UNTIL=20270101T045959Z' })
+  })
+
+  describe('a series on Tuesdays and Thursdays', () => {
+    const ny = todo({
+      start: '2026-11-10T23:00:00Z',
+      due: '2026-11-10T23:00:00Z',
+      timezone: NY,
+      dueTimezone: NY,
+      rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+      recurring: true,
+      fixedDays: true,
+      recurrenceId: '2026-11-10T23:00:00Z',
+    })
+
+    it('opens with its rule as stored, and keeps it while the repeat is untouched', () => {
+      expect(taskToForm(ny, TZ)).toMatchObject({
+        startDate: '2026-11-10',
+        startTime: '18:00',
+        recurrence: 'custom',
+        customRule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+      })
+      expect(formToTodoInput({ ...taskToForm(ny, TZ), title: 'Other' }, TZ, ny, ny)).not.toHaveProperty('rrule')
+    })
+
+    // In March 2027 New York is on summer time two weeks before Berlin.
+    it('opens at a later repeat in its zone, with the rule of the series', () => {
+      const shown = { start: '2027-03-16T22:00:00Z', startAllDay: false, due: '2027-03-16T22:00:00Z', dueAllDay: false }
+      const later = taskToForm({ ...ny, ...shown }, TZ, ny)
+      expect(later).toMatchObject({ startDate: '2027-03-16', startTime: '18:00', customRule: 'FREQ=WEEKLY;BYDAY=TU,TH' })
+      expect(formToTodoInput(later, TZ, ny, shown)).not.toHaveProperty('rrule')
+      expect(issues(later, ny)).toBeUndefined()
+    })
+  })
+
+  describe('the due picker', () => {
+    it('reads the due in the browser’s zone', () => {
+      expect(dueFields(nyDue, TZ)).toEqual({ dueDate: '2026-10-27', dueTime: '23:00' })
+      expect(dueFields(todo({ due: '2026-10-27T00:00:00Z', dueAllDay: true, timezone: NY }), TZ)).toEqual({
+        dueDate: '2026-10-27',
+        dueTime: '',
+      })
+      expect(dueFields(todo(), TZ)).toEqual({ dueDate: '', dueTime: '' })
+    })
+
+    it('keeps the zone', () => {
+      const input = withDue(nyDue, { date: '2026-10-28', time: '10:00' }, TZ)
+      expect(input.due).toBe('2026-10-28T09:00:00.000Z')
+      expect(input).not.toHaveProperty('timezone')
+      expect(input).not.toHaveProperty('dueTimezone')
+      const dateless = todo({ rrule: 'FREQ=WEEKLY', recurring: true })
+      expect(withDue(dateless, { date: '2026-10-28', time: '10:00' }, TZ)).toMatchObject({ timezone: TZ })
+    })
   })
 })

@@ -276,6 +276,19 @@ describe('taskRuleStart', () => {
     expect(taskRuleStart(moved, dates({}))).toBeNull()
     expect(taskRuleStart({ ...moved, shown: dates({}) })).toBeNull()
   })
+
+  // FR-18: a New York series at 18:00 on Tuesdays is at midnight on Wednesdays here; the editor reads it in New York.
+  it('reads the place on the wall clock of the zone given', () => {
+    const ny = { recurrenceId: '2026-11-10T23:00:00Z', shown: dates({ due: '2026-11-10T23:00:00Z' }) }
+    expect(taskRuleStart(ny, ny.shown, 'America/New_York')).toEqual(new Date(2026, 10, 10, 18))
+    expect(taskRuleStart(ny)).toEqual(new Date(2026, 10, 11, 0))
+    // Moved by a week and an hour, from a repeat another app moved a day early.
+    const early = { ...ny, shown: dates({ due: '2026-11-09T23:00:00Z' }) }
+    expect(taskRuleStart(early, dates({ due: '2026-11-17T00:00:00Z' }), 'America/New_York')).toEqual(new Date(2026, 10, 17, 19))
+    // A date is the same everywhere.
+    const allDayRepeat = { recurrenceId: allDay('2026-11-10'), shown: dates({ due: allDay('2026-11-10'), dueAllDay: true }) }
+    expect(taskRuleStart(allDayRepeat, allDayRepeat.shown, 'America/New_York')).toEqual(new Date(2026, 10, 10))
+  })
 })
 
 describe('occurrenceTask', () => {

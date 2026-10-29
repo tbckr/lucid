@@ -68,7 +68,6 @@ import {
   type ScopeNotes,
   type ScopeResult,
 } from '@/lib/scope'
-import { taskRuleClock } from '@/lib/seriesShift'
 import {
   buildTaskFormSchema,
   editedFields,
@@ -76,7 +75,6 @@ import {
   formWithDate,
   formWithTime,
   seriesEditInput,
-  shownTaskRule,
   taskToForm,
   type TaskFormValues,
 } from '@/lib/taskForm'
@@ -90,6 +88,7 @@ import {
 } from '@/lib/tasks'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
+import { fieldZone } from '@/lib/zones'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
 
@@ -107,8 +106,8 @@ const LEVEL_ON: Record<PriorityLevel, string> = {
 }
 
 const DATES = {
-  start: { date: 'startDate', time: 'startTime', other: 'due' },
-  due: { date: 'dueDate', time: 'dueTime', other: 'start' },
+  start: { date: 'startDate', time: 'startTime', zone: 'startZone', other: 'due' },
+  due: { date: 'dueDate', time: 'dueTime', zone: 'dueZone', other: 'start' },
 } as const
 
 type Which = keyof typeof DATES
@@ -212,7 +211,7 @@ export function TaskEditor({
   // is while its fields stay (#10, FR-18).
   const openedDates: TaskDates | undefined = repeat?.shown ?? todo
   const form = useForm<TaskFormValues>({
-    resolver: zodResolver(buildTaskFormSchema(todo && { original: todo, timeZone: tz })),
+    resolver: zodResolver(buildTaskFormSchema(todo && { original: todo })),
     defaultValues: opened,
   })
   const { register, control, handleSubmit, formState, setValue, getValues, setFocus, subscribe } = form
@@ -235,8 +234,6 @@ export function TaskEditor({
 
   // A rule Lucid can't read can't be completed or moved here, only removed (FR-17).
   const ruleUnsupported = todo?.ruleUnsupported ?? false
-  // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
-  const recursOn = todo?.recurring && shownTaskRule(todo, tz) === null ? taskRuleClock(todo) : null
   // A repeat recurs from the start, else the due date; the presets and the repeat editor follow it, from the
   // last one that could be read while its field holds text it couldn't (FR-09). Without one, as after a switch of
   // the kind with a date its field couldn't read, from the other date, else today: never from the day such text
@@ -251,7 +248,9 @@ export function TaskEditor({
   // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override
   // moved it; a changed rule starts over at the dates entered (FR-17), as does one for a series of dates.
   const keptRule = buildRRule(opened.recurrence, opened.customRule)
-  const keptStart = repeat && keptRule && entered ? taskRuleStart(repeat, entered) : null
+  // Read on the wall clock of the zone the anchor's fields are in, which the series recurs in (FR-18).
+  const anchorZone = fieldZone(startDate ? getValues('startZone') : getValues('dueZone'), tz)
+  const keptStart = repeat && keptRule && entered ? taskRuleStart(repeat, entered, anchorZone) : null
   const kept = keptStart ? { rule: keptRule, start: keptStart } : undefined
 
   useEffect(() => {
@@ -465,15 +464,20 @@ export function TaskEditor({
 
   const setDate = (which: Which, date: string) => {
     const f = DATES[which]
-    // A new date takes the other date's time: RFC 5545 wants a time on both or neither.
-    setValue(f.time, formWithDate(getValues(), which, date)[f.time], setOpts)
+    // A new date takes the other date's time, in its zone: RFC 5545 wants a time on both or neither (FR-18).
+    const next = formWithDate(getValues(), which, date)
+    setValue(f.time, next[f.time], setOpts)
+    setValue(f.zone, next[f.zone], setOpts)
     setValue(f.date, date, setOpts)
   }
 
   const setTime = (which: Which, time: string) => {
-    const other = DATES[DATES[which].other].time
-    // A time given or taken goes for the other date too: RFC 5545 wants a time on both or neither.
-    setValue(other, formWithTime(getValues(), which, time)[other], setOpts)
+    const other = DATES[DATES[which].other]
+    // A time given or taken goes for the other date too, in its zone: RFC 5545 wants a time on both or neither
+    // (FR-18).
+    const next = formWithTime(getValues(), which, time)
+    setValue(other.time, next[other.time], setOpts)
+    setValue(other.zone, next[other.zone], setOpts)
     setValue(DATES[which].time, time, setOpts)
   }
 
@@ -715,7 +719,6 @@ export function TaskEditor({
               timeZone={tz}
               presets={ruleUnsupported ? NONE : RECURRENCE_PRESETS}
               customizable={!ruleUnsupported && !readOnly}
-              recursOn={recursOn}
               kept={kept}
               explicit={todo?.recurring ?? false}
               disabled={readOnly}

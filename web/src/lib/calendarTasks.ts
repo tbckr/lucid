@@ -3,9 +3,11 @@ import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
 import { localDateToUtc, movedAs, utcDateToLocal } from './dates'
 import { type FormatPrefs } from './format'
+import { browserTimeZone } from './locale'
 import { describeSeriesRule } from './rrule'
 import { taskRuleClock } from './seriesShift'
 import { isDone, todoToInput } from './tasks'
+import { sameZone, wallDate } from './zones'
 
 /** Height of a task that has a single point in time (FR-16). */
 export const TASK_POINT_MINUTES = 30
@@ -70,21 +72,28 @@ function anchorDate(d: TaskDates): TaskDate | null {
 }
 
 /**
- * Where the rule of a task series places its repeat `repeat` on the browser's
- * wall clock once it moves to the dates `to`, by default where it is shown
- * (FR-17): at its RECURRENCE-ID, not where an override moved it, moved as far
- * as `to` lies from the shown dates, each anchored on its start, else its
- * due, as a save that keeps the rule moves the series; by dates where either
- * is a date, an all-day repeat's read as a date. What a rule leaves to the
- * series' start is filled in from there (`describeRRule`). `null` where
- * either has no dates.
+ * Where the rule of a task series places its repeat `repeat` on the wall
+ * clock of `zone`, as a wall Date of that zone (`wallDate`), once it moves to
+ * the dates `to`, by default where it is shown (FR-17, FR-18): at its
+ * RECURRENCE-ID, not where an override moved it, moved as far as `to` lies
+ * from the shown dates, each anchored on its start, else its due, as a save
+ * that keeps the rule moves the series; by dates where either is a date, an
+ * all-day repeat's read as a date, the same in every zone. What a rule leaves
+ * to the series' start is filled in from there (`describeRRule`). `null`
+ * where either has no dates. By default on the browser's wall clock, where
+ * the instants are wall Dates already.
  */
-export function taskRuleStart(repeat: Pick<TaskRepeat, 'recurrenceId' | 'shown'>, to: TaskDates = repeat.shown): Date | null {
+export function taskRuleStart(
+  repeat: Pick<TaskRepeat, 'recurrenceId' | 'shown'>,
+  to: TaskDates = repeat.shown,
+  zone: string = browserTimeZone(),
+): Date | null {
   const from = anchorDate(repeat.shown)
   const at = anchorDate(to)
   if (!from || !at) return null
-  const rid = from.allDay ? utcDateToLocal(repeat.recurrenceId) : new Date(repeat.recurrenceId)
-  return movedAs(at.at, from.at, rid, from.allDay || at.allDay)
+  const wall = (d: TaskDate) => (d.allDay || sameZone(zone, browserTimeZone()) ? d.at : wallDate(d.at, zone))
+  const rid = from.allDay ? utcDateToLocal(repeat.recurrenceId) : wall({ at: new Date(repeat.recurrenceId), allDay: false })
+  return movedAs(wall(at), wall(from), rid, from.allDay || at.allDay)
 }
 
 /**

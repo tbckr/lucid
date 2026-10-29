@@ -243,6 +243,44 @@ describe('TaskEditor', () => {
     })
   })
 
+  // FR-18: a date added takes the other's time in the other's zone, where it is the same moment, as the server gives
+  // a date the task doesn't have yet the zone of the other.
+  it("gives a start date added to a task in another zone the due's time there", async () => {
+    const user = userEvent.setup()
+    // Due Friday, 13 March 2026, 14:00 in New York, 19:00 in Berlin.
+    const zone = 'America/New_York'
+    const { fetch, dialog } = await openTask(todo({ due: '2026-03-13T18:00:00Z', timezone: zone, dueTimezone: zone }))
+
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start' }))
+    await user.click(screen.getByRole('button', { name: 'Wednesday, March 11th, 2026' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('2:00 PM')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    const body = await saved(fetch)
+    expect(body).toMatchObject({ start: '2026-03-11T18:00:00.000Z', due: '2026-03-13T18:00:00.000Z' })
+    expect(body).not.toHaveProperty('timezone')
+  })
+
+  it("gives a due date added again to a task in two zones the start's time in the start's zone", async () => {
+    const user = userEvent.setup()
+    // From 10:00 Berlin time to 16:00 in New York on Wednesday, 28 October 2026.
+    const { fetch, dialog } = await openTask(
+      todo({ start: '2026-10-28T09:00:00Z', due: '2026-10-28T20:00:00Z', timezone: 'Europe/Berlin', dueTimezone: 'America/New_York' }),
+    )
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove due date' }))
+    await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
+    await user.click(screen.getByRole('button', { name: 'Wednesday, October 28th, 2026' }))
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('10:00 AM')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await saved(fetch)).toMatchObject({
+      due: '2026-10-28T09:00:00.000Z',
+      timezone: 'Europe/Berlin',
+      dueTimezone: 'Europe/Berlin',
+    })
+  })
+
   // Save leaves the field, which reads what was typed there: no Enter and no Tab first (FR-09).
   it('saves a due time typed right before Save is clicked', async () => {
     const user = userEvent.setup()
@@ -526,11 +564,14 @@ describe('TaskEditor', () => {
       next: { start: null, due: '2026-10-08T00:00:00Z' },
     })
     const single = todo({ title: 'Slides', due: '2026-10-05T00:00:00Z', dueAllDay: true })
-    // The same series with a time: due at 9:00 on Monday, the next repeat at 9:00 on Thursday.
+    // The same series with a time, in Berlin, as Lucid writes it: due at 9:00 on Monday, the next repeat at 9:00 on
+    // Thursday. A series without a zone recurs on UTC's clock, where the editor shows it (FR-18).
     const timed = {
       ...series,
       due: '2026-10-05T07:00:00Z',
       dueAllDay: false,
+      timezone: 'Europe/Berlin',
+      dueTimezone: 'Europe/Berlin',
       recurrenceId: '2026-10-05T07:00:00Z',
       next: { start: null, due: '2026-10-08T07:00:00Z' },
     }
@@ -579,7 +620,10 @@ describe('TaskEditor', () => {
       await user.click(screen.getByRole('option', { name: 'Every day' }))
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-      expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=DAILY', timezone: 'Europe/Berlin' })
+      // A series of dates has no zone (FR-18).
+      const body = await saved(fetch)
+      expect(body).toMatchObject({ rrule: 'FREQ=DAILY' })
+      expect(body).not.toHaveProperty('timezone')
     })
 
     it('removes the repeat of a series with "Does not repeat"', async () => {
@@ -647,42 +691,46 @@ describe('TaskEditor', () => {
       expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every day at 9:30 AM and 5:30 PM')
     })
 
-    // A task in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
+    // A task in New York at 18:00, at midnight in Berlin, a day later: shown and edited in New York (FR-17, FR-18).
     const newYork = (rrule: string) =>
       todo({
         title: 'Report',
         due: '2026-11-10T23:00:00Z',
         timezone: 'America/New_York',
+        dueTimezone: 'America/New_York',
         rrule,
         recurring: true,
         recurrenceId: '2026-11-10T23:00:00Z',
       })
 
-    it('edits the repeat of a series in another zone on the days it shows on, and saves it in its zone', async () => {
+    it('edits the repeat of a series in another zone on its own days, and keeps its zone', async () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(newYork('FREQ=WEEKLY'))
       const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
-      expect(select).toHaveTextContent('Every week on Wednesday')
+      expect(select).toHaveTextContent('Every week on Tuesday')
 
       await user.click(select)
       await user.click(screen.getByRole('option', { name: 'Custom…' }))
       const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
-      expect(within(repeat).getByRole('button', { name: 'Wednesday' })).toHaveAttribute('aria-pressed', 'true')
+      expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'true')
       const interval = within(repeat).getByRole('spinbutton', { name: 'Repeat every' })
       await user.clear(interval)
       await user.type(interval, '2')
       await user.click(within(repeat).getByRole('button', { name: 'Done' }))
-      expect(select).toHaveTextContent('Every 2 weeks on Wednesday')
+      expect(select).toHaveTextContent('Every 2 weeks on Tuesday')
 
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-      // Tuesday at 18:00 in New York, which the task keeps.
-      expect(await saved(fetch)).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+      const body = await saved(fetch)
+      expect(body).toMatchObject({ rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU' })
+      expect(body).not.toHaveProperty('timezone')
+      expect(body).not.toHaveProperty('dueTimezone')
     })
 
     // A weekly series on Tuesdays at 10:00 whose current repeat of 10 November is moved to Monday, 9 November.
     const movedRepeat = todo({
       due: '2026-11-09T09:00:00Z',
       timezone: 'Europe/Berlin',
+      dueTimezone: 'Europe/Berlin',
       rrule: 'FREQ=WEEKLY',
       recurring: true,
       recurrenceId: '2026-11-10T09:00:00Z',
@@ -755,7 +803,8 @@ describe('TaskEditor', () => {
       expect(within(repeat).getByRole('button', { name: 'Tuesday' })).toHaveAttribute('aria-pressed', 'false')
     })
 
-    it("refuses a repeat that doesn't read the same in the series' zone, and saves nothing", async () => {
+    // Its dates are New York's: the 10th there is the 11th here, which the series doesn't move to.
+    it('saves a repeat of a series in another zone on its own dates', async () => {
       const user = userEvent.setup()
       const { fetch, dialog } = await openTask(newYork('FREQ=WEEKLY'))
       await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
@@ -766,21 +815,29 @@ describe('TaskEditor', () => {
       await user.click(within(repeat).getByRole('button', { name: 'Done' }))
 
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-      expect(
-        await within(dialog).findByText('The task keeps its own time zone, where these days fall on other dates. Choose another repeat.'),
-      ).toBeInTheDocument()
-      expect(puts(fetch)).toHaveLength(0)
+      const body = await saved(fetch)
+      expect(body).toMatchObject({ rrule: 'FREQ=MONTHLY;BYMONTHDAY=10' })
+      expect(body).not.toHaveProperty('timezone')
     })
 
-    it("offers no custom repeat for a rule that doesn't read the same here", async () => {
+    it('offers the custom repeat of a series in another zone, read in its zone', async () => {
       const user = userEvent.setup()
       const { dialog } = await openTask(newYork('FREQ=MONTHLY;BYMONTHDAY=10'))
       const select = within(dialog).getByRole('combobox', { name: 'Repeat' })
-      expect(select).toHaveTextContent('Every month on day 10 (America/New_York)')
+      expect(select).toHaveTextContent('Every month on day 10')
+      expect(select).not.toHaveTextContent('America/New_York')
 
+      // The presets are named after its date there too: the 10th, a Tuesday.
       await user.click(select)
-      expect(screen.getByRole('option', { name: 'Every month on day 11' })).toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'Custom…' })).toBeNull()
+      expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+        'Does not repeat',
+        'Every day',
+        'Every week on Tuesday',
+        'Every month on day 10',
+        'Every year on November 10',
+        'Every month on day 10',
+        'Custom…',
+      ])
     })
 
     // FR-09: a time the field couldn't read is said by its note alone; nothing is read from it, not even for the rule
@@ -1179,7 +1236,9 @@ describe('TaskEditor', () => {
           shown: { start: null, startAllDay: false, due: '2026-10-08T07:00:00Z', dueAllDay: false },
         }
         const { fetch, dialog } = await openTask(series, undefined, thursday)
-        expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('9:00 AM')
+        // An all-day series has no zone: the time another app gave a repeat is shown on UTC's clock, where the
+        // server reads it (FR-18).
+        expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('7:00 AM')
 
         await user.click(within(dialog).getByRole('radio', { name: 'High' }))
         await user.click(within(dialog).getByRole('button', { name: 'Save' }))

@@ -63,6 +63,17 @@ describe('DuePicker', () => {
     expect(dialog).not.toBeInTheDocument()
   })
 
+  // FR-18: the picker shows and takes the due in the browser's zone, whatever zone the task is in, which it keeps.
+  it('shows the due of a task in another zone at its time here, and keeps its zone', async () => {
+    const zone = 'America/New_York'
+    const { user, onChange, dialog } = await open(todo({ title: 'Call', due: at(-1, '23:00'), timezone: zone, dueTimezone: zone }))
+    expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('11:00 PM')
+    await user.click(within(dialog).getByRole('button', { name: /^Tomorrow / }))
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ due: at(1, '23:00'), dueAllDay: false }))
+    expect(onChange.mock.calls[0]?.[0]).not.toHaveProperty('timezone')
+    expect(onChange.mock.calls[0]?.[0]).not.toHaveProperty('dueTimezone')
+  })
+
   it('keeps an all-day due date all-day', async () => {
     const { user, onChange } = await open(todo({ due: allDay(addDays(new Date(), -1)), dueAllDay: true }))
     await user.click(screen.getByRole('button', { name: /^Next week / }))
@@ -762,11 +773,13 @@ describe('DuePicker', () => {
       }
     })
 
-    it('names the zone of a new day too', async () => {
+    // FR-18: a day is the same everywhere; the task keeps whatever zone it has.
+    it('names no zone for a new day', async () => {
       const { user, onScope, dialog } = await open(series)
       await user.click(within(dialog).getByRole('button', { name: /^Tomorrow / }))
       await user.click(within(dialog).getByRole('button', { name: 'All repeats' }))
-      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ timezone: TZ }))
+      expect(onScope).toHaveBeenCalledWith('all', expect.objectContaining({ dueAllDay: true }))
+      expect(onScope.mock.calls[0]?.[1]).not.toHaveProperty('timezone')
     })
 
     it('offers every shortcut and day, earlier ones too', async () => {

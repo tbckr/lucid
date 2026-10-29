@@ -206,6 +206,9 @@ export function taskForm(title: string, when: TaskWhen): TaskFormValues {
     checklist: [],
     recurrence: 'none',
     customRule: '',
+    // No zone until one is picked (FR-18).
+    startZone: '',
+    dueZone: '',
   }
 }
 

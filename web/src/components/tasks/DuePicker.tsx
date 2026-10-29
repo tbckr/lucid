@@ -25,7 +25,7 @@ import {
   type ScopeResult,
 } from '@/lib/scope'
 import { type ShiftReason } from '@/lib/seriesShift'
-import { taskToForm, withDue } from '@/lib/taskForm'
+import { dueFields, withDue } from '@/lib/taskForm'
 import { datesChanged, dueShortcuts, isOverdue } from '@/lib/tasks'
 import { unreadableNote } from '@/lib/unreadable'
 
@@ -107,7 +107,7 @@ export function DuePicker({
   const committed = useRef(false)
   // Where the focus goes once the question gives way to the month again (NFR-27).
   const back = useRef<HTMLElement | null>(null)
-  const { dueDate, dueTime } = taskToForm(todo, tz)
+  const { dueDate, dueTime } = dueFields(todo, tz)
   const shortcuts = dueShortcuts(now)
   const picks = [
     { label: t('tasks.today'), day: shortcuts.today },
