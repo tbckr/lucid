@@ -163,7 +163,6 @@
     "endDate": "End date",
     "startZone": "Start time zone",
     "endZone": "End time zone",
-    "timezoneOther": "Times are in {{tz}}. Saving moves the event from {{from}} to this time zone.",
     "skippedTime": "Clocks go forward on this day: {{time}} doesn't exist and is saved as {{saved}}.",
     "calendar": "Calendar",
     "chooseCalendar": "Choose a calendar",

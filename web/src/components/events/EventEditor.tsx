@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlignLeftIcon, ClockIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
+import { AlignLeftIcon, ClockIcon, GlobeIcon, MapPinIcon, RepeatIcon, XIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
@@ -24,6 +24,7 @@ import {
   useUpdateFollowing,
   useUpdateOccurrence,
   useVisibleCalendars,
+  useZonesInUse,
 } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
@@ -38,10 +39,12 @@ import {
   keepsRuleAndAllDay,
   occurrenceInput,
   shiftEnd,
+  withStartZone,
+  zonesChanged,
   type EventFormValues,
 } from '@/lib/eventForm'
 import { type CalEvent } from '@/lib/events'
-import { formatDuration } from '@/lib/format'
+import { formatDuration, formatEventWhen } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { eventOffRule } from '@/lib/recurrence'
@@ -59,12 +62,14 @@ import {
 } from '@/lib/scope'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
+import { fieldZone, sameZone, zoneCity } from '@/lib/zones'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
 import { SkippedTimeNote } from './SkippedTimeNote'
 import { TimeField } from './TimeField'
 import { useReadableStart } from './useTypedField'
+import { ZoneField } from './ZoneField'
 
 /** Creates and edits events in the editor dialog (FR-09, FR-11). */
 export function EventEditor({
@@ -137,10 +142,21 @@ function EditorForm({
   const kindRef = useRef<HTMLButtonElement>(null)
   const saveRef = useRef<HTMLButtonElement>(null)
   const askedBefore = useRef(false)
-  // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
+  // The editor's values when it opened, to tell whether the rule, the all-day flag or a zone changed (FR-17, FR-18).
   const initial = event ? editFormValues(event, tz) : null
-  // What a changed repeat does to this event where it doesn't fall on it, which the repeat editor says (#11).
-  const offRule = eventOffRule(event, prefs.weekStartsOn, tz)
+  // What a changed repeat does to this event where it doesn't fall on it, which the repeat editor says (#11), its
+  // old rule read in the zone the series' start was in (FR-18).
+  const offRule = eventOffRule(event, prefs.weekStartsOn, fieldZone(initial?.startZone ?? '', tz))
+  // The zones of the events and tasks loaded, which the zone fields' lists offer first (FR-18).
+  const inUse = useZonesInUse(tz)
+  // The zone fields (FR-18): shown from the start for an event with a zone other than the browser's in a row, else
+  // after "Other time zone", and then until the editor closes, also once every ✕ is used, so nothing jumps.
+  const [zonesShown, setZonesShown] = useState(
+    () => !!initial && !initial.allDay && [initial.startZone, initial.endZone].some((z) => z !== '' && !sameZone(z, tz)),
+  )
+  // "Other time zone" puts the focus in the start's zone field with its list open, as it shows the field: once, not
+  // again where All day hides the field and shows it anew (NFR-27).
+  const [revealing, setRevealing] = useState(false)
   // After a save refused as a conflict (FR-09): the ETag the event has now, `undefined` where the
   // reloaded calendar no longer holds it. The form keeps what was entered.
   const [conflict, setConflict] = useState<{ etag: string | undefined } | null>(null)
@@ -164,7 +180,7 @@ function EditorForm({
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   })
-  const { register, control, handleSubmit, setValue, getValues, setFocus, subscribe, formState } = form
+  const { register, control, handleSubmit, setValue, getValues, setFocus, subscribe, trigger, formState } = form
   const [allDay, recurrence, customRule, calendarId, startDate, startTime, endDate, endTime, startZone, endZone] = useWatch({
     control,
     name: ['allDay', 'recurrence', 'customRule', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime', 'startZone', 'endZone'],
@@ -183,11 +199,18 @@ function EditorForm({
   // couldn't read, the end, else today: never the day such text falls back to, 1 January 1970 (FR-09).
   const anchor =
     readStart ?? (isFormDate(endDate) ? { date: endDate, time: endTime } : { date: dayKey(now), time: startTime })
+  // The fields' wall clock, in the zone of the start's fields, where the repeat is read and built (FR-18).
+  const ruleZone = fieldZone(startZone, tz)
   const entered = allDay ? parseDayKey(anchor.date) : dayAt(anchor.date, anchor.time)
-  // A time summer time skips on its date, and the one it is saved as, said under its row (#10, FR-18).
-  const startSaved = allDay ? null : skippedTime(startDate, startTime, tz)
-  const endSaved = allDay ? null : skippedTime(endDate, endTime, tz)
-  const start = occurrence ? eventRuleStart(occurrence, entered, allDay) : entered
+  // A time summer time skips on its date in its row's zone, and the one it is saved as, said under its row (#10,
+  // FR-18).
+  const startSaved = allDay ? null : skippedTime(startDate, startTime, ruleZone)
+  const endSaved = allDay ? null : skippedTime(endDate, endTime, fieldZone(endZone, tz))
+  const start = occurrence ? eventRuleStart(occurrence, entered, allDay, ruleZone) : entered
+  // The zone fields go with the times, which All day hides (FR-18). A field All day hid takes no focus as it shows
+  // again.
+  const zoneFields = zonesShown && !allDay
+  if (allDay && revealing) setRevealing(false)
 
   // A new entry starts in its title, not in the switch before it; after a switch, the focus stays there (NFR-27).
   useEffect(() => {
@@ -228,6 +251,14 @@ function EditorForm({
     setValue('endTime', next.endTime, { shouldDirty: true, shouldValidate: formState.isSubmitted })
   }
 
+  // A zone change keeps the clock times of the fields (FR-18); the start's takes the end along while that is in the
+  // start's zone (`withStartZone`). Where the end was said to lie before the start, that is judged anew.
+  const onZonesChange = (zones: Pick<EventFormValues, 'startZone' | 'endZone'>) => {
+    setValue('startZone', zones.startZone, { shouldDirty: true })
+    setValue('endZone', zones.endZone, { shouldDirty: true })
+    if (formState.isSubmitted) void trigger('endDate')
+  }
+
   // Leaves the scope question and tells the surrounding dialog it no longer needs to catch
   // Escape for it (NFR-27).
   const cancelAsk = useCallback(() => {
@@ -249,13 +280,13 @@ function EditorForm({
     })
   }, [asking, subscribe, cancelAsk])
 
-  // What a save of `values` does to the series (FR-17): a changed rule or all-day flag is a `rule`
-  // change, anything else a `change`.
+  // What a save of `values` does to the series (FR-17): a changed rule, all-day flag or zone is a `rule`
+  // change, as a series has one zone for all its events (FR-18), anything else a `change`.
   const saveAction = (values: EventFormValues): ScopeAction =>
-    initial && keepsRuleAndAllDay(values, initial) ? 'change' : 'rule'
+    initial && keepsRuleAndAllDay(values, initial) && !zonesChanged(values, initial) ? 'change' : 'rule'
 
   // Which events of a series a save of `values` (sent as `input`) can reach (FR-17): a changed
-  // rule or all-day flag this and the following events' or the whole series', and a day the
+  // rule, all-day flag or zone this and the following events' or the whole series', and a day the
   // series can't follow only this event's. Empty for anything but an occurrence of a series.
   const saveScopes = (values: EventFormValues, input: EventInput): ScopeResult =>
     occurrence
@@ -354,26 +385,37 @@ function EditorForm({
   const startNotes = notesOf(startDate, startTime)
   const endNotes = notesOf(endDate, endTime)
   const unread = [startNotes.date, startNotes.time, endNotes.date, endNotes.time].some(Boolean)
+  // The values as a save would send them, read only while every date and time shown can be (FR-09).
+  const formValues = getValues()
+  const readable = isFormDate(startDate) && isFormDate(endDate) && (allDay || (isFormTime(startTime) && isFormTime(endTime)))
+  const entry = !unread && readable ? formToInput(formValues, tz, event) : null
 
   // What Save reaches when there is no choice (FR-17), said in the footer before it is pressed. Live
   // with the form: the watched fields above re-render the editor whenever the answer can change.
-  // Only for an occurrence of a series, and while every field can be read, so a single event's
-  // values aren't read before they are validated.
-  const formValues = getValues()
-  const hint =
-    occurrence && !unread
-      ? eventScopeHint(t, saveScopes(formValues, formToInput(formValues, tz, occurrence)), recurrence === 'none')
+  // Only for an occurrence of a series, and while every field can be read.
+  const hint = occurrence && entry ? eventScopeHint(t, saveScopes(formValues, entry), recurrence === 'none') : null
+  // Where the event lies for the browser, while a row's fields are in another zone (FR-18): the instants a save
+  // writes, once the times can be read and the end isn't before the start. A number keeps the word after it on its
+  // line where the text wraps, a time its "PM".
+  const elsewhere = !allDay && [startZone, endZone].some((z) => !sameZone(fieldZone(z, tz), tz))
+  const inYourZone =
+    elsewhere && entry && duration
+      ? t('zone.inYourZone', {
+          zone: zoneCity(tz),
+          when: formatEventWhen({ allDay: false, startsAt: new Date(entry.start), endsAt: new Date(entry.end) }, prefs, now)
+            .replace(/(\d) (?=\p{L})/gu, '$1\u00a0'),
+        })
       : null
+  // A new zone is the whole series', all events' or the following ones' (FR-17, FR-18), said before Save asks.
+  const seriesZone = !!occurrence && !allDay && !!initial && zonesChanged({ startZone, endZone }, initial)
+  const zoneNotes = described(inYourZone && `${id}-in-your-zone`, seriesZone && `${id}-series-zone`)
+  // The ✕ of a zone field: no zone for a single event, the browser's for a series, which needs one (FR-18).
+  const clearZoneTo = recurrence !== 'none' ? tz : ''
 
   const titleError = err('title')
   // An end before the start, which is only judged once every date and time can be read; an end date the
   // field couldn't read is said by its note.
   const endOrder = formState.errors.endDate?.message === 'validation.endBeforeStart' ? err('endDate') : undefined
-  // For a series, saving only moves the time zone while the rule or the all-day flag changes
-  // too (spec §4); until then, both "Only this event" and "All events" keep the series' own
-  // zone, so the notice would be misleading.
-  const seriesZoneFixed = !!(event?.recurring && initial && keepsRuleAndAllDay(getValues(), initial))
-  const otherZone = !allDay && event?.timezone && event.timezone !== tz && !seriesZoneFixed ? event.timezone : null
 
   return (
     <form onSubmit={(e) => void onSubmit(e)} noValidate>
@@ -449,9 +491,10 @@ function EditorForm({
         <EditorRow icon={<ClockIcon />}>
           <fieldset className="grid gap-2">
             <legend className="sr-only">{t('event.when')}</legend>
-            {/* Narrow screens drop the visible Start/End labels, like mobile calendars; the order says it. */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span id={`${id}-starts`} className="w-12 text-sm text-muted-foreground max-sm:sr-only">
+            {/* Narrow screens drop the visible Start/End labels, like mobile calendars; the order says it. What wraps,
+                such as a zone field (FR-18), lines up with the fields, not the label. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:pl-14">
+              <span id={`${id}-starts`} className="w-12 text-sm text-muted-foreground max-sm:sr-only sm:-ml-14">
                 {t('event.starts')}
               </span>
               <DateField
@@ -477,6 +520,23 @@ function EditorForm({
                   aria-label={t('event.startTime')}
                 />
               )}
+              {/* The zone follows the time in its row, and wraps with it (FR-18). */}
+              {zoneFields && (
+                <ZoneField
+                  value={startZone}
+                  onChange={(zone) => {
+                    onZonesChange(withStartZone(getValues(), zone))
+                  }}
+                  clearTo={clearZoneTo}
+                  browserZone={tz}
+                  date={startDate}
+                  inUse={inUse}
+                  prefs={prefs}
+                  autoFocus={revealing}
+                  describedBy={zoneNotes}
+                  aria-label={t('event.startZone')}
+                />
+              )}
             </div>
             <UnreadNotes notes={startNotes} id={`${id}-start`} />
             {startSaved && (
@@ -488,8 +548,8 @@ function EditorForm({
                 className="text-muted-foreground"
               />
             )}
-            <div className="flex flex-wrap items-center gap-2">
-              <span id={`${id}-ends`} className="w-12 text-sm text-muted-foreground max-sm:sr-only">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:pl-14">
+              <span id={`${id}-ends`} className="w-12 text-sm text-muted-foreground max-sm:sr-only sm:-ml-14">
                 {t('event.ends')}
               </span>
               <Controller
@@ -534,6 +594,21 @@ function EditorForm({
                   )}
                 />
               )}
+              {zoneFields && (
+                <ZoneField
+                  value={endZone}
+                  onChange={(zone) => {
+                    onZonesChange({ startZone: getValues('startZone'), endZone: zone })
+                  }}
+                  clearTo={clearZoneTo}
+                  browserZone={tz}
+                  date={endDate}
+                  inUse={inUse}
+                  prefs={prefs}
+                  describedBy={zoneNotes}
+                  aria-label={t('event.endZone')}
+                />
+              )}
               {duration && !('days' in duration && duration.days === 1) && (
                 <span className="tabular pl-1 text-sm text-muted-foreground">{formatDuration(duration, prefs)}</span>
               )}
@@ -553,19 +628,46 @@ function EditorForm({
                 {endOrder}
               </p>
             )}
-            <div className="flex items-center gap-2 pt-1">
-              <Controller
-                control={control}
-                name="allDay"
-                render={({ field }) => (
-                  <Switch id={`${id}-allday`} checked={field.value} onCheckedChange={field.onChange} />
-                )}
-              />
-              <Label htmlFor={`${id}-allday`} className="font-normal">
-                {t('event.allDay')}
-              </Label>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1">
+              <div className="flex items-center gap-2">
+                <Controller
+                  control={control}
+                  name="allDay"
+                  render={({ field }) => (
+                    <Switch id={`${id}-allday`} checked={field.value} onCheckedChange={field.onChange} />
+                  )}
+                />
+                <Label htmlFor={`${id}-allday`} className="font-normal">
+                  {t('event.allDay')}
+                </Label>
+              </div>
+              {/* Quiet, while no zone field shows: an event in the browser's zone looks as it always did (FR-18). */}
+              {!zonesShown && !allDay && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-my-1 font-normal text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setZonesShown(true)
+                    setRevealing(true)
+                  }}
+                >
+                  <GlobeIcon aria-hidden />
+                  {t('zone.other')}
+                </Button>
+              )}
             </div>
-            {otherZone && <p className="text-xs text-muted-foreground">{t('event.timezoneOther', { tz, from: otherZone })}</p>}
+            {inYourZone && (
+              <p id={`${id}-in-your-zone`} className="tabular text-sm text-muted-foreground">
+                {inYourZone}
+              </p>
+            )}
+            {seriesZone && (
+              <p id={`${id}-series-zone`} className="text-sm text-muted-foreground">
+                {t('zone.seriesEvent')}
+              </p>
+            )}
           </fieldset>
         </EditorRow>
 
@@ -581,7 +683,7 @@ function EditorForm({
               setValue('customRule', v.customRule, repeatOpts)
             }}
             start={start}
-            timeZone={tz}
+            timeZone={ruleZone}
             presets={RECURRENCE_PRESETS}
             customizable
             explicit={event?.recurring ?? false}

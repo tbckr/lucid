@@ -720,28 +720,34 @@ describe('EventEditor', () => {
     expect(within(dialog).getByText('Personal')).toBeInTheDocument()
   })
 
+  // FR-18: the zone shows only where it says something; an event in the browser's zone offers another.
   it.each([
     ['America/New_York', true],
     ['Europe/Berlin', false],
-  ])('mentions the time zone only when the event has another one (%s)', async (timezone, shown) => {
-    const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone })) })
-    expect(within(dialog).queryByText(/Saving moves the event from America\/New_York/) !== null).toBe(shown)
+  ])('shows the zone fields only when the event has another zone (%s)', async (timezone, shown) => {
+    const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone, endTimezone: timezone })) })
+    expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' }) !== null).toBe(shown)
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' }) === null).toBe(shown)
   })
 
-  // FR-17: for a series, the notice only matters once the rule or the
-  // all-day flag actually changes - until then both scope choices keep the
-  // series' own time zone.
-  it('hides the time zone notice for an unchanged series, and shows it once the rule changes', async () => {
+  // FR-17, FR-18: a series keeps its zone when its rule changes, and nothing says otherwise.
+  it("keeps a series' zone when its rule changes", async () => {
     const user = userEvent.setup()
     const event = toCalEvent(
-      apiEvent({ id: 'e1', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: '2026-09-25T08:00:00Z', timezone: 'America/New_York' }),
+      apiEvent({
+        id: 'e1',
+        recurring: true,
+        rrule: 'FREQ=WEEKLY',
+        recurrenceId: '2026-09-25T08:00:00Z',
+        timezone: 'America/New_York',
+        endTimezone: 'America/New_York',
+      }),
     )
     const { dialog } = await openEditor({ mode: 'edit', event })
-    expect(within(dialog).queryByText(/Saving moves the event from America\/New_York/)).toBeNull()
-
     await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
     await user.click(screen.getByRole('option', { name: 'Every day' }))
-    expect(within(dialog).getByText(/Saving moves the event from America\/New_York/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Start time zone' })).toHaveValue('New York')
+    expect(within(dialog).queryByText('A new time zone applies to all events or the following ones.')).toBeNull()
   })
 
   it('asks on save which events of a series change, and saves only this one', async () => {
@@ -1250,6 +1256,207 @@ describe('EventEditor', () => {
         expect(screen.queryByRole('dialog')).toBeNull()
       })
       expect(writtenEtags(fetch)).toEqual(['"1"', '"2"'])
+    })
+  })
+})
+
+describe('time zones (FR-18)', () => {
+  afterEach(() => {
+    useUi.getState().openEditor(null)
+    vi.restoreAllMocks()
+  })
+
+  /** An event in New York, by default the one of 10 November at 18:00 of a series on Tuesdays and Thursdays. */
+  const newYork = (p: Partial<ApiEvent> = {}) =>
+    toCalEvent(
+      apiEvent({
+        recurring: true,
+        rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+        timezone: 'America/New_York',
+        endTimezone: 'America/New_York',
+        start: '2026-11-10T23:00:00Z',
+        end: '2026-11-11T00:00:00Z',
+        recurrenceId: '2026-11-10T23:00:00Z',
+        ...p,
+      }),
+    )
+  /** A single event, without the series' fields. */
+  const single: Partial<ApiEvent> = { recurring: false, rrule: '', recurrenceId: null }
+  const zoneField = (dialog: HTMLElement, name: 'Start time zone' | 'End time zone') =>
+    within(dialog).getByRole<HTMLInputElement>('combobox', { name })
+  const put = async (fetch: Awaited<ReturnType<typeof openEditor>>['fetch']) => {
+    await waitFor(() => {
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+    })
+    const [url, init] = fetch.mock.calls.find(([, i]) => i?.method === 'PUT')!
+    return { url: urlOf(url), body: bodyOf(init) }
+  }
+
+  it('shows a foreign series in its zone', async () => {
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork() })
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('6:00 PM')
+    expect(zoneField(dialog, 'Start time zone')).toHaveValue('New York')
+    expect(zoneField(dialog, 'End time zone')).toHaveValue('New York')
+    expect(within(dialog).getByText(/In your time zone \(Berlin\): Wed, Nov 11/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Tuesday and Thursday')
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+  })
+
+  it('offers Other time zone for an event in your zone', async () => {
+    const user = userEvent.setup()
+    const event = toCalEvent(apiEvent({ timezone: '', endTimezone: '' }))
+    const { dialog } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+    expect(within(dialog).queryByRole('combobox', { name: 'End time zone' })).toBeNull()
+    expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+    const start = zoneField(dialog, 'Start time zone')
+    const end = zoneField(dialog, 'End time zone')
+    for (const field of [start, end]) {
+      expect(field).toHaveValue('')
+      expect(field).toHaveAttribute('placeholder', 'Your time zone')
+    }
+    expect(start).toHaveFocus()
+    expect(start).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('listbox', { name: 'Start time zone' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+  })
+
+  it('changes the zone and keeps the clock', async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event: newYork({ first: true }) })
+    await user.click(zoneField(dialog, 'Start time zone'))
+    await user.keyboard('Tokyo{Enter}')
+    expect(zoneField(dialog, 'Start time zone')).toHaveValue('Tokyo')
+    expect(zoneField(dialog, 'End time zone')).toHaveValue('Tokyo')
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('6:00 PM')
+
+    // The series' first event: a new zone applies to all of it, without a question.
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+    const { url, body } = await put(fetch)
+    expect(url).toBe('/api/v1/events/e1')
+    expect(body).toMatchObject({
+      timezone: 'Asia/Tokyo',
+      endTimezone: 'Asia/Tokyo',
+      start: '2026-11-10T09:00:00.000Z',
+      end: '2026-11-10T10:00:00.000Z',
+    })
+  })
+
+  it('asks no Only this event for a new zone', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork() })
+    const note = 'A new time zone applies to all events or the following ones.'
+    expect(within(dialog).queryByText(note)).toBeNull()
+
+    await user.click(zoneField(dialog, 'Start time zone'))
+    await user.keyboard('Tokyo{Enter}')
+    expect(within(dialog).getByText(note)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog', { name: 'This event repeats. Which events should change?' })
+    expect(within(question).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      expect.stringContaining('This and following events'),
+      expect.stringContaining('All events'),
+      'Cancel',
+    ])
+    expect(within(question).queryByRole('button', { name: 'Only this event' })).toBeNull()
+  })
+
+  it('asks about only this event while the zone of a series stays', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork() })
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const question = within(dialog).getByRole('alertdialog')
+    expect(within(question).getByRole('button', { name: 'Only this event' })).toBeInTheDocument()
+  })
+
+  // 14 March 2027: New York skips 02:00 to 03:00, Berlin two weeks later.
+  it.each([
+    ['America/New_York', '2027-03-14T05:00:00Z', true],
+    ['Europe/Berlin', '2027-03-13T23:00:00Z', false],
+  ])("says a skipped time in the row's zone (%s)", async (timezone, start, shown) => {
+    const user = userEvent.setup()
+    const end = new Date(Date.parse(start) + 3600 * 1000).toISOString()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork({ ...single, timezone, endTimezone: timezone, start, end }) })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Start time' }))
+    await user.click(screen.getByRole('option', { name: '2:30 AM' }))
+    const note = "Clocks go forward on this day: 2:30 AM doesn't exist and is saved as 3:30 AM."
+    expect(within(dialog).queryByText(note) !== null).toBe(shown)
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveAccessibleDescription(shown ? note : '')
+  })
+
+  it('hides the zones while All day', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork() })
+    const allDay = within(dialog).getByRole('switch', { name: 'All day' })
+    await user.click(allDay)
+    expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+    expect(within(dialog).queryByRole('combobox', { name: 'End time zone' })).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+
+    await user.click(allDay)
+    expect(zoneField(dialog, 'Start time zone')).toHaveValue('New York')
+    expect(zoneField(dialog, 'End time zone')).toHaveValue('New York')
+    expect(zoneField(dialog, 'Start time zone')).not.toHaveFocus()
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  it('hides Other time zone while All day, and takes the focus only when it is clicked', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone: '', endTimezone: '' })) })
+    const allDay = within(dialog).getByRole('switch', { name: 'All day' })
+    await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+    await user.keyboard('{Escape}')
+    await user.click(allDay)
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+
+    // Back from All day, the fields shown stay, but don't take the focus again.
+    await user.click(allDay)
+    expect(zoneField(dialog, 'Start time zone')).not.toHaveFocus()
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+  })
+
+  it.each([
+    ["a single event's row to none", single, '', 'Your time zone'],
+    ["a series' row to your zone", {}, 'Europe/Berlin', 'Berlin'],
+  ])('the ✕ sets %s, and the fields stay', async (_, p, zone, text) => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: newYork(p) })
+    const [clear] = within(dialog).getAllByRole('button', { name: 'Use your time zone' })
+    await user.click(clear!)
+    for (const name of ['Start time zone', 'End time zone'] as const) {
+      const field = zoneField(dialog, name)
+      if (zone === '') {
+        expect(field).toHaveValue('')
+        expect(field).toHaveAttribute('placeholder', text)
+      } else {
+        expect(field).toHaveValue(text)
+      }
+    }
+    expect(within(dialog).queryByRole('button', { name: 'Use your time zone' })).toBeNull()
+    expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+    expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('6:00 PM')
+  })
+
+  it("keeps a single event's clock in the zone it is moved out of with the ✕", async () => {
+    const user = userEvent.setup()
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event: newYork(single) })
+    const [clear] = within(dialog).getAllByRole('button', { name: 'Use your time zone' })
+    await user.click(clear!)
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    // 18:00 in Berlin, where an event without a zone is shown, and saved without one.
+    expect((await put(fetch)).body).toMatchObject({
+      timezone: '',
+      endTimezone: '',
+      start: '2026-11-10T17:00:00.000Z',
+      end: '2026-11-10T18:00:00.000Z',
     })
   })
 })
