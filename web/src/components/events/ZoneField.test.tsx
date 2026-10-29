@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { de } from 'date-fns/locale/de'
 import { enUS } from 'date-fns/locale/en-US'
+import { fr } from 'date-fns/locale/fr'
 import { type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
@@ -10,6 +11,7 @@ import { ZoneField } from './ZoneField'
 
 const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
 const german: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
+const french: FormatPrefs = { tag: 'fr-FR', locale: fr, hourCycle: '24h', weekStartsOn: 1 }
 
 type Props = Partial<ComponentProps<typeof ZoneField>>
 
@@ -255,6 +257,17 @@ describe('ZoneField (FR-18)', () => {
     const utc = named('UTC, Etc/UTC')[0]!
     expect(utc).toHaveTextContent('UTCUTC+0')
     expect(utc).not.toHaveTextContent('GMT')
+  })
+
+  // French names a zone without a name of its own by its offset from UTC ("UTC+00:00"), not from GMT.
+  it('shows no generic name that is only an offset from UTC either', async () => {
+    const { user, input } = setup({ prefs: french })
+    await user.click(input)
+    await user.clear(input)
+    await user.keyboard('utc')
+    const utc = named('UTC, Etc/UTC')[0]!
+    expect(utc).toHaveTextContent('UTCUTC+0')
+    expect(utc).not.toHaveTextContent('00:00')
   })
 
   it('groups where you are and the zones in use, then lists every zone under a divider', async () => {

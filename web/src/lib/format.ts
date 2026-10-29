@@ -186,10 +186,16 @@ const MS_PER_DAY = 86_400_000
  * Times in the zones they are told in (FR-18), such as "Wed, Oct 28, 10:00 Berlin – 13:00 New York": each as
  * `formatEventWhen` shows a time, in its zone, with the zone's city after it where the zones differ and once at the
  * end where they are one (`sameZone`), as in "Tue, Nov 10, 18:00 – 19:00 New York". A time on the date of the one
- * before it, each in its own zone, leaves the date out. The year is named on every date once a time lies in another
- * than `now`'s, as a range of `formatEventWhen` does. Every zone is one Intl knows (`fieldZone`).
+ * before it, each in its own zone, leaves the date out, and one at the instant before it in the same zone is said
+ * once, as a range of `formatEventWhen` says equal ends. The year is named on every date once a time lies in another
+ * than `now`'s, as a range of `formatEventWhen` does. A no-break space keeps the dash with the time before it, so a
+ * wrapped line doesn't start with "–". Every zone is one Intl knows (`fieldZone`).
  */
-export function formatInZones(parts: readonly ZonedInstant[], p: FormatPrefs, now: Date): string {
+export function formatInZones(all: readonly ZonedInstant[], p: FormatPrefs, now: Date): string {
+  const parts = all.filter((part, i) => {
+    const before = all[i - 1]
+    return before?.at.getTime() !== part.at.getTime() || !sameZone(part.zone, before.zone)
+  })
   const first = parts[0]
   if (!first) return ''
   // The wall clocks, read as UTC, which hold the date and the year of each time in its own zone.
@@ -204,7 +210,7 @@ export function formatInZones(parts: readonly ZonedInstant[], p: FormatPrefs, no
     }).format(at)
     return oneZone ? time : `${time} ${zoneCity(zone)}`
   })
-  return `${texts.join(' – ')}${oneZone ? ` ${zoneCity(first.zone)}` : ''}`
+  return `${texts.join('\u00a0– ')}${oneZone ? ` ${zoneCity(first.zone)}` : ''}`
 }
 
 /**

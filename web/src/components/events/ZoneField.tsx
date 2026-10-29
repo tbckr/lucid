@@ -31,8 +31,11 @@ interface Moved {
   zone: string
 }
 
-/** Names Intl falls back to where it has none for the zone ("GMT+00:00" for UTC): the offset says as much. */
-const OFFSET_NAME = /^GMT[+\-−]/
+/**
+ * Names Intl falls back to where it has none for the zone ("GMT+00:00" for UTC, "UTC+00:00" in French): the offset
+ * says as much.
+ */
+const OFFSET_NAME = /^(GMT|UTC)[+\-−]/
 
 /**
  * Time zone field of a row's date and time (FR-18): the zone at rest as its city, a typed search with a list of
@@ -229,8 +232,9 @@ export function ZoneField({
               inputProps.onChange?.(e)
             }}
             onKeyDown={onKeyDown}
+            // At rest the city is quiet beside the time, as "Your time zone" is; typed in, it is ink (FR-18).
             className={cn(
-              'peer h-9 w-full min-w-0 rounded-md border border-input bg-surface pr-8 pl-3 text-sm transition-[color,box-shadow] outline-none placeholder:text-muted-foreground',
+              'peer h-9 w-full min-w-0 rounded-md border border-input bg-surface pr-8 pl-3 text-sm text-muted-foreground transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus:text-foreground',
               'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40',
               'disabled:cursor-not-allowed disabled:opacity-50',
             )}

@@ -201,7 +201,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+    ).toBe('Wed, Oct 28, 10:00 Berlin\u00a0– 13:00 New York')
   })
 
   it('names a shared zone once, at the end', () => {
@@ -214,7 +214,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Tue, Nov 10, 18:00 – 19:00 New York')
+    ).toBe('Tue, Nov 10, 18:00\u00a0– 19:00 New York')
   })
 
   it('treats two names of one zone as a shared zone', () => {
@@ -227,7 +227,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Wed, Oct 28, 09:00 – 10:00 UTC')
+    ).toBe('Wed, Oct 28, 09:00\u00a0– 10:00 UTC')
   })
 
   it('names the zone of a single time', () => {
@@ -246,7 +246,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Tue, Oct 27, 18:00 – Wed, Oct 28, 01:00 New York')
+    ).toBe('Tue, Oct 27, 18:00\u00a0– Wed, Oct 28, 01:00 New York')
     // Half past midnight in Berlin is still the evening before in New York: each date is the one in its own zone.
     expect(
       formatInZones(
@@ -257,7 +257,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Wed, Oct 28, 00:30 Berlin – Tue, Oct 27, 23:00 New York')
+    ).toBe('Wed, Oct 28, 00:30 Berlin\u00a0– Tue, Oct 27, 23:00 New York')
   })
 
   it('adds the year of a time in its zone where it is not the current one, to every date, as a range does', () => {
@@ -275,7 +275,7 @@ describe('formatInZones', () => {
         us24,
         now,
       ),
-    ).toBe('Thu, Dec 31, 2026, 22:00 – Fri, Jan 1, 2027, 00:00 New York')
+    ).toBe('Thu, Dec 31, 2026, 22:00\u00a0– Fri, Jan 1, 2027, 00:00 New York')
   })
 
   it('formats in the hour cycle and the language', () => {
@@ -283,8 +283,29 @@ describe('formatInZones', () => {
       { at: new Date('2026-10-28T09:00:00Z'), zone: berlin },
       { at: new Date('2026-10-28T17:00:00Z'), zone: ny },
     ]
-    expect(formatInZones(parts, us, now)).toMatch(/^Wed, Oct 28, 10:00\sAM Berlin – 1:00\sPM New York$/)
-    expect(formatInZones(parts, deDE, now)).toBe('Mi., 28. Okt., 10:00 Berlin – 13:00 New York')
+    expect(formatInZones(parts, us, now)).toMatch(/^Wed, Oct 28, 10:00\sAM Berlin\u00a0– 1:00\sPM New York$/)
+    expect(formatInZones(parts, deDE, now)).toBe('Mi., 28. Okt., 10:00 Berlin\u00a0– 13:00 New York')
+  })
+
+  // As the range of formatEventWhen says equal ends once.
+  it('says a time once where the start and the end are one instant in one zone', () => {
+    const at = new Date('2026-10-27T13:00:00Z')
+    const once = [
+      { at, zone: ny },
+      { at, zone: ny },
+    ]
+    expect(formatInZones(once, us, now)).toMatch(/^Tue, Oct 27, 9:00\sAM New York$/)
+    // In two zones, each is named.
+    expect(
+      formatInZones(
+        [
+          { at, zone: ny },
+          { at, zone: berlin },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Tue, Oct 27, 09:00 New York\u00a0– 14:00 Berlin')
   })
 
   it('says nothing without a time', () => {
@@ -311,7 +332,7 @@ describe('formatOwnZones', () => {
         us24,
         now,
       ),
-    ).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+    ).toBe('Wed, Oct 28, 10:00 Berlin\u00a0– 13:00 New York')
     expect(
       formatOwnZones(
         [
@@ -322,7 +343,7 @@ describe('formatOwnZones', () => {
         us24,
         now,
       ),
-    ).toBe('Wed, Oct 28, 05:00 – 13:00 New York')
+    ).toBe('Wed, Oct 28, 05:00\u00a0– 13:00 New York')
   })
 
   it("puts a time without a zone, or in one Intl does not know, in the browser's", () => {
@@ -330,9 +351,9 @@ describe('formatOwnZones', () => {
       { at: start, zone },
       { at: end, zone: ny },
     ]
-    expect(formatOwnZones(parts(''), berlin, us24, now)).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+    expect(formatOwnZones(parts(''), berlin, us24, now)).toBe('Wed, Oct 28, 10:00 Berlin\u00a0– 13:00 New York')
     expect(formatOwnZones(parts('W. Europe Standard Time'), berlin, us24, now)).toBe(
-      'Wed, Oct 28, 10:00 Berlin – 13:00 New York',
+      'Wed, Oct 28, 10:00 Berlin\u00a0– 13:00 New York',
     )
   })
 
