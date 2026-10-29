@@ -368,15 +368,18 @@ function anchorRow(d: TaskDates): { iso: string; allDay: boolean; row: 'start' |
  * other at a time, so a time it gets is the user's, on the series' day. One
  * it loses goes.
  *
- * A row with a time moved into another zone, by `zones` (the fields' zones
- * before and after, FR-18), moves as the server moves a series into a zone
- * (the wall move): by the distance from the repeat's wall clock in the zone
- * it was shown in to the one entered in the new zone, the series' own time
- * from its wall clock in the old zone to that moved one in the new zone, so
- * a clock kept is the series' clock in the new zone, whatever the two zones'
- * offsets do between the series' repeat and the later one; a time the row
- * gains is moved back on the new zone's wall clock. Other rows are measured
- * on the browser's wall clock, as before.
+ * With `zones`, the zones of each row's fields before and after the edit
+ * (FR-18), a row with a time moves as the server moves the series, its
+ * wall move: by the distance from the repeat's wall clock in the zone it
+ * was shown in to the one entered in the zone it is entered in, the
+ * series' own time from its wall clock in the first to that moved one in
+ * the second. So a clock kept in a new zone is the series' clock there,
+ * and a date moved in a zone other than the browser's keeps the series'
+ * clock in it, whatever the zones' offsets do between the series' repeat
+ * and the later one. A time the row gains is moved back on the wall clock
+ * of the zone it is entered in. A row whose zones are both the browser's,
+ * a date, and every row without `zones`, as a drag in the browser's view
+ * moves them, are measured on the browser's wall clock.
  */
 export function allRepeatsDates(
   repeat: TaskRepeat,
@@ -411,17 +414,22 @@ export function allRepeatsDates(
     const allDay = to[flag]
     const was = repeat.shown[which]
     const value = series[which]
+    // A time on the wall clock of the row's zones, where one of them isn't the browser's (FR-18).
     const zone = zones?.[which]
-    const rezoned = zone !== undefined && !allDay && !sameZone(zone.shown, zone.entered) ? zone : null
-    // Also where the instant stays: a zone with the old one's offset on the repeat's day may have another on the
-    // series' (FR-18).
-    if (rezoned && next && was && value && !repeat.shown[flag] && !series[flag]) {
-      const by = wallSpan(wallMs(was, false, rezoned.shown), wallMs(next, false, rezoned.entered), false)
-      return [movedWall(value, by, rezoned.shown, rezoned.entered), false]
-    }
-    if (sameDate(was, repeat.shown[flag], next, allDay)) return [value ?? null, series[flag]]
+    const browser = browserTimeZone()
+    const walls =
+      zone && !allDay && !(sameZone(zone.shown, browser) && sameZone(zone.entered, browser)) ? zone : null
+    const timedShape = !!was && !!value && !repeat.shown[flag] && !series[flag]
+    // In a new zone also where the instant stays: a zone with the old one's offset on the repeat's day may have
+    // another on the series'.
+    const rezoned = !!walls && timedShape && !sameZone(walls.shown, walls.entered)
+    if (!rezoned && sameDate(was, repeat.shown[flag], next, allDay)) return [value ?? null, series[flag]]
     if (!next) return [null, allDay]
-    if (rezoned) return [movedWall(next, zonedBack, rezoned.entered, rezoned.entered), false]
+    if (walls && was && value && timedShape) {
+      const by = wallSpan(wallMs(was, false, walls.shown), wallMs(next, false, walls.entered), false)
+      return [movedWall(value, by, walls.shown, walls.entered), false]
+    }
+    if (walls) return [movedWall(next, zonedBack, walls.entered, walls.entered), false]
     if (was && value && repeat.shown[flag] === allDay && series[flag] === allDay) {
       const by = wallDistance(shownAt(was, allDay), shownAt(next, allDay))
       return [movedDate(value, allDay, by.days, by.minutes), allDay]

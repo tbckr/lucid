@@ -1558,6 +1558,19 @@ describe('TaskEditor', () => {
       })
     /** A single task, without the series' fields. */
     const single: Partial<Todo> = { rrule: '', recurring: false, recurrenceId: null, next: null }
+    /** The repeat of `t` after its current one, on Tuesday, 3 November at 18:00 in New York, on winter time. */
+    const nov3 = (t: Todo): TaskRepeat => {
+      const due = '2026-11-03T23:00:00Z'
+      return {
+        todo: t,
+        recurrenceId: due,
+        at: 'upcoming',
+        last: false,
+        offRule: false,
+        title: t.title,
+        shown: { start: null, startAllDay: false, due, dueAllDay: false },
+      }
+    }
     // From 9:00 AM to 5:00 PM on Wednesday, 28 October 2026, without a zone: in Berlin, where the browser is.
     const workday = todo({ start: '2026-10-28T08:00:00Z', due: '2026-10-28T16:00:00Z' })
     const zoneField = (dialog: HTMLElement, name: 'Start time zone' | 'Due time zone') =>
@@ -1690,17 +1703,7 @@ describe('TaskEditor', () => {
     it('asks no Only this repeat for a new zone at a later repeat', async () => {
       const user = userEvent.setup()
       const t = newYork()
-      const due = '2026-11-03T23:00:00Z'
-      const nov3: TaskRepeat = {
-        todo: t,
-        recurrenceId: due,
-        at: 'upcoming',
-        last: false,
-        offRule: false,
-        title: t.title,
-        shown: { start: null, startAllDay: false, due, dueAllDay: false },
-      }
-      const { dialog } = await openTask(t, undefined, nov3)
+      const { dialog } = await openTask(t, undefined, nov3(t))
       await user.click(zoneField(dialog, 'Due time zone'))
       await user.keyboard('Tokyo{Enter}')
       expect(within(dialog).getByText(seriesNote)).toBeInTheDocument()
@@ -1738,17 +1741,7 @@ describe('TaskEditor', () => {
     ])('saves all repeats from a later repeat moved into %s at their clock', async (_, rezone, due, zone) => {
       const user = userEvent.setup()
       const t = newYork()
-      const shown = '2026-11-03T23:00:00Z'
-      const nov3: TaskRepeat = {
-        todo: t,
-        recurrenceId: shown,
-        at: 'upcoming',
-        last: false,
-        offRule: false,
-        title: t.title,
-        shown: { start: null, startAllDay: false, due: shown, dueAllDay: false },
-      }
-      const { fetch, dialog } = await openTask(t, undefined, nov3)
+      const { fetch, dialog } = await openTask(t, undefined, nov3(t))
       await rezone(user, dialog)
       expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('6:00 PM')
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
@@ -1757,6 +1750,26 @@ describe('TaskEditor', () => {
       const { path, body } = await wrote(fetch, 'PUT')
       expect(path).toBe('/api/v1/todos/t1')
       expect(body).toMatchObject({ due, dueAllDay: false, timezone: zone, dueTimezone: zone })
+    })
+
+    // FR-17, FR-18: a date moved at a later repeat moves the series on its own zone's wall clock, across New York's
+    // change to winter time, which Berlin, where the browser is, made a week earlier.
+    it("moves all repeats of a series in another zone from a later repeat on that zone's wall clock", async () => {
+      const user = userEvent.setup()
+      const t = newYork()
+      const { fetch, dialog } = await openTask(t, undefined, nov3(t))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due' }))
+      const month = screen.getByRole('dialog', { name: 'Due date' })
+      await user.click(within(month).getByRole('button', { name: 'Tuesday, November 10th, 2026' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All repeats' }))
+
+      // A week later than 27 October at 18:00 in New York.
+      const { path, body } = await wrote(fetch, 'PUT')
+      expect(path).toBe('/api/v1/todos/t1')
+      expect(body).toMatchObject({ due: '2026-11-03T23:00:00.000Z', dueAllDay: false })
+      expect(body).not.toHaveProperty('timezone')
+      expect(body).not.toHaveProperty('dueTimezone')
     })
 
     it('asks about only this repeat while the zone of a series stays', async () => {
