@@ -15,11 +15,20 @@ const UTC_NAMES: ReadonlySet<string> = new Set(['UTC', PICKED_UTC, 'GMT'])
 /** The zone Intl formats in as `zone` names it (`Asia/Calcutta` for `Asia/Kolkata` in V8); null where it rejects it. */
 const resolved = new Map<string, string | null>()
 
+/** The zones Intl lists, by the names it lists them by; empty without the API. */
+function listedZones(): readonly string[] {
+  return (Intl as Partial<Pick<typeof Intl, 'supportedValuesOf'>>).supportedValuesOf?.('timeZone') ?? []
+}
+
+/** The zones Intl lists, which it names as it lists them: the list's names need no formatter to resolve (FR-18). */
+let listed: ReadonlySet<string> | undefined
+
 function resolve(zone: string): string | null {
   let name = resolved.get(zone)
   if (name === undefined) {
+    listed ??= new Set(listedZones())
     try {
-      name = new Intl.DateTimeFormat('en', { timeZone: zone }).resolvedOptions().timeZone
+      name = listed.has(zone) ? zone : new Intl.DateTimeFormat('en', { timeZone: zone }).resolvedOptions().timeZone
     } catch {
       name = null
     }
@@ -111,8 +120,7 @@ export function zoneOffset(zone: string, at: Date): string {
  * lists one, would be sent as no zone). Only UTC without the API.
  */
 export function allZones(): string[] {
-  const listed = (Intl as Partial<Pick<typeof Intl, 'supportedValuesOf'>>).supportedValuesOf?.('timeZone') ?? []
-  return [...listed.filter((zone) => zone !== 'UTC' && zone !== PICKED_UTC), PICKED_UTC]
+  return [...listedZones().filter((zone) => zone !== 'UTC' && zone !== PICKED_UTC), PICKED_UTC]
 }
 
 /** City names in English, as the IDs spell them, whatever the language of the interface. */
@@ -177,6 +185,46 @@ export function genericName(zone: string, tag: string, style: 'longGeneric' | 's
     nameFormats.set(key, format)
   }
   return format?.formatToParts(at).find((part) => part.type === 'timeZoneName')?.value ?? ''
+}
+
+/** What `warmZones` built or is building, once per session: `${what}|${tag}`. */
+const warmed = new Set<string>()
+
+/** Runs `step` when the browser is idle, or soon where it can't say (FR-18). */
+function whenIdle(step: (deadline?: IdleDeadline) => void): void {
+  const idle = (globalThis as Partial<Pick<typeof globalThis, 'requestIdleCallback'>>).requestIdleCallback
+  if (idle) idle(step)
+  else setTimeout(step, 0)
+}
+
+/**
+ * Builds, in the background, the Intl formatters the zone list needs for every zone in the language `tag`, a few
+ * hundred, which its first open would otherwise wait for (FR-18): for the `list`, the generic names and offsets it
+ * shows, once a zone field shows; for a `search`, the short names it also reads, once the list opens. A few zones
+ * at a time while the browser is idle, once per session.
+ */
+export function warmZones(tag: string, what: 'list' | 'search'): void {
+  const key = `${what}|${tag}`
+  if (warmed.has(key)) return
+  warmed.add(key)
+  const zones = allZones()
+  const at = new Date()
+  let next = 0
+  const step = (deadline?: IdleDeadline) => {
+    // While the browser is idle, else 20 zones at a time; one at least.
+    for (const zone of zones.slice(next, deadline ? undefined : next + 20)) {
+      next++
+      if (what === 'list') {
+        genericName(zone, tag, 'longGeneric', at)
+        zoneOffset(zone, at)
+      } else {
+        genericName(zone, tag, 'shortGeneric', at)
+      }
+      if (deadline && deadline.timeRemaining() < 1) break
+    }
+    if (next < zones.length) whenIdle(step)
+  }
+  whenIdle(step)
 }
 
 /** Whether `query` (already plain) matches the city, ID, generic names (in `tag`) or offset (at `at`) of `zone`. */

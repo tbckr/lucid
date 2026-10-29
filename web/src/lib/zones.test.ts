@@ -344,3 +344,80 @@ describe('wallDate', () => {
     ])
   })
 })
+
+// The zone list's first open built a few hundred Intl formatters, ~200 ms (FR-18).
+describe('the cost of the zone list', () => {
+  /** A zones module of its own, with nothing cached yet. */
+  const fresh = async () => {
+    vi.resetModules()
+    return import('./zones')
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reads a zone Intl lists by its name, without a formatter', async () => {
+    const zones = await fresh()
+    const formats = vi.spyOn(Intl, 'DateTimeFormat')
+    const listed = Intl.supportedValuesOf('timeZone')
+    for (const zone of listed) {
+      expect(zones.canonicalZone(zone)).toBe(zone)
+      zones.zoneCity(zone)
+    }
+    expect(formats).not.toHaveBeenCalled()
+    // One it doesn't list still asks Intl.
+    expect(zones.sameZone('US/Eastern', 'America/New_York')).toBe(true)
+    expect(formats).toHaveBeenCalledTimes(1)
+  })
+
+  it("builds the list's names and offsets in the background once the field shows, once", async () => {
+    const zones = await fresh()
+    vi.useFakeTimers()
+    const formats = vi.spyOn(Intl, 'DateTimeFormat')
+    zones.warmZones('en-GB', 'list')
+    // Nothing on the way of what shows the field.
+    expect(formats).not.toHaveBeenCalled()
+    vi.runAllTimers()
+    expect(formats).toHaveBeenCalled()
+
+    formats.mockClear()
+    const at = new Date('2026-03-20T12:00:00Z')
+    for (const zone of zones.allZones()) {
+      zones.genericName(zone, 'en-GB', 'longGeneric', at)
+      zones.zoneOffset(zone, at)
+    }
+    expect(formats).not.toHaveBeenCalled()
+    zones.warmZones('en-GB', 'list')
+    vi.runAllTimers()
+    expect(formats).not.toHaveBeenCalled()
+  })
+
+  it('works while the browser is idle, a zone at least each time', async () => {
+    const zones = await fresh()
+    const queued: IdleRequestCallback[] = []
+    vi.stubGlobal('requestIdleCallback', (step: IdleRequestCallback) => queued.push(step))
+    try {
+      zones.warmZones('en-GB', 'search')
+      let calls = 0
+      // Never idle for long: one zone each time.
+      for (let step = queued.shift(); step; step = queued.shift()) {
+        calls++
+        step({ didTimeout: false, timeRemaining: () => 0 })
+      }
+      expect(calls).toBe(zones.allZones().length)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('builds the names a search reads once the list opens', async () => {
+    const zones = await fresh()
+    vi.useFakeTimers()
+    zones.warmZones('en-GB', 'search')
+    vi.runAllTimers()
+    const formats = vi.spyOn(Intl, 'DateTimeFormat')
+    for (const zone of zones.allZones()) zones.genericName(zone, 'en-GB', 'shortGeneric', new Date())
+    expect(formats).not.toHaveBeenCalled()
+  })
+})

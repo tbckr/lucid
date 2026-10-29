@@ -5,7 +5,7 @@ import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { dayKey, isFormDate, parseDayKey } from '@/lib/dates'
 import { formatMonthDay, type FormatPrefs } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { genericName, sameZone, zoneCity, zoneGroups, zoneOffset, type ZoneGroup } from '@/lib/zones'
+import { genericName, sameZone, warmZones, zoneCity, zoneGroups, zoneOffset, type ZoneGroup } from '@/lib/zones'
 import { FieldEnd } from './EditorRow'
 import { reveal, useTypedField } from './useTypedField'
 
@@ -175,6 +175,15 @@ export function ZoneField({
   useEffect(() => {
     if (open && marked) reveal(list.current, marked, moved === null)
   }, [open, marked, moved])
+
+  // The list's names and offsets, for every zone, are built in the background once a field shows, and the names a
+  // search reads once the list opens, rather than when it opens or the first key is typed (FR-18).
+  useEffect(() => {
+    warmZones(tag, 'list')
+  }, [tag])
+  useEffect(() => {
+    if (open) warmZones(tag, 'search')
+  }, [open, tag])
 
   // Shown by "Other time zone" (FR-18): once, when it appears.
   useEffect(() => {
