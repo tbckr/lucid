@@ -1,7 +1,7 @@
 import { addDays, addMinutes, differenceInCalendarDays, startOfDay } from 'date-fns'
 import { type TFunction } from 'i18next'
 import { type OccurrenceState, type Todo, type TodoInput, type TodoOccurrence } from './api/schemas'
-import { localDateToUtc, movedAs, utcDateToLocal } from './dates'
+import { localDateToUtc, movedAs, utcDateToLocal, wallOf, zonedToUtc } from './dates'
 import { type FormatPrefs } from './format'
 import { browserTimeZone } from './locale'
 import { describeSeriesRule } from './rrule'
@@ -316,6 +316,43 @@ function sameDate(
   return aAllDay === bAllDay && Date.parse(a) === Date.parse(b)
 }
 
+/** The zones the fields of a row of a repeat were shown in, and are entered in (FR-18). */
+export interface RowZones {
+  shown: string
+  entered: string
+}
+
+const DAY_MS = 86_400_000
+
+/** A wire date as its wall clock in `zone`, read as UTC, in ms: a date (all-day) by its UTC date, at midnight. */
+function wallMs(iso: string, allDay: boolean, zone: string): number {
+  return allDay ? Date.parse(iso) : wallOf(Date.parse(iso), zone)
+}
+
+/**
+ * The whole days, and the change of the time of day, from the wall clock `from` to `to` (`wallMs`); the days alone
+ * for `byDays`.
+ */
+function wallSpan(from: number, to: number, byDays: boolean): { days: number; ms: number } {
+  const days = Math.floor(to / DAY_MS) - Math.floor(from / DAY_MS)
+  return { days, ms: byDays ? 0 : to - from - days * DAY_MS }
+}
+
+/** The time `iso` moved by `by` on its wall clock in `from`, at that wall clock in `to` (FR-18). */
+function movedWall(iso: string, by: { days: number; ms: number }, from: string, to: string): string {
+  const wall = wallOf(Date.parse(iso), from) + by.days * DAY_MS + by.ms
+  const text = new Date(wall).toISOString()
+  // The fields hold minutes; the seconds come along.
+  return new Date(zonedToUtc(text.slice(0, 10), text.slice(11, 16), to).getTime() + (wall % 60_000)).toISOString()
+}
+
+/** The wire date that places `d` (start, else due), its value type and its row; `null` without one. */
+function anchorRow(d: TaskDates): { iso: string; allDay: boolean; row: 'start' | 'due' } | null {
+  if (d.start) return { iso: d.start, allDay: d.startAllDay, row: 'start' }
+  if (d.due) return { iso: d.due, allDay: d.dueAllDay, row: 'due' }
+  return null
+}
+
 /**
  * The series' own dates, its current repeat's, for "all repeats" chosen at its
  * later `repeat`, changed from the dates it is shown on to `to` (FR-17). A
@@ -330,8 +367,22 @@ function sameDate(
  * current one: in whole days where one of them is shown on a date and the
  * other at a time, so a time it gets is the user's, on the series' day. One
  * it loses goes.
+ *
+ * A row with a time moved into another zone, by `zones` (the fields' zones
+ * before and after, FR-18), moves as the server moves a series into a zone
+ * (the wall move): by the distance from the repeat's wall clock in the zone
+ * it was shown in to the one entered in the new zone, the series' own time
+ * from its wall clock in the old zone to that moved one in the new zone, so
+ * a clock kept is the series' clock in the new zone, whatever the two zones'
+ * offsets do between the series' repeat and the later one; a time the row
+ * gains is moved back on the new zone's wall clock. Other rows are measured
+ * on the browser's wall clock, as before.
  */
-export function allRepeatsDates(repeat: TaskRepeat, to: TaskDates): Required<TaskDates> {
+export function allRepeatsDates(
+  repeat: TaskRepeat,
+  to: TaskDates,
+  zones?: Partial<Record<'start' | 'due', RowZones>>,
+): Required<TaskDates> {
   const series = repeat.todo
   const shown = anchorDate(repeat.shown)
   const own = anchorDate(series)
@@ -342,14 +393,35 @@ export function allRepeatsDates(repeat: TaskRepeat, to: TaskDates): Required<Tas
         ? wallDistance(shown.at, own.at)
         : { days: differenceInCalendarDays(own.at, shown.at), minutes: 0 }
       : { days: 0, minutes: 0 }
+  // The same, on the wall clock of the zone each anchor was shown in, for a row moved into another zone.
+  const zoneOf = (row: 'start' | 'due') => zones?.[row]?.shown ?? browserTimeZone()
+  const shownRow = anchorRow(repeat.shown)
+  const ownRow = anchorRow(series)
+  const zonedBack =
+    shownRow && ownRow
+      ? wallSpan(
+          wallMs(shownRow.iso, shownRow.allDay, zoneOf(shownRow.row)),
+          wallMs(ownRow.iso, ownRow.allDay, zoneOf(ownRow.row)),
+          shownRow.allDay !== ownRow.allDay,
+        )
+      : { days: 0, ms: 0 }
   const field = (which: 'start' | 'due'): [string | null, boolean] => {
     const flag = which === 'start' ? 'startAllDay' : 'dueAllDay'
     const next = to[which]
     const allDay = to[flag]
     const was = repeat.shown[which]
     const value = series[which]
+    const zone = zones?.[which]
+    const rezoned = zone !== undefined && !allDay && !sameZone(zone.shown, zone.entered) ? zone : null
+    // Also where the instant stays: a zone with the old one's offset on the repeat's day may have another on the
+    // series' (FR-18).
+    if (rezoned && next && was && value && !repeat.shown[flag] && !series[flag]) {
+      const by = wallSpan(wallMs(was, false, rezoned.shown), wallMs(next, false, rezoned.entered), false)
+      return [movedWall(value, by, rezoned.shown, rezoned.entered), false]
+    }
     if (sameDate(was, repeat.shown[flag], next, allDay)) return [value ?? null, series[flag]]
     if (!next) return [null, allDay]
+    if (rezoned) return [movedWall(next, zonedBack, rezoned.entered, rezoned.entered), false]
     if (was && value && repeat.shown[flag] === allDay && series[flag] === allDay) {
       const by = wallDistance(shownAt(was, allDay), shownAt(next, allDay))
       return [movedDate(value, allDay, by.days, by.minutes), allDay]

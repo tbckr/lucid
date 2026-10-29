@@ -55,7 +55,14 @@ import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { isApiError } from '@/lib/api/client'
 import { type Todo, type TodoInput } from '@/lib/api/schemas'
-import { allRepeatsDates, currentRepeat, taskRuleStart, type TaskDates, type TaskRepeat } from '@/lib/calendarTasks'
+import {
+  allRepeatsDates,
+  currentRepeat,
+  taskRuleStart,
+  type RowZones,
+  type TaskDates,
+  type TaskRepeat,
+} from '@/lib/calendarTasks'
 import { dayAt, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
@@ -120,14 +127,17 @@ type Which = keyof typeof DATES
 /**
  * What a save at a repeat of a series does (FR-17): the body it sends, what
  * the user did (`move` when the repeat's dates changed, `rule` when the rule
- * did, else `change`), whether the dates changed, which the toast tells, and
- * which repeats it can reach.
+ * or a zone did, else `change`), whether the dates changed, which the toast
+ * tells, which repeats it can reach, and the zones of the rows' fields before
+ * and after, which "all repeats" from a later repeat moves the series by
+ * (FR-18).
  */
 interface SavePlan {
   input: TodoInput
   action: ScopeAction
   moved: boolean
   result: ScopeResult
+  zones: Record<Which, RowZones>
 }
 
 /**
@@ -375,7 +385,11 @@ export function TaskEditor({
     const moved = datesChanged(repeat.shown, input)
     // A new zone is the series', for all repeats or the following ones, as a new rule is (FR-17, FR-18).
     const action: ScopeAction = input.rrule !== undefined || zonesMoved(v) ? 'rule' : moved ? 'move' : 'change'
-    return { input, action, moved, result: scopeOptions({ kind: 'task', action, item: repeat, to: input }) }
+    const zones = {
+      start: { shown: fieldZone(opened.startZone, tz), entered: fieldZone(v.startZone, tz) },
+      due: { shown: fieldZone(opened.dueZone, tz), entered: fieldZone(v.dueZone, tz) },
+    }
+    return { input, action, moved, result: scopeOptions({ kind: 'task', action, item: repeat, to: input }), zones }
   }
 
   // A refused save says so, and the next one goes with the ETag the task has now: it replaces the
@@ -393,8 +407,8 @@ export function TaskEditor({
 
   // "Only this repeat" detaches the current repeat with the changes; "This and following repeats"
   // splits the series at a later one, from its new dates; "All repeats" saves the series, which
-  // from a later repeat moves as far as that repeat moved (FR-17).
-  const saveScope = (scope: Scope, { input, moved }: SavePlan) => {
+  // from a later repeat moves as far as that repeat moved (FR-17), into a new zone on its wall clock (FR-18).
+  const saveScope = (scope: Scope, { input, moved, zones }: SavePlan) => {
     if (!todo || !repeat) return
     switch (scope) {
       case 'this':
@@ -408,7 +422,7 @@ export function TaskEditor({
         update.mutate(
           {
             todo: written(todo),
-            input: later ? { ...input, ...allRepeatsDates(repeat, input) } : input,
+            input: later ? { ...input, ...allRepeatsDates(repeat, input, zones) } : input,
             byUpcoming: later,
             look: { slots: taskGlyphSlots('all', repeat.at) },
           },

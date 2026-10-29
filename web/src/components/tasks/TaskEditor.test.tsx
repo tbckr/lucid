@@ -1715,6 +1715,50 @@ describe('TaskEditor', () => {
       expect(within(question).queryByRole('button', { name: 'Only this repeat' })).toBeNull()
     })
 
+    // FR-17, FR-18: all repeats keep the clock in the new zone, as the event of a series does, also where the zones'
+    // offsets differ between the series' current repeat (New York on summer time) and the one shown (winter time).
+    it.each([
+      [
+        'Tokyo',
+        async (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) => {
+          await user.click(zoneField(dialog, 'Due time zone'))
+          await user.keyboard('Tokyo{Enter}')
+        },
+        '2026-10-27T09:00:00.000Z',
+        'Asia/Tokyo',
+      ],
+      [
+        "your zone, with the ✕",
+        async (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) => {
+          await user.click(within(dialog).getByRole('button', { name: 'Use your time zone' }))
+        },
+        '2026-10-27T17:00:00.000Z',
+        'Europe/Berlin',
+      ],
+    ])('saves all repeats from a later repeat moved into %s at their clock', async (_, rezone, due, zone) => {
+      const user = userEvent.setup()
+      const t = newYork()
+      const shown = '2026-11-03T23:00:00Z'
+      const nov3: TaskRepeat = {
+        todo: t,
+        recurrenceId: shown,
+        at: 'upcoming',
+        last: false,
+        offRule: false,
+        title: t.title,
+        shown: { start: null, startAllDay: false, due: shown, dueAllDay: false },
+      }
+      const { fetch, dialog } = await openTask(t, undefined, nov3)
+      await rezone(user, dialog)
+      expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('6:00 PM')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All repeats' }))
+
+      const { path, body } = await wrote(fetch, 'PUT')
+      expect(path).toBe('/api/v1/todos/t1')
+      expect(body).toMatchObject({ due, dueAllDay: false, timezone: zone, dueTimezone: zone })
+    })
+
     it('asks about only this repeat while the zone of a series stays', async () => {
       const user = userEvent.setup()
       const { dialog } = await openTask(newYork())

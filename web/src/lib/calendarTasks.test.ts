@@ -553,6 +553,64 @@ describe('allRepeatsDates', () => {
     const repeat = thursday(span, timed('2026-10-08T07:00:00Z', '2026-10-08T06:00:00Z'))
     expect(allRepeatsDates(repeat, timed('2026-10-08T07:00:00Z'))).toEqual(timed('2026-10-05T07:00:00Z'))
   })
+
+  // FR-18: a new zone moves the series as the server does, from the repeat's wall clock in the zone it was shown in
+  // to the one entered in the new zone, the series' own dates rebuilt from their wall clock in the old zone, read in
+  // the new one, whatever the two zones' offsets do between the series' repeat and the later one.
+  describe('into another zone', () => {
+    const ny = 'America/New_York'
+    // Due Tuesdays at 18:00 in New York: on 27 October on summer time (22:00Z), on 3 November on winter time.
+    const newYork = todo({
+      rrule: 'FREQ=WEEKLY',
+      recurring: true,
+      due: '2026-10-27T22:00:00Z',
+      recurrenceId: '2026-10-27T22:00:00Z',
+      timezone: ny,
+      dueTimezone: ny,
+      next: { due: '2026-11-03T23:00:00Z' },
+    })
+    const nov3: TaskRepeat = {
+      todo: newYork,
+      recurrenceId: '2026-11-03T23:00:00Z',
+      at: 'upcoming',
+      last: false,
+      offRule: false,
+      title: newYork.title,
+      shown: timed('2026-11-03T23:00:00Z'),
+    }
+    const into = (zone: string) => ({ start: { shown: ny, entered: zone }, due: { shown: ny, entered: zone } })
+
+    it.each([
+      ['Tokyo', 'Asia/Tokyo', '2026-11-03T09:00:00Z', '2026-10-27T09:00:00.000Z'],
+      ["Berlin, the browser's, as the ✕ sets it", 'Europe/Berlin', '2026-11-03T17:00:00Z', '2026-10-27T17:00:00.000Z'],
+      ["Chicago, on New York's summer time", 'America/Chicago', '2026-11-04T00:00:00Z', '2026-10-27T23:00:00.000Z'],
+      // Panama keeps New York's winter offset all year: the repeat's instant stays, the series' moves.
+      ["Panama, at New York's winter offset", 'America/Panama', '2026-11-03T23:00:00Z', '2026-10-27T23:00:00.000Z'],
+    ])('keeps the clock of the series at 18:00 in %s', (_, zone, entered, own) => {
+      expect(allRepeatsDates(nov3, timed(entered), into(zone))).toEqual(timed(own))
+    })
+
+    it('moves the series as far as the repeat moved, from its old wall clock to the new one', () => {
+      // Wednesday, 4 November at 9:00 in Tokyo: the series on Wednesday, 28 October at 9:00 there.
+      expect(allRepeatsDates(nov3, timed('2026-11-04T00:00:00Z'), into('Asia/Tokyo'))).toEqual(
+        timed('2026-10-28T00:00:00.000Z'),
+      )
+    })
+
+    it('gives a date the repeat gains its time in the new zone, on the series\' day', () => {
+      // A start at 17:00 in Tokyo on 3 November, the due kept at 18:00 there: both on 27 October in Tokyo.
+      expect(allRepeatsDates(nov3, timed('2026-11-03T09:00:00Z', '2026-11-03T08:00:00Z'), into('Asia/Tokyo'))).toEqual(
+        timed('2026-10-27T09:00:00.000Z', '2026-10-27T08:00:00.000Z'),
+      )
+    })
+
+    it('measures as before where a row keeps its zone', () => {
+      // 19:00 instead of 18:00 in New York.
+      const to = timed('2026-11-04T00:00:00Z')
+      expect(allRepeatsDates(nov3, to, into(ny))).toEqual(allRepeatsDates(nov3, to))
+      expect(allRepeatsDates(nov3, to, into(ny))).toEqual(timed('2026-10-27T23:00:00.000Z'))
+    })
+  })
 })
 
 describe('canComplete', () => {
