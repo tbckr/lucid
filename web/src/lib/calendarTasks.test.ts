@@ -612,6 +612,16 @@ describe('allRepeatsDates', () => {
       expect(allRepeatsDates(nov3, timed('2026-11-04T00:00:00Z'), into(ny))).toEqual(timed('2026-10-27T23:00:00.000Z'))
     })
 
+    // 3 November at 18:00 in New York is 4 November in Berlin: counted on Berlin's dates, the series' own due
+    // would go to 26 October, and the server would put the weekly rule on Mondays.
+    it("moves a row that loses its time back by the days of the zone it was shown in", () => {
+      const dated = { start: null, startAllDay: false, due: allDay('2026-11-03'), dueAllDay: true }
+      expect(allRepeatsDates(nov3, dated, into(ny))).toEqual({ ...dated, due: '2026-10-27T00:00:00.000Z' })
+      // Also where the series' own time is another than the repeat's: whole days, the time goes.
+      const at17 = { ...nov3, todo: { ...newYork, due: '2026-10-27T21:00:00Z' } }
+      expect(allRepeatsDates(at17, dated, into(ny))).toEqual({ ...dated, due: '2026-10-27T00:00:00.000Z' })
+    })
+
     it("gives a series in the browser's zone the result it has without zones", () => {
       // As 'keeps the wall-clock time where the series and the repeat lie across the DST change' above.
       const october = todo({ ...series, due: '2026-10-22T07:00:00Z', recurrenceId: '2026-10-22T07:00:00Z' })

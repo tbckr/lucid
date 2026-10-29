@@ -377,9 +377,10 @@ function anchorRow(d: TaskDates): { iso: string; allDay: boolean; row: 'start' |
  * and a date moved in a zone other than the browser's keeps the series'
  * clock in it, whatever the zones' offsets do between the series' repeat
  * and the later one. A time the row gains is moved back on the wall clock
- * of the zone it is entered in. A row whose zones are both the browser's,
- * a date, and every row without `zones`, as a drag in the browser's view
- * moves them, are measured on the browser's wall clock.
+ * of the zone it is entered in, and one it loses by the days on the dates
+ * of the zone it was shown in. A row whose zones are both the browser's,
+ * any other date, and every row without `zones`, as a drag in the
+ * browser's view moves them, are measured on the browser's wall clock.
  */
 export function allRepeatsDates(
   repeat: TaskRepeat,
@@ -434,6 +435,9 @@ export function allRepeatsDates(
       const by = wallDistance(shownAt(was, allDay), shownAt(next, allDay))
       return [movedDate(value, allDay, by.days, by.minutes), allDay]
     }
+    // A time the row loses: back by the days from the repeat to the series' own on the dates of the zones they were
+    // shown in, as the server counts the series' days in its zone, not on the browser's dates (FR-18).
+    if (zones && allDay && was && !repeat.shown[flag]) return [movedDate(next, true, zonedBack.days, 0), true]
     return [movedDate(next, allDay, back.days, back.minutes), allDay]
   }
   const [start, startAllDay] = field('start')

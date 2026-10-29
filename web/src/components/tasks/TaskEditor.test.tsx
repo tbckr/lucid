@@ -1771,6 +1771,20 @@ describe('TaskEditor', () => {
       expect(body).not.toHaveProperty('dueTimezone')
     })
 
+    // FR-17, FR-18: 3 November at 18:00 in New York is 4 November here; without its time, the series goes back by a
+    // week on New York's dates, to Tuesday the 27th, not to a Monday.
+    it("moves all repeats of a series in another zone back by that zone's days where a later repeat loses its time", async () => {
+      const user = userEvent.setup()
+      const t = newYork()
+      const { fetch, dialog } = await openTask(t, undefined, nov3(t))
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await user.click(within(within(dialog).getByRole('alertdialog')).getByRole('button', { name: 'All repeats' }))
+
+      const { body } = await wrote(fetch, 'PUT')
+      expect(body).toMatchObject({ due: '2026-10-27T00:00:00.000Z', dueAllDay: true })
+    })
+
     it('asks about only this repeat while the zone of a series stays', async () => {
       const user = userEvent.setup()
       const { dialog } = await openTask(newYork())
