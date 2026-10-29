@@ -1788,21 +1788,18 @@ type seriesZones struct {
 
 // zonesFor returns the seriesZones of a write in of the timed series s
 // (FR-17, FR-18): its DTSTART (else DUE) and DUE stay in their forms unless
-// in names other zones for them, see seriesStart, todoForms and rezones; the
-// zone the series reports, sent back, is none, however its TZID is spelled.
-// Another anchor zone is a zone change, which moves the series into it; one
-// named for the due alone changes DUE's form only. An all-day series, or one
-// moved between dates and times, has none: its dates convert instead (see
-// retypeRefs).
+// in names other zones for them, see zoneChangeOf. Another anchor zone is a
+// zone change, which moves the series into it; one named for the due alone
+// changes DUE's form only. An all-day series, or one moved between dates and
+// times, has none: its dates convert instead (see retypeRefs).
 func (s *todoSeries) zonesFor(in domain.TodoInput) seriesZones {
-	_, start := seriesStart(s.master, in)
-	_, due := todoForms(s.master, in)
+	c := zoneChangeOf(s.startForm, s.dueForm, in)
 	z := seriesZones{start: s.startForm, due: s.dueForm, to: s.anchor.loc()}
-	if rezones(start, s.startForm) {
-		z.start, z.rezone, z.to = start, true, start.zone()
+	if c.startMoves {
+		z.start, z.rezone, z.to = c.start, true, c.start.zone()
 	}
-	if rezones(due, s.dueForm) {
-		z.due = due
+	if c.dueMoves {
+		z.due = c.due
 	}
 	return z
 }

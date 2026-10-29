@@ -10,14 +10,10 @@ import (
 	"github.com/emersion/go-ical"
 )
 
-// ensureVTimezone adds a VTIMEZONE for loc to cal unless one with the same
-// TZID exists. VTIMEZONE components are placed before other components.
-func ensureVTimezone(cal *ical.Calendar, loc *time.Location, year int) {
-	ensureVTimezoneAs(cal, loc.String(), loc, year)
-}
-
-// ensureVTimezoneAs is ensureVTimezone for a TZID other than loc's IANA
-// name, such as "/mozilla.org/20050126_1/Europe/Berlin" (FR-17).
+// ensureVTimezoneAs adds a VTIMEZONE for loc to cal under the TZID tzid,
+// loc's IANA name or another, such as
+// "/mozilla.org/20050126_1/Europe/Berlin", unless one with that TZID exists
+// (FR-17). VTIMEZONE components are placed before other components.
 func ensureVTimezoneAs(cal *ical.Calendar, tzid string, loc *time.Location, year int) {
 	if findVTimezone(cal, tzid) != nil {
 		return

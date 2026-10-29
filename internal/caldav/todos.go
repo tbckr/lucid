@@ -1298,14 +1298,42 @@ func todoForms(c *ical.Component, in domain.TodoInput) (start, due dateForm) {
 }
 
 // zonesChange reports whether in names a zone for a timed start or due that
-// the todo c writes in another, see rezones: a zone change, which writes the
-// date anew, also at an instant c has (FR-18). The zone c reports, sent
-// back, is none (see formFor), and neither is a zone named for a date or
-// for a date given a time.
+// the todo c writes in another, see zoneChangeOf: a zone change, which
+// writes the date anew, also at an instant c has (FR-18). Only a date in
+// carries counts.
 func zonesChange(c *ical.Component, in domain.TodoInput) bool {
 	keptStart, keptDue, ok := storedForms(c)
-	start, due := todoForms(c, in)
-	return ok && (in.Start != nil && rezones(start, keptStart) || in.Due != nil && rezones(due, keptDue))
+	z := zoneChangeOf(keptStart, keptDue, in)
+	return ok && (in.Start != nil && z.startMoves || in.Due != nil && z.dueMoves)
+}
+
+// zoneChange is what the zones a write of a todo names do to its timed
+// dates (FR-18), see zoneChangeOf.
+type zoneChange struct {
+	// start and due are the forms the write puts DTSTART (the anchor: in's
+	// start, else its due) and DUE in, see seriesStart and todoForms.
+	start, due dateForm
+	// startMoves and dueMoves tell a zone change of either, see rezones.
+	startMoves, dueMoves bool
+}
+
+// zoneChangeOf judges the zones in names for a todo whose DTSTART (DUE
+// without one) and DUE are written in the forms start and due (FR-18): a
+// date written in another zone than its own changes it. The zone the todo
+// reports, sent back, is none, however its TZID is spelled (see formFor),
+// and neither is a zone named for a date or for a date given a time, which
+// changes its value type instead.
+func zoneChangeOf(start, due dateForm, in domain.TodoInput) zoneChange {
+	anchorAllDay := in.StartAllDay
+	if in.Start == nil {
+		anchorAllDay = in.DueAllDay
+	}
+	z := zoneChange{
+		start: formFor(in.Timezone, start).ofType(anchorAllDay),
+		due:   endFormFor(in.DueTimezone, in.Timezone, due).ofType(in.DueAllDay),
+	}
+	z.startMoves, z.dueMoves = rezones(z.start, start), rezones(z.due, due)
+	return z
 }
 
 // sameDates reports whether in carries the start and due cur already has, at

@@ -169,20 +169,20 @@ func TestOccurrenceInputZoneFields(t *testing.T) {
 func TestTodoInputZoneFields(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
-		name, body               string
-		wantTimezone, wantDue    *string
-		startOmitted, rruleOmitt bool
-		wantInvalid              bool
+		name, body                 string
+		wantTimezone, wantDue      *string
+		startOmitted, rruleOmitted bool
+		wantInvalid                bool
 	}{
-		{name: "absent", body: `{"title":"x"}`, startOmitted: true, rruleOmitt: true},
-		{name: "empty timezone", body: `{"title":"x","timezone":""}`, wantTimezone: ptr(""), startOmitted: true, rruleOmitt: true},
-		{name: "due timezone", body: `{"title":"x","dueTimezone":"Asia/Tokyo"}`, wantDue: ptr("Asia/Tokyo"), startOmitted: true, rruleOmitt: true},
+		{name: "absent", body: `{"title":"x"}`, startOmitted: true, rruleOmitted: true},
+		{name: "empty timezone", body: `{"title":"x","timezone":""}`, wantTimezone: ptr(""), startOmitted: true, rruleOmitted: true},
+		{name: "due timezone", body: `{"title":"x","dueTimezone":"Asia/Tokyo"}`, wantDue: ptr("Asia/Tokyo"), startOmitted: true, rruleOmitted: true},
 		{
 			name: "both with start and rrule", body: `{"title":"x","start":null,"rrule":"","timezone":"Europe/Berlin","dueTimezone":"Asia/Tokyo"}`,
 			wantTimezone: ptr("Europe/Berlin"), wantDue: ptr("Asia/Tokyo"),
 		},
-		{name: "unknown due timezone", body: `{"title":"x","dueTimezone":"Mars/Olympus"}`, wantDue: ptr("Mars/Olympus"), startOmitted: true, rruleOmitt: true, wantInvalid: true},
-		{name: "unknown timezone", body: `{"title":"x","timezone":"Mars/Olympus"}`, wantTimezone: ptr("Mars/Olympus"), startOmitted: true, rruleOmitt: true, wantInvalid: true},
+		{name: "unknown due timezone", body: `{"title":"x","dueTimezone":"Mars/Olympus"}`, wantDue: ptr("Mars/Olympus"), startOmitted: true, rruleOmitted: true, wantInvalid: true},
+		{name: "unknown timezone", body: `{"title":"x","timezone":"Mars/Olympus"}`, wantTimezone: ptr("Mars/Olympus"), startOmitted: true, rruleOmitted: true, wantInvalid: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -196,8 +196,8 @@ func TestTodoInputZoneFields(t *testing.T) {
 			if !eqStrPtr(in.DueTimezone, tt.wantDue) {
 				t.Errorf("DueTimezone = %s, want %s", showStrPtr(in.DueTimezone), showStrPtr(tt.wantDue))
 			}
-			if in.StartOmitted != tt.startOmitted || in.RRuleOmitted != tt.rruleOmitt {
-				t.Errorf("StartOmitted, RRuleOmitted = %v, %v, want %v, %v", in.StartOmitted, in.RRuleOmitted, tt.startOmitted, tt.rruleOmitt)
+			if in.StartOmitted != tt.startOmitted || in.RRuleOmitted != tt.rruleOmitted {
+				t.Errorf("StartOmitted, RRuleOmitted = %v, %v, want %v, %v", in.StartOmitted, in.RRuleOmitted, tt.startOmitted, tt.rruleOmitted)
 			}
 			checkValidate(t, in.Validate(), tt.wantInvalid)
 		})

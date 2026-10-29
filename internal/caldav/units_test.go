@@ -168,8 +168,8 @@ func TestEnsureVTimezoneOnce(t *testing.T) {
 	t.Parallel()
 	loc, _ := time.LoadLocation("Europe/Berlin")
 	cal := newCalendar()
-	ensureVTimezone(cal, loc, 2025)
-	ensureVTimezone(cal, loc, 2026)
+	ensureVTimezoneAs(cal, loc.String(), loc, 2025)
+	ensureVTimezoneAs(cal, loc.String(), loc, 2026)
 	if len(cal.Children) != 1 {
 		t.Fatalf("got %d components; want 1", len(cal.Children))
 	}
