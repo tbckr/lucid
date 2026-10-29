@@ -221,7 +221,7 @@ function EditorForm({
   // (FR-09).
   const onStartChange = (date: string, time: string) => {
     const from = readStart ? { startDate: readStart.date, startTime: readStart.time } : {}
-    const next = shiftEnd({ ...getValues(), ...from }, date, time)
+    const next = shiftEnd({ ...getValues(), ...from }, date, time, tz)
     setValue('startDate', date, { shouldDirty: true })
     setValue('startTime', time, { shouldDirty: true })
     setValue('endDate', next.endDate, { shouldDirty: true, shouldValidate: formState.isSubmitted })

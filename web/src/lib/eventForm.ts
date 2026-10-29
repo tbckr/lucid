@@ -256,11 +256,16 @@ export function occurrenceInput(input: EventInput): OccurrenceInput {
  * When the start moves, keep the event's duration (Google Calendar behaviour).
  * Returns the new end date/time strings. A start or an end its field couldn't
  * read leaves the end as it is (FR-09): its note still says what to type.
+ * Rows in one zone keep their length on the wall clock; rows in two zones
+ * (each its field's zone, rows without zones in `browserZone`) keep the time
+ * between their instants, the end written in its own zone (FR-18).
  */
 export function shiftEnd(
-  prev: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'>,
+  prev: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'> &
+    Partial<Pick<EventFormValues, 'startZone' | 'endZone'>>,
   nextStartDate: string,
   nextStartTime: string,
+  browserZone: string = browserTimeZone(),
 ): { endDate: string; endTime: string } {
   if (!isFormDate(prev.startDate) || !isFormDate(nextStartDate) || !isFormDate(prev.endDate)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
@@ -271,6 +276,15 @@ export function shiftEnd(
   }
   if (!isFormTime(prev.startTime) || !isFormTime(prev.endTime) || !isFormTime(nextStartTime)) {
     return { endDate: prev.endDate, endTime: prev.endTime }
+  }
+  const rows = { ...prev, startZone: prev.startZone ?? '', endZone: prev.endZone ?? '' }
+  const startZone = fieldZone(rows.startZone, browserZone)
+  const endZone = fieldZone(rows.endZone, browserZone)
+  if (!sameZone(startZone, endZone)) {
+    const minutes = Math.max(0, rowMinutes(rows, browserZone))
+    const start = zonedToUtc(nextStartDate, nextStartTime, startZone)
+    const end = utcToZoned(new Date(start.getTime() + minutes * 60_000), endZone)
+    return { endDate: end.date, endTime: end.time }
   }
   const duration = Math.max(0, wallClockMs(prev.endDate, prev.endTime) - wallClockMs(prev.startDate, prev.startTime))
   const end = new Date(wallClockMs(nextStartDate, nextStartTime) + duration)

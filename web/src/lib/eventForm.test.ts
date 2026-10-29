@@ -515,6 +515,28 @@ describe('shiftEnd', () => {
     expect(shiftEnd(base, '2026-03-28', '23:45')).toEqual({ endDate: '2026-03-29', endTime: '00:15' })
   })
 
+  // FR-18: an event at 09:00Z-10:00Z, from 10:00 in Berlin to 06:00 in New York.
+  it('keeps the length of an event whose end is in another zone', () => {
+    const across = { ...base, startDate: '2026-10-28', startTime: '10:00', startZone: 'Europe/Berlin', endDate: '2026-10-28', endTime: '06:00', endZone: 'America/New_York' }
+    expect(shiftEnd(across, '2026-10-28', '11:00', TZ)).toEqual({ endDate: '2026-10-28', endTime: '07:00' })
+    // Into the next day in New York's dates.
+    expect(shiftEnd(across, '2026-10-29', '06:30', TZ)).toEqual({ endDate: '2026-10-29', endTime: '02:30' })
+  })
+
+  it("keeps the clock's length within one zone across a change of summer time", () => {
+    const berlin = { ...base, startDate: '2026-03-28', startTime: '23:00', startZone: 'Europe/Berlin', endDate: '2026-03-29', endTime: '01:00', endZone: 'Europe/Berlin' }
+    // Two hours on the clock, one of them skipped: 03:00, as today, not the instant's 04:00.
+    expect(shiftEnd(berlin, '2026-03-29', '01:00', TZ)).toEqual({ endDate: '2026-03-29', endTime: '03:00' })
+  })
+
+  it("reads a zone the browser doesn't know as the browser's, as the fields do", () => {
+    // 10:00 in Tokyo to 03:00 in Berlin's fields (01:00Z-02:00Z).
+    const unknownEnd = { ...base, startDate: '2026-10-28', startTime: '10:00', startZone: 'Asia/Tokyo', endDate: '2026-10-28', endTime: '03:00', endZone: 'Mars/Olympus' }
+    expect(shiftEnd(unknownEnd, '2026-10-28', '11:00', TZ)).toEqual({ endDate: '2026-10-28', endTime: '04:00' })
+    // With the start in Berlin, both rows are in one zone: on the clock.
+    expect(shiftEnd({ ...unknownEnd, startTime: '02:00', startZone: TZ }, '2026-10-28', '23:30', TZ)).toEqual({ endDate: '2026-10-29', endTime: '00:30' })
+  })
+
   it('keeps the day span of all-day events', () => {
     expect(shiftEnd({ ...base, allDay: true, endDate: '2026-03-30' }, '2026-04-01', '09:00')).toEqual({
       endDate: '2026-04-03',
