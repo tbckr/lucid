@@ -7,20 +7,9 @@ import { formatClock, type FormatPrefs } from '@/lib/format'
 import { readTime } from '@/lib/typedTime'
 import { cn } from '@/lib/utils'
 import { FieldEnd, FieldSizer, onTint } from './EditorRow'
-import { useTypedField, type CommitVia } from './useTypedField'
+import { reveal, useTypedField, type CommitVia } from './useTypedField'
 
 const OPTIONS = timeOptions(STEP_MINUTES)
-
-/** Scrolls `box` to its entry `id`: into the middle, or just into sight. */
-function reveal(box: HTMLElement | null, id: string, center: boolean) {
-  const item = document.getElementById(id)
-  if (!box || !item) return
-  if (center) box.scrollTop = item.offsetTop - (box.clientHeight - item.offsetHeight) / 2
-  else if (item.offsetTop < box.scrollTop) box.scrollTop = item.offsetTop
-  else if (item.offsetTop + item.offsetHeight > box.scrollTop + box.clientHeight) {
-    box.scrollTop = item.offsetTop + item.offsetHeight - box.clientHeight
-  }
-}
 
 /**
  * Time field honouring the 12h/24h preference (FR-09): typed, minute-exact,

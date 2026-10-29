@@ -161,6 +161,8 @@
     "endTime": "Endzeit",
     "startDate": "Startdatum",
     "endDate": "Enddatum",
+    "startZone": "Zeitzone des Beginns",
+    "endZone": "Zeitzone des Endes",
     "timezoneOther": "Zeiten in {{tz}}. Beim Speichern wechselt der Termin von {{from}} in diese Zeitzone.",
     "skippedTime": "An diesem Tag wird die Uhr vorgestellt: {{time}} gibt es nicht und wird als {{saved}} gespeichert.",
     "calendar": "Kalender",
@@ -294,6 +296,18 @@
       "customize": "Benutzerdefiniert …"
     }
   },
+  "zone": {
+    "other": "Andere Zeitzone",
+    "yours": "Deine Zeitzone",
+    "useYours": "Deine Zeitzone verwenden",
+    "here": "Wo du gerade bist",
+    "inUse": "In deinen Kalendern",
+    "on": "am {{date}}",
+    "none": "Keine Zeitzone passt.",
+    "inYourZone": "In deiner Zeitzone ({{zone}}): {{when}}",
+    "seriesEvent": "Eine neue Zeitzone gilt für alle oder die folgenden Termine.",
+    "seriesTask": "Eine neue Zeitzone gilt für alle oder die folgenden Wiederholungen."
+  },
   "dnd": {
     "instructions": "Drücke die Leertaste zum Aufnehmen. Verschiebe mit den Pfeiltasten, lege mit Leertaste oder Eingabe ab, Escape bricht ab.",
     "picked": "{{title}} aufgenommen.",
@@ -413,6 +427,8 @@
     "startTime": "Beginn um",
     "due": "Fällig am",
     "dueTime": "Fällig um",
+    "startZone": "Zeitzone des Beginns",
+    "dueZone": "Zeitzone der Fälligkeit",
     "when": "Beginn und Fälligkeit",
     "startLabel": "Beginn",
     "dueLabel": "Fällig",

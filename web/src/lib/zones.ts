@@ -141,7 +141,7 @@ const OFFSET_QUERY = /[\d+-]/
 const nameFormats = new Map<string, Intl.DateTimeFormat | null>()
 
 /** The generic name of `zone` in the language `tag` at `at` ("Mitteleuropäische Zeit", "MEZ"); empty without one. */
-function genericName(zone: string, tag: string, style: 'longGeneric' | 'shortGeneric', at: Date): string {
+export function genericName(zone: string, tag: string, style: 'longGeneric' | 'shortGeneric', at: Date): string {
   const key = `${tag}|${style}|${zone}`
   let format = nameFormats.get(key)
   if (format === undefined) {

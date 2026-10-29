@@ -3,6 +3,7 @@ import {
   allZones,
   canonicalZone,
   fieldZone,
+  genericName,
   knownZone,
   PICKED_UTC,
   sameZone,
@@ -295,6 +296,22 @@ describe('zoneGroups', () => {
   it('lists a current zone Intl does not know where it matches', () => {
     const groups = zoneGroups({ ...base, query: 'olympus', current: 'Mars/Olympus' })
     expect(groups).toEqual([{ kind: 'all', zones: ['Mars/Olympus'] }])
+  })
+})
+
+describe('genericName', () => {
+  const at = new Date('2026-10-28T12:00:00Z')
+
+  it('is the name of the zone in the language of the tag, whichever the date', () => {
+    expect(genericName('America/New_York', 'en-US', 'longGeneric', at)).toBe('Eastern Time')
+    expect(genericName('America/New_York', 'en-US', 'longGeneric', new Date('2026-01-15T12:00:00Z'))).toBe('Eastern Time')
+    expect(genericName('Europe/Berlin', 'de', 'longGeneric', at)).toMatch(/^Mitteleurop/)
+    expect(genericName('Europe/Berlin', 'de', 'shortGeneric', at)).toBe('MEZ')
+  })
+
+  it('is empty where Intl rejects the zone or the tag', () => {
+    expect(genericName('Mars/Olympus', 'en', 'longGeneric', at)).toBe('')
+    expect(genericName('Europe/Berlin', 'not a tag', 'longGeneric', at)).toBe('')
   })
 })
 

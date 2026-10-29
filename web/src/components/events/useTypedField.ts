@@ -29,6 +29,17 @@ function followFocus(next: EventTarget | null) {
   })
 }
 
+/** Scrolls the list `box` of a typed field to its entry `id`: into the middle, or just into sight. */
+export function reveal(box: HTMLElement | null, id: string, center: boolean) {
+  const item = document.getElementById(id)
+  if (!box || !item) return
+  if (center) box.scrollTop = item.offsetTop - (box.clientHeight - item.offsetHeight) / 2
+  else if (item.offsetTop < box.scrollTop) box.scrollTop = item.offsetTop
+  else if (item.offsetTop + item.offsetHeight > box.scrollTop + box.clientHeight) {
+    box.scrollTop = item.offsetTop + item.offsetHeight - box.clientHeight
+  }
+}
+
 /** How a typed field's value was committed: Enter, a pick in its popover, or leaving the field (FR-09). */
 export type CommitVia = 'enter' | 'pick' | 'blur'
 
@@ -74,6 +85,8 @@ export function useTypedField(o: {
 }): {
   text: string
   focused: boolean
+  /** Whether the text was typed, or written by `setText`, since the focus or the last commit. */
+  edited: boolean
   open: boolean
   /**
    * Opens or closes the popover; it doesn't open while the field is disabled, by a prop or a fieldset around, and
@@ -213,6 +226,7 @@ export function useTypedField(o: {
   return {
     text,
     focused,
+    edited: draft?.edited ?? false,
     open,
     setOpen: openIf,
     preview,

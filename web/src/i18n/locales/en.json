@@ -161,6 +161,8 @@
     "endTime": "End time",
     "startDate": "Start date",
     "endDate": "End date",
+    "startZone": "Start time zone",
+    "endZone": "End time zone",
     "timezoneOther": "Times are in {{tz}}. Saving moves the event from {{from}} to this time zone.",
     "skippedTime": "Clocks go forward on this day: {{time}} doesn't exist and is saved as {{saved}}.",
     "calendar": "Calendar",
@@ -297,6 +299,18 @@
       "customize": "Custom…"
     }
   },
+  "zone": {
+    "other": "Other time zone",
+    "yours": "Your time zone",
+    "useYours": "Use your time zone",
+    "here": "Where you are now",
+    "inUse": "In your calendars",
+    "on": "on {{date}}",
+    "none": "No time zone matches.",
+    "inYourZone": "In your time zone ({{zone}}): {{when}}",
+    "seriesEvent": "A new time zone applies to all events or the following ones.",
+    "seriesTask": "A new time zone applies to all repeats or the following ones."
+  },
   "dnd": {
     "instructions": "Press space to pick it up. Use the arrow keys to move it, space or enter to drop it, escape to cancel.",
     "picked": "Picked up {{title}}.",
@@ -416,6 +430,8 @@
     "startTime": "Start time",
     "due": "Due date",
     "dueTime": "Due time",
+    "startZone": "Start time zone",
+    "dueZone": "Due time zone",
     "when": "Start and due date",
     "startLabel": "Start",
     "dueLabel": "Due",
