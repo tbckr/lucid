@@ -1,15 +1,10 @@
-import { de } from 'date-fns/locale/de'
-import { enGB } from 'date-fns/locale/en-GB'
-import { enUS } from 'date-fns/locale/en-US'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import i18n from '@/i18n'
-import { type FormatPrefs } from './format'
 import {
   allZones,
   canonicalZone,
   fieldZone,
   genericName,
-  inYourZone,
+  inOtherZone,
   knownZone,
   PICKED_UTC,
   sameZone,
@@ -72,6 +67,19 @@ describe('fieldZone', () => {
     expect(fieldZone('Mars/Olympus', 'Europe/Berlin')).toBe('Europe/Berlin')
     expect(fieldZone('', 'Europe/Berlin')).toBe('Europe/Berlin')
     expect(fieldZone('Asia/Tokyo', 'Europe/Berlin')).toBe('Asia/Tokyo')
+  })
+})
+
+describe('inOtherZone', () => {
+  it.each([
+    ['another zone', 'America/New_York', 'Europe/Berlin', true],
+    ['UTC', 'UTC', 'Europe/Berlin', true],
+    ['no zone', '', 'Europe/Berlin', false],
+    ["the browser's", 'Europe/Berlin', 'Europe/Berlin', false],
+    ["the browser's under another name", 'Asia/Calcutta', 'Asia/Kolkata', false],
+    ['a zone Intl does not know, which the row is shown in the browser\'s for', 'Mars/Olympus', 'Europe/Berlin', false],
+  ])('is whether a row in %s lies elsewhere', (_, zone, browserZone, want) => {
+    expect(inOtherZone(zone, browserZone)).toBe(want)
   })
 })
 
@@ -334,66 +342,5 @@ describe('wallDate', () => {
     expect([d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()]).toEqual([
       11, 8, 30, 15, 250,
     ])
-  })
-})
-
-describe('inYourZone', () => {
-  const us: FormatPrefs = { tag: 'en-US', locale: enUS, hourCycle: '12h', weekStartsOn: 0 }
-  const gb: FormatPrefs = { tag: 'en-GB', locale: enGB, hourCycle: '24h', weekStartsOn: 1 }
-  const deDE: FormatPrefs = { tag: 'de-DE', locale: de, hourCycle: '24h', weekStartsOn: 1 }
-  const en = i18n.getFixedT('en')
-  const now = new Date(2026, 9, 28)
-  const berlin = 'Europe/Berlin'
-  const ny = 'America/New_York'
-  // 18:00 to 23:00 in New York on Tuesday, 27 October 2026: 23:00 to 04:00 the next day in Berlin.
-  const start = new Date('2026-10-27T22:00:00Z')
-  const end = new Date('2026-10-28T03:00:00Z')
-  /** Whitespace a line can break at before the dash, or between a number and a word beside it. */
-  const breaks = /[ \u2009]–|\d\.? (?=\p{L})|\p{L}\.? (?=\d)/u
-
-  it('says where an item in another zone lies here, a day keeping its month, a time its "PM" and the dash its first time', () => {
-    const text = inYourZone(en, us, now, { zones: [ny, ny], browserZone: berlin, start, end })
-    expect(text).toBe('In your time zone (Berlin): Tue, Oct\u00a027, 11:00\u202fPM\u202f–\u2009Wed, Oct\u00a028, 4:00\u202fAM')
-    expect(text).not.toMatch(breaks)
-  })
-
-  it('says one time where the item has one, such as a task due then', () => {
-    // Intl separates "PM" by a plain space here, as browsers do in ranges too.
-    expect(inYourZone(en, us, now, { zones: [ny], browserZone: berlin, start, end: start })).toBe(
-      'In your time zone (Berlin): Tue, Oct\u00a027, 11:00\u00a0PM',
-    )
-  })
-
-  it.each([
-    ['en-GB', gb, en, 'In your time zone (Berlin): Tue\u00a027\u00a0Oct, 23:00\u202f–\u2009Wed\u00a028\u00a0Oct, 04:00'],
-    ['de', deDE, i18n.getFixedT('de'), 'In deiner Zeitzone (Berlin): Di., 27.\u00a0Okt., 23:00\u202f–\u2009Mi., 28.\u00a0Okt., 04:00'],
-  ])('keeps a day with its month and weekday in %s', (_, prefs, t, want) => {
-    const text = inYourZone(t, prefs, now, { zones: [ny, ny], browserZone: berlin, start, end })
-    expect(text).toBe(want)
-    expect(text).not.toMatch(breaks)
-  })
-
-  it("names the browser's zone, and its times", () => {
-    expect(inYourZone(en, us, now, { zones: [berlin, berlin], browserZone: ny, start, end: start })).toBe(
-      'In your time zone (New York): Tue, Oct\u00a027, 6:00\u00a0PM',
-    )
-  })
-
-  it('says it while one row is in another zone', () => {
-    expect(inYourZone(en, us, now, { zones: ['', ny], browserZone: berlin, start, end })).not.toBeNull()
-  })
-
-  it.each([
-    ['without a zone', ['', ''], berlin],
-    ["in the browser's", [berlin, ''], berlin],
-    ["in the browser's under another name", ['Asia/Calcutta'], 'Asia/Kolkata'],
-    ["in one Intl does not know, whose fields are the browser's", ['Mars/Olympus'], berlin],
-    ['none, without rows', [], berlin],
-  ])('says nothing while every row is %s', (_, zones, browserZone) => {
-    expect(inYourZone(en, us, now, { zones, browserZone, start, end })).toBeNull()
-  })
-
-  it('says nothing for an end before the start, which the form refuses', () => {
-    expect(inYourZone(en, us, now, { zones: [ny], browserZone: berlin, start: end, end: start })).toBeNull()
   })
 })

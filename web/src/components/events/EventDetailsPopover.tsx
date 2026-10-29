@@ -1,4 +1,4 @@
-import { AlignLeftIcon, GlobeIcon, LockIcon, MapPinIcon } from 'lucide-react'
+import { AlignLeftIcon, LockIcon, MapPinIcon } from 'lucide-react'
 import { useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover } from '@/components/ui/popover'
@@ -6,13 +6,13 @@ import { useDeleteEvent, useDeleteFollowing, useDeleteOccurrence, useVisibleCale
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { usePrefs } from '@/hooks/usePrefs'
 import { eventTitle, type CalEvent } from '@/lib/events'
-import { formatEventWhen, type FormatPrefs } from '@/lib/format'
+import { formatEventWhen, formatOwnZones, type FormatPrefs } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { describeSeriesRule } from '@/lib/rrule'
 import { eventScopeItems, eventScopeMissing, scopeOptions, type Scope } from '@/lib/scope'
 import { eventRuleClock, eventRuleStart } from '@/lib/seriesShift'
 import { useUi } from '@/stores/ui'
-import { DetailActions, DetailClose, DetailContent, DetailReport, DetailRow, Linked } from './DetailParts'
+import { DetailActions, DetailClose, DetailContent, DetailReport, DetailRow, DetailZones, Linked } from './DetailParts'
 import { RepeatGlyph } from './EventItems'
 
 /** Popover with the details of the selected event (read, edit, delete; FR-09). */
@@ -32,14 +32,19 @@ export function EventDetailsPopover() {
   )
 }
 
-// The event's times in its own zone, its series' for an event of a series, when that is another one than the browser's.
+// The event's times in its own zones, its series' for an event of a series, where one is another than the browser's
+// (FR-18): the start in the zone of DTSTART, the end in the one of DTEND.
 function zoneTimes(event: CalEvent, tz: string, prefs: FormatPrefs, now: Date): string | null {
-  if (event.allDay || !event.timezone || event.timezone === tz) return null
-  try {
-    return `${formatEventWhen(event, prefs, now, event.timezone)} (${event.timezone})`
-  } catch {
-    return null // not an IANA zone, e.g. a Windows name
-  }
+  if (event.allDay) return null
+  return formatOwnZones(
+    [
+      { at: event.startsAt, zone: event.timezone },
+      { at: event.endsAt, zone: event.endTimezone },
+    ],
+    tz,
+    prefs,
+    now,
+  )
 }
 
 function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
@@ -145,11 +150,7 @@ function Details({ event, anchor }: { event: CalEvent; anchor: HTMLElement }) {
                 {event.modified && <p className="mt-0.5 text-muted-foreground">{t('event.modifiedNotice')}</p>}
               </DetailRow>
             )}
-            {inZone && (
-              <DetailRow icon={<GlobeIcon />}>
-                <span className="text-muted-foreground">{inZone}</span>
-              </DetailRow>
-            )}
+            {inZone && <DetailZones text={inZone} />}
             {event.location && (
               <DetailRow icon={<MapPinIcon />}>
                 <span className="[overflow-wrap:anywhere]">

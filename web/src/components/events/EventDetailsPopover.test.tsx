@@ -99,14 +99,55 @@ describe('EventDetailsPopover', () => {
     expect(notice !== null).toBe(shown)
   })
 
+  // Vitest runs in Europe/Berlin, on CET (UTC+1) in March until the 29th; New York is on EDT (UTC-4) from the 8th.
+  const march = { start: '2026-03-13T13:00:00Z', end: '2026-03-13T15:00:00Z' }
+  const ny = 'America/New_York'
+
   it.each([
-    ['America/New_York', true],
-    ['W. Europe Standard Time', false],
-    ['Europe/Berlin', false],
-  ])('shows the times in the zone of the event only when it is another valid one (%s)', async (timezone, shown) => {
-    const { dialog } = await openDetails({ timezone, start: '2026-03-13T13:00:00Z', end: '2026-03-13T15:00:00Z' })
-    const zone = within(dialog).queryByText(/9:00 – 11:00 AM \(America\/New_York\)$/)
-    expect(zone !== null).toBe(shown)
+    ['in New York', { timezone: ny, endTimezone: ny }, /^Fri, Mar 13(, 2026)?, 9:00\sAM – 11:00\sAM New York$/],
+    [
+      'from Berlin to New York',
+      { timezone: 'Europe/Berlin', endTimezone: ny },
+      /^Fri, Mar 13(, 2026)?, 2:00\sPM Berlin – 11:00\sAM New York$/,
+    ],
+    [
+      'with the start in no zone',
+      { timezone: '', endTimezone: ny },
+      /^Fri, Mar 13(, 2026)?, 2:00\sPM Berlin – 11:00\sAM New York$/,
+    ],
+    [
+      'in UTC under two names',
+      { timezone: 'Etc/UTC', endTimezone: 'UTC' },
+      /^Fri, Mar 13(, 2026)?, 1:00\sPM – 3:00\sPM UTC$/,
+    ],
+  ])('names the zones of an event, its times in each, where one is not the browser\'s (%s)', async (_, zones, text) => {
+    const { dialog } = await openDetails({ ...zones, ...march })
+    expect(within(dialog).getByText(text)).toBeInTheDocument()
+  })
+
+  it.each([
+    ["in the browser's", { timezone: 'Europe/Berlin', endTimezone: 'Europe/Berlin' }],
+    ['without a zone', { timezone: '', endTimezone: '' }],
+    ['in a zone Intl does not know', { timezone: 'W. Europe Standard Time', endTimezone: 'W. Europe Standard Time' }],
+    ['all-day', { allDay: true, timezone: ny, endTimezone: ny }],
+  ])('names no zone for an event %s', async (_, p) => {
+    const { dialog } = await openDetails({ ...march, ...p })
+    expect(within(dialog).queryByText(/Berlin|New York|UTC/)).toBeNull()
+    expect(dialog.querySelector('.lucide-globe')).toBeNull()
+  })
+
+  it("names the series' zone for the times of an occurrence, and says its repeat in the browser's", async () => {
+    // Tuesday 18:30 in New York is Wednesday 00:30 in Berlin.
+    const { dialog } = await openDetails({
+      recurring: true,
+      rrule: 'FREQ=WEEKLY',
+      timezone: ny,
+      endTimezone: ny,
+      start: '2026-11-10T23:30:00Z',
+      end: '2026-11-11T00:30:00Z',
+    })
+    expect(within(dialog).getByText(/^Tue, Nov 10(, 2026)?, 6:30\sPM – 7:30\sPM New York$/)).toBeInTheDocument()
+    expect(within(dialog).getByText('Every week on Wednesday')).toBeInTheDocument()
   })
 
   it('offers only closing and reporting for an event in a read-only calendar', async () => {

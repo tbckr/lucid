@@ -44,7 +44,7 @@ import {
   type EventFormValues,
 } from '@/lib/eventForm'
 import { type CalEvent } from '@/lib/events'
-import { formatDuration } from '@/lib/format'
+import { formatDuration, inYourZone } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { eventOffRule } from '@/lib/recurrence'
@@ -62,7 +62,7 @@ import {
 } from '@/lib/scope'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { fieldZone, inYourZone, sameZone } from '@/lib/zones'
+import { fieldZone, sameZone } from '@/lib/zones'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'

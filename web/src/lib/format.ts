@@ -1,8 +1,10 @@
 import { format, isSameDay, type Locale } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
-import { type DateRange, type ViewKind } from './dates'
+import { type TFunction } from 'i18next'
+import { wallOf, type DateRange, type ViewKind } from './dates'
 import { type CalEvent, type CalItem } from './events'
 import { type HourCycle, type WeekStart } from './locale'
+import { fieldZone, inOtherZone, sameZone, zoneCity } from './zones'
 
 /** Everything formatting needs; derived from settings + browser locale. */
 export interface FormatPrefs {
@@ -143,6 +145,16 @@ export function formatEventSpan(e: CalItem, p: FormatPrefs, allDayLabel: string)
   return `${format(e.startsAt, `PP, ${t}`, { locale: p.locale })} – ${format(e.endsAt, `PP, ${t}`, { locale: p.locale })}`
 }
 
+/** The day as the app's "when" texts show it, "Fri, Mar 13", with the year where asked. */
+function dayFields(year: boolean): Intl.DateTimeFormatOptions {
+  return { weekday: 'short', day: 'numeric', month: 'short', ...(year ? { year: 'numeric' } : {}) }
+}
+
+/** The time of day as the app's "when" texts show it, in the hour cycle, and in `timeZone` where there is one. */
+function clockFields(p: FormatPrefs, timeZone?: string): Intl.DateTimeFormatOptions {
+  return { hour: 'numeric', minute: '2-digit', hourCycle: p.hourCycle === '12h' ? 'h12' : 'h23', timeZone }
+}
+
 /**
  * Day and time of an event as one range in the app's date format, e.g.
  * "Fri, Mar 13, 2:00 – 4:00 PM"; all-day events show only their days. With
@@ -157,19 +169,84 @@ export function formatEventWhen(
   const end = e.allDay ? new Date(e.endsAt.getTime() - 1) : e.endsAt
   const otherYear = e.startsAt.getFullYear() !== now.getFullYear() || end.getFullYear() !== now.getFullYear()
   return intlRange(e.startsAt, end, p.tag, {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    ...(otherYear ? { year: 'numeric' } : {}),
-    ...(e.allDay
-      ? {}
-      : {
-          hour: 'numeric',
-          minute: '2-digit',
-          hourCycle: p.hourCycle === '12h' ? 'h12' : 'h23',
-          timeZone,
-        }),
+    ...dayFields(otherYear),
+    ...(e.allDay ? {} : clockFields(p, timeZone)),
   })
+}
+
+/** An instant, and the zone it is shown in. */
+export interface ZonedInstant {
+  at: Date
+  zone: string
+}
+
+const MS_PER_DAY = 86_400_000
+
+/**
+ * Times in the zones they are told in (FR-18), such as "Wed, Oct 28, 10:00 Berlin – 13:00 New York": each as
+ * `formatEventWhen` shows a time, in its zone, with the zone's city after it where the zones differ and once at the
+ * end where they are one (`sameZone`), as in "Tue, Nov 10, 18:00 – 19:00 New York". A time on the date of the one
+ * before it, each in its own zone, leaves the date out. The year is named on every date once a time lies in another
+ * than `now`'s, as a range of `formatEventWhen` does. Every zone is one Intl knows (`fieldZone`).
+ */
+export function formatInZones(parts: readonly ZonedInstant[], p: FormatPrefs, now: Date): string {
+  const first = parts[0]
+  if (!first) return ''
+  // The wall clocks, read as UTC, which hold the date and the year of each time in its own zone.
+  const walls = parts.map(({ at, zone }) => wallOf(at.getTime(), zone))
+  const days = walls.map((wall) => Math.floor(wall / MS_PER_DAY))
+  const otherYear = walls.some((wall) => new Date(wall).getUTCFullYear() !== now.getFullYear())
+  const oneZone = parts.every(({ zone }) => sameZone(zone, first.zone))
+  const texts = parts.map(({ at, zone }, i) => {
+    const time = new Intl.DateTimeFormat(p.tag, {
+      ...(i > 0 && days[i] === days[i - 1] ? {} : dayFields(otherYear)),
+      ...clockFields(p, zone),
+    }).format(at)
+    return oneZone ? time : `${time} ${zoneCity(zone)}`
+  })
+  return `${texts.join(' – ')}${oneZone ? ` ${zoneCity(first.zone)}` : ''}`
+}
+
+/**
+ * The times of an item in its own zones (FR-18), as `formatInZones` says them, where one of them lies in a zone
+ * other than the browser's: set, one Intl knows, and not `browserZone` under any name. A time without such a zone is
+ * the browser's, as the fields of a row are (`fieldZone`). Null while every one of them does.
+ */
+export function formatOwnZones(
+  parts: readonly ZonedInstant[],
+  browserZone: string,
+  p: FormatPrefs,
+  now: Date,
+): string | null {
+  if (!parts.some(({ zone }) => inOtherZone(zone, browserZone))) return null
+  return formatInZones(
+    parts.map(({ at, zone }) => ({ at, zone: fieldZone(zone, browserZone) })),
+    p,
+    now,
+  )
+}
+
+/**
+ * The editors' "In your time zone (Berlin): …" line (FR-18): where an item lies for the browser, from `start` to
+ * `end` in `browserZone` (one time where they are one, such as a task's due), while the fields of one of its timed
+ * rows, whose zones are `zones`, are in another zone. A row without a zone counts as the browser's, as does one in a
+ * zone Intl doesn't know, whose fields are the browser's. Null while every row does, and for an end before the
+ * start, which the form refuses. Where the line wraps, a number keeps the words beside it on its line, a day its
+ * month and a time its "PM", and the dash the time before it, so no line starts with "–".
+ */
+export function inYourZone(
+  t: TFunction,
+  p: FormatPrefs,
+  now: Date,
+  o: { zones: readonly string[]; browserZone: string; start: Date; end: Date },
+): string | null {
+  if (!o.zones.some((zone) => inOtherZone(zone, o.browserZone)) || o.end < o.start) return null
+  const when = formatEventWhen({ allDay: false, startsAt: o.start, endsAt: o.end }, p, now, o.browserZone)
+    .replace(/(\d\.?) (?=\p{L})/gu, '$1\u00a0')
+    .replace(/(\p{L}\.?) (?=\d)/gu, '$1\u00a0')
+    // Intl's thin space around the dash, or a plain one, stays as narrow as it was.
+    .replace(/[ \u2009](?=–)/gu, (space) => (space === ' ' ? '\u00a0' : '\u202f'))
+  return t('zone.inYourZone', { zone: zoneCity(o.browserZone), when })
 }
 
 /** Length of an event: wall-clock minutes for timed events, days for all-day ones. */

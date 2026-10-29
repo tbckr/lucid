@@ -7,6 +7,7 @@ import {
   DetailContent,
   DetailReport,
   DetailRow,
+  DetailZones,
   Linked,
 } from '@/components/events/DetailParts'
 import { RecurringMark } from '@/components/events/EventItems'
@@ -23,9 +24,10 @@ import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
 import { usePrefs } from '@/hooks/usePrefs'
 import { useToggleTodo } from '@/hooks/useToggleTodo'
+import { type Todo } from '@/lib/api/schemas'
 import { anchorOf, canComplete, recurringLabel, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
 import { eventTitle } from '@/lib/events'
-import { formatEventWhen, formatPickerDate } from '@/lib/format'
+import { formatEventWhen, formatOwnZones, formatPickerDate, type FormatPrefs } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { scopeOptions, taskGlyphSlots, taskScopeItems, taskScopeMissing, type Scope, type ScopeResult } from '@/lib/scope'
 import { isDetached, isDone, isOverdue, priorityLevel } from '@/lib/tasks'
@@ -49,6 +51,17 @@ export function TaskDetailsPopover() {
       <Details key={detail.item.key} task={detail.item} anchor={detail.anchor} />
     </Popover>
   )
+}
+
+// The task's times in its own zones where one is another than the browser's (FR-18): its start in the zone of its
+// anchor (`timezone`), its due in the one of its DUE (`dueTimezone`), or the one date it has in its own. A series
+// has them for every repeat. A date has no time, and so no zone to name.
+function zoneTimes(placed: CalTask, todo: Todo, tz: string, prefs: FormatPrefs, now: Date): string | null {
+  if (placed.allDay) return null
+  const start = { at: placed.startsAt, zone: todo.timezone ?? '' }
+  const due = { at: placed.dates === 'span' ? placed.endsAt : placed.startsAt, zone: todo.dueTimezone ?? '' }
+  const parts = placed.dates === 'span' ? [start, due] : [placed.dates === 'due' ? due : start]
+  return formatOwnZones(parts, tz, prefs, now)
 }
 
 function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
@@ -85,6 +98,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
   // A point shows its time alone; one date says which one it is (FR-14).
   const when = formatEventWhen(placed.point ? { ...placed, endsAt: placed.startsAt } : placed, prefs, now)
   const whenText = placed.dates === 'span' ? when : t(placed.dates === 'due' ? 'tasks.dueWhen' : 'tasks.startsWhen', { when })
+  const inZone = zoneTimes(placed, todo, tz, prefs, now)
   const upcoming = task.occurrence?.state === 'upcoming'
   // The series carries its current occurrence's dates, the only one that can be completed and so be late (FR-14, FR-17).
   const overdue = !done && !upcoming && isOverdue(todo, now)
@@ -98,7 +112,8 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
       ? t('tasks.detachedNotice', { next: formatPickerDate(originAt, prefs, now) })
       : t('tasks.detachedNoticeAlone')
     : null
-  const hasDetails = hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring || detached
+  const hasDetails =
+    hasPriority || todo.checklist.length > 0 || todo.description !== '' || todo.recurring || detached || !!inZone
   // The rule row's hint (FR-17): which occurrence to complete first, that another app already did, or
   // that Lucid can't read the rule at all; the current occurrence, or a plain series, needs none of these.
   const hint = upcoming
@@ -227,6 +242,7 @@ function Details({ task, anchor }: { task: CalTask; anchor: HTMLElement }) {
                 {hint && <p className="mt-1 text-muted-foreground">{hint}</p>}
               </DetailRow>
             )}
+            {inZone && <DetailZones text={inZone} />}
             {hasPriority && (
               <DetailRow icon={<FlagIcon />}>
                 <PriorityChip priority={todo.priority} flag={false} />

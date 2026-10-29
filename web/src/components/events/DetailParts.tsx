@@ -1,4 +1,4 @@
-import { LifeBuoyIcon, PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
+import { GlobeIcon, LifeBuoyIcon, PencilIcon, Trash2Icon, XIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
@@ -107,6 +107,15 @@ export function DetailRow({ icon, children }: { icon: ReactNode; children: React
       </span>
       <div className="min-w-0">{children}</div>
     </div>
+  )
+}
+
+/** The row with the times of an item in its own time zones, `formatOwnZones`' text (FR-18). */
+export function DetailZones({ text }: { text: string }) {
+  return (
+    <DetailRow icon={<GlobeIcon />}>
+      <span className="tabular text-muted-foreground">{text}</span>
+    </DetailRow>
   )
 }
 

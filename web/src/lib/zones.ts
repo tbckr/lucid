@@ -1,6 +1,4 @@
-import { type TFunction } from 'i18next'
 import { wallOf } from './dates'
-import { formatEventWhen, type FormatPrefs } from './format'
 
 /**
  * UTC as a zone the user picked: the server writes it as `TZID=Etc/UTC` with its VTIMEZONE, so that an item picked
@@ -61,6 +59,14 @@ export function fieldZone(zone: string, browserZone: string): string {
 }
 
 /**
+ * Whether a row in `zone` lies in another zone than the browser's (FR-18): one that is set, that Intl knows (a row
+ * in any other is shown in `fieldZone`, the browser's) and that is not `browserZone` under another name.
+ */
+export function inOtherZone(zone: string, browserZone: string): boolean {
+  return !sameZone(fieldZone(zone, browserZone), browserZone)
+}
+
+/**
  * The city of a zone ID for labels (FR-18): its last segment with the underscores spaced, "New York" for
  * `America/New_York`, "Buenos Aires" for `America/Argentina/Buenos_Aires`. Every name of UTC is "UTC".
  */
@@ -82,30 +88,6 @@ export function zoneOffset(zone: string, at: Date): string {
   const abs = Math.abs(minutes)
   const rest = abs % 60
   return `UTC${minutes < 0 ? '−' : '+'}${Math.floor(abs / 60)}${rest === 0 ? '' : `:${String(rest).padStart(2, '0')}`}`
-}
-
-/**
- * The editors' "In your time zone (Berlin): …" line (FR-18): where an item lies for the browser, from `start` to
- * `end` in `browserZone` (one time where they are one, such as a task's due), while the fields of one of its timed
- * rows, whose zones are `zones`, are in another zone. A row without a zone counts as the browser's, as does one in a
- * zone Intl doesn't know, whose fields are the browser's. Null while every row does, and for an end before the
- * start, which the form refuses. Where the line wraps, a number keeps the words beside it on its line, a day its
- * month and a time its "PM", and the dash the time before it, so no line starts with "–".
- */
-export function inYourZone(
-  t: TFunction,
-  prefs: FormatPrefs,
-  now: Date,
-  o: { zones: readonly string[]; browserZone: string; start: Date; end: Date },
-): string | null {
-  const elsewhere = o.zones.some((zone) => !sameZone(fieldZone(zone, o.browserZone), o.browserZone))
-  if (!elsewhere || o.end < o.start) return null
-  const when = formatEventWhen({ allDay: false, startsAt: o.start, endsAt: o.end }, prefs, now, o.browserZone)
-    .replace(/(\d\.?) (?=\p{L})/gu, '$1\u00a0')
-    .replace(/(\p{L}\.?) (?=\d)/gu, '$1\u00a0')
-    // Intl's thin space around the dash, or a plain one, stays as narrow as it was.
-    .replace(/[ \u2009](?=–)/gu, (space) => (space === ' ' ? '\u00a0' : '\u202f'))
-  return t('zone.inYourZone', { zone: zoneCity(o.browserZone), when })
 }
 
 /**

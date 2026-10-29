@@ -64,6 +64,7 @@ import {
   type TaskRepeat,
 } from '@/lib/calendarTasks'
 import { dayAt, isFormDate, isFormTime, parseDayKey, skippedTime } from '@/lib/dates'
+import { inYourZone } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, switchDraft, taskForm, writableFor } from '@/lib/quickCreate'
 import { buildRRule, RECURRENCE_PRESETS, type Recurrence } from '@/lib/rrule'
@@ -100,7 +101,7 @@ import {
 } from '@/lib/tasks'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { fieldZone, inYourZone, sameZone } from '@/lib/zones'
+import { fieldZone, sameZone } from '@/lib/zones'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
 

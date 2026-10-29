@@ -6,6 +6,7 @@ import { queryKeys } from '@/hooks/queries'
 import { api } from '@/lib/api/client'
 import { type Todo, type TodoOccurrence } from '@/lib/api/schemas'
 import { occurrenceTask, repeatOf, toCalTask, type CalTask } from '@/lib/calendarTasks'
+import { useSettings } from '@/stores/settings'
 import { emptyReport, useUi } from '@/stores/ui'
 import { bodyOf, calendar, jsonResponse, occurrence, todo, urlOf } from '@/test/fixtures'
 import { renderWithProviders } from '@/test/render'
@@ -78,6 +79,87 @@ describe('TaskDetailsPopover', () => {
   ])('says when the task is in the calendar: %s', async (_name, dates, when) => {
     const { dialog } = await openDetails(dates)
     expect(within(dialog).getByText(when)).toBeInTheDocument()
+  })
+
+  describe('time zones (FR-18)', () => {
+    // Vitest runs in Europe/Berlin, on CET (UTC+1) from 25 October; New York is on EDT (UTC-4) until 1 November.
+    const ny = 'America/New_York'
+
+    afterEach(() => {
+      useSettings.setState({ timeFormat: 'auto' })
+    })
+
+    // A date is in the zone of its own field: a due in DUE's (`dueTimezone`), a start in DTSTART's (`timezone`).
+    it('names the zone of a task due in another one, with the time in it', async () => {
+      useSettings.setState({ timeFormat: '24h' })
+      const { dialog } = await openDetails({ due: '2026-10-27T22:00:00Z', dueTimezone: ny })
+      expect(within(dialog).getByText(/^Tue, Oct 27(, 2026)?, 18:00 New York$/)).toBeInTheDocument()
+      expect(dialog.querySelector('.lucide-globe')).not.toBeNull()
+    })
+
+    it('names the zone of a task that starts in another one', async () => {
+      const { dialog } = await openDetails({ due: null, start: '2026-10-27T22:00:00Z', timezone: ny })
+      expect(within(dialog).getByText(/^Tue, Oct 27(, 2026)?, 6:00\sPM New York$/)).toBeInTheDocument()
+    })
+
+    it('names the zone of each date of a task from start to due, in the zone of each', async () => {
+      const { dialog } = await openDetails({
+        start: '2026-10-28T09:00:00Z',
+        due: '2026-10-28T17:00:00Z',
+        timezone: 'Europe/Berlin',
+        dueTimezone: ny,
+      })
+      const text = /^Wed, Oct 28(, 2026)?, 10:00\sAM Berlin – 1:00\sPM New York$/
+      expect(within(dialog).getByText(text)).toBeInTheDocument()
+    })
+
+    it("names the zone of one date only where the other one is in the browser's", async () => {
+      const { dialog } = await openDetails({
+        start: '2026-10-28T09:00:00Z',
+        due: '2026-10-28T17:00:00Z',
+        timezone: '',
+        dueTimezone: ny,
+      })
+      const text = /^Wed, Oct 28(, 2026)?, 10:00\sAM Berlin – 1:00\sPM New York$/
+      expect(within(dialog).getByText(text)).toBeInTheDocument()
+    })
+
+    it("names the series' zone for the times of one of its repeats", async () => {
+      const series = todo({
+        id: 't1',
+        title: 'Water the flowers',
+        rrule: 'FREQ=DAILY',
+        recurring: true,
+        due: '2026-10-27T22:00:00Z',
+        timezone: ny,
+        dueTimezone: ny,
+      })
+      const t = occurrenceTask(
+        occurrence({
+          todoId: 't1',
+          title: 'Water the flowers',
+          due: '2026-10-28T22:00:00Z',
+          dueAllDay: false,
+          recurrenceId: '2026-10-28T22:00:00Z',
+          key: 't1@2026-10-28T22:00:00Z',
+          state: 'upcoming',
+        }),
+        series,
+      )!
+      const { dialog } = await open(t, 'Water the flowers')
+      expect(within(dialog).getByText(/^Wed, Oct 28(, 2026)?, 6:00\sPM New York$/)).toBeInTheDocument()
+    })
+
+    it.each([
+      ["in the browser's", { timezone: 'Europe/Berlin', dueTimezone: 'Europe/Berlin' }],
+      ['without a zone', {}],
+      ['in a zone Intl does not know', { timezone: 'W. Europe Standard Time', dueTimezone: 'W. Europe Standard Time' }],
+      ['a date', { due: allDay('2026-10-27'), dueAllDay: true, timezone: ny, dueTimezone: ny }],
+    ])('names no zone for a task due %s', async (_, p) => {
+      const { dialog } = await openDetails({ due: '2026-10-27T22:00:00Z', ...p })
+      expect(within(dialog).queryByText(/Berlin|New York|UTC/)).toBeNull()
+      expect(dialog.querySelector('.lucide-globe')).toBeNull()
+    })
   })
 
   it('marks an open task past its due date as overdue', async () => {

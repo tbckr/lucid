@@ -1,6 +1,8 @@
 import { de } from 'date-fns/locale/de'
+import { enGB } from 'date-fns/locale/en-GB'
 import { enUS } from 'date-fns/locale/en-US'
 import { describe, expect, it } from 'vitest'
+import i18n from '@/i18n'
 import { toCalTask } from './calendarTasks'
 import { visibleRange } from './dates'
 import { toCalEvent } from './events'
@@ -10,12 +12,15 @@ import {
   formatEventSpan,
   formatEventWhen,
   formatHour,
+  formatInZones,
   formatLoadedAt,
   formatMonthDay,
+  formatOwnZones,
   formatPeriodTitle,
   formatPickerDate,
   formatShortTime,
   formatTime,
+  inYourZone,
   loadDateLocale,
   localeKey,
   timePattern,
@@ -176,6 +181,229 @@ describe('formatEventWhen', () => {
   it('formats in another time zone', () => {
     // New York is on EDT (UTC-4) from March 8, 2026.
     expect(formatEventWhen(timed, us, now, 'America/New_York')).toBe('Fri, Mar 13, 9:00\u2009–\u200911:00\u202fAM')
+  })
+})
+
+describe('formatInZones', () => {
+  const us24: FormatPrefs = { ...us, hourCycle: '24h' }
+  const now = new Date(2026, 9, 28)
+  const berlin = 'Europe/Berlin'
+  const ny = 'America/New_York'
+
+  it('names the zone after each time where the zones differ, the date once where both lie on it', () => {
+    // Berlin is on CET (UTC+1) from 25 October, New York on EDT (UTC-4) until 1 November.
+    expect(
+      formatInZones(
+        [
+          { at: new Date('2026-10-28T09:00:00Z'), zone: berlin },
+          { at: new Date('2026-10-28T17:00:00Z'), zone: ny },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+  })
+
+  it('names a shared zone once, at the end', () => {
+    expect(
+      formatInZones(
+        [
+          { at: new Date('2026-11-10T23:00:00Z'), zone: ny },
+          { at: new Date('2026-11-11T00:00:00Z'), zone: ny },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Tue, Nov 10, 18:00 – 19:00 New York')
+  })
+
+  it('treats two names of one zone as a shared zone', () => {
+    expect(
+      formatInZones(
+        [
+          { at: new Date('2026-10-28T09:00:00Z'), zone: 'Etc/UTC' },
+          { at: new Date('2026-10-28T10:00:00Z'), zone: 'UTC' },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Wed, Oct 28, 09:00 – 10:00 UTC')
+  })
+
+  it('names the zone of a single time', () => {
+    expect(formatInZones([{ at: new Date('2026-10-27T22:00:00Z'), zone: ny }], us24, now)).toBe(
+      'Tue, Oct 27, 18:00 New York',
+    )
+  })
+
+  it('repeats the date where the second time lies on another one in its zone', () => {
+    expect(
+      formatInZones(
+        [
+          { at: new Date('2026-10-27T22:00:00Z'), zone: ny },
+          { at: new Date('2026-10-28T05:00:00Z'), zone: ny },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Tue, Oct 27, 18:00 – Wed, Oct 28, 01:00 New York')
+    // Half past midnight in Berlin is still the evening before in New York: each date is the one in its own zone.
+    expect(
+      formatInZones(
+        [
+          { at: new Date('2026-10-27T23:30:00Z'), zone: berlin },
+          { at: new Date('2026-10-28T03:00:00Z'), zone: ny },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Wed, Oct 28, 00:30 Berlin – Tue, Oct 27, 23:00 New York')
+  })
+
+  it('adds the year of a time in its zone where it is not the current one, to every date, as a range does', () => {
+    // 03:00Z on 1 January 2027 is the evening of 31 December in New York, already the new year in Berlin.
+    const at = new Date('2027-01-01T03:00:00Z')
+    expect(formatInZones([{ at, zone: ny }], us24, now)).toBe('Thu, Dec 31, 22:00 New York')
+    expect(formatInZones([{ at, zone: berlin }], us24, now)).toBe('Fri, Jan 1, 2027, 04:00 Berlin')
+    const later = new Date('2027-01-01T05:00:00Z')
+    expect(
+      formatInZones(
+        [
+          { at, zone: ny },
+          { at: later, zone: ny },
+        ],
+        us24,
+        now,
+      ),
+    ).toBe('Thu, Dec 31, 2026, 22:00 – Fri, Jan 1, 2027, 00:00 New York')
+  })
+
+  it('formats in the hour cycle and the language', () => {
+    const parts = [
+      { at: new Date('2026-10-28T09:00:00Z'), zone: berlin },
+      { at: new Date('2026-10-28T17:00:00Z'), zone: ny },
+    ]
+    expect(formatInZones(parts, us, now)).toMatch(/^Wed, Oct 28, 10:00\sAM Berlin – 1:00\sPM New York$/)
+    expect(formatInZones(parts, deDE, now)).toBe('Mi., 28. Okt., 10:00 Berlin – 13:00 New York')
+  })
+
+  it('says nothing without a time', () => {
+    expect(formatInZones([], us24, now)).toBe('')
+  })
+})
+
+describe('formatOwnZones', () => {
+  const us24: FormatPrefs = { ...us, hourCycle: '24h' }
+  const now = new Date(2026, 9, 28)
+  const berlin = 'Europe/Berlin'
+  const ny = 'America/New_York'
+  const start = new Date('2026-10-28T09:00:00Z')
+  const end = new Date('2026-10-28T17:00:00Z')
+
+  it("names the times in the zones of an item where one is other than the browser's", () => {
+    expect(
+      formatOwnZones(
+        [
+          { at: start, zone: berlin },
+          { at: end, zone: ny },
+        ],
+        berlin,
+        us24,
+        now,
+      ),
+    ).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+    expect(
+      formatOwnZones(
+        [
+          { at: start, zone: ny },
+          { at: end, zone: ny },
+        ],
+        berlin,
+        us24,
+        now,
+      ),
+    ).toBe('Wed, Oct 28, 05:00 – 13:00 New York')
+  })
+
+  it("puts a time without a zone, or in one Intl does not know, in the browser's", () => {
+    const parts = (zone: string) => [
+      { at: start, zone },
+      { at: end, zone: ny },
+    ]
+    expect(formatOwnZones(parts(''), berlin, us24, now)).toBe('Wed, Oct 28, 10:00 Berlin – 13:00 New York')
+    expect(formatOwnZones(parts('W. Europe Standard Time'), berlin, us24, now)).toBe(
+      'Wed, Oct 28, 10:00 Berlin – 13:00 New York',
+    )
+  })
+
+  it.each([
+    ['no zone', ['', ''], berlin],
+    ["the browser's", [berlin, berlin], berlin],
+    ["the browser's under another name", ['Asia/Calcutta', 'Asia/Kolkata'], 'Asia/Kolkata'],
+    ['one Intl does not know', ['Mars/Olympus', ''], berlin],
+    ['no time', [], berlin],
+  ])('says nothing while every time is in %s', (_, zones, browserZone) => {
+    const parts = zones.map((zone, i) => ({ at: i === 0 ? start : end, zone }))
+    expect(formatOwnZones(parts, browserZone, us24, now)).toBeNull()
+  })
+})
+
+describe('inYourZone', () => {
+  const gb: FormatPrefs = { tag: 'en-GB', locale: enGB, hourCycle: '24h', weekStartsOn: 1 }
+  const en = i18n.getFixedT('en')
+  const now = new Date(2026, 9, 28)
+  const berlin = 'Europe/Berlin'
+  const ny = 'America/New_York'
+  // 18:00 to 23:00 in New York on Tuesday, 27 October 2026: 23:00 to 04:00 the next day in Berlin.
+  const start = new Date('2026-10-27T22:00:00Z')
+  const end = new Date('2026-10-28T03:00:00Z')
+  /** Whitespace a line can break at before the dash, or between a number and a word beside it. */
+  const breaks = /[ \u2009]–|\d\.? (?=\p{L})|\p{L}\.? (?=\d)/u
+
+  it('says where an item in another zone lies here, a day keeping its month, a time its "PM" and the dash its first time', () => {
+    const text = inYourZone(en, us, now, { zones: [ny, ny], browserZone: berlin, start, end })
+    expect(text).toBe('In your time zone (Berlin): Tue, Oct\u00a027, 11:00\u202fPM\u202f–\u2009Wed, Oct\u00a028, 4:00\u202fAM')
+    expect(text).not.toMatch(breaks)
+  })
+
+  it('says one time where the item has one, such as a task due then', () => {
+    // Intl separates "PM" by a plain space here, as browsers do in ranges too.
+    expect(inYourZone(en, us, now, { zones: [ny], browserZone: berlin, start, end: start })).toBe(
+      'In your time zone (Berlin): Tue, Oct\u00a027, 11:00\u00a0PM',
+    )
+  })
+
+  it.each([
+    ['en-GB', gb, en, 'In your time zone (Berlin): Tue\u00a027\u00a0Oct, 23:00\u202f–\u2009Wed\u00a028\u00a0Oct, 04:00'],
+    ['de', deDE, i18n.getFixedT('de'), 'In deiner Zeitzone (Berlin): Di., 27.\u00a0Okt., 23:00\u202f–\u2009Mi., 28.\u00a0Okt., 04:00'],
+  ])('keeps a day with its month and weekday in %s', (_, prefs, t, want) => {
+    const text = inYourZone(t, prefs, now, { zones: [ny, ny], browserZone: berlin, start, end })
+    expect(text).toBe(want)
+    expect(text).not.toMatch(breaks)
+  })
+
+  it("names the browser's zone, and its times", () => {
+    expect(inYourZone(en, us, now, { zones: [berlin, berlin], browserZone: ny, start, end: start })).toBe(
+      'In your time zone (New York): Tue, Oct\u00a027, 6:00\u00a0PM',
+    )
+  })
+
+  it('says it while one row is in another zone', () => {
+    expect(inYourZone(en, us, now, { zones: ['', ny], browserZone: berlin, start, end })).not.toBeNull()
+  })
+
+  it.each([
+    ['without a zone', ['', ''], berlin],
+    ["in the browser's", [berlin, ''], berlin],
+    ["in the browser's under another name", ['Asia/Calcutta'], 'Asia/Kolkata'],
+    ["in one Intl does not know, whose fields are the browser's", ['Mars/Olympus'], berlin],
+    ['none, without rows', [], berlin],
+  ])('says nothing while every row is %s', (_, zones, browserZone) => {
+    expect(inYourZone(en, us, now, { zones, browserZone, start, end })).toBeNull()
+  })
+
+  it('says nothing for an end before the start, which the form refuses', () => {
+    expect(inYourZone(en, us, now, { zones: [ny], browserZone: berlin, start: end, end: start })).toBeNull()
   })
 })
 
