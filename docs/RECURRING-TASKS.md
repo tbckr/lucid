@@ -1157,18 +1157,21 @@ by the change in date.
 
 A series keeps its zone and form (a `TZID`, UTC or floating) through every
 move and new rule, unless the save names another zone for its anchor
-(`timezone`). Then it moves into that zone by its wall clock, as an event
-series does (see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)): the distance
-runs from the current occurrence's wall clock as shown, in the old zone, to
-the dates saved in the new one, so a New York series at 18:00 saved at 18:00
-Berlin time is at 18:00 Berlin time on every date, and the rule and the
-later references follow it as above, a UTC `UNTIL` too. Every
-`RECURRENCE-ID` and `EXDATE` takes the new `TZID` (or UTC), as mixed forms
-are what other clients misread: those of earlier occurrences, such as other
-apps' completions, at their instant, with their overrides' own dates as they
-are. A floating `UNTIL` is written in UTC there, and the old zone's
-`VTIMEZONE` goes once nothing refers to it. A zone named for the due alone
-(`dueTimezone`) writes `DUE` there at its instant, and moves nothing.
+(`timezone`): the zone it reports, sent back, is none, however its `TZID` is
+spelled (`/mozilla.org/20050126_1/Europe/Berlin` is `Europe/Berlin`). Then
+it moves into that zone by its wall clock, as an event series does (see
+[RECURRING-EVENTS.md](RECURRING-EVENTS.md)): the distance runs from the
+current occurrence's wall clock as shown, in the old zone, to the dates
+saved in the new one, so a New York series at 18:00 saved at 18:00 Berlin
+time is at 18:00 Berlin time on every date, and the rule and the later
+references follow it as above, a UTC `UNTIL` too. Every `RECURRENCE-ID` and
+`EXDATE` takes the new `TZID` (or UTC), as mixed forms are what other
+clients misread: those of earlier occurrences, such as other apps'
+completions, at their instant, with their overrides' own dates as they are.
+A floating `UNTIL` is written in UTC there, and the old zone's `VTIMEZONE`
+goes once nothing refers to it. A zone named for the due alone
+(`dueTimezone`) writes the series' `DUE` there at its instant, and moves
+nothing: the current occurrence's override keeps its own dates.
 
 A repeat at a time its zone skips, such as 02:30 on the night Berlin
 changes to summer time, shows an hour later, at 03:30, as RFC 5545 reads

@@ -273,9 +273,10 @@ func TestFindVTimezoneWithCommas(t *testing.T) {
 }
 
 // TestZoneForms checks the forms a write's zones ask for (FR-18): a nil
-// zone keeps the form, "" and "UTC" are UTC, "Etc/UTC" its own TZID, any
-// other zone its IANA name; an end without a zone of its own follows the
-// start's; and when two forms are the same zone.
+// zone keeps the form, and so does the zone the form is in, however its
+// TZID is spelled; "" and "UTC" are UTC, "Etc/UTC" its own TZID, any other
+// zone its IANA name; an end without a zone of its own follows the start's;
+// and when two forms, or a zone sent and a form, are the same zone.
 func TestZoneForms(t *testing.T) {
 	t.Parallel()
 	kept := dateForm{tzid: "Europe/London", param: "/mozilla.org/20050126_1/Europe/London"}
@@ -297,6 +298,7 @@ func TestZoneForms(t *testing.T) {
 		got, want dateForm
 	}{
 		{"formFor nil", formFor(nil, kept), kept},
+		{"formFor its zone", formFor(ptr("Europe/London"), kept), kept},
 		{"formFor zone", formFor(ptr("Europe/Berlin"), kept), berlin},
 		{"formFor empty", formFor(ptr(""), kept), dateForm{}},
 		{"endFormFor own", endFormFor(ptr("Asia/Tokyo"), ptr("Europe/Berlin"), kept), dateForm{tzid: "Asia/Tokyo"}},
@@ -315,7 +317,12 @@ func TestZoneForms(t *testing.T) {
 		{dateForm{}, dateForm{}, true},
 		{berlin, dateForm{tzid: "Europe/Berlin", param: "Europe/Berlin"}, true},
 		{sentForm("Etc/UTC"), dateForm{tzid: "UTC", param: "Etc/UTC"}, true},
-		{kept, dateForm{tzid: "Europe/London"}, false},
+		{kept, dateForm{tzid: "Europe/London"}, true},
+		{dateForm{tzid: "UTC", param: "UTC"}, dateForm{tzid: "UTC", param: "Etc/UTC"}, true},
+		{dateForm{param: "Mars/Olympus"}, dateForm{param: "Mars/Olympus"}, true},
+		{dateForm{param: "Mars/Olympus"}, dateForm{param: "Mars/Phobos"}, false},
+		{dateForm{param: "Mars/Olympus"}, dateForm{}, false},
+		{dateForm{param: "Mars/Olympus"}, berlin, false},
 		{dateForm{}, dateForm{tzid: "UTC", param: "UTC"}, false},
 		{dateForm{}, dateForm{floating: true}, false},
 		{dateForm{}, dateForm{allDay: true}, false},
@@ -323,6 +330,30 @@ func TestZoneForms(t *testing.T) {
 	} {
 		if got := sameZoneForm(tt.a, tt.b); got != tt.same || sameZoneForm(tt.b, tt.a) != tt.same {
 			t.Errorf("sameZoneForm(%+v, %+v) = %v; want %v", tt.a, tt.b, got, tt.same)
+		}
+	}
+	utc := dateForm{tzid: "UTC", param: "UTC"}
+	for _, tt := range []struct {
+		sent string
+		kept dateForm
+		same bool
+	}{
+		{"Europe/London", kept, true},
+		{"Europe/Paris", kept, false},
+		{"UTC", dateForm{}, true},
+		{"UTC", utc, true},
+		{"UTC", dateForm{tzid: "UTC", param: "Etc/UTC"}, true},
+		{"", dateForm{}, true},
+		{"", utc, false},
+		{"Etc/UTC", utc, true},
+		{"Etc/UTC", dateForm{}, false},
+		{"UTC", dateForm{floating: true}, false},
+		{"", dateForm{floating: true}, false},
+		{"UTC", dateForm{allDay: true}, false},
+		{"UTC", kept, false},
+	} {
+		if got := sentIsKept(tt.sent, tt.kept); got != tt.same {
+			t.Errorf("sentIsKept(%q, %+v) = %v; want %v", tt.sent, tt.kept, got, tt.same)
 		}
 	}
 }

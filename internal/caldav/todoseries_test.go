@@ -1128,31 +1128,129 @@ func TestUpdateTodoSeriesDueZone(t *testing.T) {
 	}
 }
 
-// TestUpdateTodoSeriesDueZoneFromRepeatShownElsewhere checks that a zone
-// named for the due alone of a task series whose current repeat another app
-// shows on another day writes DUE in it, the series' and the repeat's, and
-// moves nothing (FR-17, FR-18).
-func TestUpdateTodoSeriesDueZoneFromRepeatShownElsewhere(t *testing.T) {
+// TestUpdateTodoSeriesDueZoneKeepsRepeats checks that a zone named for the
+// due alone of a task series writes the series' DUE in it, at its instant,
+// and moves nothing: the current repeat's override, at its RECURRENCE-ID or
+// showing the repeat on another day, keeps its own dates and its note, and
+// the COUNT stays (FR-17, FR-18).
+func TestUpdateTodoSeriesDueZoneKeepsRepeats(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		override []string
+		shown    time.Time // the current repeat's due as listed
+	}{
+		{
+			name:     "an override at its RECURRENCE-ID",
+			override: []string{"DUE;TZID=Europe/Berlin:20261027T200000"},
+			shown:    date(2026, 10, 27, 19, 0),
+		},
+		{
+			name:     "an override showing the repeat on another day",
+			override: []string{"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=Europe/Berlin:20261028T180000"},
+			shown:    date(2026, 10, 28, 17, 0),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			override := slices.Concat([]string{
+				"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000",
+				"DESCRIPTION:Own note",
+			}, tc.override, []string{"END:VTODO"})
+			id := e.put(t, "tasks", "r.ics", slices.Concat(berlinTimezone, []string{
+				"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Call",
+				"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=Europe/Berlin:20261027T180000",
+				"RRULE:FREQ=WEEKLY;COUNT=5", "END:VTODO",
+			}, override)...)
+			f := listedTodo(t, e, id)
+			if !sameTime(f.Due, &tc.shown) {
+				t.Fatalf("listed series = %+v; want its current repeat due at %v", f, tc.shown)
+			}
+			in := editInput(&f)
+			in.DueTimezone = ptr("America/New_York")
+			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "series", storedObject(t, e, id), slices.Concat([]string{
+				"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=America/New_York:20261027T130000",
+				"RRULE:FREQ=WEEKLY;COUNT=5\r\n", "RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000", "DESCRIPTION:Own note",
+				"TZID:Europe/Berlin", "TZID:America/New_York",
+			}, tc.override), []string{"DUE;TZID=Europe/Berlin:20261027T180000"})
+			if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || got.DueTimezone != "America/New_York" ||
+				!sameNext(got.Next, &domain.TodoDates{Start: ptr(date(2026, 11, 3, 9, 0)), Due: ptr(date(2026, 11, 3, 17, 0))}) {
+				t.Errorf("series = %+v, next %+v; want it as listed, due in America/New_York", got, got.Next)
+			}
+		})
+	}
+}
+
+// TestUpdateTodoSeriesDueZoneMovingRepeatsDue checks that a zone named for
+// the due of a task series, saved with another due for its current repeat
+// another app shows on another day, writes the series' DUE in it at its
+// instant and the repeat's new due in it too, as that repeat alone changes
+// (FR-17, FR-18).
+func TestUpdateTodoSeriesDueZoneMovingRepeatsDue(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, caldavtest.Options{})
 	id := e.put(t, "tasks", "r.ics", slices.Concat(berlinTimezone, []string{
 		"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Call",
-		"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=Europe/Berlin:20261027T180000", "RRULE:FREQ=WEEKLY", "END:VTODO",
+		"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=Europe/Berlin:20261027T180000", "RRULE:FREQ=WEEKLY",
+		"END:VTODO",
 		"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000",
 		"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=Europe/Berlin:20261028T180000", "END:VTODO",
 	})...)
 	f := listedTodo(t, e, id)
 	in := editInput(&f)
-	in.DueTimezone = ptr("America/New_York")
-	got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+	in.Due, in.DueTimezone = ptr(f.Due.Add(time.Hour)), ptr("America/New_York")
+	_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
 	mustNoErr(t, err)
 	checkStored(t, "series", storedObject(t, e, id), []string{
-		"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=America/New_York:20261027T130000", "RRULE:FREQ=WEEKLY\r\n",
-		"RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000",
-		"DTSTART;TZID=Europe/Berlin:20261028T100000", "DUE;TZID=America/New_York:20261028T130000",
+		"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=America/New_York:20261027T130000",
+		"RECURRENCE-ID;TZID=Europe/Berlin:20261027T100000", "DTSTART;TZID=Europe/Berlin:20261028T100000",
+		"DUE;TZID=America/New_York:20261028T140000",
 	}, []string{"DUE;TZID=Europe/Berlin"})
-	if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || got.DueTimezone != "America/New_York" {
-		t.Errorf("series = %+v; want it as listed, due in America/New_York", got)
+}
+
+// TestUpdateTodoSeriesDueZoneShapes checks a zone named for the due alone
+// of a task series written otherwise than with DTSTART and DUE: one
+// anchored on DUE gets DTSTART = DUE in the zone it recurs in, and one with
+// a DURATION gets DUE at that distance from DTSTART, each due then in the
+// zone named at its instant, and the repeats stay (FR-17, FR-18).
+func TestUpdateTodoSeriesDueZoneShapes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		master, lacks []string
+		has           []string
+		next          domain.TodoDates
+	}{
+		{
+			name:   "anchored on its due",
+			master: []string{"DUE;TZID=Europe/Berlin:20261027T180000", "RRULE:FREQ=WEEKLY"},
+			has:    []string{"DTSTART;TZID=Europe/Berlin:20261027T180000", "DUE;TZID=America/New_York:20261027T130000"},
+			next:   domain.TodoDates{Start: ptr(date(2026, 11, 3, 17, 0)), Due: ptr(date(2026, 11, 3, 17, 0))},
+		},
+		{
+			name:   "with a duration",
+			master: []string{"DTSTART;TZID=Europe/Berlin:20261027T100000", "DURATION:PT8H", "RRULE:FREQ=WEEKLY"},
+			has:    []string{"DTSTART;TZID=Europe/Berlin:20261027T100000", "DUE;TZID=America/New_York:20261027T130000"},
+			lacks:  []string{"DURATION"},
+			next:   domain.TodoDates{Start: ptr(date(2026, 11, 3, 9, 0)), Due: ptr(date(2026, 11, 3, 17, 0))},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id, f := seedZoned(t, e, berlinTimezone, tc.master...)
+			in := editInput(&f)
+			in.DueTimezone = ptr("America/New_York")
+			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "series", storedObject(t, e, id), tc.has, tc.lacks)
+			if !sameTime(got.Due, f.Due) || got.DueTimezone != "America/New_York" || !sameNext(got.Next, &tc.next) {
+				t.Errorf("series = %+v, next %+v; want it due as listed in America/New_York, next %+v", got, got.Next, tc.next)
+			}
+		})
 	}
 }
 
@@ -1238,6 +1336,97 @@ func TestWritesDropUnusedTimezones(t *testing.T) {
 			})...)
 			tc.write(t, e, id)
 			checkStored(t, "series", storedObject(t, e, id), []string{"TZID:Europe/Berlin"}, []string{"Asia/Tokyo"})
+		})
+	}
+}
+
+// mozillaBerlin is the TZID Thunderbird writes for Europe/Berlin, and
+// mozillaBerlinTimezone its VTIMEZONE.
+const mozillaBerlin = "/mozilla.org/20050126_1/Europe/Berlin"
+
+var mozillaBerlinTimezone = slices.Concat([]string{"BEGIN:VTIMEZONE", "TZID:" + mozillaBerlin}, berlinTimezone[2:])
+
+// TestTodoZoneSentBackKeepsForm checks that a task saved with the zones it
+// reports, as an editor sends them back, keeps its dates as they are
+// written: the zone is judged by what a TZID resolves to, not by its
+// spelling, and "UTC" and "Etc/UTC" are a TZID that resolves to UTC. A
+// series saved so moves nothing, and its current repeat's override keeps
+// its own dates and note (FR-17, FR-18).
+func TestTodoZoneSentBackKeepsForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name             string
+		zone             []string
+		master, override []string
+		sent             string
+	}{
+		{
+			name: "a series in a prefixed zone",
+			zone: mozillaBerlinTimezone,
+			master: []string{
+				"DTSTART;TZID=" + mozillaBerlin + ":20261027T100000", "DUE;TZID=" + mozillaBerlin + ":20261027T180000",
+				"RRULE:FREQ=WEEKLY;COUNT=5",
+			},
+			override: []string{
+				"RECURRENCE-ID;TZID=" + mozillaBerlin + ":20261027T100000", "DUE;TZID=" + mozillaBerlin + ":20261027T200000",
+				"DESCRIPTION:Own note",
+			},
+			sent: "Europe/Berlin",
+		},
+		{name: "a task in UTC as a TZID, sent as UTC", master: []string{"DUE;TZID=UTC:20261027T180000"}, sent: "UTC"},
+		{name: "a task in UTC as a TZID, sent as Etc/UTC", master: []string{"DUE;TZID=UTC:20261027T180000"}, sent: "Etc/UTC"},
+		{
+			name:   "a series in UTC as a TZID, sent as UTC",
+			master: []string{"DTSTART;TZID=UTC:20261027T100000", "DUE;TZID=UTC:20261027T180000", "RRULE:FREQ=WEEKLY;COUNT=5"},
+			sent:   "UTC",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			lines := slices.Concat(tc.zone, []string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z", "SUMMARY:Call"},
+				tc.master, []string{"END:VTODO"})
+			if tc.override != nil {
+				lines = slices.Concat(lines, []string{"BEGIN:VTODO", "UID:r", "DTSTAMP:20240101T000000Z"}, tc.override,
+					[]string{"END:VTODO"})
+			}
+			id := e.put(t, "tasks", "r.ics", lines...)
+			f := listedTodo(t, e, id)
+			in := editInput(&f)
+			in.Title, in.Timezone, in.DueTimezone = "Renamed", ptr(tc.sent), ptr(tc.sent)
+			got, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "todo", storedObject(t, e, id), slices.Concat(tc.master, tc.override, []string{"SUMMARY:Renamed"}),
+				[]string{"TZID=Europe/Berlin", "TZID=Etc/UTC", "DTSTART:2026", "DUE:2026"})
+			if !sameTime(got.Start, f.Start) || !sameTime(got.Due, f.Due) || !sameNext(got.Next, f.Next) {
+				t.Errorf("saved = %+v; want the dates as listed, %+v", got, f)
+			}
+		})
+	}
+}
+
+// TestTodoUTCPickedIsAZone checks that UTC picked as Etc/UTC for a task in
+// UTC without a TZID is a zone of its own, written as that TZID with its
+// VTIMEZONE, and that "" takes a TZID that resolves to UTC back to "Z"
+// (FR-18).
+func TestTodoUTCPickedIsAZone(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, stored, sent string
+		has, lacks         []string
+	}{
+		{"Etc/UTC on Z", "DUE:20261027T180000Z", "Etc/UTC", []string{"DUE;TZID=Etc/UTC:20261027T180000", "TZID:Etc/UTC"}, []string{"DUE:2026"}},
+		{"\"\" on a TZID of UTC", "DUE;TZID=UTC:20261027T180000", "", []string{"DUE:20261027T180000Z"}, []string{"TZID"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id, f := seedZoned(t, e, nil, tc.stored)
+			in := editInput(&f)
+			in.Timezone = ptr(tc.sent)
+			_, _, err := e.svc.UpdateTodo(t.Context(), id, f.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "todo", storedObject(t, e, id), tc.has, tc.lacks)
 		})
 	}
 }

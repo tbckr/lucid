@@ -4041,3 +4041,34 @@ func TestDeleteEvent(t *testing.T) {
 	}
 	mustErr(t, e.svc.DeleteEvent(ctx, ev.ID, ev.ETag), domain.ErrNotFound)
 }
+
+// TestUpdateSeriesZoneSentBackKeepsForm checks that "all events" saved with
+// the zones the series reports, as the editor sends them back, is no zone
+// change where its TZID is spelled otherwise than the zone's name: the
+// series in Thunderbird's TZID for Berlin, renamed, moves nothing and keeps
+// its TZID, and so does its exception (FR-17, FR-18).
+func TestUpdateSeriesZoneSentBackKeepsForm(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, caldavtest.Options{})
+	const tzid = "/mozilla.org/20050126_1/Europe/Berlin"
+	series := []string{
+		"DTSTART;TZID=" + tzid + ":20261027T100000", "DTEND;TZID=" + tzid + ":20261027T110000", "RRULE:FREQ=WEEKLY",
+		"RECURRENCE-ID;TZID=" + tzid + ":20261103T100000", "DTSTART;TZID=" + tzid + ":20261103T120000",
+		"DTEND;TZID=" + tzid + ":20261103T130000", "SUMMARY:Moved",
+	}
+	id := e.put(t, "work", "series.ics", slices.Concat(
+		[]string{"BEGIN:VTIMEZONE", "TZID:" + tzid}, berlinTimezone[2:],
+		[]string{"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Call"}, series[:3],
+		[]string{"END:VEVENT", "BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z"}, series[3:], []string{"END:VEVENT"},
+	)...)
+	ev := listedAt(t, e, "work", date(2026, 10, 27, 9, 0), date(2026, 10, 27, 0, 0), date(2026, 10, 28, 0, 0))
+	if ev.Timezone != "Europe/Berlin" || ev.EndTimezone != "Europe/Berlin" {
+		t.Fatalf("listed %+v; want it in Europe/Berlin", ev)
+	}
+	in := eventInputOf(ev)
+	in.Title, in.Timezone, in.EndTimezone = "Renamed", ptr(ev.Timezone), ptr(ev.EndTimezone)
+	_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+	mustNoErr(t, err)
+	checkStored(t, "series", stored(t, e, "work", "series.ics"), append(series, "SUMMARY:Renamed", "TZID:"+tzid),
+		[]string{"TZID=Europe/Berlin", "TZID:Europe/Berlin"})
+}

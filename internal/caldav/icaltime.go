@@ -63,13 +63,32 @@ func sentForm(zone string) dateForm {
 }
 
 // formFor returns the form a timed date property is written in for the
-// zone sent: kept, the form it has, where none is sent, else the one the
-// zone asks for, see sentForm (FR-18).
+// zone sent: kept, the form it has, where none is sent or the one sent is
+// its zone (see sentIsKept), so that a zone sent back as reported is no
+// change and the form stays as written; else the one the zone asks for, see
+// sentForm (FR-18).
 func formFor(sent *string, kept dateForm) dateForm {
-	if sent == nil {
+	if sent == nil || sentIsKept(*sent, kept) {
 		return kept
 	}
 	return sentForm(*sent)
+}
+
+// sentIsKept reports whether the zone sent is the zone of the form kept
+// (FR-18), judged by the zone a TZID resolves to, not by how it is spelled
+// (see sameZoneForm): Europe/Berlin is
+// /mozilla.org/20050126_1/Europe/Berlin, and Etc/UTC any TZID that resolves
+// to UTC. "UTC", the zone the API reports for UTC in any form, is also a
+// TZID that resolves to it, while "" is UTC without a TZID ("Z") only, and
+// Etc/UTC, UTC picked, is no "Z". A floating time and a date have no zone a
+// write could name again.
+func sentIsKept(sent string, kept dateForm) bool {
+	f := sentForm(sent)
+	if sameZoneForm(f, kept) {
+		return true
+	}
+	return sent != "" && f == (dateForm{}) && !kept.allDay && !kept.floating &&
+		loadLocation(cmp.Or(kept.param, kept.tzid)) == time.UTC
 }
 
 // endFormFor returns the form DTEND (DUE) is written in, see formFor: that
@@ -77,7 +96,7 @@ func formFor(sent *string, kept dateForm) dateForm {
 // start's, where sent, else kept, the end's own (FR-18).
 func endFormFor(sentEnd, sentStart *string, kept dateForm) dateForm {
 	if sentEnd != nil {
-		return sentForm(*sentEnd)
+		return formFor(sentEnd, kept)
 	}
 	return formFor(sentStart, kept)
 }
@@ -96,12 +115,35 @@ func (f dateForm) ofType(allDay bool) dateForm {
 	return f
 }
 
-// sameZoneForm reports whether a and b are written alike as far as their
-// zone goes: both DATEs, both floating, both UTC, or both with the same
-// TZID, as written where it was read (FR-18). Equal instants in two zones
-// are no same zone.
+// sameZoneForm reports whether a and b name the same zone (FR-18): both
+// DATEs, both floating, both UTC without a TZID ("Z"), or both with a TZID,
+// judged by the zone it resolves to, not by its spelling: two TZIDs Lucid
+// resolves to the zone of one name, such as Europe/Berlin and
+// /mozilla.org/20050126_1/Europe/Berlin, or two it cannot resolve, written
+// alike. A TZID that resolves to UTC, such as Etc/UTC, is no "Z", and equal
+// instants in two zones are no same zone.
 func sameZoneForm(a, b dateForm) bool {
-	return a.allDay == b.allDay && a.floating == b.floating && cmp.Or(a.param, a.tzid) == cmp.Or(b.param, b.tzid)
+	ta, tb := cmp.Or(a.param, a.tzid), cmp.Or(b.param, b.tzid)
+	switch {
+	case a.allDay || b.allDay:
+		return a.allDay == b.allDay
+	case a.floating || b.floating:
+		return a.floating == b.floating
+	case ta == "" || tb == "":
+		return ta == tb
+	}
+	la, lb := loadLocation(ta), loadLocation(tb)
+	if la == nil || lb == nil {
+		return la == nil && lb == nil && ta == tb
+	}
+	return la.String() == lb.String()
+}
+
+// rezones reports whether a date-time written in the form kept and then in
+// the form f changes its zone, see sameZoneForm (FR-18): a date, and one
+// that gets or loses a time, changes its value type instead.
+func rezones(f, kept dateForm) bool {
+	return !f.allDay && !kept.allDay && !sameZoneForm(f, kept)
 }
 
 // zone returns the zone a DATE-TIME of the form f is read in: the one its

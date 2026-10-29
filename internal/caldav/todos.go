@@ -448,8 +448,12 @@ type todoEdit struct {
 	rule   ruleEdit
 	rr     string  // the rule ruleSet sets, normalized
 	from   todoOcc // the occurrence ruleSet sets it from: the one cur reports
-	// unchanged reports that in has cur's dates.
+	// unchanged reports that in has cur's dates, in the zones they are
+	// written in (see zonesChange).
 	unchanged bool
+	// dueZone reports that in has cur's dates and names another zone for the
+	// due alone of a series, which then moves nothing, see rezoneDue (FR-18).
+	dueZone bool
 	// drop reports the RECURRENCE-IDs of the overrides the rule edit drops,
 	// nil where it drops none: all of them for ruleRemove, and for ruleSet of
 	// a series those from the occurrence it is set from on (see refsFrom).
@@ -480,9 +484,11 @@ func newTodoEdit(cal *ical.Calendar, c *ical.Component, cur domain.Todo, in doma
 	if e.rule, e.rr, err = ruleEditOf(c, e.in); err != nil {
 		return todoEdit{}, err
 	}
-	// A rule Lucid cannot evaluate can be kept or removed, but moving its
-	// series or replacing it needs its occurrences (FR-17).
-	if cur.RuleUnsupported && (e.rule == ruleSet || (e.rule == ruleKeep && !e.unchanged)) {
+	e.dueZone = !e.unchanged && e.series != nil && sameDates(cur, e.in) && !e.series.zonesFor(e.in).rezone
+	// A rule Lucid cannot evaluate can be kept or removed, and its due put
+	// into another zone, but moving its series or replacing it needs its
+	// occurrences (FR-17).
+	if cur.RuleUnsupported && (e.rule == ruleSet || (e.rule == ruleKeep && !e.unchanged && !e.dueZone)) {
 		return todoEdit{}, errRuleUnsupported
 	}
 	switch {
@@ -574,6 +580,10 @@ func applyTodoEdit(cal *ical.Calendar, c *ical.Component, e todoEdit, now time.T
 	switch {
 	case series == nil:
 		applyTodoDates(cal, c, e.in)
+	case e.rule == ruleKeep && e.dueZone:
+		// The dates stay, the current occurrence's override with its own
+		// (FR-18).
+		series.rezoneDue(cal, series.zonesFor(e.in).due)
 	case e.rule == ruleKeep && !e.unchanged:
 		// A move the rule cannot follow, or one onto a repeat another app
 		// changed, fails before anything is written; an undo restores the
@@ -1288,14 +1298,14 @@ func todoForms(c *ical.Component, in domain.TodoInput) (start, due dateForm) {
 }
 
 // zonesChange reports whether in names a zone for a timed start or due that
-// the todo c writes in another, see sameZoneForm: a zone change, which
-// writes the date anew, also at an instant c has (FR-18). A zone named for a
-// date, or for a date given a time, changes no zone.
+// the todo c writes in another, see rezones: a zone change, which writes the
+// date anew, also at an instant c has (FR-18). The zone c reports, sent
+// back, is none (see formFor), and neither is a zone named for a date or
+// for a date given a time.
 func zonesChange(c *ical.Component, in domain.TodoInput) bool {
 	keptStart, keptDue, ok := storedForms(c)
 	start, due := todoForms(c, in)
-	changes := func(f, kept dateForm) bool { return !f.allDay && !kept.allDay && !sameZoneForm(f, kept) }
-	return ok && (in.Start != nil && changes(start, keptStart) || in.Due != nil && changes(due, keptDue))
+	return ok && (in.Start != nil && rezones(start, keptStart) || in.Due != nil && rezones(due, keptDue))
 }
 
 // sameDates reports whether in carries the start and due cur already has, at

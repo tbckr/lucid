@@ -811,7 +811,7 @@ func (s *todoSeries) applyMove(cal *ical.Calendar, status string, in domain.Todo
 // into it as move does, by the distance from where occ is shown, on the wall
 // clock of the series' zone, to in's dates on the new zone's, with the
 // references in the new form (see zonesFor and rezoneRefs); one named for
-// the due alone writes DUE in it, from prev on, as a move of no distance.
+// the due alone writes the series' DUE in it, see rezoneDue.
 //
 // It returns the overrides it left in place, for keepApart, and fails,
 // without changing anything, as move does.
@@ -837,8 +837,13 @@ func (s *todoSeries) moveShown(cal *ical.Calendar, occ todoOcc, in domain.TodoIn
 		dest.t = dest.t.In(z.to)
 	}
 	shift := s.shiftBetween(shown, dest, z.to)
-	if shift == nil && !retype && !z.rezone && sameZoneForm(z.due, s.dueForm) {
-		s.setEntryDates(occ.override, moved)
+	if shift == nil && !retype && !z.rezone {
+		entry := s
+		if !sameZoneForm(z.due, s.dueForm) {
+			s.rezoneDue(cal, z.due)
+			entry = newTodoSeries(cal, s.master)
+		}
+		entry.setEntryDates(occ.override, moved)
 		return nil, nil
 	}
 	if shift == nil && z.rezone {
@@ -1781,23 +1786,51 @@ type seriesZones struct {
 	to     *time.Location // the series' zone, or the one it moves into
 }
 
-// zonesFor returns the seriesZones of a move or a new rule of the timed
-// series s for the write in (FR-17, FR-18): its DTSTART (else DUE) and DUE
-// stay in their forms unless in names zones for them, see seriesStart and
-// todoForms. Another anchor zone is a zone change, which moves the series
-// into that zone, and so is the same zone written otherwise, such as
-// Europe/Berlin for /mozilla.org/20050126_1/Europe/Berlin; one named for the
-// due alone changes DUE's form only. An all-day series, or one moved between
-// dates and times, has none: its dates convert instead (see retypeRefs).
+// zonesFor returns the seriesZones of a write in of the timed series s
+// (FR-17, FR-18): its DTSTART (else DUE) and DUE stay in their forms unless
+// in names other zones for them, see seriesStart, todoForms and rezones; the
+// zone the series reports, sent back, is none, however its TZID is spelled.
+// Another anchor zone is a zone change, which moves the series into it; one
+// named for the due alone changes DUE's form only. An all-day series, or one
+// moved between dates and times, has none: its dates convert instead (see
+// retypeRefs).
 func (s *todoSeries) zonesFor(in domain.TodoInput) seriesZones {
 	_, start := seriesStart(s.master, in)
 	_, due := todoForms(s.master, in)
 	z := seriesZones{start: s.startForm, due: s.dueForm, to: s.anchor.loc()}
-	if !s.anchor.allDay && !start.allDay && !sameZoneForm(start, s.startForm) {
+	if rezones(start, s.startForm) {
 		z.start, z.rezone, z.to = start, true, start.zone()
 	}
-	if !s.dueForm.allDay && !due.allDay && !sameZoneForm(due, s.dueForm) {
+	if rezones(due, s.dueForm) {
 		z.due = due
 	}
 	return z
+}
+
+// rezoneDue writes the due of the series s in cal in the form due at the
+// instant it has, for a write that names another zone for the due alone and
+// moves nothing (FR-17, FR-18): DUE, or a DURATION as DUE at its distance
+// from DTSTART, as RFC 5545 allows only one of them. A series anchored on
+// DUE gets DTSTART = DUE first, in the form DUE has, as RFC 5545 wants
+// DTSTART with RRULE and as a move writes it: it recurs where it did. The
+// overrides keep their own dates.
+func (s *todoSeries) rezoneDue(cal *ical.Calendar, due dateForm) {
+	c := s.master
+	at, err := parseDateProp(c.Props.Get(ical.PropDue))
+	if err != nil {
+		if s.dueOffset == nil || s.onDue {
+			return
+		}
+		at = dateValue{t: s.anchor.t.Add(*s.dueOffset)}
+	}
+	if at.allDay {
+		return
+	}
+	if s.onDue {
+		start := cloneProps(c.Props[ical.PropDue][:1])[0]
+		start.Name = ical.PropDateTimeStart
+		c.Props.Set(&start)
+	}
+	c.Props.Set(seriesValueProp(cal, ical.PropDue, at, due))
+	c.Props.Del(ical.PropDuration)
 }

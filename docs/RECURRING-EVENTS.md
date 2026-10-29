@@ -879,8 +879,10 @@ event, and the refusal comes as a toast.
   location into the series too (`applyChangedEventFields`), so an
   exception's own title stays out of it.
 - **A timed series whose start zone changes** (the request names another
-  zone, or UTC for a `TZID` or a floating time, or a `TZID` written
-  otherwise, such as `/mozilla.org/…/Europe/Berlin`) moves into it **by its
+  zone, judged by what a `TZID` resolves to, not by its spelling, so
+  `Europe/Berlin` sent back for `/mozilla.org/…/Europe/Berlin` changes
+  nothing, and `"UTC"` nothing for a `TZID` that resolves to UTC; or a zone
+  for a floating time; `sentIsKept`, `sameZoneForm`) moves into it **by its
   wall clock**, whether its rule changes or not (`seriesFormsFor`,
   `wallShift`): the change is measured from the edited event's shown start
   on the old zone's clock to the start entered on the new zone's, as a
