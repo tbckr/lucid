@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { createTestEvent, createTestTask, deleteTestEvents, deleteTestTasks, login } from './helpers'
 
 /*
- * Time zones (FR-18): a series takes the browser's time zone. A browser that reports UTC instead,
+ * Time zones (FR-18): a new series takes the browser's time zone. A browser that reports UTC instead,
  * such as Firefox with privacy.resistFingerprinting, gets series without a zone of its own, as
  * Thunderbird writes them with its time zone set to UTC (README, "Time zones").
  */
@@ -82,9 +82,10 @@ test('in a browser that reports UTC, a weekly event and task are saved without a
 })
 
 /*
- * A series in another time zone (FR-17, FR-18): one in New York in the evening shows a day later in Berlin. The
- * editors read and build its repeat on the days it shows on; an event that changes its repeat moves to the browser's
- * zone, a task keeps its own.
+ * Items in other time zones (FR-17, FR-18), in a browser in Berlin. A series in New York in the evening shows a day
+ * later here, and its details say its repeat on the days it shows on; the editors show and build it in New York,
+ * where it stays. A flight is entered in the zones it leaves and lands in, each row in its own, and its details name
+ * both.
  */
 test.describe('a browser in Berlin', () => {
   test.use({ timezoneId: 'Europe/Berlin' })
@@ -97,7 +98,10 @@ test.describe('a browser in Berlin', () => {
     return d
   }
 
-  test('edits the repeat of a series from New York on the days it shows on', async ({ page }) => {
+  /** The date of `at` in UTC as iCalendar writes it, "yyyymmdd": for 23:00 UTC also the date in New York. */
+  const icalDate = (at: Date) => at.toISOString().slice(0, 10).replaceAll('-', '')
+
+  test('keeps a series from New York in its zone', async ({ page }) => {
     const tuesday = tuesdayNight()
     // Wednesday at noon, Berlin's day of the series.
     await page.clock.setFixedTime(new Date(tuesday.getTime() + 13 * 3600 * 1000))
@@ -118,23 +122,28 @@ test.describe('a browser in Berlin', () => {
     const details = page.getByRole('dialog', { name: title })
     await expect(details).toContainText('Every week on Wednesday and Friday')
 
+    // The editor shows the series where it recurs: at 18:00 or 19:00 on Tuesdays and Thursdays in New York.
     await details.getByRole('button', { name: 'Edit event' }).click()
     const editor = page.getByRole('dialog', { name: 'Edit event' })
+    await expect(editor.getByRole('combobox', { name: 'Start time zone' })).toHaveValue('New York')
+    await expect(editor.getByRole('combobox', { name: 'Start time', exact: true })).toHaveValue(/^[67]:00 PM$/)
     const select = editor.getByRole('combobox', { name: 'Repeat' })
-    await expect(select).toHaveText('Every week on Wednesday and Friday')
+    await expect(select).toHaveText('Every week on Tuesday and Thursday')
     await select.click()
     await page.getByRole('option', { name: 'Custom…' }).click()
     const repeat = page.getByRole('dialog', { name: 'Custom repeat' })
     await repeat.getByRole('spinbutton', { name: 'Repeat every' }).fill('2')
     await repeat.getByRole('button', { name: 'Done' }).click()
-    await expect(select).toHaveText('Every 2 weeks on Wednesday and Friday')
+    await expect(select).toHaveText('Every 2 weeks on Tuesday and Thursday')
     // The series' first event: the new repeat applies to all of it, without a question.
     await editor.getByRole('button', { name: 'Save' }).click()
     await expect(editor).toBeHidden()
 
+    // The new repeat, built in New York, and the series still there.
     const event = await stored(page, await eventId(page, title))
-    expect(event).toMatch(/\r\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR(;|\r\n)/)
-    expect(event).toMatch(/\r\nDTSTART;TZID=Europe\/Berlin:\d{8}T0[01]0000\r\n/)
+    expect(event).toMatch(/\r\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH(;|\r\n)/)
+    expect(event).toMatch(new RegExp(`\\r\\nDTSTART;TZID=America/New_York:${icalDate(tuesday)}T1[89]0000\\r\\n`))
+    expect(event).not.toContain('Europe/Berlin')
 
     const task = 'E2E New York task'
     const { id } = await createTestTask(page, {
@@ -147,19 +156,76 @@ test.describe('a browser in Berlin', () => {
     await page.reload()
     await page.getByRole('button', { name: `Edit task: ${task}` }).click()
     const taskEditor = page.getByRole('dialog', { name: 'Edit task' })
+    await expect(taskEditor.getByRole('combobox', { name: 'Due time zone' })).toHaveValue('New York')
     const taskSelect = taskEditor.getByRole('combobox', { name: 'Repeat' })
-    await expect(taskSelect).toHaveText('Every week on Wednesday')
+    await expect(taskSelect).toHaveText('Every week on Tuesday')
     await taskSelect.click()
     await page.getByRole('option', { name: 'Custom…' }).click()
     await repeat.getByRole('spinbutton', { name: 'Repeat every' }).fill('2')
     await repeat.getByRole('button', { name: 'Done' }).click()
-    await expect(taskSelect).toHaveText('Every 2 weeks on Wednesday')
+    await expect(taskSelect).toHaveText('Every 2 weeks on Tuesday')
     await taskEditor.getByRole('button', { name: 'Save' }).click()
     await expect(taskEditor).toBeHidden()
 
-    // Tuesday in New York, where the task stays.
     const todo = await stored(page, id)
     expect(todo).toMatch(/\r\nRRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU(;|\r\n)/)
-    expect(todo).toMatch(/\r\nDUE;TZID=America\/New_York:\d{8}T1[89]0000\r\n/)
+    expect(todo).toMatch(new RegExp(`\\r\\nDUE;TZID=America/New_York:${icalDate(tuesday)}T1[89]0000\\r\\n`))
+    expect(todo).not.toContain('Europe/Berlin')
+  })
+
+  test('enters a flight in two zones', async ({ page }) => {
+    // Create picks the next full hour: in the morning, it is today.
+    const morning = new Date()
+    morning.setUTCHours(6, 30, 0, 0)
+    await page.clock.setFixedTime(morning)
+    await login(page)
+    await page.keyboard.press('d')
+
+    const title = `E2E flight ${Date.now()}`
+    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'New event' })
+    await dialog.getByPlaceholder('Add a title').fill(title)
+    // An event in the browser's zone shows no zone field until it is asked for. The start's then has the focus, and
+    // the end's follows it while it is in the start's zone.
+    const startZone = dialog.getByRole('combobox', { name: 'Start time zone' })
+    const endZone = dialog.getByRole('combobox', { name: 'End time zone' })
+    await expect(startZone).toBeHidden()
+    await dialog.getByRole('button', { name: 'Other time zone' }).click()
+    await expect(startZone).toBeFocused()
+    await page.keyboard.type('Berlin')
+    await page.keyboard.press('Enter')
+    await expect(startZone).toHaveValue('Berlin')
+    await expect(endZone).toHaveValue('Berlin')
+    await endZone.click()
+    await page.keyboard.type('New York')
+    await page.keyboard.press('Enter')
+    await expect(endZone).toHaveValue('New York')
+    await expect(startZone).toHaveValue('Berlin')
+
+    const startTime = dialog.getByRole('combobox', { name: 'Start time', exact: true })
+    await startTime.click()
+    await page.keyboard.type('10:00')
+    await page.keyboard.press('Enter')
+    await expect(startTime).toHaveValue('10:00 AM')
+    const endTime = dialog.getByRole('combobox', { name: 'End time', exact: true })
+    await endTime.click()
+    await page.keyboard.type('1:00 PM')
+    await page.keyboard.press('Enter')
+    await expect(endTime).toHaveValue('1:00 PM')
+    // Where the flight lies here: it lands at 18:00 or 19:00 in Berlin, as the two zones are 5 or 6 hours apart.
+    await expect(dialog).toContainText(/In your time zone \(Berlin\):\s.*10:00\sAM\s–\s[67]:00\sPM/)
+    await dialog.getByRole('button', { name: 'Create event' }).click()
+    await expect(dialog).toBeHidden()
+
+    // Each time in its zone, on the same date, Berlin picked too, though it is the browser's.
+    const event = await stored(page, await eventId(page, title))
+    const day = /\r\nDTSTART;TZID=Europe\/Berlin:(\d{8})T100000\r\n/.exec(event)?.[1]
+    expect(day).toBeDefined()
+    expect(event).toContain(`\r\nDTEND;TZID=America/New_York:${day}T130000\r\n`)
+    expect(event).toContain('\r\nTZID:Europe/Berlin\r\n')
+    expect(event).toContain('\r\nTZID:America/New_York\r\n')
+
+    await page.getByRole('main').locator('[data-event-key]', { hasText: title }).click()
+    await expect(page.getByRole('dialog', { name: title })).toContainText('10:00 AM Berlin – 1:00 PM New York')
   })
 })

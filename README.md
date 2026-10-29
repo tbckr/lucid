@@ -55,7 +55,8 @@ and Lucid keeps the comfort you're used to from Google Calendar.
   or hide them once they're done. Checklists are saved as plain Markdown task
   lines, so your other apps can still read them.
 - **Recurring events and time zones:** recurring series, all-day and timed
-  events, always shown in your local time zone.
+  events, always shown in your local time zone, and time zones of their own
+  for the events and tasks that need them, such as a flight.
 - **Custom repeats:** beyond daily, weekly, monthly and yearly, the repeat
   editor builds repeats of events and tasks such as "every 2 weeks on Monday
   and Thursday" or "every month on the last weekday", with an end date or a
@@ -102,10 +103,8 @@ Not there yet:
   subscriptions to calendar feeds (webcal), no import or export of `.ics`
   files, and one account at a time. Calendars shared with you show if your
   server puts them in your calendar home, as Nextcloud does.
-- **Events and tasks:** no search, no moving to another calendar, no
-  subtasks, and no time zone per event: Lucid shows times in your browser's
-  time zone, and saving a single event stores its time without the zone
-  another app may have given it.
+- **Events and tasks:** no search, no moving to another calendar, and no
+  subtasks.
 - **Touch screens:** drag and drop is made for mouse and keyboard and
   untested on touch screens; the editor works everywhere.
 - **Sessions** live in memory only, so restarting Lucid signs everybody out.
@@ -168,26 +167,39 @@ of how CalDAV clients handle repeating tasks.
 
 ### Time zones
 
-Lucid shows every time in your browser's time zone. It stores a single timed
-event or task in UTC. A repeating one you create in Lucid gets your browser's
-time zone, such as `Europe/Berlin`, as calendar apps usually do: that is what
-keeps a weekly meeting at 9:00 when daylight saving time begins or ends. The
-zone stays with the series on your CalDAV server, where whoever runs the
-server, and whoever you share the calendar with, can see it.
+Lucid shows every time in your browser's time zone: in the calendar, the task
+list and the details. A repeating event or task you create in Lucid gets your
+browser's time zone, such as `Europe/Berlin`, as calendar apps usually do:
+that is what keeps a weekly meeting at 9:00 when daylight saving time begins
+or ends. A time zone stays with its event or task on your CalDAV server, where
+whoever runs the server, and whoever you share the calendar with, can see it,
+so a single event or task gets a time zone only when you choose one; without
+one, it is stored in UTC.
 
 To keep your time zone out, use a browser that reports UTC instead, such as
 Firefox with
 [`privacy.resistFingerprinting`](https://support.mozilla.org/en-US/kb/resist-fingerprinting),
 which reports UTC or Iceland's time (`Atlantic/Reykjavik`). Lucid then shows
-and stores every time in that zone, as Thunderbird does with its time zone set
-to UTC, so a weekly meeting at 9:00 stays at 9:00 UTC all year.
+every time in that zone, and a repeating event or task you create gets it, as
+Thunderbird does with its time zone set to UTC, so a weekly meeting at 9:00
+stays at 9:00 UTC all year.
 
-A repeating event or task from another time zone shows on the days it falls on
-in yours, and so does its repeat, in the details and the editor: a weekly
-meeting on Tuesdays at 18:00 in New York repeats on Wednesdays in Berlin. A
-repeat that can't be said that way, such as a day of the month that falls on
-another date in your time zone, comes with the series' time zone, and can be
-kept, replaced by a preset or removed, but not customized.
+An event or task can have time zones of its own, one for its start and one
+for its end or due date, such as a flight that leaves Berlin at 10:00 and
+lands in New York at 13:00. Its details then show its times there as well,
+and the editor shows and takes them there, each time with its time zone.
+"Other time zone" adds them to an event or task in yours, and ✕ goes back to
+yours. You find a time zone by its city in English, its name or its offset. A
+new time zone keeps the time you entered, so 10:00 in Berlin becomes 10:00 in
+New York, and the editor says when that is in your time zone.
+
+A repeating event or task stays in its time zone, also when you change its
+repeat. A weekly meeting on Tuesdays at 18:00 in New York shows on Wednesdays
+in Berlin, in the calendar and in its details, while the editor shows it at
+18:00 on Tuesdays in New York, where you change its repeat. A new time zone
+applies to all events of a series or the following ones, at the time you
+entered: moved to Berlin at 18:00, the meeting is at 18:00 every Tuesday in
+Berlin.
 
 ## Quick start
 

@@ -1182,9 +1182,10 @@ from 03:30 to 04:30, the series and its later references go to 04:30, as an
 event series does. Saved at the 03:30 it shows, with a new due or rule, it
 keeps 02:30. A date a move or a change to timed dates puts at such a
 time is written as computed, 02:30, so every other repeat keeps that time. A
-time entered in the task editor that the browser's zone skips is read the
-same way, at 03:30, which the editor says before saving: a series entered
-there starts and repeats at 03:30, as the API carries instants.
+time entered in the task editor that its row's zone skips (the browser's,
+unless the row has a zone of its own, FR-18) is read the same way, at 03:30,
+which the editor says before saving: a series entered there starts and
+repeats at 03:30, as the API carries instants.
 
 `DTSTART` stays on the rule, so a `COUNT` stays a `COUNT`, without the
 occurrences before the moved one, which the new `DTSTART` leaves behind. An
@@ -1285,23 +1286,23 @@ two weeks from there starts over on Monday, which counts as the first date
 though the repeat doesn't fall on it, as the editor says, followed by
 Tuesday, the next day.
 
-The editor shows and builds a rule on the browser's wall clock, as for events
-(`ruleInZone`, see [RECURRING-EVENTS.md](RECURRING-EVENTS.md)), but a task
-keeps its zone when its rule changes: the series' `TZID`, else UTC, and a
-single task's `TZID`. A changed rule of a timed task is therefore translated
-back onto that zone's wall clock before it is sent (`writtenRule` in
-`web/src/lib/taskForm.ts`): "every two weeks on Wednesday", chosen in Berlin
-for a task at 18:00 on Tuesdays in New York, is written as `BYDAY=TU`. The
-editor reads the rule at the series' current repeat, at its `RECURRENCE-ID`,
-also when it opens at a later one, so an untouched rule stays untouched. The
-server starts a changed rule over at the dates the save sends, so it is
-written back at their time of day: on the `RECURRENCE-ID`'s date for a series,
-as two zones can be a date apart for part of the year only, and on the new
-date for a task that doesn't repeat yet. Moved to 09:00 in Berlin, 03:00 in
-New York, the same "every two weeks on Wednesday" stays `BYDAY=WE`. A changed
-rule that doesn't read the same in the task's zone, such as a day of the month
-that falls on another date there, is refused at the repeat field; a stored
-rule like that is named with its zone and can't be customized.
+The editor shows and builds a rule in the task's own zone, as for events (see
+[RECURRING-EVENTS.md](RECURRING-EVENTS.md)): the zone of its start row, else
+of its due row, which is the series' `TZID`, UTC for a series without one, and
+for a single task its `TZID`, else the browser's zone (FR-18). A task at 18:00
+on Tuesdays in New York opens in Berlin on Tuesday at 18:00, its zone field
+reading "New York", and "every two weeks on Tuesday" is written as built,
+`BYDAY=TU`, the task still in New York. The editor reads the rule at the
+series' current repeat, at its `RECURRENCE-ID`, also when it opens at a later
+one, so an untouched rule stays untouched. The task list and the details still
+say the rule on the browser's wall clock, as they show the times there
+(`recurringLabel` in `web/src/lib/calendarTasks.ts`, with `ruleInZone`): the
+task above reads "Every week on Wednesday" in Berlin, and a rule that doesn't
+read the same there is named with its zone. The editor used to build a rule on
+the browser's clock too and translated a changed one back onto the task's zone
+before sending it, refusing one that couldn't be said there; built in the
+task's own zone, a rule needs no translation, and only a new zone in the zone
+fields moves the series into another zone (see [API.md](API.md), "Time zone").
 
 **Removing the rule** leaves a single task at the current occurrence's dates,
 without `RRULE`, `RDATE`, `EXDATE` or overrides, as for events: the current

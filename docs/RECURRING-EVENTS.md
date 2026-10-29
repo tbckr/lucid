@@ -865,9 +865,10 @@ event, and the refusal comes as a toast.
   a move, a change to timed or a change of zone puts at such a time, such
   as a `DTSTART` moved from 01:30 to 02:30 on that night, is written as
   computed, 02:30, so every other event stays at that time. A time entered
-  in an editor that the browser's zone skips, such as 02:30 that night, is
-  read the same way, at 03:30, which the editor says before saving: a series
-  entered there starts and repeats at 03:30, as the API carries instants.
+  in an editor that its row's zone skips (the browser's, unless the row has
+  a zone of its own, FR-18), such as 02:30 that night, is read the same way,
+  at 03:30, which the editor says before saving: a series entered there
+  starts and repeats at 03:30, as the API carries instants.
 - `EXDATE` and `RDATE` shift along with `RECURRENCE-ID`
   (`shiftRecurrenceRefs`), again like Thunderbird, SOGo and InfCloud, rather
   than leaving them behind as Nextcloud, Roundcube, Evolution, KDE, Etar and
@@ -918,20 +919,30 @@ event, and the refusal comes as a toast.
   the two zones' UTC offsets at the edited event, as Lucid did while the
   editor built the rule on the browser's clock (#5), a series edited from
   an exception in another week moved by another hour than the one entered.
-- The editor shows and builds that rule on the browser's wall clock, where
-  the series then recurs. A series from another zone opens on the days it
-  shows on (`ruleInZone`, `web/src/lib/seriesShift.ts`, which reads the rule
-  there as `seriesShift` would move the series there): a weekly series on
-  Tuesday and Thursday at 18:00 in New York opens in Berlin as Wednesday and
-  Friday, and a changed rule goes out as built. The details say the rule the
-  same way. A rule that doesn't read the same there (a day of the month on
-  another date, hours on another clock, weekdays that leave the weeks an
-  every-other-week rule pairs up) is named with its zone, "Every month on
-  day 10 (America/New_York)", and can be kept, replaced by a preset or
-  removed, but not customized. Two zones can be a date apart for part of
-  the year only (New York changes to summer time weeks before Berlin), so
-  the rule is read at the edited event's place in the rule, its
-  `RECURRENCE-ID`, not where an exception moved it.
+- The editor shows and builds that rule in the series' own zone, the one of
+  its start's zone field, where the series recurs and stays (FR-18): a
+  weekly series on Tuesday and Thursday at 18:00 in New York opens in Berlin
+  at 18:00, its start's zone field reading "New York" and its repeat "Every
+  week on Tuesday and Thursday", and a changed rule goes out as built, the
+  series still in New York. A series without a zone, in UTC, floating or
+  with a `TZID` Lucid can't resolve, opens in UTC, where the server reads
+  it. Only the details still say the rule on the browser's wall clock, as
+  they show the times there (`describeSeriesRule` in `web/src/lib/rrule.ts`,
+  with `ruleInZone` in `web/src/lib/seriesShift.ts`, which reads the rule
+  there as `seriesShift` would move the series there): the series above
+  reads "Every week on Wednesday and Friday" in Berlin, and a rule that
+  doesn't read the same there (a day of the month on another date, hours on
+  another clock, weekdays that leave the weeks an every-other-week rule
+  pairs up) is named with its zone, "Every month on day 10
+  (America/New_York)". Two zones can be a date apart for part of the year
+  only (New York changes to summer time weeks before Berlin), so the details
+  read the rule at the event's place in the rule, its `RECURRENCE-ID`, not
+  where an exception moved it, as the editor does. The editor used to build
+  the rule on the browser's clock too: a series whose rule changed moved
+  into the browser's zone, and a rule that didn't read the same there could
+  not be customized. Built in the series' own zone, a rule needs no
+  translation, and only a new zone in the zone field moves the series into
+  another zone (see above).
 - What a rule leaves to the series' start, the weekday of `FREQ=WEEKLY` or
   the day of `FREQ=MONTHLY` (RFC 5545 section 3.3.10), is read at that place
   too (`eventRuleStart`, `web/src/lib/seriesShift.ts`): in the details as it
