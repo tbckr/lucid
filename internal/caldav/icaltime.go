@@ -46,13 +46,13 @@ func (d dateValue) form() dateForm {
 	return dateForm{allDay: d.allDay, floating: d.floating, tzid: d.tzid, param: d.param}
 }
 
-// sentForm returns the form the zone a write names asks for (FR-18):
+// sentForm returns the form the zone a write names asks for (FR-18). The
+// zone has passed the inputs' Validate, which lets through only the names
+// time.LoadLocation knows; a name it turns away never gets here.
 //   - "Etc/UTC", the UTC a user picked, is that TZID, with its VTIMEZONE;
-//   - "" is UTC ("Z"), and so is every other name loadLocation reads as
-//     UTC itself, "UTC" and "GMT" in any case, also between spaces or
-//     quotes, and one that ends in "/UTC", or cannot resolve, such as
-//     "Local" and every name the inputs' Validate turns away, which lets
-//     through only the names time.LoadLocation knows;
+//   - "", "UTC" and "GMT" are UTC ("Z"): loadLocation reads the last two
+//     as UTC itself, also in another letter case where time.LoadLocation
+//     accepts one; and so is "Local", which it cannot resolve;
 //   - any other name is the TZID of that name, with its VTIMEZONE: also
 //     the other names of UTC in the tz database, such as Etc/GMT, Etc/UCT,
 //     UCT, Etc/Zulu, Zulu, Universal, Greenwich and GMT0, and a link, such
