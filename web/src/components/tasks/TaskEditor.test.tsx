@@ -1541,6 +1541,288 @@ describe('TaskEditor', () => {
     })
   })
 
+  describe('time zones (FR-18)', () => {
+    const ny = 'America/New_York'
+    // A weekly task due Tuesday, 27 October 2026 at 18:00 in New York, 23:00 in Berlin: its current repeat.
+    const newYork = (p: Partial<Todo> = {}) =>
+      todo({
+        title: 'Report',
+        due: '2026-10-27T22:00:00Z',
+        timezone: ny,
+        dueTimezone: ny,
+        rrule: 'FREQ=WEEKLY',
+        recurring: true,
+        recurrenceId: '2026-10-27T22:00:00Z',
+        next: { start: null, due: '2026-11-03T23:00:00Z' },
+        ...p,
+      })
+    /** A single task, without the series' fields. */
+    const single: Partial<Todo> = { rrule: '', recurring: false, recurrenceId: null, next: null }
+    // From 9:00 AM to 5:00 PM on Wednesday, 28 October 2026, without a zone: in Berlin, where the browser is.
+    const workday = todo({ start: '2026-10-28T08:00:00Z', due: '2026-10-28T16:00:00Z' })
+    const zoneField = (dialog: HTMLElement, name: 'Start time zone' | 'Due time zone') =>
+      within(dialog).getByRole<HTMLInputElement>('combobox', { name })
+    const noZones = (dialog: HTMLElement) => {
+      expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+      expect(within(dialog).queryByRole('combobox', { name: 'Due time zone' })).toBeNull()
+    }
+    const seriesNote = 'A new time zone applies to all repeats or the following ones.'
+
+    beforeEach(() => {
+      // Only the date: fake timers would stall the requests.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 20, 12))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('shows a foreign task in its zone', async () => {
+      const { dialog } = await openTask(newYork())
+      expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('6:00 PM')
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('New York')
+      expect(within(dialog).getByText(/In your time zone \(Berlin\): .*Oct 27/)).toBeInTheDocument()
+      expect(zoneField(dialog, 'Due time zone')).toHaveAccessibleDescription(/^In your time zone \(Berlin\)/)
+      // A row without a date has no time, and no zone.
+      expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+      expect(within(dialog).getByRole('combobox', { name: 'Repeat' })).toHaveTextContent('Every week on Tuesday')
+      expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    })
+
+    it('says where the start and the due of a task in another zone lie here', async () => {
+      const { dialog } = await openTask(
+        newYork({ ...single, start: '2026-10-28T13:00:00Z', due: '2026-10-28T21:00:00Z' }),
+      )
+      expect(zoneField(dialog, 'Start time zone')).toHaveValue('New York')
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('New York')
+      expect(within(dialog).getByText(/^In your time zone \(Berlin\): Wed, Oct 28, 2:00\s–\s10:00\sPM$/u)).toBeInTheDocument()
+    })
+
+    it.each([
+      ['with a start and a due', workday, 'Start time zone'],
+      ['due alone', todo({ due: '2026-10-28T16:00:00Z' }), 'Due time zone'],
+    ] as const)('offers Other time zone for a task in your zone, %s', async (_, t, first) => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(t)
+      noZones(dialog)
+      expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+      const fields = within(dialog).getAllByRole<HTMLInputElement>('combobox', { name: /time zone$/ })
+      expect(fields).toHaveLength(t.start ? 2 : 1)
+      for (const field of fields) {
+        expect(field).toHaveValue('')
+        expect(field).toHaveAttribute('placeholder', 'Your time zone')
+      }
+      expect(zoneField(dialog, first)).toHaveFocus()
+      expect(zoneField(dialog, first)).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByRole('listbox', { name: first })).toBeInTheDocument()
+      expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+      expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+    })
+
+    it("the due follows the start's zone, and keeps one of its own", async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(workday)
+      await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+      await user.keyboard('Tokyo{Enter}')
+      expect(zoneField(dialog, 'Start time zone')).toHaveValue('Tokyo')
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('Tokyo')
+      // The clock stays: 9:00 in Tokyo is 1:00 here.
+      expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('9:00 AM')
+      expect(within(dialog).getByText(/^In your time zone \(Berlin\): Wed, Oct 28, 1:00\s–\s9:00\sAM$/u)).toBeInTheDocument()
+
+      await user.click(zoneField(dialog, 'Due time zone'))
+      await user.keyboard('London{Enter}')
+      await user.click(zoneField(dialog, 'Start time zone'))
+      await user.keyboard('New York{Enter}')
+      expect(zoneField(dialog, 'Start time zone')).toHaveValue('New York')
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('London')
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      expect(await saved(fetch)).toMatchObject({
+        start: '2026-10-28T13:00:00.000Z',
+        due: '2026-10-28T17:00:00.000Z',
+        timezone: ny,
+        dueTimezone: 'Europe/London',
+      })
+    })
+
+    // FR-16: the start can't come after the due, where each is saved.
+    it('judges the order of the dates anew once a zone changes', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(workday)
+      await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+      await user.keyboard('{Escape}')
+      // 5:00 PM in Auckland is 4:00 AM here, before the start at 9:00 AM.
+      await user.click(zoneField(dialog, 'Due time zone'))
+      await user.keyboard('Auckland{Enter}')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const error = "The start can't be after the due date."
+      expect(await within(dialog).findByText(error)).toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Use your time zone' }))
+      await waitFor(() => {
+        expect(within(dialog).queryByText(error)).toBeNull()
+      })
+      expect(fetch.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+    })
+
+    it('asks no Only this repeat for a new zone at the current repeat, where all repeats are left', async () => {
+      const user = userEvent.setup()
+      const { fetch, dialog } = await openTask(newYork())
+      expect(within(dialog).queryByText(seriesNote)).toBeNull()
+
+      await user.click(zoneField(dialog, 'Due time zone'))
+      await user.keyboard('Tokyo{Enter}')
+      expect(within(dialog).getByText(seriesNote)).toBeInTheDocument()
+      // Of "Only this repeat" and "All repeats", which it asks otherwise, the second is left: said, not asked.
+      const save = within(dialog).getByRole('button', { name: 'Save' })
+      expect(save).toHaveAccessibleDescription('Applies from this repeat on. Done ones stay.')
+      await user.click(save)
+      expect(within(dialog).queryByRole('alertdialog')).toBeNull()
+      const { path, body } = await wrote(fetch, 'PUT')
+      expect(path).toBe('/api/v1/todos/t1')
+      expect(body).toMatchObject({ due: '2026-10-27T09:00:00.000Z', timezone: 'Asia/Tokyo', dueTimezone: 'Asia/Tokyo' })
+    })
+
+    it('asks no Only this repeat for a new zone at a later repeat', async () => {
+      const user = userEvent.setup()
+      const t = newYork()
+      const due = '2026-11-03T23:00:00Z'
+      const nov3: TaskRepeat = {
+        todo: t,
+        recurrenceId: due,
+        at: 'upcoming',
+        last: false,
+        offRule: false,
+        title: t.title,
+        shown: { start: null, startAllDay: false, due, dueAllDay: false },
+      }
+      const { dialog } = await openTask(t, undefined, nov3)
+      await user.click(zoneField(dialog, 'Due time zone'))
+      await user.keyboard('Tokyo{Enter}')
+      expect(within(dialog).getByText(seriesNote)).toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const question = within(dialog).getByRole('alertdialog', { name: 'This task repeats. Which repeats should change?' })
+      expect(within(question).getAllByRole('button').map((b) => b.textContent)).toEqual([
+        expect.stringContaining('This and following repeats'),
+        expect.stringContaining('All repeats'),
+        'Cancel',
+      ])
+      expect(within(question).queryByRole('button', { name: 'Only this repeat' })).toBeNull()
+    })
+
+    it('asks about only this repeat while the zone of a series stays', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(newYork())
+      await user.click(within(dialog).getByRole('radio', { name: 'High' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      const question = within(dialog).getByRole('alertdialog')
+      expect(within(question).getByRole('button', { name: 'Only this repeat' })).toBeInTheDocument()
+      expect(within(dialog).queryByText(seriesNote)).toBeNull()
+    })
+
+    it('a row without a time has no zone field', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(newYork(single))
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('New York')
+      expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+      noZones(dialog)
+      expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+      expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+
+      // A time given again brings its zone back, which the form kept.
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+      await user.click(screen.getByRole('option', { name: '6:00 PM' }))
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('New York')
+    })
+
+    it('offers no Other time zone for a task without a time', async () => {
+      const { dialog } = await openTask(todo({ due: '2026-10-28T00:00:00Z', dueAllDay: true }))
+      noZones(dialog)
+      expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    })
+
+    it('takes the focus only when Other time zone is clicked, not where the field shows again', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(todo({ due: '2026-10-28T16:00:00Z' }))
+      await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+      await user.keyboard('{Escape}')
+      await user.click(within(dialog).getByRole('button', { name: 'Remove due time' }))
+      noZones(dialog)
+
+      await user.click(within(dialog).getByRole('combobox', { name: 'Due time' }))
+      await user.click(screen.getByRole('option', { name: '6:00 PM' }))
+      expect(zoneField(dialog, 'Due time zone')).not.toHaveFocus()
+      expect(screen.queryByRole('listbox', { name: 'Due time zone' })).toBeNull()
+      expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+    })
+
+    // 14 March 2027: New York skips 02:00 to 03:00, Berlin two weeks later.
+    it.each([
+      [ny, '2027-03-14T05:00:00Z', true],
+      ['Europe/Berlin', '2027-03-13T23:00:00Z', false],
+    ])("says a skipped time in the row's zone (%s)", async (zone, due, shown) => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(todo({ due, timezone: zone, dueTimezone: zone }))
+      const time = within(dialog).getByRole('combobox', { name: 'Due time' })
+      await user.click(time)
+      await user.click(screen.getByRole('option', { name: '2:30 AM' }))
+      const note = "Clocks go forward on this day: 2:30 AM doesn't exist and is saved as 3:30 AM."
+      expect(within(dialog).queryByText(note) !== null).toBe(shown)
+      expect(time).toHaveAccessibleDescription(shown ? note : '')
+    })
+
+    // FR-17: the repeat editor reads the series' end on the series' dates, as a save fits it there.
+    it("reads the end of a repeat in the task's zone", async () => {
+      const user = userEvent.setup()
+      // Until 23:59:59 on Monday, 30 November in New York, Tuesday, 1 December in Berlin.
+      const { dialog } = await openTask(newYork({ rrule: 'FREQ=WEEKLY;UNTIL=20261201T045959Z' }))
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Custom…' }))
+      const repeat = screen.getByRole('dialog', { name: 'Custom repeat' })
+      expect(within(repeat).getByRole('combobox', { name: 'On' })).toHaveValue('Mon, Nov 30')
+    })
+
+    it.each([
+      ["a single task's row to none", single, ''],
+      ["a series' row to your zone", {}, 'Berlin'],
+    ])('the ✕ sets %s, and the clock stays', async (_, p, text) => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(newYork(p))
+      await user.click(within(dialog).getByRole('button', { name: 'Use your time zone' }))
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue(text)
+      if (text === '') expect(zoneField(dialog, 'Due time zone')).toHaveAttribute('placeholder', 'Your time zone')
+      expect(within(dialog).queryByRole('button', { name: 'Use your time zone' })).toBeNull()
+      expect(within(dialog).queryByText(/In your time zone/)).toBeNull()
+      expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('6:00 PM')
+    })
+
+    // The ✕ shows only where it changes the zone: a save gives a new series' rows without one the browser's anyway.
+    it('has no ✕ on a row without a zone of a task made a series', async () => {
+      const user = userEvent.setup()
+      const { dialog } = await openTask(workday)
+      await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+      await user.keyboard('{Escape}')
+      await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+      await user.click(screen.getByRole('option', { name: 'Every day' }))
+      expect(zoneField(dialog, 'Start time zone')).toHaveAttribute('placeholder', 'Your time zone')
+      expect(within(dialog).queryByRole('button', { name: 'Use your time zone' })).toBeNull()
+
+      await user.click(zoneField(dialog, 'Start time zone'))
+      await user.keyboard('Tokyo{Enter}')
+      const [clear] = within(dialog).getAllByRole('button', { name: 'Use your time zone' })
+      await user.click(clear!)
+      expect(zoneField(dialog, 'Start time zone')).toHaveValue('Berlin')
+      expect(zoneField(dialog, 'Due time zone')).toHaveValue('Berlin')
+    })
+  })
+
   describe('after a conflict (FR-09)', () => {
     it('says the task changed elsewhere, and saves over it with the ETag it has now', async () => {
       toast.dismiss()

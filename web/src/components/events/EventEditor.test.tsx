@@ -1445,6 +1445,26 @@ describe('time zones (FR-18)', () => {
     expect(within(dialog).getByRole('combobox', { name: 'Start time' })).toHaveValue('6:00 PM')
   })
 
+  // The ✕ shows only where it changes the zone: a save gives a new series' rows without one the browser's anyway.
+  it('has no ✕ on a row without a zone of an event made a series', async () => {
+    const user = userEvent.setup()
+    const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone: '', endTimezone: '' })) })
+    await user.click(within(dialog).getByRole('button', { name: 'Other time zone' }))
+    await user.keyboard('{Escape}')
+    await user.click(within(dialog).getByRole('combobox', { name: 'Repeat' }))
+    await user.click(screen.getByRole('option', { name: 'Every day' }))
+    expect(zoneField(dialog, 'Start time zone')).toHaveAttribute('placeholder', 'Your time zone')
+    expect(within(dialog).queryByRole('button', { name: 'Use your time zone' })).toBeNull()
+
+    // A zone picked has one, which sets the browser's.
+    await user.click(zoneField(dialog, 'Start time zone'))
+    await user.keyboard('Tokyo{Enter}')
+    const [clear] = within(dialog).getAllByRole('button', { name: 'Use your time zone' })
+    await user.click(clear!)
+    expect(zoneField(dialog, 'Start time zone')).toHaveValue('Berlin')
+    expect(zoneField(dialog, 'End time zone')).toHaveValue('Berlin')
+  })
+
   it("keeps a single event's clock in the zone it is moved out of with the ✕", async () => {
     const user = userEvent.setup()
     const { dialog, fetch } = await openEditor({ mode: 'edit', event: newYork(single) })

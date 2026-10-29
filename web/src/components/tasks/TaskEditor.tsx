@@ -4,6 +4,7 @@ import {
   CheckIcon,
   ClockIcon,
   FlagIcon,
+  GlobeIcon,
   InfoIcon,
   ListChecksIcon,
   PlusIcon,
@@ -24,6 +25,7 @@ import { EditorRow, quietField } from '@/components/events/EditorRow'
 import { SkippedTimeNote } from '@/components/events/SkippedTimeNote'
 import { TimeField } from '@/components/events/TimeField'
 import { useReadableStart } from '@/components/events/useTypedField'
+import { ZoneField } from '@/components/events/ZoneField'
 import { ScopeChoice } from '@/components/scope/ScopeChoice'
 import { ScopeGlyph } from '@/components/scope/ScopeGlyph'
 import { Button } from '@/components/ui/button'
@@ -46,6 +48,7 @@ import {
   useTodoFollowing,
   useUpdateTodo,
   useVisibleCalendars,
+  useZonesInUse,
 } from '@/hooks/queries'
 import { useCalendarColors } from '@/hooks/useCalendarColors'
 import { useNow } from '@/hooks/useNow'
@@ -76,6 +79,8 @@ import {
   formWithTime,
   seriesEditInput,
   taskToForm,
+  taskZonesChanged,
+  withTaskStartZone,
   type TaskFormValues,
 } from '@/lib/taskForm'
 import {
@@ -88,7 +93,7 @@ import {
 } from '@/lib/tasks'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { fieldZone } from '@/lib/zones'
+import { fieldZone, inYourZone, sameZone } from '@/lib/zones'
 import { useSettings } from '@/stores/settings'
 import { useUi, type TaskEditorState } from '@/stores/ui'
 
@@ -214,13 +219,27 @@ export function TaskEditor({
     resolver: zodResolver(buildTaskFormSchema(todo && { original: todo })),
     defaultValues: opened,
   })
-  const { register, control, handleSubmit, formState, setValue, getValues, setFocus, subscribe } = form
+  const { register, control, handleSubmit, formState, setValue, getValues, setFocus, subscribe, trigger } = form
   const checklist = useFieldArray({ control, name: 'checklist' })
-  const [completed, startDate, startTime, dueDate, dueTime, items, recurrence, customRule] = useWatch({
+  const [completed, startDate, startTime, dueDate, dueTime, items, recurrence, customRule, startZone, dueZone] = useWatch({
     control,
-    name: ['completed', 'startDate', 'startTime', 'dueDate', 'dueTime', 'checklist', 'recurrence', 'customRule'],
+    name: [
+      'completed',
+      'startDate',
+      'startTime',
+      'dueDate',
+      'dueTime',
+      'checklist',
+      'recurrence',
+      'customRule',
+      'startZone',
+      'dueZone',
+    ],
   })
-  const values = { start: { date: startDate, time: startTime }, due: { date: dueDate, time: dueTime } }
+  const values = {
+    start: { date: startDate, time: startTime, zone: startZone },
+    due: { date: dueDate, time: dueTime, zone: dueZone },
+  }
   // A date or time field holding text it couldn't read (FR-09): the form can't be saved, and nothing is
   // read from it until it can.
   const readableDate = (date: string, time: string) => (date === '' || isFormDate(date)) && (time === '' || isFormTime(time))
@@ -248,10 +267,28 @@ export function TaskEditor({
   // form moves the repeat, as a save that keeps the rule moves the series (`taskRuleStart`), not where an override
   // moved it; a changed rule starts over at the dates entered (FR-17), as does one for a series of dates.
   const keptRule = buildRRule(opened.recurrence, opened.customRule)
-  // Read on the wall clock of the zone the anchor's fields are in, which the series recurs in (FR-18).
-  const anchorZone = fieldZone(startDate ? getValues('startZone') : getValues('dueZone'), tz)
+  // Read on the wall clock of the zone the anchor's fields are in, which the series recurs in, and where the repeat
+  // editor reads and builds the rule (FR-18).
+  const anchorZone = fieldZone(startDate ? startZone : dueZone, tz)
   const keptStart = repeat && keptRule && entered ? taskRuleStart(repeat, entered, anchorZone) : null
   const kept = keptStart ? { rule: keptRule, start: keptStart } : undefined
+  // The zones of the events and tasks loaded, which the zone fields' lists offer first (FR-18).
+  const inUse = useZonesInUse(tz)
+  // The rows with a time, which have a zone; a date has none (FR-18).
+  const timedRows = (['start', 'due'] as const).filter((which) => values[which].time !== '')
+  // The zone fields (FR-18): shown from the start for a task with a zone other than the browser's in a row, else
+  // after "Other time zone", and then until the editor closes, also once every ✕ is used, so nothing jumps; each
+  // while its row has a time.
+  const [zonesShown, setZonesShown] = useState(
+    () => !!todo && [opened.startZone, opened.dueZone].some((z) => z !== '' && !sameZone(z, tz)),
+  )
+  // "Other time zone" puts the focus in the zone field of the first row with a time, with its list open, as it shows
+  // the field: once, not again where the row loses its time and gets one anew (NFR-27).
+  const [revealing, setRevealing] = useState<Which | null>(null)
+  if (revealing && values[revealing].time === '') setRevealing(null)
+  // Whether a save gives a row with a time a new zone, which a series has one of for all its repeats: a change of the
+  // rule's kind, `rule` (FR-17, FR-18).
+  const zonesMoved = (v: TaskFormValues) => (v.startTime !== '' || v.dueTime !== '') && taskZonesChanged(v, opened)
 
   useEffect(() => {
     // The footer asks in place: focus its "Cancel", and "Delete task" again once it is back (NFR-27).
@@ -336,7 +373,8 @@ export function TaskEditor({
     const input = editInput(v)
     if (isSeriesCompletion(todo, input)) return null
     const moved = datesChanged(repeat.shown, input)
-    const action: ScopeAction = input.rrule !== undefined ? 'rule' : moved ? 'move' : 'change'
+    // A new zone is the series', for all repeats or the following ones, as a new rule is (FR-17, FR-18).
+    const action: ScopeAction = input.rrule !== undefined || zonesMoved(v) ? 'rule' : moved ? 'move' : 'change'
     return { input, action, moved, result: scopeOptions({ kind: 'task', action, item: repeat, to: input }) }
   }
 
@@ -481,10 +519,47 @@ export function TaskEditor({
     setValue(DATES[which].time, time, setOpts)
   }
 
+  // A zone change keeps the clock times of the fields (FR-18); the start's takes the due along while that is in the
+  // start's zone (`withTaskStartZone`). Where the start was said to lie after the due, that is judged anew.
+  const setZone = (which: Which, zone: string) => {
+    const v = getValues()
+    const next = which === 'start' ? withTaskStartZone(v, zone) : { ...v, dueZone: zone }
+    setValue('startZone', next.startZone, { shouldDirty: true })
+    setValue('dueZone', next.dueZone, { shouldDirty: true })
+    if (formState.isSubmitted) void trigger('startDate')
+  }
+
   const clearDate = (which: Which) => {
     setValue(DATES[which].date, '', setOpts)
     setValue(DATES[which].time, '', setOpts)
   }
+
+  // The values as a save would send them, read only while every date and time shown can be (FR-09), and only for a
+  // row with a time.
+  const current = { ...getValues(), completed, startDate, startTime, dueDate, dueTime, startZone, dueZone }
+  const entry = readable && timedRows.length > 0 ? formToTodoInput(current, tz, todo, openedDates) : null
+  const instant = (iso: string | null | undefined, allDay: boolean) => (iso && !allDay ? new Date(iso) : null)
+  const startAt = entry && instant(entry.start, entry.startAllDay)
+  const dueAt = entry && instant(entry.due, entry.dueAllDay)
+  // Where the task lies for the browser, while a row with a time is in another zone (FR-18): from its start to its
+  // due, or at the one of them it has, as a save writes them, once they can be read and the due isn't before the
+  // start.
+  const first = startAt ?? dueAt
+  const yourZone = first
+    ? inYourZone(t, prefs, now, {
+        zones: timedRows.map((which) => values[which].zone),
+        browserZone: tz,
+        start: first,
+        end: dueAt ?? first,
+      })
+    : null
+  // A new zone is the whole series', all repeats' or the following ones' (FR-17, FR-18), said before Save asks.
+  const seriesZone = !!repeat && zonesMoved(current)
+  const zoneNotes =
+    [yourZone && `${id}-in-your-zone`, seriesZone && `${id}-series-zone`].filter(Boolean).join(' ') || undefined
+  // "Other time zone", quiet, while a row has a time and no zone field shows: a task in the browser's zone looks as
+  // it always did (FR-18).
+  const otherZone = !zonesShown && timedRows.length > 0 && !readOnly && !ruleUnsupported
 
   const msg = (m: string | undefined) => (m ? t(m as 'validation.date') : undefined)
   const titleError = msg(formState.errors.title?.message)
@@ -492,7 +567,7 @@ export function TaskEditor({
   const itemError = msg(formState.errors.checklist?.message ?? formState.errors.checklist?.find?.((e) => e?.text)?.text?.message)
 
   const dateRow = (which: Which) => {
-    const { date, time } = values[which]
+    const { date, time, zone } = values[which]
     const other = values[DATES[which].other].date
     // What to type where the date or the time can't be read, at once, not only after Save (FR-09): a note about
     // each, describing its field alone, the date's first where both can't be read (NFR-27).
@@ -505,15 +580,16 @@ export function TaskEditor({
     const refusal =
       !error && refused && which === refusedRow ? t('scope.hint.none', { reason: t(`scope.reason.${refused}`) }) : undefined
     const note = error ?? refusal
-    // A time summer time skips on its date, and the one it is saved as (#10, FR-18).
-    const saved = time ? skippedTime(date, time, tz) : null
-    // The label keeps its own column, so on narrow screens the time wraps below the date.
+    // A time summer time skips on its date in its row's zone, and the one it is saved as (#10, FR-18).
+    const saved = time ? skippedTime(date, time, fieldZone(zone, tz)) : null
+    // The label keeps its own column, so on narrow screens the time wraps below the date, and the zone (FR-18) below
+    // them where it doesn't fit; closer within the row than to the next one.
     return (
       <div className="grid grid-cols-[3rem_1fr] items-start gap-x-2 gap-y-1">
         <span id={`${id}-${which}-label`} className="flex h-9 items-center text-sm text-muted-foreground">
           {t(`tasks.${which}Label`)}
         </span>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <DateField
             id={`${id}-${which}`}
             labelledBy={`${id}-${which}-label`}
@@ -554,6 +630,25 @@ export function TaskEditor({
                   .join(' ') || undefined
               }
               aria-label={t(`tasks.${which}Time`)}
+            />
+          )}
+          {/* The zone follows the time in its row, and wraps with it (FR-18). */}
+          {zonesShown && time !== '' && (
+            <ZoneField
+              value={zone}
+              onChange={(next) => {
+                setZone(which, next)
+              }}
+              // The ✕: no zone for a single task, the browser's for a series, which needs one; none on a row of a new
+              // series without a zone, which a save gives the browser's anyway.
+              clearTo={recurrence !== 'none' && zone !== '' ? tz : ''}
+              browserZone={tz}
+              date={date}
+              inUse={inUse}
+              prefs={prefs}
+              autoFocus={revealing === which}
+              describedBy={zoneNotes}
+              aria-label={t(`tasks.${which}Zone`)}
             />
           )}
           {which === 'due' && overdue && <span className="text-sm font-medium text-destructive">{t('tasks.overdue')}</span>}
@@ -700,6 +795,35 @@ export function TaskEditor({
             <legend className="sr-only">{t('tasks.when')}</legend>
             {dateRow('start')}
             {dateRow('due')}
+            {/* Under the rows, in the fields' column: quiet, as the zone fields only show where they say something. */}
+            {otherZone && (
+              <div className="grid grid-cols-[3rem_1fr] gap-x-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="col-start-2 justify-self-start font-normal text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setZonesShown(true)
+                    setRevealing(timedRows[0] ?? null)
+                  }}
+                >
+                  <GlobeIcon aria-hidden />
+                  {t('zone.other')}
+                </Button>
+              </div>
+            )}
+            {/* About all the rows, under them, as in the event editor. */}
+            {yourZone && (
+              <p id={`${id}-in-your-zone`} className="tabular text-sm text-muted-foreground">
+                {yourZone}
+              </p>
+            )}
+            {seriesZone && (
+              <p id={`${id}-series-zone`} className="text-sm text-muted-foreground">
+                {t('zone.seriesTask')}
+              </p>
+            )}
           </fieldset>
         </EditorRow>
 
@@ -716,7 +840,7 @@ export function TaskEditor({
                 setValue('customRule', v.customRule, setOpts)
               }}
               start={anchorDay}
-              timeZone={tz}
+              timeZone={anchorZone}
               presets={ruleUnsupported ? NONE : RECURRENCE_PRESETS}
               customizable={!ruleUnsupported && !readOnly}
               kept={kept}

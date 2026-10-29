@@ -44,7 +44,7 @@ import {
   type EventFormValues,
 } from '@/lib/eventForm'
 import { type CalEvent } from '@/lib/events'
-import { formatDuration, formatEventWhen } from '@/lib/format'
+import { formatDuration } from '@/lib/format'
 import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { eventOffRule } from '@/lib/recurrence'
@@ -62,7 +62,7 @@ import {
 } from '@/lib/scope'
 import { unreadableNote } from '@/lib/unreadable'
 import { cn } from '@/lib/utils'
-import { fieldZone, sameZone, zoneCity } from '@/lib/zones'
+import { fieldZone, inYourZone, sameZone } from '@/lib/zones'
 import { useUi, type EditorState } from '@/stores/ui'
 import { DateField } from './DateField'
 import { EditorRow, quietField } from './EditorRow'
@@ -395,22 +395,22 @@ function EditorForm({
   // Only for an occurrence of a series, and while every field can be read.
   const hint = occurrence && entry ? eventScopeHint(t, saveScopes(formValues, entry), recurrence === 'none') : null
   // Where the event lies for the browser, while a row's fields are in another zone (FR-18): the instants a save
-  // writes, once the times can be read and the end isn't before the start. A number keeps the word after it on its
-  // line where the text wraps, a time its "PM".
-  const elsewhere = !allDay && [startZone, endZone].some((z) => !sameZone(fieldZone(z, tz), tz))
-  const inYourZone =
-    elsewhere && entry && duration
-      ? t('zone.inYourZone', {
-          zone: zoneCity(tz),
-          when: formatEventWhen({ allDay: false, startsAt: new Date(entry.start), endsAt: new Date(entry.end) }, prefs, now)
-            .replace(/(\d) (?=\p{L})/gu, '$1\u00a0'),
+  // writes, once the times can be read and the end isn't before the start.
+  const yourZone =
+    !allDay && entry && duration
+      ? inYourZone(t, prefs, now, {
+          zones: [startZone, endZone],
+          browserZone: tz,
+          start: new Date(entry.start),
+          end: new Date(entry.end),
         })
       : null
   // A new zone is the whole series', all events' or the following ones' (FR-17, FR-18), said before Save asks.
   const seriesZone = !!occurrence && !allDay && !!initial && zonesChanged({ startZone, endZone }, initial)
-  const zoneNotes = described(inYourZone && `${id}-in-your-zone`, seriesZone && `${id}-series-zone`)
-  // The ✕ of a zone field: no zone for a single event, the browser's for a series, which needs one (FR-18).
-  const clearZoneTo = recurrence !== 'none' ? tz : ''
+  const zoneNotes = described(yourZone && `${id}-in-your-zone`, seriesZone && `${id}-series-zone`)
+  // The ✕ of a zone field: no zone for a single event, the browser's for a series, which needs one (FR-18); none on a
+  // row of a new series without a zone, which a save gives the browser's anyway.
+  const clearZoneTo = (zone: string) => (recurrence !== 'none' && zone !== '' ? tz : '')
 
   const titleError = err('title')
   // An end before the start, which is only judged once every date and time can be read; an end date the
@@ -527,7 +527,7 @@ function EditorForm({
                   onChange={(zone) => {
                     onZonesChange(withStartZone(getValues(), zone))
                   }}
-                  clearTo={clearZoneTo}
+                  clearTo={clearZoneTo(startZone)}
                   browserZone={tz}
                   date={startDate}
                   inUse={inUse}
@@ -600,7 +600,7 @@ function EditorForm({
                   onChange={(zone) => {
                     onZonesChange({ startZone: getValues('startZone'), endZone: zone })
                   }}
-                  clearTo={clearZoneTo}
+                  clearTo={clearZoneTo(endZone)}
                   browserZone={tz}
                   date={endDate}
                   inUse={inUse}
@@ -658,9 +658,9 @@ function EditorForm({
                 </Button>
               )}
             </div>
-            {inYourZone && (
+            {yourZone && (
               <p id={`${id}-in-your-zone`} className="tabular text-sm text-muted-foreground">
-                {inYourZone}
+                {yourZone}
               </p>
             )}
             {seriesZone && (
