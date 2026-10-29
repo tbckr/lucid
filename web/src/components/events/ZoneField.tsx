@@ -245,6 +245,11 @@ export function ZoneField({
               {value}
             </span>
           )}
+          {/* The focus stays in the text, so an empty list is announced from here: by a live region that is there
+              before the list empties, as one added with its text would go unsaid (NFR-27). */}
+          <span role="status" className="sr-only">
+            {open && sections.length === 0 ? t('zone.none') : ''}
+          </span>
           <FieldEnd
             input={inputProps.ref}
             clearLabel={clearable ? t('zone.useYours') : undefined}
@@ -287,7 +292,10 @@ export function ZoneField({
         }}
       >
         {sections.length === 0 ? (
-          <p className="px-3 py-2.5 text-sm text-muted-foreground">{t('zone.none')}</p>
+          // For the eye: the field's live region says it (NFR-27).
+          <p aria-hidden className="px-3 py-2.5 text-sm text-muted-foreground">
+            {t('zone.none')}
+          </p>
         ) : (
           <>
             {/* The offsets below are this day's. Decoration for the eye: the entries are named by their IDs. */}
@@ -325,6 +333,8 @@ export function ZoneField({
                         role="option"
                         aria-selected={entry.key === markedKey}
                         aria-label={`${entry.city}, ${entry.zone}`}
+                        // The offset of the row's date, which the eye reads in its column (NFR-27).
+                        aria-describedby={entry.offset === '' ? undefined : `${optionId(entry.key)}-offset`}
                         tabIndex={-1}
                         onClick={() => {
                           field.commit('pick', entry.zone)
@@ -336,7 +346,12 @@ export function ZoneField({
                       >
                         <span className="shrink-0 font-medium whitespace-nowrap">{entry.city}</span>
                         <span className="min-w-0 flex-1 truncate text-muted-foreground">{entry.name}</span>
-                        <span className="tabular w-[4.5rem] shrink-0 text-right whitespace-nowrap">{entry.offset}</span>
+                        <span
+                          id={`${optionId(entry.key)}-offset`}
+                          className="tabular w-[4.5rem] shrink-0 text-right whitespace-nowrap"
+                        >
+                          {entry.offset}
+                        </span>
                         {value !== '' && sameZone(entry.zone, value) && (
                           <CheckIcon className="absolute right-2 size-4 text-primary" aria-hidden />
                         )}

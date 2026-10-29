@@ -103,12 +103,29 @@ describe('ZoneField (FR-18)', () => {
     const { user, onChange, input } = setup()
     await user.click(input)
     await user.keyboard('xyz')
-    expect(screen.getByText('No time zone matches.')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('No time zone matches.')).toBeInTheDocument()
     expect(screen.queryAllByRole('option')).toHaveLength(0)
     await user.tab()
     expect(onChange).not.toHaveBeenCalled()
     expect(input).toHaveValue('New York')
     expect(screen.queryByText('No time zone matches.')).toBeNull()
+  })
+
+  // NFR-27: the focus stays in the text, so a screen reader hears of an empty list through a live region, which is
+  // there before the list empties, or the change would not be announced.
+  it('announces that no zone matches', async () => {
+    const { user, input } = setup()
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent('')
+    await user.click(input)
+    expect(status).toHaveTextContent('')
+    await user.keyboard('xyz')
+    expect(status).toHaveTextContent('No time zone matches.')
+    await user.keyboard('{Backspace}{Backspace}{Backspace}tok')
+    expect(status).toHaveTextContent('')
+    await user.keyboard('xyz')
+    await user.tab()
+    expect(status).toHaveTextContent('')
   })
 
   it('restores the last zone on Enter without a match, and when emptied', async () => {
@@ -419,6 +436,26 @@ describe('ZoneField (FR-18)', () => {
     await user.click(input)
     expect(named('Dar es Salaam, Africa/Dar_es_Salaam')).toHaveLength(1)
     expect(named('UTC, Etc/UTC')).toHaveLength(1)
+  })
+
+  // NFR-27: the offset of the row's date, which the eye reads in its column, is the entry's description.
+  it("describes each entry by its offset on the row's date", async () => {
+    const { user, input, rerender } = setup()
+    await user.click(input)
+    for (const ny of named('New York, America/New_York')) expect(ny).toHaveAccessibleDescription('UTC−4')
+    expect(named('Tokyo, Asia/Tokyo')[0]).toHaveAccessibleDescription('UTC+9')
+    await user.keyboard('{Escape}')
+    rerender({ date: '2026-11-02' })
+    await user.click(input)
+    for (const ny of named('New York, America/New_York')) expect(ny).toHaveAccessibleDescription('UTC−5')
+  })
+
+  it('describes an entry Intl does not know by nothing', async () => {
+    const { user, input } = setup({ value: 'Mars/Olympus' })
+    await user.click(input)
+    const [row] = named('Olympus, Mars/Olympus')
+    expect(row).toHaveAccessibleDescription('')
+    expect(row).not.toHaveAttribute('aria-describedby')
   })
 
   it('describes the field by the full ID of its zone, after the notes passed in', () => {
