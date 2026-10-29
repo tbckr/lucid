@@ -1406,6 +1406,25 @@ describe('time zones (FR-18)', () => {
     expect(screen.queryByRole('listbox')).toBeNull()
   })
 
+  // Another app made an event of the series all-day: given a time, it is in the series' zone, which a save keeps.
+  it("shows an all-day event of a series with zones in the series' zone once it has a time", async () => {
+    const user = userEvent.setup()
+    const event = newYork({ first: true, allDay: true, start: '2026-11-10T00:00:00Z', end: '2026-11-11T00:00:00Z' })
+    const { dialog, fetch } = await openEditor({ mode: 'edit', event })
+    expect(within(dialog).queryByRole('combobox', { name: 'Start time zone' })).toBeNull()
+    await user.click(within(dialog).getByRole('switch', { name: 'All day' }))
+    expect(zoneField(dialog, 'Start time zone')).toHaveValue('New York')
+    expect(zoneField(dialog, 'End time zone')).toHaveValue('New York')
+    expect(within(dialog).queryByRole('button', { name: 'Other time zone' })).toBeNull()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const { body } = await put(fetch)
+    // 9:00 AM in New York, with no zone sent: the series stays in its own.
+    expect(body).toMatchObject({ allDay: false, start: '2026-11-10T14:00:00.000Z' })
+    expect(body).not.toHaveProperty('timezone')
+    expect(body).not.toHaveProperty('endTimezone')
+  })
+
   it('hides Other time zone while All day, and takes the focus only when it is clicked', async () => {
     const user = userEvent.setup()
     const { dialog } = await openEditor({ mode: 'edit', event: toCalEvent(apiEvent({ timezone: '', endTimezone: '' })) })

@@ -90,12 +90,19 @@ export function createFormValues(
   }
 }
 
+/** Whether `event` belongs to a series with a zone, which every event of it reports, an all-day one too (FR-18). */
+function inZonedSeries(event: CalEvent | undefined): boolean {
+  return !!event?.recurring && (event.timezone !== '' || event.endTimezone !== '')
+}
+
 /**
  * Values for editing an existing occurrence (FR-17, FR-18): its rule as
  * stored, and its fields in its own zones, `fieldZone` of each row's. A timed
  * series without a zone recurs on UTC's clock, where the server reads it, and
  * is edited there; a single event without one, and an all-day event, have no
- * zone and are shown in `browserZone`.
+ * zone and are shown in `browserZone`. An all-day event of a series with
+ * zones, which another app made all-day, has the series' zones, where a time
+ * given it is: the series keeps them.
  */
 export function editFormValues(event: CalEvent, browserZone: string): EventFormValues {
   const rule = event.rrule
@@ -109,8 +116,13 @@ export function editFormValues(event: CalEvent, browserZone: string): EventFormV
     recurrence,
     customRule: recurrence === 'custom' ? rule : '',
   }
+  // A series' "no zone" is UTC, where the server reads it; a single event's is none, the browser's.
+  const none = event.recurring ? 'UTC' : ''
+  const startZone = event.timezone || none
+  const endZone = event.endTimezone || none
   if (event.allDay) {
     const lastDay = addDays(event.endsAt, -1)
+    const zoned = inZonedSeries(event)
     return {
       ...base,
       allDay: true,
@@ -118,14 +130,10 @@ export function editFormValues(event: CalEvent, browserZone: string): EventFormV
       startTime: '09:00',
       endDate: format(lastDay < event.startsAt ? event.startsAt : lastDay, 'yyyy-MM-dd'),
       endTime: '09:30',
-      startZone: '',
-      endZone: '',
+      startZone: zoned ? startZone : '',
+      endZone: zoned ? endZone : '',
     }
   }
-  // A series' "no zone" is UTC, where the server reads it; a single event's is none, the browser's.
-  const none = event.recurring ? 'UTC' : ''
-  const startZone = event.timezone || none
-  const endZone = event.endTimezone || none
   const s = utcToZoned(event.startsAt, fieldZone(startZone, browserZone))
   const e = utcToZoned(event.endsAt, fieldZone(endZone, browserZone))
   return { ...base, allDay: false, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time, startZone, endZone }
@@ -173,18 +181,18 @@ export function keepsRuleAndAllDay(values: EventFormValues, initial: EventFormVa
 
 /**
  * Convert form values to the API payload (FR-17, FR-18). `event` is set when
- * editing. Each row's fields are read in its field's zone (`fieldZone`).
- * A zone goes out only where it changes, as an absent one keeps the zone and
+ * editing. Each row's fields are read in its field's zone (`fieldZone`). A
+ * zone goes out only where it changes, as an absent one keeps the zone and
  * form the server has: the start's (`timezone`) where its row's zone differs
  * from the one the editor opened with, or where a timed series is made (new,
- * from a single event, or from an all-day one) and the row has no zone; the
- * end's (`endTimezone`) likewise, and whenever the start's goes, as an absent
- * end follows a start zone sent. A series without a start zone the editor
- * shows in UTC thus stays as it is where only its end's zone changes. A row
- * without a zone is sent as the browser's zone for a series, which needs a
- * zone to keep its time across summer time, and as "" (UTC) for a single
- * event; a changed zone that names UTC as `PICKED_UTC`, a UTC picked, which
- * is stored as such. An all-day event has none.
+ * from a single event, or from an all-day one without zones) and the row has
+ * no zone; the end's (`endTimezone`) likewise, and whenever the start's goes,
+ * as an absent end follows a start zone sent. A series without a start zone
+ * the editor shows in UTC thus stays as it is where only its end's zone
+ * changes. A row without a zone is sent as the browser's zone for a series,
+ * which needs a zone to keep its time across summer time, and as "" (UTC) for
+ * a single event; a changed zone that names UTC as `PICKED_UTC`, a UTC
+ * picked, which is stored as such. An all-day event has none.
  */
 export function formToInput(v: EventFormValues, browserZone: string, event?: CalEvent): EventInput {
   const initial = event ? editFormValues(event, browserZone) : undefined
@@ -225,9 +233,10 @@ export function formToInput(v: EventFormValues, browserZone: string, event?: Cal
     event?.recurring && initial && keepsRuleAndAllDay(v, initial)
       ? event.rrule
       : fitUntil(buildRRule(v.recurrence, v.customRule), v.allDay, startZone)
-  // A series after the save: one with a rule, or a series of dates that keeps its dates (FR-17).
+  // A series after the save: one with a rule, or a series of dates that keeps its dates (FR-17). One made timed
+  // takes the browser's zone only where it has none: a series with zones keeps them (FR-18).
   const series = rrule !== '' || (event?.recurring === true && v.recurrence !== 'none')
-  const madeSeries = series && (!event?.recurring || initial?.allDay === true)
+  const madeSeries = series && (!event?.recurring || (initial?.allDay === true && !inZonedSeries(event)))
   const opened = initial ?? { startZone: '', endZone: '' }
   const startChanged = !sameZone(v.startZone, opened.startZone)
   const endChanged = !sameZone(v.endZone, opened.endZone)

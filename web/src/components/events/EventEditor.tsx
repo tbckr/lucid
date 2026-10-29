@@ -150,9 +150,10 @@ function EditorForm({
   // The zones of the events and tasks loaded, which the zone fields' lists offer first (FR-18).
   const inUse = useZonesInUse(tz)
   // The zone fields (FR-18): shown from the start for an event with a zone other than the browser's in a row, else
-  // after "Other time zone", and then until the editor closes, also once every ✕ is used, so nothing jumps.
+  // after "Other time zone", and then until the editor closes, also once every ✕ is used, so nothing jumps. An
+  // all-day event of a series with zones has them too: its fields show once it has a time.
   const [zonesShown, setZonesShown] = useState(
-    () => !!initial && !initial.allDay && [initial.startZone, initial.endZone].some((z) => z !== '' && !sameZone(z, tz)),
+    () => !!initial && [initial.startZone, initial.endZone].some((z) => z !== '' && !sameZone(z, tz)),
   )
   // "Other time zone" puts the focus in the start's zone field with its list open, as it shows the field: once, not
   // again where All day hides the field and shows it anew (NFR-27).

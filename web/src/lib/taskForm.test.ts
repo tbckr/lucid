@@ -252,6 +252,12 @@ describe('taskForm', () => {
         ['a series given no due date', spanning, { date: '', time: '' }],
         ['a series with a time', { ...allDay, due: '2026-09-25T07:00:00Z', dueAllDay: false }, { date: '2026-09-25', time: '10:00' }],
         ['a single task given a time', todo({ due: '2026-09-25T00:00:00Z', dueAllDay: true }), { date: '2026-09-25', time: '09:00' }],
+        // Another app made its current repeat all-day: the series keeps the zone it has.
+        [
+          'a series with a zone whose current repeat has no time',
+          { ...allDay, timezone: 'America/New_York', dueTimezone: 'America/New_York' },
+          { date: '2026-09-25', time: '09:00' },
+        ],
       ])('names none for %s', (_, t, due) => {
         const input = withDue(t, due, 'Asia/Tokyo')
         expect(input).not.toHaveProperty('timezone')
@@ -643,6 +649,21 @@ describe('time zones', () => {
   })
 
   // FR-18: for a task without a start, `timezone` names the zone of its due, which a sent `dueTimezone` names too.
+  // Another app made the current repeat of the New York series all-day: the series keeps its zone, which a time
+  // given the repeat is in, and which a save keeps, rather than moving the series into the browser's zone.
+  it("opens a repeat without a time of a series with a zone in the series' zone, which a time given it keeps", () => {
+    const dated = { ...nyWeekly, due: '2026-10-27T00:00:00Z', dueAllDay: true }
+    const v = taskToForm(dated, TZ)
+    expect(v).toMatchObject({ dueDate: '2026-10-27', dueTime: '', startZone: NY, dueZone: NY })
+    const input = formToTodoInput({ ...v, dueTime: '18:00' }, TZ, dated, dated)
+    expect(input).toMatchObject({ due: '2026-10-27T22:00:00.000Z', dueAllDay: false })
+    expect(zoneKeys(input)).toEqual([])
+    // A start given it, with its time, is in that zone too.
+    const span = formWithTime(formWithDate({ ...v, dueTime: '18:00' }, 'start', '2026-10-27'), 'start', '17:00')
+    expect(span).toMatchObject({ startZone: NY, dueZone: NY })
+    expect(zoneKeys(formToTodoInput(span, TZ, dated, dated))).toEqual([])
+  })
+
   it('a due-only task names its zone as timezone', () => {
     const v = { ...taskToForm(nyDue, TZ), dueZone: 'Asia/Tokyo' }
     expect(formToTodoInput(v, TZ, nyDue, nyDue)).toMatchObject({
@@ -664,9 +685,10 @@ describe('time zones', () => {
   // A series without a start zone (floating, a TZID Lucid can't resolve) is shown in UTC: sending that back would
   // write it in UTC for every other app.
   it('sends no start zone for a series without one whose due zone alone changed', () => {
+    // From 18:00 to 20:00 the next day.
     const utc = todo({
       start: '2026-10-27T18:00:00Z',
-      due: '2026-10-27T20:00:00Z',
+      due: '2026-10-28T20:00:00Z',
       rrule: 'FREQ=WEEKLY',
       recurring: true,
       recurrenceId: '2026-10-27T18:00:00Z',
@@ -677,7 +699,7 @@ describe('time zones', () => {
     expect('timezone' in input).toBe(false)
     expect(input.dueTimezone).toBe('Asia/Tokyo')
     // The start as it was; the due at 20:00 as before, now in Tokyo.
-    expect(input).toMatchObject({ start: '2026-10-27T18:00:00.000Z', due: '2026-10-27T11:00:00.000Z' })
+    expect(input).toMatchObject({ start: '2026-10-27T18:00:00.000Z', due: '2026-10-28T11:00:00.000Z' })
   })
 
   it('sends the zone of an unlinked due with a changed start, so it does not follow the start', () => {

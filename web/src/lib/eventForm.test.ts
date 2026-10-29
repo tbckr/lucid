@@ -408,7 +408,8 @@ describe('time zones', () => {
   // A series without a start zone (floating, a TZID Lucid can't resolve) is shown in UTC: sending that back would
   // write it in UTC for every other app.
   it('sends no start zone for a series without one whose end zone alone changed', () => {
-    const at = { start: '2026-03-17T18:00:00Z', end: '2026-03-17T19:00:00Z' }
+    // Over night, from 18:00 to 19:00 the next day.
+    const at = { start: '2026-03-17T18:00:00Z', end: '2026-03-18T19:00:00Z' }
     const series = toCalEvent(
       apiEvent({ ...at, timezone: '', endTimezone: '', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: at.start }),
     )
@@ -416,7 +417,7 @@ describe('time zones', () => {
     expect('timezone' in input).toBe(false)
     expect(input.endTimezone).toBe('Asia/Tokyo')
     // The start as it was; the end at 19:00 as before, now in Tokyo.
-    expect(input).toMatchObject({ start: '2026-03-17T18:00:00.000Z', end: '2026-03-17T10:00:00.000Z' })
+    expect(input).toMatchObject({ start: '2026-03-17T18:00:00.000Z', end: '2026-03-18T10:00:00.000Z' })
   })
 
   it('sends the zone of an unlinked end with a changed start, so it does not follow the start', () => {
@@ -471,13 +472,28 @@ describe('time zones', () => {
   it("gives an event that becomes a timed series the browser's zone for a row without one", () => {
     const single = toCalEvent(apiEvent({ timezone: '', endTimezone: '' }))
     expect(formToInput({ ...editFormValues(single, TZ), recurrence: 'weekly' }, TZ, single)).toMatchObject({ timezone: TZ, endTimezone: TZ })
+    // An all-day series has no zone: its dates have none.
     const allDay = toCalEvent(
-      apiEvent({ allDay: true, recurring: true, rrule: 'FREQ=WEEKLY', start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z', recurrenceId: '2026-09-25T00:00:00Z' }),
+      apiEvent({ allDay: true, recurring: true, rrule: 'FREQ=WEEKLY', start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z', recurrenceId: '2026-09-25T00:00:00Z', timezone: '', endTimezone: '' }),
     )
     expect(formToInput({ ...editFormValues(allDay, TZ), allDay: false }, TZ, allDay)).toMatchObject({ timezone: TZ, endTimezone: TZ })
     // A single event with zones keeps them.
     const zoned = toCalEvent(apiEvent({ timezone: 'America/New_York', endTimezone: 'America/New_York' }))
     expect(zoneKeys(formToInput({ ...editFormValues(zoned, TZ), recurrence: 'weekly' }, TZ, zoned))).toEqual([])
+  })
+
+  // Another app made an event of a timed series all-day: the series keeps its zones, which the event is in once it
+  // has a time again, and which "All events" then keeps, rather than moving the series into the browser's zone.
+  it("opens an all-day event of a series with zones in the series' zones, which a time given it keeps", () => {
+    const allDay = newYork({ allDay: true, start: '2026-11-10T00:00:00Z', end: '2026-11-11T00:00:00Z' })
+    const v = editFormValues(allDay, TZ)
+    expect(v).toMatchObject({ allDay: true, startDate: '2026-11-10', startZone: 'America/New_York', endZone: 'America/New_York' })
+    const input = formToInput({ ...v, allDay: false, startTime: '18:00', endTime: '19:00' }, TZ, allDay)
+    expect(input).toMatchObject({ start: '2026-11-10T23:00:00.000Z', end: '2026-11-11T00:00:00.000Z', allDay: false })
+    expect(zoneKeys(input)).toEqual([])
+    // Its end zone too, where it has one of its own.
+    const apart = newYork({ allDay: true, start: '2026-11-10T00:00:00Z', end: '2026-11-11T00:00:00Z', endTimezone: 'Asia/Tokyo' })
+    expect(editFormValues(apart, TZ)).toMatchObject({ startZone: 'America/New_York', endZone: 'Asia/Tokyo' })
   })
 
   it('sends no zone for an all-day event', () => {

@@ -165,6 +165,11 @@ function hasTime(dates: TaskDates): boolean {
   return (!!dates.start && !dates.startAllDay) || (!!dates.due && !dates.dueAllDay)
 }
 
+/** Whether `todo` is a series with a zone, which it reports whatever dates its current repeat has (FR-18). */
+function inZonedSeries(todo: Todo): boolean {
+  return todo.recurring && ((todo.timezone ?? '') !== '' || (todo.dueTimezone ?? '') !== '')
+}
+
 /**
  * The zones of the rows of `dates`, a task of `series` (FR-18): a timed
  * start's is the series' `timezone`, a timed due's its `dueTimezone`; a timed
@@ -172,13 +177,19 @@ function hasTime(dates: TaskDates): boolean {
  * edited there; a single task without one has none, the browser's. A row
  * without a time is in the other's zone, where a time given it is saved: the
  * server gives a date the task doesn't have yet the form of the other one.
- * Without any time, there is none.
+ * Without any time, a series with a zone, whose repeat another app made
+ * all-day, has its zones, the start's standing in for a due without one and
+ * the other way round, as the server writes a time given the repeat there;
+ * any other task has none.
  */
 function rowZones(dates: TaskDates, series: Todo): ZoneFields {
   const none = series.recurring ? 'UTC' : ''
-  const start = dates.start && !dates.startAllDay ? (series.timezone ?? '') || none : null
-  const due = dates.due && !dates.dueAllDay ? (series.dueTimezone ?? '') || none : null
-  return { startZone: start ?? due ?? '', dueZone: due ?? start ?? '' }
+  const startZone = series.timezone ?? ''
+  const dueZone = series.dueTimezone ?? ''
+  const start = dates.start && !dates.startAllDay ? startZone || none : null
+  const due = dates.due && !dates.dueAllDay ? dueZone || none : null
+  const own = inZonedSeries(series) ? { startZone: startZone || dueZone, dueZone: dueZone || startZone } : null
+  return { startZone: start ?? due ?? own?.startZone ?? '', dueZone: due ?? start ?? own?.dueZone ?? '' }
 }
 
 /**
@@ -236,16 +247,16 @@ export function withTaskStartZone(v: TaskFormValues, zone: string): TaskFormValu
  * A zone goes out only where it changes, as an absent one keeps the zone and
  * form the server has: a timed row's where its zone differs from the one the
  * editor opened with, or where a timed series is made (new, from a single
- * task, or from one without a time) and the row has no zone. `timezone` is
- * the start's; `dueTimezone` goes where the due's does and whenever
- * `timezone` goes, as an absent due follows a start zone sent. A series
- * without a start zone the editor shows in UTC thus stays as it is where only
- * its due's zone changes. For a task without a timed start, `timezone` names
- * DUE's zone, and goes with `dueTimezone`, the same. A row without a zone is
- * sent as the browser's zone for a series, which needs a zone to keep its
- * time across summer time, and as "" (UTC) for a single task; a changed zone
- * that names UTC as `PICKED_UTC`, a UTC picked, which is stored as such. A
- * task without a time sends none.
+ * task, or from one without a time and a zone) and the row has no zone.
+ * `timezone` is the start's; `dueTimezone` goes where the due's does and
+ * whenever `timezone` goes, as an absent due follows a start zone sent. A
+ * series without a start zone the editor shows in UTC thus stays as it is
+ * where only its due's zone changes. For a task without a timed start,
+ * `timezone` names DUE's zone, and goes with `dueTimezone`, the same. A row
+ * without a zone is sent as the browser's zone for a series, which needs a
+ * zone to keep its time across summer time, and as "" (UTC) for a single
+ * task; a changed zone that names UTC as `PICKED_UTC`, a UTC picked, which is
+ * stored as such. A task without a time sends none.
  */
 export function formToTodoInput(v: TaskFormValues, browserZone: string, original?: Todo, opened?: TaskDates): TodoInput {
   const openedDates = opened ?? original
@@ -271,7 +282,9 @@ export function formToTodoInput(v: TaskFormValues, browserZone: string, original
   const series = rrule === null ? (original?.recurring ?? false) : rrule !== ''
   const timedStart = start.value !== null && !start.allDay
   const timedDue = due.value !== null && !due.allDay
-  const madeTimedSeries = series && (!original?.recurring || !openedDates || !hasTime(openedDates))
+  // A series given a time takes the browser's zone only where it has none: one with a zone keeps it (FR-18).
+  const madeTimedSeries =
+    series && (!original?.recurring || (!inZonedSeries(original) && (!openedDates || !hasTime(openedDates))))
   const startChanged = !sameZone(v.startZone, openedZones.startZone)
   const dueChanged = !sameZone(v.dueZone, openedZones.dueZone)
   const sendDue = timedDue && (dueChanged || (madeTimedSeries && v.dueZone === ''))
@@ -414,13 +427,13 @@ function shiftFields(f: Fields, days: number, minutes: number): Fields {
  * time it is all-day (FR-14). The start moves by as much as the due date and
  * takes its kind, so the two stay a valid pair (FR-16); a start that would
  * still come after the due date ends at it. The write names no zone: the
- * task keeps its own (FR-18), except where a series without a time is given
- * one, which the server writes in the zone the write names, as the editor's
- * does (`formToTodoInput`, FR-17).
+ * task keeps its own (FR-18), except where a series without a time and a
+ * zone is given a time, which the server writes in the zone the write names,
+ * as the editor's does (`formToTodoInput`, FR-17).
  */
 export function withDue(todo: Todo, due: Fields, browserZone: string): TodoInput {
   const next = fromFields(due.date, due.time, browserZone)
-  const timed = todo.recurring && !hasTime(todo) && !next.allDay && next.value !== null
+  const timed = todo.recurring && !inZonedSeries(todo) && !hasTime(todo) && !next.allDay && next.value !== null
   const patch = { due: next.value, dueAllDay: next.allDay, ...(timed ? { timezone: browserZone } : {}) }
   if (!due.date || !todo.start) return todoToInput(todo, patch)
 
