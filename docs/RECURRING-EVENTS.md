@@ -919,14 +919,14 @@ event, and the refusal comes as a toast.
   the two zones' UTC offsets at the edited event, as Lucid did while the
   editor built the rule on the browser's clock (#5), a series edited from
   an exception in another week moved by another hour than the one entered.
-- The editor shows and builds that rule in the series' own zone, the one of
-  its start's zone field, where the series recurs and stays (FR-18): a
-  weekly series on Tuesday and Thursday at 18:00 in New York opens in Berlin
-  at 18:00, its start's zone field reading "New York" and its repeat "Every
-  week on Tuesday and Thursday", and a changed rule goes out as built, the
-  series still in New York. A series without a zone, in UTC, floating or
-  with a `TZID` Lucid can't resolve, opens in UTC, where the server reads
-  it. Only the details still say the rule on the browser's wall clock, as
+- The editor shows and builds that rule in the series' own zone, which the
+  zone field of its start shows and where the series recurs and stays
+  (FR-18): a weekly series on Tuesday and Thursday at 18:00 in New York
+  opens in Berlin at 18:00, its start's zone field reading "New York" and
+  its repeat "Every week on Tuesday and Thursday", and a changed rule goes
+  out as built, the series still in New York. A series without a zone (in
+  UTC, floating, or with a `TZID` Lucid can't resolve) opens in UTC, where
+  the server reads it. Only the details still say the rule on the browser's wall clock, as
   they show the times there (`describeSeriesRule` in `web/src/lib/rrule.ts`,
   with `ruleInZone` in `web/src/lib/seriesShift.ts`, which reads the rule
   there as `seriesShift` would move the series there): the series above
