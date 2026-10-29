@@ -862,7 +862,11 @@ export interface MoveVars {
   change?: boolean
 }
 
-/** Build the PUT payload for a moved/resized event. */
+/**
+ * Build the PUT payload for a moved/resized event. Without zones, which the
+ * server keeps as they are (FR-18): a zone sent would let an end zone of its
+ * own follow the start's.
+ */
 export function moveInput(event: CalEvent, start: string, end: string): EventInput {
   return {
     title: event.title,
@@ -871,7 +875,6 @@ export function moveInput(event: CalEvent, start: string, end: string): EventInp
     start,
     end,
     allDay: event.allDay,
-    timezone: event.timezone,
     rrule: event.rrule,
     ...(event.recurring && event.recurrenceId ? { instanceStart: event.recurrenceId } : {}),
   }
@@ -935,7 +938,10 @@ export function useMoveEvent(series?: string) {
   })
 }
 
-/** Build the PUT payload for one moved/resized occurrence of a series ("Only this event", FR-17). */
+/**
+ * Build the PUT payload for one moved/resized occurrence of a series ("Only
+ * this event", FR-17), without zones, as `moveInput` (FR-18).
+ */
 export function moveOccurrenceInput(event: CalEvent, start: string, end: string): OccurrenceInput {
   return {
     title: event.title,
@@ -944,7 +950,6 @@ export function moveOccurrenceInput(event: CalEvent, start: string, end: string)
     start,
     end,
     allDay: event.allDay,
-    timezone: event.timezone,
   }
 }
 

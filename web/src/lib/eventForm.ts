@@ -1,20 +1,12 @@
 import { addDays, differenceInCalendarDays, format } from 'date-fns'
 import { z } from 'zod'
 import { type EventInput, type OccurrenceInput } from './api/schemas'
-import {
-  dayAt,
-  isFormDate,
-  isFormTime,
-  localDateToUtc,
-  parseDayKey,
-  utcToZoned,
-  zonedToUtc,
-  zonedToUtcAfter,
-} from './dates'
+import { isFormDate, isFormTime, localDateToUtc, parseDayKey, utcToZoned, zonedToUtc, zonedToUtcAfter } from './dates'
 import { type CalEvent } from './events'
 import { type Duration } from './format'
+import { browserTimeZone } from './locale'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
-import { eventRuleClock, ruleInZone } from './seriesShift'
+import { fieldZone, sameZone } from './zones'
 
 /**
  * Event editor form. Messages are i18n keys resolved by the form.
@@ -35,6 +27,9 @@ export const eventFormSchema = z
     description: z.string().max(64 * 1024, 'validation.tooLong'),
     recurrence: z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly', 'custom']),
     customRule: z.string().max(1024, 'validation.tooLong'),
+    // The zones the start's and the end's fields are in; "" is none, the browser's (FR-18).
+    startZone: z.string(),
+    endZone: z.string(),
   })
   .superRefine((v, ctx) => {
     if (!v.allDay) {
@@ -43,17 +38,30 @@ export const eventFormSchema = z
       }
     }
     if (!isFormDate(v.startDate) || !isFormDate(v.endDate)) return
-    // At the times saved, in the browser's zone, which the editors convert in: a time summer
-    // time skips counts where it is saved, an hour later (#10, FR-18).
+    // At the instants saved, each row in its own zone: a time summer time skips counts where it
+    // is saved, an hour later (#10, FR-18).
     const endBeforeStart = v.allDay
       ? v.endDate < v.startDate
-      : isFormTime(v.startTime) && isFormTime(v.endTime) && dayAt(v.endDate, v.endTime) < dayAt(v.startDate, v.startTime)
+      : isFormTime(v.startTime) && isFormTime(v.endTime) && rowMinutes(v, browserTimeZone()) < 0
     if (endBeforeStart) {
       ctx.addIssue({ code: 'custom', message: 'validation.endBeforeStart', path: ['endDate'] })
     }
   })
 
 export type EventFormValues = z.infer<typeof eventFormSchema>
+
+type Rows = Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'startZone' | 'endZone'>
+
+/**
+ * The minutes from the start to the end at the instants the rows are saved as, each read in its
+ * field's zone (FR-18): a time summer time skips where it is saved, a time it repeats at its
+ * first pass, as the server reads them (`zonedToUtc`).
+ */
+function rowMinutes(v: Rows, browserZone: string): number {
+  const start = zonedToUtc(v.startDate, v.startTime, fieldZone(v.startZone, browserZone))
+  const end = zonedToUtc(v.endDate, v.endTime, fieldZone(v.endZone, browserZone))
+  return (end.getTime() - start.getTime()) / 60_000
+}
 
 /** Initial values for creating an event. */
 export function createFormValues(
@@ -75,25 +83,22 @@ export function createFormValues(
     description: '',
     recurrence: 'none',
     customRule: '',
+    // No zone: a new single event is saved without one unless one is picked, a new series in
+    // the browser's (FR-18).
+    startZone: '',
+    endZone: '',
   }
 }
 
 /**
- * The repeat rule of `event` as the editor shows and builds it (FR-17, FR-18):
- * on the browser's wall clock in `timeZone` (see `ruleInZone`), where a
- * changed rule recurs, as saving moves the series into that zone. `null`
- * where the rule doesn't read the same there: the editor can only keep it,
- * replace it by a preset, or remove it.
+ * Values for editing an existing occurrence (FR-17, FR-18): its rule as
+ * stored, and its fields in its own zones, `fieldZone` of each row's. A timed
+ * series without a zone recurs on UTC's clock, where the server reads it, and
+ * is edited there; a single event without one, and an all-day event, have no
+ * zone and are shown in `browserZone`.
  */
-export function shownRule(event: CalEvent, timeZone: string): string | null {
-  const clock = eventRuleClock(event)
-  return clock ? ruleInZone(event.rrule, clock.at, clock.zone, timeZone) : event.rrule
-}
-
-/** Values for editing an existing occurrence (shown in the browser time zone). */
-export function editFormValues(event: CalEvent, timeZone: string): EventFormValues {
-  // A rule that doesn't read the same here stays as it is, see shownRule.
-  const rule = shownRule(event, timeZone) ?? event.rrule
+export function editFormValues(event: CalEvent, browserZone: string): EventFormValues {
+  const rule = event.rrule
   // A series of dates without a rule repeats too: "custom" without a rule, kept as it is (FR-17).
   const recurrence: Recurrence = event.recurring && !rule.trim() ? 'custom' : recurrenceFromRRule(rule)
   const base = {
@@ -113,11 +118,33 @@ export function editFormValues(event: CalEvent, timeZone: string): EventFormValu
       startTime: '09:00',
       endDate: format(lastDay < event.startsAt ? event.startsAt : lastDay, 'yyyy-MM-dd'),
       endTime: '09:30',
+      startZone: '',
+      endZone: '',
     }
   }
-  const s = utcToZoned(event.startsAt, timeZone)
-  const e = utcToZoned(event.endsAt, timeZone)
-  return { ...base, allDay: false, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time }
+  // A series' "no zone" is UTC, where the server reads it; a single event's is none, the browser's.
+  const none = event.recurring ? 'UTC' : ''
+  const startZone = event.timezone || none
+  const endZone = event.endTimezone || none
+  const s = utcToZoned(event.startsAt, fieldZone(startZone, browserZone))
+  const e = utcToZoned(event.endsAt, fieldZone(endZone, browserZone))
+  return { ...base, allDay: false, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time, startZone, endZone }
+}
+
+/** Whether the zone of either row differs from the editor's initial values (FR-18), by `sameZone`. */
+export function zonesChanged(
+  v: Pick<EventFormValues, 'startZone' | 'endZone'>,
+  initial: Pick<EventFormValues, 'startZone' | 'endZone'>,
+): boolean {
+  return !sameZone(v.startZone, initial.startZone) || !sameZone(v.endZone, initial.endZone)
+}
+
+/**
+ * `v` with the start in `zone`, the clock times kept (FR-18). The end
+ * follows while it is in the start's zone; one in a zone of its own keeps it.
+ */
+export function withStartZone(v: EventFormValues, zone: string): EventFormValues {
+  return { ...v, startZone: zone, endZone: sameZone(v.endZone, v.startZone) ? zone : v.endZone }
 }
 
 /**
@@ -144,9 +171,21 @@ export function keepsRuleAndAllDay(values: EventFormValues, initial: EventFormVa
   return !ruleChanged(values, initial) && values.allDay === initial.allDay
 }
 
-/** Convert form values to the API payload. `event` is set when editing. */
-export function formToInput(v: EventFormValues, timeZone: string, event?: CalEvent): EventInput {
-  const initial = event ? editFormValues(event, timeZone) : undefined
+/**
+ * Convert form values to the API payload (FR-17, FR-18). `event` is set when
+ * editing. Each row's fields are read in its field's zone (`fieldZone`).
+ * Zones go out only with a change, `timezone` and `endTimezone` together, as
+ * the server takes a zone sent back unchanged as no change: where a row's
+ * zone differs from the one the editor opened with, or where a timed series
+ * is made (new, from a single event, or from an all-day one) and a row has
+ * no zone. A row without one is then sent as the browser's zone for a series,
+ * which needs a zone to keep its time across summer time, and as "" (UTC) for
+ * a single event. An all-day event has none.
+ */
+export function formToInput(v: EventFormValues, browserZone: string, event?: CalEvent): EventInput {
+  const initial = event ? editFormValues(event, browserZone) : undefined
+  const startZone = fieldZone(v.startZone, browserZone)
+  const endZone = fieldZone(v.endZone, browserZone)
   let start: Date
   let end: Date
   if (v.allDay) {
@@ -154,27 +193,41 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     // All-day end is exclusive: the day after the last day.
     end = localDateToUtc(addDays(parseDayKey(v.endDate), 1))
   } else {
-    // The fields can't say which of a time summer time repeats it is, so one
-    // left as the editor opened it keeps its instant, and an end entered
-    // anew is not before the start (#10, FR-18).
+    // The fields can't say which of a time summer time repeats it is, so a
+    // row left as the editor opened it, its zone too, keeps its instant, and
+    // an end entered anew is not before the start (#10, FR-18).
     const timed = event !== undefined && initial !== undefined && !initial.allDay
     start =
-      timed && v.startDate === initial.startDate && v.startTime === initial.startTime
+      timed &&
+      v.startDate === initial.startDate &&
+      v.startTime === initial.startTime &&
+      sameZone(startZone, fieldZone(initial.startZone, browserZone))
         ? event.startsAt
-        : zonedToUtc(v.startDate, v.startTime, timeZone)
+        : zonedToUtc(v.startDate, v.startTime, startZone)
     end =
-      timed && v.endDate === initial.endDate && v.endTime === initial.endTime
+      timed &&
+      v.endDate === initial.endDate &&
+      v.endTime === initial.endTime &&
+      sameZone(endZone, fieldZone(initial.endZone, browserZone))
         ? event.endsAt
-        : zonedToUtcAfter(v.endDate, v.endTime, timeZone, start)
+        : zonedToUtcAfter(v.endDate, v.endTime, endZone, start)
   }
   // While a series' rule and all-day flag are unchanged from the editor's
   // initial values, the stored RRULE goes back verbatim (FR-17): rebuilding
   // it from the preset can rewrite text the server would then see as a
-  // changed rule, losing the fast path that keeps the series' own time zone.
+  // changed rule. A rule built here is read in the start's zone, its UNTIL
+  // too.
   const rrule =
     event?.recurring && initial && keepsRuleAndAllDay(v, initial)
       ? event.rrule
-      : fitUntil(buildRRule(v.recurrence, v.customRule), v.allDay, timeZone)
+      : fitUntil(buildRRule(v.recurrence, v.customRule), v.allDay, startZone)
+  // A series after the save: one with a rule, or a series of dates that keeps its dates (FR-17).
+  const series = rrule !== '' || (event?.recurring === true && v.recurrence !== 'none')
+  const madeSeries = series && (!event?.recurring || initial?.allDay === true)
+  const zoned =
+    !v.allDay &&
+    (zonesChanged(v, initial ?? { startZone: '', endZone: '' }) || (madeSeries && (v.startZone === '' || v.endZone === '')))
+  const sent = (zone: string) => (zone === '' && series ? browserZone : zone)
   return {
     title: v.title.trim(),
     description: v.description,
@@ -182,7 +235,7 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
     start: start.toISOString(),
     end: end.toISOString(),
     allDay: v.allDay,
-    timezone: v.allDay ? '' : timeZone,
+    ...(zoned ? { timezone: sent(v.startZone), endTimezone: sent(v.endZone) } : {}),
     rrule,
     ...(event?.recurring && event.recurrenceId ? { instanceStart: event.recurrenceId } : {}),
   }
@@ -191,10 +244,11 @@ export function formToInput(v: EventFormValues, timeZone: string, event?: CalEve
 /**
  * Drops the fields `OccurrenceInput` doesn't have (FR-17): the rule belongs
  * to the series, and the occurrence being edited is already named in the
- * path, not the body.
+ * path, not the body. Its zones too: a series has one zone for all its
+ * events, which "Only this event" keeps (FR-18).
  */
 export function occurrenceInput(input: EventInput): OccurrenceInput {
-  const { rrule: _rrule, instanceStart: _instanceStart, ...rest } = input
+  const { rrule: _rrule, instanceStart: _instanceStart, timezone: _timezone, endTimezone: _endTimezone, ...rest } = input
   return rest
 }
 
@@ -229,12 +283,15 @@ function wallClockMs(date: string, time: string): number {
 }
 
 /**
- * Length of the event as the form shows it: wall-clock minutes for timed
- * events, days (the last one included) for all-day events. Null while a value
- * is invalid or the end lies before the start.
+ * Length of the event as the form shows it: for timed events, minutes on the
+ * wall clock while both rows are in one zone, else between the instants they
+ * are saved as, each row in its field's zone (FR-18); days (the last one
+ * included) for all-day events. Null while a value is invalid or the end lies
+ * before the start.
  */
 export function formDuration(
-  v: Pick<EventFormValues, 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'allDay'>,
+  v: Pick<EventFormValues, 'allDay' | 'startDate' | 'startTime' | 'endDate' | 'endTime' | 'startZone' | 'endZone'>,
+  browserZone: string,
 ): Duration | null {
   if (!isFormDate(v.startDate) || !isFormDate(v.endDate)) return null
   if (v.allDay) {
@@ -242,7 +299,9 @@ export function formDuration(
     return days > 0 ? { days } : null
   }
   if (!isFormTime(v.startTime) || !isFormTime(v.endTime)) return null
-  const minutes = (wallClockMs(v.endDate, v.endTime) - wallClockMs(v.startDate, v.startTime)) / 60_000
+  const minutes = sameZone(fieldZone(v.startZone, browserZone), fieldZone(v.endZone, browserZone))
+    ? (wallClockMs(v.endDate, v.endTime) - wallClockMs(v.startDate, v.startTime)) / 60_000
+    : rowMinutes(v, browserZone)
   return minutes >= 0 ? { minutes } : null
 }
 

@@ -3,6 +3,8 @@ import { type Todo } from './api/schemas'
 import { type TaskDates, type TaskRepeat, type ZonedTaskDates } from './calendarTasks'
 import { movedAs, utcDateToLocal, utcToZoned } from './dates'
 import { type CalEvent } from './events'
+import { browserTimeZone } from './locale'
+import { sameZone, wallDate } from './zones'
 
 /**
  * `seriesShift` mirrors `internal/caldav/seriesshift.go` (FR-17): when a
@@ -343,23 +345,28 @@ export function eventRuleClock(event: Pick<CalEvent, 'allDay' | 'timezone' | 'st
 }
 
 /**
- * Where the rule of the series of `event` places it on the browser's wall
- * clock once it starts at `start`, by default where it is shown (FR-17): at
- * its RECURRENCE-ID, not where an exception moved it, moved as far as
- * `start` lies from the shown start, as a save moves the series; by dates
- * where either is all-day, an all-day event's read as a date. What a rule
- * leaves to the series' start, the weekday of `FREQ=WEEKLY` or the day of
- * `FREQ=MONTHLY`, is filled in from there (`describeRRule`). A single event
- * is at `start`.
+ * Where the rule of the series of `event` places it on the wall clock of
+ * `zone`, as a wall Date of that zone (`wallDate`), once it starts at
+ * `start`, a wall Date of `zone` too, by default where it is shown (FR-17,
+ * FR-18): at its RECURRENCE-ID, not where an exception moved it, moved as
+ * far as `start` lies from the shown start, as a save moves the series; by
+ * dates where either is all-day, an all-day event's read as a date, the same
+ * in every zone. What a rule leaves to the series' start, the weekday of
+ * `FREQ=WEEKLY` or the day of `FREQ=MONTHLY`, is filled in from there
+ * (`describeRRule`). A single event is at `start`. By default on the
+ * browser's wall clock, where the event's instants are wall Dates already.
  */
 export function eventRuleStart(
   event: Pick<CalEvent, 'allDay' | 'startsAt' | 'recurrenceId'>,
-  start: Date = event.startsAt,
+  start?: Date,
   allDay: boolean = event.allDay,
+  zone: string = browserTimeZone(),
 ): Date {
-  if (!event.recurrenceId) return start
-  const rid = event.allDay ? utcDateToLocal(event.recurrenceId) : new Date(event.recurrenceId)
-  return movedAs(start, event.startsAt, rid, allDay || event.allDay)
+  const wall = (at: Date) => (event.allDay || sameZone(zone, browserTimeZone()) ? at : wallDate(at, zone))
+  const shown = wall(event.startsAt)
+  if (!event.recurrenceId) return start ?? shown
+  const rid = event.allDay ? utcDateToLocal(event.recurrenceId) : wall(new Date(event.recurrenceId))
+  return movedAs(start ?? shown, shown, rid, allDay || event.allDay)
 }
 
 /**

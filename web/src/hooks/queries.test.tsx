@@ -16,6 +16,8 @@ import { defaultSettings, useSettings } from '@/stores/settings'
 import { emptyReport, useUi } from '@/stores/ui'
 import {
   MOVE_EVENT_KEY,
+  moveInput,
+  moveOccurrenceInput,
   queryKeys,
   reportMutationError,
   useCalendarTasks,
@@ -316,6 +318,20 @@ describe('useCalendarTasks', () => {
         expect(result.current.tasks.map((x) => x.key)).toEqual(['task:t1'])
       })
     })
+  })
+})
+
+// A drag keeps the event's zones: a zone sent would rewrite them, an end zone of its own too (FR-18).
+describe('moveInput', () => {
+  it('moves without naming a zone', () => {
+    const event = toCalEvent(apiEvent({ timezone: 'Europe/London', endTimezone: 'Asia/Tokyo' }))
+    const start = '2026-09-25T09:00:00Z'
+    const end = '2026-09-25T10:00:00Z'
+    for (const input of [moveInput(event, start, end), moveOccurrenceInput(event, start, end)]) {
+      expect(input).toMatchObject({ start, end, allDay: false })
+      expect('timezone' in input).toBe(false)
+      expect('endTimezone' in input).toBe(false)
+    }
   })
 })
 
@@ -1367,12 +1383,13 @@ describe('this and following events', () => {
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true)
     })
-    // The event is named in the path: the body has no instanceStart.
+    // The event is named in the path: the body has no instanceStart. A move names no zone (FR-18).
+    const { timezone: _zone, ...moved } = input
     expect(writes()).toEqual([
       {
         request: 'PUT /api/v1/events/e1/following/2025-03-17T08%3A00%3A00Z',
         etag: '"1"',
-        body: { ...input, rrule: 'FREQ=WEEKLY' },
+        body: { ...moved, rrule: 'FREQ=WEEKLY' },
       },
     ])
     const shown = toastOf(success.mock.calls, 'Moved from Mon, Mar 17 on, as a series of its own.')

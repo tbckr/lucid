@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { apiEvent } from '@/test/fixtures'
+import { type ApiEvent } from './api/schemas'
 import { toCalEvent } from './events'
 import {
   createFormValues,
@@ -10,10 +11,12 @@ import {
   occurrenceInput,
   ruleChanged,
   shiftEnd,
-  shownRule,
   timeOptions,
+  withStartZone,
+  zonesChanged,
   type EventFormValues,
 } from './eventForm'
+import { PICKED_UTC } from './zones'
 
 const TZ = 'Europe/Berlin'
 const base: EventFormValues = {
@@ -28,6 +31,8 @@ const base: EventFormValues = {
   description: 'Notes',
   recurrence: 'none',
   customRule: '',
+  startZone: '',
+  endZone: '',
 }
 
 describe('eventFormSchema', () => {
@@ -82,6 +87,7 @@ describe('eventFormSchema', () => {
 })
 
 describe('formToInput', () => {
+  // A new single event without a zone picked is saved without one (FR-18).
   it('converts timed values in the given zone (across DST)', () => {
     const input = formToInput({ ...base, endDate: '2026-03-29', endTime: '09:00' }, TZ)
     expect(input).toEqual({
@@ -91,7 +97,6 @@ describe('formToInput', () => {
       start: '2026-03-28T08:00:00.000Z', // CET
       end: '2026-03-29T07:00:00.000Z', // CEST
       allDay: false,
-      timezone: TZ,
       rrule: '',
     })
   })
@@ -136,7 +141,7 @@ describe('formToInput', () => {
     const input = formToInput({ ...base, allDay: true, endDate: '2026-03-29', recurrence: 'yearly' }, TZ)
     expect(input.start).toBe('2026-03-28T00:00:00.000Z')
     expect(input.end).toBe('2026-03-30T00:00:00.000Z')
-    expect(input.timezone).toBe('')
+    expect(input).not.toHaveProperty('timezone')
     expect(input.rrule).toBe('FREQ=YEARLY')
   })
 
@@ -185,9 +190,16 @@ describe('formToInput', () => {
 })
 
 describe('occurrenceInput', () => {
-  it('drops exactly rrule and instanceStart', () => {
+  // One zone per series: "Only this event" keeps the zones (FR-17, FR-18).
+  it('drops exactly rrule, instanceStart and the zones', () => {
     const input = formToInput(base, TZ)
-    const withSeries = { ...input, rrule: 'FREQ=WEEKLY', instanceStart: '2026-09-25T08:00:00Z' }
+    const withSeries = {
+      ...input,
+      rrule: 'FREQ=WEEKLY',
+      instanceStart: '2026-09-25T08:00:00Z',
+      timezone: 'Asia/Tokyo',
+      endTimezone: 'Asia/Tokyo',
+    }
     expect(occurrenceInput(withSeries)).toEqual({
       title: withSeries.title,
       description: withSeries.description,
@@ -195,7 +207,6 @@ describe('occurrenceInput', () => {
       start: withSeries.start,
       end: withSeries.end,
       allDay: withSeries.allDay,
-      timezone: withSeries.timezone,
     })
   })
 })
@@ -262,59 +273,240 @@ describe('initial values', () => {
   })
 })
 
-// A series in New York at 18:00 shows at midnight in Berlin, a day later (FR-17, FR-18).
-describe('a series in another time zone', () => {
-  const ny = (rrule: string) =>
+// An event is edited in its own zones, and a save names them only where they changed (FR-17, FR-18).
+describe('time zones', () => {
+  // A weekly series on Tuesdays and Thursdays at 18:00 in New York; its event of 10 November is at
+  // midnight in Berlin, a day later.
+  const newYork = (p: Partial<ApiEvent> = {}) =>
     toCalEvent(
       apiEvent({
         start: '2026-11-10T23:00:00Z',
         end: '2026-11-11T00:00:00Z',
         timezone: 'America/New_York',
-        recurring: true,
-        rrule,
-        recurrenceId: '2026-11-10T23:00:00Z',
-      }),
-    )
-
-  it('opens on the days it shows on', () => {
-    expect(editFormValues(ny('FREQ=WEEKLY;BYDAY=TU,TH'), TZ)).toMatchObject({
-      startDate: '2026-11-11',
-      startTime: '00:00',
-      recurrence: 'custom',
-      customRule: 'FREQ=WEEKLY;BYDAY=WE,FR',
-    })
-  })
-
-  // A changed rule moves the series into the zone the write names (spec section 4), where the rule is built.
-  it('sends the stored rule while it stays, and a changed one as built here', () => {
-    const series = ny('FREQ=WEEKLY;BYDAY=TU,TH')
-    const v = editFormValues(series, TZ)
-    expect(formToInput(v, TZ, series).rrule).toBe('FREQ=WEEKLY;BYDAY=TU,TH')
-    expect(formToInput({ ...v, customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR' }, TZ, series)).toMatchObject({
-      rrule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=WE,FR',
-      timezone: TZ,
-    })
-  })
-
-  it('opens an exception moved to another time on the days the series shows on', () => {
-    const moved = toCalEvent(
-      apiEvent({
-        start: '2026-11-10T15:00:00Z', // 10:00 in New York, 16:00 on Tuesday in Berlin
-        end: '2026-11-10T16:00:00Z',
-        timezone: 'America/New_York',
+        endTimezone: 'America/New_York',
         recurring: true,
         rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
         recurrenceId: '2026-11-10T23:00:00Z',
+        ...p,
       }),
     )
-    expect(editFormValues(moved, TZ)).toMatchObject({ startDate: '2026-11-10', customRule: 'FREQ=WEEKLY;BYDAY=WE,FR' })
+  const zoneKeys = (input: object) => ['timezone', 'endTimezone'].filter((key) => key in input)
+
+  it('opens a New York series in New York', () => {
+    expect(editFormValues(newYork(), TZ)).toMatchObject({
+      startDate: '2026-11-10',
+      startTime: '18:00',
+      endDate: '2026-11-10',
+      endTime: '19:00',
+      startZone: 'America/New_York',
+      endZone: 'America/New_York',
+      recurrence: 'custom',
+      customRule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+    })
   })
 
-  it("keeps a rule that doesn't read the same here as it is", () => {
-    const series = ny('FREQ=MONTHLY;BYMONTHDAY=10')
-    expect(shownRule(series, TZ)).toBeNull()
-    expect(editFormValues(series, TZ)).toMatchObject({ recurrence: 'custom', customRule: 'FREQ=MONTHLY;BYMONTHDAY=10' })
-    expect(formToInput(editFormValues(series, TZ), TZ, series).rrule).toBe('FREQ=MONTHLY;BYMONTHDAY=10')
+  it('opens an exception moved to another time in the zone of its series', () => {
+    // 10:00 in New York, 16:00 in Berlin; its place in the rule is 18:00 in New York.
+    const moved = newYork({ start: '2026-11-10T15:00:00Z', end: '2026-11-10T16:00:00Z' })
+    expect(editFormValues(moved, TZ)).toMatchObject({
+      startDate: '2026-11-10',
+      startTime: '10:00',
+      endTime: '11:00',
+      startZone: 'America/New_York',
+      customRule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+    })
+  })
+
+  it('opens a series without a zone in UTC', () => {
+    const at = { start: '2027-01-18T08:00:00Z', end: '2027-01-18T09:00:00Z' }
+    const series = toCalEvent(
+      apiEvent({ ...at, timezone: '', endTimezone: '', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: at.start }),
+    )
+    expect(editFormValues(series, TZ)).toMatchObject({ startTime: '08:00', endTime: '09:00', startZone: 'UTC', endZone: 'UTC' })
+    const single = toCalEvent(apiEvent({ ...at, timezone: '', endTimezone: '' }))
+    expect(editFormValues(single, TZ)).toMatchObject({ startTime: '09:00', endTime: '10:00', startZone: '', endZone: '' })
+  })
+
+  it('opens an all-day event without zones', () => {
+    const allDay = toCalEvent(apiEvent({ allDay: true, start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z' }))
+    expect(editFormValues(allDay, TZ)).toMatchObject({ startZone: '', endZone: '' })
+  })
+
+  it("treats a legacy zone name as the browser's", () => {
+    const kolkata = toCalEvent(apiEvent({ timezone: 'Asia/Kolkata', endTimezone: 'Asia/Kolkata' }))
+    const v = editFormValues(kolkata, 'Asia/Calcutta')
+    expect(zonesChanged(v, editFormValues(kolkata, 'Asia/Calcutta'))).toBe(false)
+    expect(zoneKeys(formToInput(v, 'Asia/Calcutta', kolkata))).toEqual([])
+    // Picking the browser's name of the same zone changes nothing either.
+    const picked = withStartZone(v, 'Asia/Calcutta')
+    expect(zonesChanged(picked, v)).toBe(false)
+    expect(zoneKeys(formToInput(picked, 'Asia/Calcutta', kolkata))).toEqual([])
+  })
+
+  it("opens an event in a zone the browser doesn't know", () => {
+    const mars = toCalEvent(apiEvent({ timezone: 'Mars/Olympus', endTimezone: 'Mars/Olympus' }))
+    const v = editFormValues(mars, TZ)
+    // Kept, and its fields in the browser's zone: 08:00Z is 10:00 in Berlin.
+    expect(v).toMatchObject({ startZone: 'Mars/Olympus', endZone: 'Mars/Olympus', startTime: '10:00', endTime: '11:00' })
+    expect(eventFormSchema.safeParse(v).success).toBe(true)
+    expect(formToInput(v, TZ, mars)).toMatchObject({ start: '2026-09-25T08:00:00.000Z', end: '2026-09-25T09:00:00.000Z' })
+    expect(zoneKeys(formToInput(v, TZ, mars))).toEqual([])
+    expect(formToInput({ ...v, title: 'Renamed', startTime: '10:30' }, TZ, mars).start).toBe('2026-09-25T08:30:00.000Z')
+  })
+
+  it('sends no zone for an unchanged event', () => {
+    const series = newYork()
+    const input = formToInput(editFormValues(series, TZ), TZ, series)
+    expect('timezone' in input).toBe(false)
+    expect('endTimezone' in input).toBe(false)
+    expect(input).toMatchObject({ start: '2026-11-10T23:00:00.000Z', rrule: 'FREQ=WEEKLY;BYDAY=TU,TH' })
+    const single = toCalEvent(apiEvent())
+    expect(zoneKeys(formToInput({ ...editFormValues(single, TZ), startTime: '11:00' }, TZ, single))).toEqual([])
+  })
+
+  // A changed rule keeps the series in its zone, where the rule is built.
+  it('sends a changed rule as built in the series\' zone, and no zone', () => {
+    const series = newYork()
+    const input = formToInput({ ...editFormValues(series, TZ), customRule: 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH' }, TZ, series)
+    expect(input.rrule).toBe('FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH')
+    expect(zoneKeys(input)).toEqual([])
+  })
+
+  it('fits the end of a changed rule in the start\'s zone', () => {
+    const series = newYork()
+    const input = formToInput({ ...editFormValues(series, TZ), customRule: 'FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261231' }, TZ, series)
+    // The end of 31 December in New York.
+    expect(input.rrule).toBe('FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20270101T045959Z')
+  })
+
+  it('keeps the clock on a zone change', () => {
+    const series = newYork()
+    const v = withStartZone(editFormValues(series, TZ), 'Europe/Berlin')
+    expect(v).toMatchObject({ startZone: 'Europe/Berlin', endZone: 'Europe/Berlin', startTime: '18:00', endTime: '19:00' })
+    expect(formToInput(v, TZ, series)).toMatchObject({
+      start: '2026-11-10T17:00:00.000Z',
+      end: '2026-11-10T18:00:00.000Z',
+      timezone: 'Europe/Berlin',
+      endTimezone: 'Europe/Berlin',
+    })
+  })
+
+  it('an unlinked end keeps its zone', () => {
+    const series = newYork()
+    const v = { ...editFormValues(series, TZ), endZone: 'Asia/Tokyo' }
+    const moved = withStartZone(v, 'Europe/Berlin')
+    expect(moved.endZone).toBe('Asia/Tokyo')
+    expect(formToInput(moved, TZ, series)).toMatchObject({ timezone: 'Europe/Berlin', endTimezone: 'Asia/Tokyo' })
+    // A change of one row sends both, the start's as it was.
+    expect(formToInput(v, TZ, series)).toMatchObject({ timezone: 'America/New_York', endTimezone: 'Asia/Tokyo' })
+    // Set back to the start's, the end follows it again.
+    expect(withStartZone({ ...moved, endZone: 'Europe/Berlin' }, 'Asia/Seoul').endZone).toBe('Asia/Seoul')
+  })
+
+  it('tells a changed zone of either row', () => {
+    const v = editFormValues(newYork(), TZ)
+    expect(zonesChanged(v, v)).toBe(false)
+    expect(zonesChanged({ ...v, startZone: 'Europe/Berlin' }, v)).toBe(true)
+    expect(zonesChanged({ ...v, endZone: '' }, v)).toBe(true)
+    expect(zonesChanged({ ...v, endZone: 'US/Eastern' }, v)).toBe(false)
+  })
+
+  it("a new single event sends no zone, a new series the browser's", () => {
+    const created = createFormValues({ start: new Date(2026, 8, 25, 14), end: new Date(2026, 8, 25, 15), allDay: false }, 'c1', TZ)
+    expect(created).toMatchObject({ startZone: '', endZone: '' })
+    expect(zoneKeys(formToInput(created, TZ))).toEqual([])
+    expect(formToInput({ ...created, recurrence: 'weekly' }, TZ)).toMatchObject({ timezone: TZ, endTimezone: TZ })
+    // A zone picked for a new event is sent.
+    expect(formToInput({ ...created, startZone: 'Asia/Tokyo', endZone: 'Asia/Tokyo' }, TZ)).toMatchObject({
+      start: '2026-09-25T05:00:00.000Z',
+      timezone: 'Asia/Tokyo',
+      endTimezone: 'Asia/Tokyo',
+    })
+  })
+
+  it("gives an event that becomes a timed series the browser's zone for a row without one", () => {
+    const single = toCalEvent(apiEvent({ timezone: '', endTimezone: '' }))
+    expect(formToInput({ ...editFormValues(single, TZ), recurrence: 'weekly' }, TZ, single)).toMatchObject({ timezone: TZ, endTimezone: TZ })
+    const allDay = toCalEvent(
+      apiEvent({ allDay: true, recurring: true, rrule: 'FREQ=WEEKLY', start: '2026-09-25T00:00:00Z', end: '2026-09-26T00:00:00Z', recurrenceId: '2026-09-25T00:00:00Z' }),
+    )
+    expect(formToInput({ ...editFormValues(allDay, TZ), allDay: false }, TZ, allDay)).toMatchObject({ timezone: TZ, endTimezone: TZ })
+    // A single event with zones keeps them.
+    const zoned = toCalEvent(apiEvent({ timezone: 'America/New_York', endTimezone: 'America/New_York' }))
+    expect(zoneKeys(formToInput({ ...editFormValues(zoned, TZ), recurrence: 'weekly' }, TZ, zoned))).toEqual([])
+  })
+
+  it('sends no zone for an all-day event', () => {
+    expect(zoneKeys(formToInput({ ...base, allDay: true }, TZ))).toEqual([])
+    const series = newYork()
+    const v = { ...withStartZone(editFormValues(series, TZ), 'Asia/Tokyo'), allDay: true }
+    expect(zoneKeys(formToInput(v, TZ, series))).toEqual([])
+  })
+
+  it('the ✕ of a single event sends UTC', () => {
+    const single = toCalEvent(apiEvent({ timezone: 'America/New_York', endTimezone: 'America/New_York' }))
+    const v = { ...editFormValues(single, TZ), startZone: '', endZone: '' }
+    // 04:00 and 05:00 as in New York, now in Berlin.
+    expect(formToInput(v, TZ, single)).toMatchObject({
+      start: '2026-09-25T02:00:00.000Z',
+      end: '2026-09-25T03:00:00.000Z',
+      timezone: '',
+      endTimezone: '',
+    })
+  })
+
+  it("the ✕ of a series sends the browser's zone", () => {
+    const series = newYork()
+    const v = { ...editFormValues(series, TZ), startZone: '', endZone: '' }
+    expect(formToInput(v, TZ, series)).toMatchObject({ start: '2026-11-10T17:00:00.000Z', timezone: TZ, endTimezone: TZ })
+    // A series whose rule goes is a single event after the save: no zone.
+    expect(formToInput({ ...v, recurrence: 'none' }, TZ, series)).toMatchObject({ timezone: '', endTimezone: '' })
+  })
+
+  it('a picked UTC is Etc/UTC', () => {
+    const single = toCalEvent(apiEvent())
+    const v = { ...editFormValues(single, TZ), startZone: PICKED_UTC, endZone: PICKED_UTC }
+    expect(formToInput(v, TZ, single)).toMatchObject({
+      start: '2026-09-25T10:00:00.000Z',
+      timezone: 'Etc/UTC',
+      endTimezone: 'Etc/UTC',
+    })
+  })
+
+  it('drops the zones for only this event', () => {
+    const series = newYork()
+    const input = formToInput(withStartZone(editFormValues(series, TZ), 'Asia/Tokyo'), TZ, series)
+    expect(input).toMatchObject({ timezone: 'Asia/Tokyo', endTimezone: 'Asia/Tokyo' })
+    expect(zoneKeys(occurrenceInput(input))).toEqual([])
+  })
+
+  // #10: the hour summer time repeats can't be told apart in the fields; the start's zone counts too.
+  it('keeps the instant of a row only while its zone stays too', () => {
+    // 02:30 CET, the second pass of the hour on the night Berlin leaves summer time.
+    const event = toCalEvent(apiEvent({ start: '2026-10-25T01:30:00Z', end: '2026-10-25T02:30:00Z' }))
+    const v = editFormValues(event, TZ)
+    expect(formToInput({ ...v, title: 'Renamed' }, TZ, event).start).toBe('2026-10-25T01:30:00.000Z')
+    // 02:30 in London is 02:30 GMT.
+    expect(formToInput(withStartZone(v, 'Europe/London'), TZ, event).start).toBe('2026-10-25T02:30:00.000Z')
+  })
+
+  it('measures the length across zones', () => {
+    const across = { ...base, startDate: '2026-10-28', startTime: '10:00', startZone: 'Europe/Berlin', endDate: '2026-10-28', endTime: '13:00', endZone: 'America/New_York' }
+    expect(formDuration(across, TZ)).toEqual({ minutes: 480 })
+    // A row in a zone the browser doesn't know is in the browser's.
+    expect(formDuration({ ...across, startZone: 'Mars/Olympus' }, TZ)).toEqual({ minutes: 480 })
+  })
+
+  it('refuses an end before the start across zones', () => {
+    const across = { ...base, startDate: '2026-10-28', startTime: '10:00', startZone: 'Europe/Berlin', endDate: '2026-10-28', endZone: 'America/New_York' }
+    // 03:00 in New York is 08:00 in Berlin.
+    const r = eventFormSchema.safeParse({ ...across, endTime: '03:00' })
+    expect(r.error?.issues.map((i) => [i.message, i.path[0]])).toEqual([['validation.endBeforeStart', 'endDate']])
+    expect(formDuration({ ...across, endTime: '03:00' }, TZ)).toBeNull()
+    // 05:00 in New York is 10:00 in Berlin.
+    expect(eventFormSchema.safeParse({ ...across, endTime: '05:00' }).success).toBe(true)
+    // 16:00 in New York is after 20:00 in Berlin, though its clock reads earlier.
+    expect(eventFormSchema.safeParse({ ...across, startTime: '20:00', endTime: '16:00' }).success).toBe(true)
   })
 })
 
@@ -352,29 +544,29 @@ describe('shiftEnd', () => {
 
 describe('formDuration', () => {
   it('measures timed events in minutes, across midnight too', () => {
-    expect(formDuration(base)).toEqual({ minutes: 30 })
-    expect(formDuration({ ...base, startTime: '23:15', endDate: '2026-03-29', endTime: '01:00' })).toEqual({ minutes: 105 })
+    expect(formDuration(base, TZ)).toEqual({ minutes: 30 })
+    expect(formDuration({ ...base, startTime: '23:15', endDate: '2026-03-29', endTime: '01:00' }, TZ)).toEqual({ minutes: 105 })
   })
 
   it('measures wall-clock time across a DST change', () => {
     // Berlin skips 02:00-03:00 on 2026-03-29; the form still shows two hours.
-    expect(formDuration({ ...base, startDate: '2026-03-29', startTime: '01:00', endDate: '2026-03-29', endTime: '03:00' })).toEqual({
+    expect(formDuration({ ...base, startDate: '2026-03-29', startTime: '01:00', endDate: '2026-03-29', endTime: '03:00' }, TZ)).toEqual({
       minutes: 120,
     })
   })
 
   it('counts the days of all-day events, the last day included', () => {
-    expect(formDuration({ ...base, allDay: true })).toEqual({ days: 1 })
-    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-30' })).toEqual({ days: 3 })
+    expect(formDuration({ ...base, allDay: true }, TZ)).toEqual({ days: 1 })
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-30' }, TZ)).toEqual({ days: 3 })
   })
 
   it('has no duration while the end lies before the start or a value is invalid', () => {
-    expect(formDuration({ ...base, endTime: '08:00' })).toBeNull()
-    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-27' })).toBeNull()
-    expect(formDuration({ ...base, endDate: '' })).toBeNull()
-    expect(formDuration({ ...base, startTime: '9' })).toBeNull()
-    expect(formDuration({ ...base, startDate: '2026-02-31' })).toBeNull()
-    expect(formDuration({ ...base, allDay: true, endDate: '2026-04-31' })).toBeNull()
+    expect(formDuration({ ...base, endTime: '08:00' }, TZ)).toBeNull()
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-03-27' }, TZ)).toBeNull()
+    expect(formDuration({ ...base, endDate: '' }, TZ)).toBeNull()
+    expect(formDuration({ ...base, startTime: '9' }, TZ)).toBeNull()
+    expect(formDuration({ ...base, startDate: '2026-02-31' }, TZ)).toBeNull()
+    expect(formDuration({ ...base, allDay: true, endDate: '2026-04-31' }, TZ)).toBeNull()
   })
 })
 

@@ -309,12 +309,13 @@ export type OffRule = 'counts' | 'moves' | 'stays'
  * `stays` for an event of a series of dates, an exception (`override`), and
  * an event whose place in the series, its RECURRENCE-ID (`eventRuleStart`),
  * is no date of the old rule, such as an extra date or a start set off the
- * rule; else `moves`. The old rule is read as the repeat editor reads it.
+ * rule; else `moves`. The old rule is read as the repeat editor reads it, on
+ * the wall clock of `timeZone`, the zone of the event's start (FR-18).
  */
 export function eventOffRule(event: CalEvent | undefined, weekStartsOn: WeekStart, timeZone: string): OffRule {
   if (!event?.recurring) return 'counts'
   if (!event.rrule || event.override) return 'stays'
-  const at = eventRuleStart(event)
+  const at = eventRuleStart(event, undefined, undefined, timeZone)
   return startMatches(modelFromRule(event.rrule, at, timeZone).model, at, weekStartsOn) ? 'moves' : 'stays'
 }
 

@@ -185,6 +185,9 @@ export function eventForm(title: string, calendarId: string, when: EventWhen): E
     description: '',
     recurrence: 'none',
     customRule: '',
+    // No zone until one is picked (FR-18).
+    startZone: '',
+    endZone: '',
   }
 }
 

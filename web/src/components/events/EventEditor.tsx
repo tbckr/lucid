@@ -38,7 +38,6 @@ import {
   keepsRuleAndAllDay,
   occurrenceInput,
   shiftEnd,
-  shownRule,
   type EventFormValues,
 } from '@/lib/eventForm'
 import { type CalEvent } from '@/lib/events'
@@ -47,7 +46,7 @@ import { browserTimeZone } from '@/lib/locale'
 import { chooseCalendar, eventForm, switchDraft, writableFor } from '@/lib/quickCreate'
 import { eventOffRule } from '@/lib/recurrence'
 import { RECURRENCE_PRESETS } from '@/lib/rrule'
-import { eventRuleClock, eventRuleStart } from '@/lib/seriesShift'
+import { eventRuleStart } from '@/lib/seriesShift'
 import {
   eventScopeHint,
   eventScopeItems,
@@ -140,8 +139,6 @@ function EditorForm({
   const askedBefore = useRef(false)
   // The editor's values when it opened, to tell whether the rule or the all-day flag changed (FR-17).
   const initial = event ? editFormValues(event, tz) : null
-  // Where a series' rule recurs, if it doesn't read the same on the browser's wall clock (FR-18).
-  const recursOn = event?.recurring && shownRule(event, tz) === null ? eventRuleClock(event) : null
   // What a changed repeat does to this event where it doesn't fall on it, which the repeat editor says (#11).
   const offRule = eventOffRule(event, prefs.weekStartsOn, tz)
   // After a save refused as a conflict (FR-09): the ETag the event has now, `undefined` where the
@@ -168,14 +165,14 @@ function EditorForm({
     reValidateMode: 'onChange',
   })
   const { register, control, handleSubmit, setValue, getValues, setFocus, subscribe, formState } = form
-  const [allDay, recurrence, customRule, calendarId, startDate, startTime, endDate, endTime] = useWatch({
+  const [allDay, recurrence, customRule, calendarId, startDate, startTime, endDate, endTime, startZone, endZone] = useWatch({
     control,
-    name: ['allDay', 'recurrence', 'customRule', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime'],
+    name: ['allDay', 'recurrence', 'customRule', 'calendarId', 'startDate', 'startTime', 'endDate', 'endTime', 'startZone', 'endZone'],
   })
   const pending = create.isPending || update.isPending || updateOccurrence.isPending || updateFollowing.isPending
   const colors = colorsOf(calendarId)
   const calendar = calendars.find((c) => c.id === calendarId)
-  const duration = formDuration({ allDay, startDate, startTime, endDate, endTime })
+  const duration = formDuration({ allDay, startDate, startTime, endDate, endTime, startZone, endZone }, tz)
   // The start as far as it can be read: while its field holds text it couldn't read, the last one that
   // could, which the end keeps its length from (FR-09).
   const readStart = useReadableStart(startDate, startTime, isFormDate(startDate) && (allDay || isFormTime(startTime)))
@@ -587,7 +584,6 @@ function EditorForm({
             timeZone={tz}
             presets={RECURRENCE_PRESETS}
             customizable
-            recursOn={recursOn}
             explicit={event?.recurring ?? false}
             offRule={offRule}
           />

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { type TaskDates, type TaskRepeat } from './calendarTasks'
 import { eventRuleClock, eventRuleStart, moveAllRefusal, ruleInZone, seriesShift, taskMoveRefusal, taskRuleClock } from './seriesShift'
+import { wallDate } from './zones'
 import { todo } from '@/test/fixtures'
 
 /** One row of the shared case table (FR-17), also read by the Go test. */
@@ -561,6 +562,29 @@ describe('eventRuleStart', () => {
     expect(eventRuleStart({ allDay: false, startsAt: new Date(2026, 10, 9, 10) }, new Date(2026, 10, 12, 8), false)).toEqual(
       new Date(2026, 10, 12, 8),
     )
+  })
+
+  // FR-17, FR-18: the event of 10 November of a series at 18:00 in New York, read on New York's wall clock,
+  // where it is on Tuesday, not on Berlin's, where it is on Wednesday.
+  describe('in the zone given', () => {
+    const NY = 'America/New_York'
+    const ny = { allDay: false, startsAt: new Date('2026-11-10T23:00:00Z'), recurrenceId: '2026-11-10T23:00:00Z' }
+    const fields = (d: Date) => [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()]
+
+    it('places the event on the wall clock of that zone', () => {
+      expect(fields(eventRuleStart(ny, wallDate(new Date('2026-11-17T23:00:00Z'), NY), false, NY))).toEqual([2026, 11, 17, 18, 0])
+      expect(fields(eventRuleStart(ny, undefined, undefined, NY))).toEqual([2026, 11, 10, 18, 0])
+      // A single event too.
+      expect(fields(eventRuleStart({ allDay: false, startsAt: ny.startsAt }, undefined, undefined, NY))).toEqual([2026, 11, 10, 18, 0])
+    })
+
+    it('moves an exception by the dates of that zone', () => {
+      // Moved to 10:00 on the same Tuesday in New York (16:00 in Berlin), and made all-day there: its
+      // place in the rule is that Tuesday, a day before the Wednesday it is in Berlin.
+      const moved = { ...ny, startsAt: new Date('2026-11-10T15:00:00Z') }
+      expect(fields(eventRuleStart(moved, new Date(2026, 10, 10), true, NY))).toEqual([2026, 11, 10, 0, 0])
+      expect(fields(eventRuleStart(moved, new Date(2026, 10, 10), true))).toEqual([2026, 11, 11, 0, 0])
+    })
   })
 })
 

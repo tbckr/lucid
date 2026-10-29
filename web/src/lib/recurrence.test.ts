@@ -202,6 +202,24 @@ describe('eventOffRule', () => {
   ])('%s: %s', (_name, event, want) => {
     expect(eventOffRule(event && toCalEvent(apiEvent(event)), 1, TZ)).toBe(want)
   })
+
+  // FR-17, FR-18: a series on Tuesdays and Thursdays at 18:00 in New York, whose event of 10 November is on
+  // Wednesday in Berlin, is read in its own zone.
+  it('reads the event in the zone given', () => {
+    const ny = toCalEvent(
+      apiEvent({
+        recurring: true,
+        rrule: 'FREQ=WEEKLY;BYDAY=TU,TH',
+        start: '2026-11-10T23:00:00Z',
+        end: '2026-11-11T00:00:00Z',
+        timezone: 'America/New_York',
+        endTimezone: 'America/New_York',
+        recurrenceId: '2026-11-10T23:00:00Z',
+      }),
+    )
+    expect(eventOffRule(ny, 1, 'America/New_York')).toBe('moves')
+    expect(eventOffRule(ny, 1, TZ)).toBe('stays')
+  })
 })
 
 describe('skipHint', () => {
