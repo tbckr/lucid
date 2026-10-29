@@ -79,8 +79,10 @@ export async function deleteTestTasks(page: Page): Promise<void> {
 /**
  * Create a task through the API in the "Tasks" calendar, the way the editor
  * saves one: `due` (and `start`) are wire dates, UTC midnight for all-day
- * values, and a timed repeat recurs in the browser's time zone. The title
- * must start with "E2E ", so that `deleteTestTasks` removes it again.
+ * values; a timed repeat recurs in the browser's time zone, and a single
+ * task has none, in UTC, unless `timezone` names one, as another app's
+ * would (FR-18). The title must start with "E2E ", so that
+ * `deleteTestTasks` removes it again.
  */
 export async function createTestTask(
   page: Page,
@@ -98,7 +100,7 @@ export async function createTestTask(
   const tasks = calendars.find((c) => c.name === 'Tasks')
   if (!tasks) throw new Error('calendar Tasks not found')
 
-  const timezone = body.timezone ?? (await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone))
+  const timezone = body.timezone ?? (body.rrule && !body.dueAllDay ? await browserZone(page) : undefined)
   const res = await api.post(`/api/v1/calendars/${tasks.id}/todos`, {
     headers: { 'X-CSRF-Token': session.csrfToken },
     data: {
@@ -113,7 +115,7 @@ export async function createTestTask(
       priority: 0,
       status: 'NEEDS-ACTION',
       ...(body.rrule === undefined ? {} : { rrule: body.rrule }),
-      timezone,
+      ...(timezone === undefined ? {} : { timezone }),
     },
   })
   await expect(res).toBeOK()
@@ -123,9 +125,10 @@ export async function createTestTask(
 
 /**
  * Create an event through the API in the "Work" calendar, the way the editor
- * saves one: `start` and `end` are wire dates, and a repeat recurs in the
- * browser's time zone, or in `timezone`, as another app's would. The title
- * must start with "E2E ", so that `deleteTestEvents` removes it again.
+ * saves one: `start` and `end` are wire dates; a repeat recurs in the
+ * browser's time zone, and a single event has none, in UTC, unless
+ * `timezone` names one, as another app's would (FR-18). The title must start
+ * with "E2E ", so that `deleteTestEvents` removes it again.
  */
 export async function createTestEvent(
   page: Page,
@@ -143,12 +146,17 @@ export async function createTestEvent(
   const work = calendars.find((c) => c.name === 'Work')
   if (!work) throw new Error('calendar Work not found')
 
-  const timezone = zone ?? (await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone))
+  const timezone = zone ?? (body.rrule ? await browserZone(page) : undefined)
   const res = await api.post(`/api/v1/calendars/${work.id}/events`, {
     headers: { 'X-CSRF-Token': session.csrfToken },
-    data: { ...body, description: '', location: '', allDay: false, timezone },
+    data: { ...body, description: '', location: '', allDay: false, ...(timezone === undefined ? {} : { timezone }) },
   })
   await expect(res).toBeOK()
+}
+
+/** The time zone the page's browser reports. */
+function browserZone(page: Page): Promise<string> {
+  return page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
 }
 
 /** The month grid of the main view. */
