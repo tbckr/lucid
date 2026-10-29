@@ -408,8 +408,8 @@ function EditorForm({
   // A new zone is the whole series', all events' or the following ones' (FR-17, FR-18), said before Save asks.
   const seriesZone = !!occurrence && !allDay && !!initial && zonesChanged({ startZone, endZone }, initial)
   const zoneNotes = described(yourZone && `${id}-in-your-zone`, seriesZone && `${id}-series-zone`)
-  // The ✕ of a zone field: no zone for a single event, the browser's for a series, which needs one (FR-18); none on a
-  // row of a new series without a zone, which a save gives the browser's anyway.
+  // The ✕ of a zone field: no zone for a single event, the browser's for a series, which needs one (FR-18). A row
+  // without a zone has no ✕: a save gives it none in a single event and the browser's in a series, as the ✕ would.
   const clearZoneTo = (zone: string) => (recurrence !== 'none' && zone !== '' ? tz : '')
 
   const titleError = err('title')

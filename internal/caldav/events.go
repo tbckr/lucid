@@ -669,12 +669,16 @@ func shownFrom(cal *ical.Calendar, master *ical.Component, t time.Time) time.Tim
 //   - otherwise, for a single event and a series whose rule goes (rr == ""):
 //     the fields and dates of in, as entered, in the forms DTSTART and DTEND
 //     have, or those the zones in names (see formFor, endFormFor, FR-18),
-//     and both are nil.
+//     and both are nil. A series saved without instanceStart is written so
+//     too.
 //
 // A series stays in its zone and form, whatever else changes, unless in
 // names another start zone: then it moves into that zone by its wall clock,
-// see seriesFormsFor and wallShift (FR-17, FR-18). A VTIMEZONE the change
-// leaves without a TZID referring to it goes (see pruneVTimezones).
+// see seriesFormsFor and wallShift (FR-17, FR-18). Without instanceStart, it
+// has no event to move from, and a series that keeps a rule and names another
+// start zone is refused with domain.ErrInvalidInput (see rezonesTimed). A
+// VTIMEZONE the change leaves without a TZID referring to it goes (see
+// pruneVTimezones).
 //
 // A move the series cannot follow is domain.ErrSeriesMoveUnsupported, see
 // moveSeries, and cal may be changed in part then: the caller writes nothing.
@@ -790,6 +794,13 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 			bumpChangeProps(ov, now)
 		}
 	default:
+		if rr != "" && isRecurring(master) && tmErr == nil && rezonesTimed(oldTm.start, in) {
+			// A series saved without instanceStart has no event to move its
+			// references from: refused rather than DTSTART written in the new
+			// zone next to EXDATE, RDATE and RECURRENCE-ID in the old one,
+			// which other clients drop or refuse (FR-17, FR-18).
+			return nil, nil, errZoneWithoutInstance
+		}
 		if rr == "" {
 			removeRecurrence(cal, master)
 		}
@@ -802,6 +813,20 @@ func applySeriesEdit(cal *ical.Calendar, master *ical.Component, in domain.Event
 	}
 	pruneVTimezones(cal)
 	return instance, moved, nil
+}
+
+// errZoneWithoutInstance refuses a new start zone for a recurring event saved
+// without instanceStart, see applySeriesEdit (FR-17, FR-18).
+var errZoneWithoutInstance error = &domain.ValidationError{
+	Msg: "the time zone of a recurring event changes only with instanceStart",
+}
+
+// rezonesTimed reports whether in names another zone for the timed start st
+// and keeps it timed: a zone change, judged as formFor judges it (see
+// sentIsKept), so the zone st is in, however its TZID is spelled, is none
+// (FR-18). A date has no zone to change.
+func rezonesTimed(st dateValue, in domain.EventInput) bool {
+	return !st.allDay && !in.AllDay && in.Timezone != nil && !sentIsKept(*in.Timezone, st.form())
 }
 
 // seriesForms are the forms "all events" writes a series' DTSTART and DTEND

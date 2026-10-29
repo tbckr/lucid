@@ -346,6 +346,12 @@ recurs in its `DTSTART`'s. A `VTIMEZONE` no `TZID` refers to any more goes
   UTC; an all-day series, or one made all-day, takes none: its `DTSTART` and
   `DTEND` stay dates, whatever zones are sent. A `VTIMEZONE` no
   `TZID` refers to any more goes (FR-17, FR-18).
+- `400 invalid_input`, and nothing is written, where a timed recurring event
+  saved without `instanceStart`, and with a rule, has a `timezone` that
+  names another zone than its `DTSTART`'s (see "Time zone"): a series
+  changes its zone through `instanceStart`, from whose occurrence its
+  `EXDATE`, `RDATE` and `RECURRENCE-ID` move along; without it, they would
+  stay in the old zone next to `DTSTART` in the new one.
 - `409 conflict`, and nothing is written, where `instanceStart` is no longer
   an occurrence of the series: neither an event of its rule nor one with an
   override, as in a view not reloaded since the series changed, such as

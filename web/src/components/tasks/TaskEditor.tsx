@@ -654,8 +654,8 @@ export function TaskEditor({
               onChange={(next) => {
                 setZone(which, next)
               }}
-              // The ✕: no zone for a single task, the browser's for a series, which needs one; none on a row of a new
-              // series without a zone, which a save gives the browser's anyway.
+              // The ✕: no zone for a single task, the browser's for a series, which needs one (FR-18). A row without a
+              // zone has no ✕: a save gives it none in a single task and the browser's in a series, as the ✕ would.
               clearTo={recurrence !== 'none' && zone !== '' ? tz : ''}
               browserZone={tz}
               date={date}

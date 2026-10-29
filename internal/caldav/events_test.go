@@ -3021,6 +3021,105 @@ func TestUpdateSeriesEndZone(t *testing.T) {
 	}
 }
 
+// TestUpdateSeriesEndZoneKeepsStartWithoutZone checks that "all events"
+// naming the end's zone alone, as the editor sends a changed end of a series
+// it shows in UTC, keeps a DTSTART without a zone Lucid reads, floating or in
+// a TZID it can't resolve, and its EXDATE, as they are written, rather than
+// moving them into UTC for every other app (FR-17, FR-18).
+func TestUpdateSeriesEndZoneKeepsStartWithoutZone(t *testing.T) {
+	t.Parallel()
+	for name, prop := range map[string]func(name, value string) string{
+		"floating":     func(name, v string) string { return name + ":" + v },
+		"unknown tzid": func(name, v string) string { return name + ";TZID=W. Europe Standard Time:" + v },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics",
+				"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Call",
+				prop("DTSTART", "20260317T180000"), prop("DTEND", "20260317T190000"),
+				"RRULE:FREQ=WEEKLY", prop("EXDATE", "20260324T180000"), "END:VEVENT")
+			ev := listedAt(t, e, "work", date(2026, 3, 31, 18, 0), date(2026, 3, 31, 0, 0), date(2026, 4, 1, 0, 0))
+			if ev.Timezone != "" {
+				t.Fatalf("timezone = %q, want none", ev.Timezone)
+			}
+			// The end at 19:00 as shown, in New York.
+			in := seriesUpdate(ev, "Call", "", ev.Start, date(2026, 3, 31, 23, 0))
+			in.EndTimezone = ptr("America/New_York")
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			mustNoErr(t, err)
+			checkStored(t, "series", stored(t, e, "work", "series.ics"),
+				[]string{
+					prop("DTSTART", "20260317T180000") + "\r\n", prop("EXDATE", "20260324T180000") + "\r\n",
+					"DTEND;TZID=America/New_York:20260317T190000",
+				},
+				[]string{"DTSTART:20260317T180000Z", "EXDATE:20260324T180000Z"})
+		})
+	}
+}
+
+// TestUpdateSeriesZoneWithoutInstanceStart checks that a series saved
+// without instanceStart that names another start zone is refused with
+// nothing written: its references can't move with it, and DTSTART in one zone
+// next to EXDATE and RECURRENCE-ID in another is what other clients drop or
+// refuse. The zone it has, an end zone alone, and a save that removes the
+// rule go through (FR-17, FR-18).
+func TestUpdateSeriesZoneWithoutInstanceStart(t *testing.T) {
+	t.Parallel()
+	exception := []string{
+		"BEGIN:VEVENT", "UID:series", "DTSTAMP:20260101T000000Z", "SUMMARY:Moved",
+		"RECURRENCE-ID;TZID=America/New_York:20260319T180000",
+		"DTSTART;TZID=America/New_York:20260319T200000", "DTEND;TZID=America/New_York:20260319T210000",
+		"END:VEVENT",
+	}
+	// The series' own start and end, 18:00 to 19:00 in New York on 2026-03-17.
+	start, end := date(2026, 3, 17, 22, 0), date(2026, 3, 17, 23, 0)
+	tests := []struct {
+		name          string
+		rrule         string
+		timezone, end *string
+		refused       bool
+		has           []string
+	}{
+		{name: "another zone", rrule: "FREQ=WEEKLY;BYDAY=TU,TH", timezone: ptr("Europe/Berlin"), refused: true},
+		{name: "UTC", rrule: "FREQ=WEEKLY;BYDAY=TU,TH", timezone: ptr(""), refused: true},
+		{
+			name: "its zone", rrule: "FREQ=WEEKLY;BYDAY=TU,TH", timezone: ptr("America/New_York"),
+			has: []string{"DTSTART;TZID=America/New_York:20260317T180000", "EXDATE;TZID=America/New_York:20260324T180000"},
+		},
+		{
+			name: "an end zone alone", rrule: "FREQ=WEEKLY;BYDAY=TU,TH", end: ptr("Asia/Tokyo"),
+			has: []string{"DTSTART;TZID=America/New_York:20260317T180000", "DTEND;TZID=Asia/Tokyo:20260318T080000"},
+		},
+		{
+			name: "rule removed", timezone: ptr("Europe/Berlin"),
+			has: []string{"DTSTART;TZID=Europe/Berlin:20260317T230000"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, caldavtest.Options{})
+			id := e.put(t, "work", "series.ics", nySeries([]string{"EXDATE;TZID=America/New_York:20260324T180000"}, exception...)...)
+			before := stored(t, e, "work", "series.ics")
+			ev := listedAt(t, e, "work", start, date(2026, 3, 17, 0, 0), date(2026, 3, 18, 0, 0))
+			in := domain.EventInput{
+				Title: "Call", Start: start, End: end, RRule: tt.rrule, Timezone: tt.timezone, EndTimezone: tt.end,
+			}
+			_, _, err := e.svc.UpdateEvent(t.Context(), id, ev.ETag, in)
+			if tt.refused {
+				mustErr(t, err, domain.ErrInvalidInput)
+				if after := stored(t, e, "work", "series.ics"); after != before {
+					t.Errorf("stored after a refused save:\n%s\nwant as before:\n%s", after, before)
+				}
+				return
+			}
+			mustNoErr(t, err)
+			checkStored(t, "series", stored(t, e, "work", "series.ics"), tt.has, nil)
+		})
+	}
+}
+
 // TestMoveSeriesKeepsEndZone checks that "all events" moved and lengthened
 // without zones writes the new DTEND in the zone DTEND has, not in
 // DTSTART's (FR-17, FR-18).

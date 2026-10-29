@@ -6,7 +6,7 @@ import { type CalEvent } from './events'
 import { type Duration } from './format'
 import { browserTimeZone } from './locale'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
-import { fieldZone, sameZone } from './zones'
+import { fieldZone, sameZone, sentZone } from './zones'
 
 /**
  * Event editor form. Messages are i18n keys resolved by the form.
@@ -174,13 +174,17 @@ export function keepsRuleAndAllDay(values: EventFormValues, initial: EventFormVa
 /**
  * Convert form values to the API payload (FR-17, FR-18). `event` is set when
  * editing. Each row's fields are read in its field's zone (`fieldZone`).
- * Zones go out only with a change, `timezone` and `endTimezone` together, as
- * the server takes a zone sent back unchanged as no change: where a row's
- * zone differs from the one the editor opened with, or where a timed series
- * is made (new, from a single event, or from an all-day one) and a row has
- * no zone. A row without one is then sent as the browser's zone for a series,
- * which needs a zone to keep its time across summer time, and as "" (UTC) for
- * a single event. An all-day event has none.
+ * A zone goes out only where it changes, as an absent one keeps the zone and
+ * form the server has: the start's (`timezone`) where its row's zone differs
+ * from the one the editor opened with, or where a timed series is made (new,
+ * from a single event, or from an all-day one) and the row has no zone; the
+ * end's (`endTimezone`) likewise, and whenever the start's goes, as an absent
+ * end follows a start zone sent. A series without a start zone the editor
+ * shows in UTC thus stays as it is where only its end's zone changes. A row
+ * without a zone is sent as the browser's zone for a series, which needs a
+ * zone to keep its time across summer time, and as "" (UTC) for a single
+ * event; a changed zone that names UTC as `PICKED_UTC`, a UTC picked, which
+ * is stored as such. An all-day event has none.
  */
 export function formToInput(v: EventFormValues, browserZone: string, event?: CalEvent): EventInput {
   const initial = event ? editFormValues(event, browserZone) : undefined
@@ -224,10 +228,12 @@ export function formToInput(v: EventFormValues, browserZone: string, event?: Cal
   // A series after the save: one with a rule, or a series of dates that keeps its dates (FR-17).
   const series = rrule !== '' || (event?.recurring === true && v.recurrence !== 'none')
   const madeSeries = series && (!event?.recurring || initial?.allDay === true)
-  const zoned =
-    !v.allDay &&
-    (zonesChanged(v, initial ?? { startZone: '', endZone: '' }) || (madeSeries && (v.startZone === '' || v.endZone === '')))
-  const sent = (zone: string) => (zone === '' && series ? browserZone : zone)
+  const opened = initial ?? { startZone: '', endZone: '' }
+  const startChanged = !sameZone(v.startZone, opened.startZone)
+  const endChanged = !sameZone(v.endZone, opened.endZone)
+  const sendStart = !v.allDay && (startChanged || (madeSeries && v.startZone === ''))
+  const sendEnd = !v.allDay && (sendStart || endChanged || (madeSeries && v.endZone === ''))
+  const sent = (zone: string, changed: boolean) => sentZone(zone, changed, series, browserZone)
   return {
     title: v.title.trim(),
     description: v.description,
@@ -235,7 +241,8 @@ export function formToInput(v: EventFormValues, browserZone: string, event?: Cal
     start: start.toISOString(),
     end: end.toISOString(),
     allDay: v.allDay,
-    ...(zoned ? { timezone: sent(v.startZone), endTimezone: sent(v.endZone) } : {}),
+    ...(sendStart ? { timezone: sent(v.startZone, startChanged) } : {}),
+    ...(sendEnd ? { endTimezone: sent(v.endZone, endChanged) } : {}),
     rrule,
     ...(event?.recurring && event.recurrenceId ? { instanceStart: event.recurrenceId } : {}),
   }

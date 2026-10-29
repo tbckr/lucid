@@ -45,6 +45,22 @@ export function sameZone(a: string, b: string): boolean {
   return canonicalZone(a) === canonicalZone(b)
 }
 
+/**
+ * What a save sends for a row in `zone` (FR-18): a row without a zone as `browserZone` in a `series`, which needs a
+ * zone to keep its time across summer time, and as "" (UTC) in a single item; a zone the row was `changed` to that
+ * names UTC as `PICKED_UTC`, so that it is stored as picked, as a browser that reports UTC offers its "UTC" where
+ * you are now, rather than read back as none; any other as it is, so a UTC sent back unchanged keeps its form.
+ */
+export function sentZone(zone: string, changed: boolean, series: boolean, browserZone: string): string {
+  if (zone === '') return series ? browserZone : ''
+  return changed && namesUtc(zone) ? PICKED_UTC : zone
+}
+
+/** Whether `zone` is a name of UTC ("UTC", "Etc/UTC", "GMT", ...), also in an engine whose Intl gives them no one name. */
+function namesUtc(zone: string): boolean {
+  return UTC_NAMES.has(zone) || canonicalZone(zone) === 'UTC'
+}
+
 /** Whether Intl can format in `zone`; false for "". */
 export function knownZone(zone: string): boolean {
   return resolve(zone) !== null
@@ -71,7 +87,7 @@ export function inOtherZone(zone: string, browserZone: string): boolean {
  * `America/New_York`, "Buenos Aires" for `America/Argentina/Buenos_Aires`. Every name of UTC is "UTC".
  */
 export function zoneCity(zone: string): string {
-  if (UTC_NAMES.has(zone) || canonicalZone(zone) === 'UTC') return 'UTC'
+  if (namesUtc(zone)) return 'UTC'
   return (zone.split('/').pop() ?? zone).replaceAll('_', ' ')
 }
 

@@ -6,7 +6,7 @@ import { dayKey, isFormDate, isFormTime, localDateToUtc, parseDayKey, utcToZoned
 import { browserTimeZone } from './locale'
 import { buildRRule, fitUntil, recurrenceFromRRule, type Recurrence } from './rrule'
 import { todoToInput } from './tasks'
-import { fieldZone, sameZone } from './zones'
+import { fieldZone, sameZone, sentZone } from './zones'
 
 // A date or time the task may leave out: empty, or as the forms hold it (FR-09).
 const optionalDate = z.string().refine((v) => v === '' || isFormDate(v), 'validation.date')
@@ -233,15 +233,19 @@ export function withTaskStartZone(v: TaskFormValues, zone: string): TaskFormValu
  * the editor opened it keeping its instant (#10). A changed repeat is written
  * as built, its UNTIL in the zone of the date it recurs from.
  *
- * Zones go out only with a change, `timezone` and `dueTimezone` together, as
- * the server takes a zone sent back unchanged as no change: where a row's
- * zone differs from the one the editor opened with, or where a timed series
- * is made (new, from a single task, or from one without a time) and a timed
- * row has no zone. A row without one is then sent as the browser's zone for a
- * series, which needs a zone to keep its time across summer time, and as ""
- * (UTC) for a single task. `timezone` is the start's, the due's for a task
- * without a start, where it names DUE's zone as `dueTimezone` does; a task
- * without a time sends none.
+ * A zone goes out only where it changes, as an absent one keeps the zone and
+ * form the server has: a timed row's where its zone differs from the one the
+ * editor opened with, or where a timed series is made (new, from a single
+ * task, or from one without a time) and the row has no zone. `timezone` is
+ * the start's; `dueTimezone` goes where the due's does and whenever
+ * `timezone` goes, as an absent due follows a start zone sent. A series
+ * without a start zone the editor shows in UTC thus stays as it is where only
+ * its due's zone changes. For a task without a timed start, `timezone` names
+ * DUE's zone, and goes with `dueTimezone`, the same. A row without a zone is
+ * sent as the browser's zone for a series, which needs a zone to keep its
+ * time across summer time, and as "" (UTC) for a single task; a changed zone
+ * that names UTC as `PICKED_UTC`, a UTC picked, which is stored as such. A
+ * task without a time sends none.
  */
 export function formToTodoInput(v: TaskFormValues, browserZone: string, original?: Todo, opened?: TaskDates): TodoInput {
   const openedDates = opened ?? original
@@ -268,12 +272,17 @@ export function formToTodoInput(v: TaskFormValues, browserZone: string, original
   const timedStart = start.value !== null && !start.allDay
   const timedDue = due.value !== null && !due.allDay
   const madeTimedSeries = series && (!original?.recurring || !openedDates || !hasTime(openedDates))
-  const zoned =
-    (timedStart || timedDue) &&
-    (taskZonesChanged(v, openedZones) ||
-      (madeTimedSeries && ((timedStart && v.startZone === '') || (timedDue && v.dueZone === ''))))
-  const sent = (zone: string) => (zone === '' && series ? browserZone : zone)
-  const anchor = sent(v.startDate ? v.startZone : v.dueZone)
+  const startChanged = !sameZone(v.startZone, openedZones.startZone)
+  const dueChanged = !sameZone(v.dueZone, openedZones.dueZone)
+  const sendDue = timedDue && (dueChanged || (madeTimedSeries && v.dueZone === ''))
+  const sendStart = timedStart ? startChanged || (madeTimedSeries && v.startZone === '') : sendDue
+  const sent = (zone: string, changed: boolean) => sentZone(zone, changed, series, browserZone)
+  const anchor = timedStart ? sent(v.startZone, startChanged) : sent(v.dueZone, dueChanged)
+  const zones = sendStart
+    ? { timezone: anchor, dueTimezone: timedStart && v.dueDate ? sent(v.dueZone, dueChanged) : anchor }
+    : sendDue
+      ? { dueTimezone: sent(v.dueZone, dueChanged) }
+      : {}
   return {
     title: v.title.trim(),
     description: v.description,
@@ -286,7 +295,7 @@ export function formToTodoInput(v: TaskFormValues, browserZone: string, original
     status: v.completed ? 'COMPLETED' : keepStatus,
     // Absent keeps the stored rule, "" removes it (FR-17).
     ...(rrule !== null ? { rrule } : {}),
-    ...(zoned ? { timezone: anchor, dueTimezone: v.dueDate ? sent(v.dueZone) : anchor } : {}),
+    ...zones,
   }
 }
 

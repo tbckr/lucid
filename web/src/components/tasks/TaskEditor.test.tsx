@@ -274,11 +274,10 @@ describe('TaskEditor', () => {
     expect(within(dialog).getByRole('combobox', { name: 'Due time' })).toHaveValue('10:00 AM')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-    expect(await saved(fetch)).toMatchObject({
-      due: '2026-10-28T09:00:00.000Z',
-      timezone: 'Europe/Berlin',
-      dueTimezone: 'Europe/Berlin',
-    })
+    // Only the due's zone changed: the start keeps its own on the server.
+    const body = await saved(fetch)
+    expect(body).toMatchObject({ due: '2026-10-28T09:00:00.000Z', dueTimezone: 'Europe/Berlin' })
+    expect(body).not.toHaveProperty('timezone')
   })
 
   // Save leaves the field, which reads what was typed there: no Enter and no Tab first (FR-09).

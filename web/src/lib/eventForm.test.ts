@@ -397,10 +397,54 @@ describe('time zones', () => {
     const moved = withStartZone(v, 'Europe/Berlin')
     expect(moved.endZone).toBe('Asia/Tokyo')
     expect(formToInput(moved, TZ, series)).toMatchObject({ timezone: 'Europe/Berlin', endTimezone: 'Asia/Tokyo' })
-    // A change of one row sends both, the start's as it was.
-    expect(formToInput(v, TZ, series)).toMatchObject({ timezone: 'America/New_York', endTimezone: 'Asia/Tokyo' })
+    // A change of the end alone sends the end's only: the start keeps its zone and form.
+    const endOnly = formToInput(v, TZ, series)
+    expect(zoneKeys(endOnly)).toEqual(['endTimezone'])
+    expect(endOnly.endTimezone).toBe('Asia/Tokyo')
     // Set back to the start's, the end follows it again.
     expect(withStartZone({ ...moved, endZone: 'Europe/Berlin' }, 'Asia/Seoul').endZone).toBe('Asia/Seoul')
+  })
+
+  // A series without a start zone (floating, a TZID Lucid can't resolve) is shown in UTC: sending that back would
+  // write it in UTC for every other app.
+  it('sends no start zone for a series without one whose end zone alone changed', () => {
+    const at = { start: '2026-03-17T18:00:00Z', end: '2026-03-17T19:00:00Z' }
+    const series = toCalEvent(
+      apiEvent({ ...at, timezone: '', endTimezone: '', recurring: true, rrule: 'FREQ=WEEKLY', recurrenceId: at.start }),
+    )
+    const input = formToInput({ ...editFormValues(series, TZ), endZone: 'Asia/Tokyo' }, TZ, series)
+    expect('timezone' in input).toBe(false)
+    expect(input.endTimezone).toBe('Asia/Tokyo')
+    // The start as it was; the end at 19:00 as before, now in Tokyo.
+    expect(input).toMatchObject({ start: '2026-03-17T18:00:00.000Z', end: '2026-03-17T10:00:00.000Z' })
+  })
+
+  it('sends the zone of an unlinked end with a changed start, so it does not follow the start', () => {
+    const series = newYork({ endTimezone: 'Asia/Tokyo', end: '2026-11-11T00:00:00Z' })
+    const v = withStartZone(editFormValues(series, TZ), 'Europe/Berlin')
+    expect(v.endZone).toBe('Asia/Tokyo')
+    expect(formToInput(v, TZ, series)).toMatchObject({ timezone: 'Europe/Berlin', endTimezone: 'Asia/Tokyo' })
+    // An end the series has in UTC goes back as "UTC", which keeps its form, not as a UTC picked.
+    const utcEnd = newYork({ endTimezone: '' })
+    const moved = withStartZone(editFormValues(utcEnd, TZ), 'Europe/Berlin')
+    expect(moved.endZone).toBe('UTC')
+    expect(formToInput(moved, TZ, utcEnd)).toMatchObject({ timezone: 'Europe/Berlin', endTimezone: 'UTC' })
+  })
+
+  // A browser that reports UTC offers it as "Where you are now": picked, it is stored, as every zone picked is.
+  it('sends a changed zone that names UTC as a UTC picked', () => {
+    const single = toCalEvent(apiEvent({ timezone: '', endTimezone: '' }))
+    const v = withStartZone(editFormValues(single, 'UTC'), 'UTC')
+    expect(formToInput(v, 'UTC', single)).toMatchObject({ timezone: PICKED_UTC, endTimezone: PICKED_UTC })
+    const zoned = toCalEvent(apiEvent({ timezone: 'America/New_York', endTimezone: 'America/New_York' }))
+    expect(formToInput({ ...editFormValues(zoned, TZ), endZone: 'GMT' }, TZ, zoned)).toMatchObject({ endTimezone: PICKED_UTC })
+    // Unchanged, it is not sent; the ✕ still sends none.
+    const series = newYork({ timezone: '', endTimezone: '' })
+    expect(zoneKeys(formToInput(editFormValues(series, 'UTC'), 'UTC', series))).toEqual([])
+    expect(formToInput({ ...editFormValues(zoned, 'UTC'), startZone: '', endZone: '' }, 'UTC', zoned)).toMatchObject({
+      timezone: '',
+      endTimezone: '',
+    })
   })
 
   it('tells a changed zone of either row', () => {
