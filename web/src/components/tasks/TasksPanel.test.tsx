@@ -53,8 +53,9 @@ function serve(calendars: Calendar[]) {
 
 const taskTitles = () => screen.getAllByRole('checkbox').map((b) => b.getAttribute('aria-label'))
 
-// jsdom has no layout: the virtualizer reads offsetWidth/offsetHeight of its scroll element and renders no rows at 0.
-const layout = { offsetWidth: 320, offsetHeight: 600 }
+// jsdom has no layout: the virtualizer sizes its scroll element by clientWidth/clientHeight (older versions by
+// offsetWidth/offsetHeight) and its rows by offsetHeight, and renders no rows at 0.
+const layout = { offsetWidth: 320, offsetHeight: 600, clientWidth: 320, clientHeight: 600 }
 const original = Object.fromEntries(
   Object.keys(layout).map((k) => [k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k)]),
 )
@@ -68,7 +69,9 @@ describe('TasksPanel', () => {
 
   afterAll(() => {
     for (const [k, d] of Object.entries(original)) {
+      // clientWidth/clientHeight live on Element.prototype: dropping the stub uncovers them again.
       if (d) Object.defineProperty(HTMLElement.prototype, k, d)
+      else Reflect.deleteProperty(HTMLElement.prototype, k)
     }
   })
 

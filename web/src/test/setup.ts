@@ -22,17 +22,18 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver = ResizeObserverStub
 
-window.matchMedia = (query: string) =>
-  ({
+// Without the deprecated addListener/removeListener: sonner falls back to them only when addEventListener throws.
+window.matchMedia = (query: string) => {
+  const list: Omit<MediaQueryList, 'addListener' | 'removeListener'> = {
     matches: false,
     media: query,
     onchange: null,
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
-    addListener: () => undefined,
-    removeListener: () => undefined,
     dispatchEvent: () => false,
-  }) as MediaQueryList
+  }
+  return list as MediaQueryList
+}
 
 // No real pointers in jsdom: capture is a no-op, tests send the moves to the pressed element.
 Element.prototype.setPointerCapture = () => undefined
