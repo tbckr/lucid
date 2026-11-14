@@ -58,8 +58,10 @@ concurrency:
 
 env:
   # Bumped by hand when upgrading dependencies (`just outdated` shows the
-  # latest release).
-  GOLANGCI_LINT_VERSION: v2.12.2
+  # latest release). Keep it at the version of the dev shell, which takes
+  # golangci-lint from nixpkgs (a nixpkgs bump can move it), or CI and the
+  # Nix workflow's `just lint-go` lint with different rules.
+  GOLANGCI_LINT_VERSION: v2.14.0
   # The version release.yml releases with; keep both in sync.
   GORELEASER_VERSION: v2.18.2
   NODE_VERSION: "24"
