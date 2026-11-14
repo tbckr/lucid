@@ -116,7 +116,8 @@ func (e *traceEnv) putEvent(t *testing.T, slug, name string) {
 	t.Helper()
 	if _, err := e.mock.PutObject(e.mock.HomePath()+slug+"/", name, ics(
 		"BEGIN:VEVENT", "UID:"+name, "DTSTAMP:20250301T000000Z", "DTSTART:20250302T100000Z", "DTEND:20250302T110000Z",
-		"SUMMARY:A", "END:VEVENT")); err != nil {
+		"SUMMARY:A", "END:VEVENT",
+	)); err != nil {
 		t.Fatalf("PutObject: %v", err)
 	}
 }

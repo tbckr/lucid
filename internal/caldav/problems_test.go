@@ -546,7 +546,8 @@ func TestProblemInvalidTodo(t *testing.T) {
 	// A rule that has not reached the window after the iterations Lucid allows.
 	objPath, err := r.mock.PutObject(r.calPath("tasks"), canary+"-todo.ics", ics(
 		"BEGIN:VTODO", "UID:"+canary, "DTSTAMP:20250301T000000Z", "DTSTART:20250310T090000Z",
-		"SUMMARY:"+canary+" title", "RRULE:FREQ=SECONDLY", "END:VTODO"))
+		"SUMMARY:"+canary+" title", "RRULE:FREQ=SECONDLY", "END:VTODO",
+	))
 	mustNoErr(t, err)
 
 	_, err = r.svc.ListTodoOccurrences(r.ctx, r.calendarID(t, r.svc, "Tasks"), date(2025, 6, 1, 0, 0), date(2025, 6, 8, 0, 0))

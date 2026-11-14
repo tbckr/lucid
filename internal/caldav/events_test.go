@@ -2310,7 +2310,8 @@ func TestUpdateSeriesNewRuleKeepsEditedException(t *testing.T) {
 	wantStored(t, e, "work", "series.ics", "DTSTART;TZID=Europe/Berlin:20261009T100000")
 	want := slices.Concat(
 		[]occ{{title: "Review with Kim", start: date(2026, 11, 10, 9, 0), end: date(2026, 11, 10, 10, 0), rid: ptr(date(2026, 11, 10, 9, 0))}},
-		seriesEvents("Review", date(2026, 11, 13, 9, 0)))
+		seriesEvents("Review", date(2026, 11, 13, 9, 0)),
+	)
 	checkOccurrences(t, listed(t, e, "work", date(2026, 11, 9, 0, 0), date(2026, 11, 16, 0, 0)), want)
 }
 
