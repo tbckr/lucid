@@ -242,7 +242,7 @@ func (s *Store) Login(oldID string, acct domain.Account) (Session, error) {
 	if err != nil {
 		return Session{}, fmt.Errorf("session: encoding account: %w", err)
 	}
-	nonce := make([]byte, s.aead.NonceSize(), s.aead.NonceSize()+len(plain)+s.aead.Overhead())
+	nonce := make([]byte, s.aead.NonceSize())
 	_, _ = rand.Read(nonce) // never fails since Go 1.24 (it crashes instead)
 	e.sealed = s.aead.Seal(nonce, nonce, plain, []byte(id))
 	clear(plain) // best effort: do not leave the password lying around
