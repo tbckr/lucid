@@ -152,7 +152,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 // newLogger builds the logger of the process: JSON in server mode, text in
 // local mode (NFR-23, FR-35), at cfg.LogLevel, writing to w. Every line logged
 // with a request's context carries that request's ID (NFR-23); that includes
-// the lines of the loggers derived with With.
+// the lines of the loggers derived with With. Both handlers escape control
+// characters in every value, so request data cannot forge a log line; CodeQL's
+// go/log-injection is excluded for that reason (codeql.yml), and a handler
+// that does not escape must not replace them.
 func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
 	var handler slog.Handler = slog.NewJSONHandler(w, opts)

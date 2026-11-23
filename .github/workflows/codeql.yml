@@ -84,6 +84,16 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
           queries: security-extended
+          # go/log-injection does not know that slog's JSON and text handlers
+          # escape every value (CR, LF and other control characters stay
+          # inside one record), so it flags every log attribute that carries
+          # request data. Lucid logs only through those handlers (newLogger in
+          # cmd/lucid; depguard bans the log package), which leaves the query
+          # nothing to find.
+          config: |
+            query-filters:
+              - exclude:
+                  id: go/log-injection
 
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:

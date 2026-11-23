@@ -198,6 +198,16 @@ linters:
               desc: "use crypto/rand (or math/rand/v2 where non-cryptographic randomness is intended)"
             - pkg: github.com/pkg/errors
               desc: "use the standard library errors package with %w"
+        # slog's handlers escape control characters in every value, which is
+        # why CodeQL's go/log-injection is excluded (codeql.yml).
+        slog-only:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - pkg: log$
+              desc: "log through the injected *slog.Logger; its handlers escape what the log package would write raw"
 
   exclusions:
     generated: lax
