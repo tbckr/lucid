@@ -288,8 +288,15 @@ test('dragging the draft of the create popover changes the times it creates', as
   await expect(endTime).toHaveValue('3:00 PM')
 
   // The title kept the focus through the drags.
-  await expect(dialog.getByPlaceholder('Add a title')).toBeFocused()
+  const titleField = dialog.getByPlaceholder('Add a title')
+  await expect(titleField).toBeFocused()
+  // Until 50 ms after a drop, dnd-kit's pointer sensor clears the page's selection whenever it
+  // changes, and Chromium then loses a key typed in the title. A timer of the page as long, set
+  // after the drop, runs after dnd-kit's.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)))
   await page.keyboard.type(title)
+  // A lost key fails here, before an event is created whose title `deleteTestEvents` doesn't know.
+  await expect(titleField).toHaveValue(title)
   await page.keyboard.press('Enter')
   await expect(dialog).toBeHidden()
   const block = page.locator('[data-event-key]', { hasText: title })
