@@ -1358,22 +1358,38 @@ func TestProviderRemembersLoggedProblems(t *testing.T) {
 	}
 }
 
-// panickingObject is iCalendar that go-ical panics on rather than reject: a
-// quoted parameter value followed by more text. The panic's value names the
-// character after the quote, here one of the canary.
-const panickingObject = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + canary + "-uid\r\n" +
+// quotedThenTextObject is iCalendar with a quoted parameter value followed by
+// more text. go-ical up to v0.0.0-20250609112844-439c63cef608 panics on it,
+// later versions reject it; either way the message names the character after
+// the quote, here the first of the canary, as afterQuote.
+const quotedThenTextObject = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\nBEGIN:VEVENT\r\nUID:" + canary + "-uid\r\n" +
 	"DTSTAMP:20250301T000000Z\r\nDTSTART:20250302T100000Z\r\n" +
 	`ATTENDEE;CN="Bob"` + canary + ":mailto:" + canary + "@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+// afterQuote is the character of quotedThenTextObject that go-ical's panic or
+// error names, quoted as it quotes it.
+var afterQuote = strconv.QuoteRune(rune(canary[0]))
 
 func TestDecodeICal(t *testing.T) {
 	t.Parallel()
 	t.Run("a panic of the decoder is an error of fixed wording", func(t *testing.T) {
 		t.Parallel()
-		cal, err := decodeICal([]byte(panickingObject))
+		cal, err := guardDecode(func() (*ical.Calendar, error) {
+			panic(fmt.Errorf("ical: unexpected character %s in %q", afterQuote, canary))
+		})
 		if cal != nil || !errors.Is(err, errDecoderPanic) {
-			t.Fatalf("decodeICal = %v, %v; want nil, errDecoderPanic", cal, err)
+			t.Fatalf("guardDecode = %v, %v; want nil, errDecoderPanic", cal, err)
 		}
 		noCanary(t, "error", err.Error())
+	})
+	t.Run("what the decoder returns stays as it is", func(t *testing.T) {
+		t.Parallel()
+		want := &ical.Calendar{Component: ical.NewComponent(ical.CompCalendar)}
+		errDecode := errors.New("decode")
+		cal, err := guardDecode(func() (*ical.Calendar, error) { return want, errDecode })
+		if cal != want || err != errDecode { //nolint:errorlint // the very error decode returned
+			t.Errorf("guardDecode = %v, %v; want %v, %v", cal, err, want, errDecode)
+		}
 	})
 	t.Run("an error of the decoder stays its own", func(t *testing.T) {
 		t.Parallel()
@@ -1391,15 +1407,28 @@ func TestDecodeICal(t *testing.T) {
 	})
 }
 
-// An object go-ical panics on is one that does not parse: skipped from the
-// listing with a problem, the other objects listed, and nothing of the panic,
-// which names a character of the object, in the log (FR-36, NFR-36).
-func TestProblemDecoderPanicInListing(t *testing.T) {
+// noAfterQuote fails t if the problem's reason or the log shows the character
+// go-ical names for quotedThenTextObject, or the log a panic.
+func noAfterQuote(t *testing.T, pr diag.Problem, log string) {
+	t.Helper()
+	if pr.Reason == "" || strings.Contains(pr.Reason, afterQuote) {
+		t.Errorf("problem reason = %q; want one without %s", pr.Reason, afterQuote)
+	}
+	if strings.Contains(log, afterQuote) || strings.Contains(log, "panic") {
+		t.Errorf("log carries %s or a panic:\n%s", afterQuote, log)
+	}
+}
+
+// An object whose quoted parameter value is followed by more text, which
+// go-ical panics on or rejects, does not parse: skipped from the listing with
+// a problem, the other objects listed, and nothing of the object, not even the
+// character the decoder names, in the problem or the log (FR-36, NFR-36).
+func TestProblemQuotedThenTextInListing(t *testing.T) {
 	t.Parallel()
 	r := newProblemRun(t)
 	r.answerReport("personal",
 		reportObject{"good.ics", canaryEvent("good")},
-		reportObject{canary + "-panic.ics", panickingObject})
+		reportObject{canary + "-quoted.ics", quotedThenTextObject})
 
 	evs, err := r.listEvents(t, "personal")
 
@@ -1408,21 +1437,19 @@ func TestProblemDecoderPanicInListing(t *testing.T) {
 		t.Fatalf("events = %+v; want the one good event", evs)
 	}
 	got := r.problems()
-	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject || got[0].Reason != diag.Reason(errDecoderPanic) {
-		t.Fatalf("problems = %+v; want one unparsable_object with the fixed reason", got)
+	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject {
+		t.Fatalf("problems = %+v; want one unparsable_object", got)
 	}
-	if id, ok := r.p.ids.open(got[0].ObjectID); !ok || id != r.calPath("personal")+canary+"-panic.ics" {
+	if id, ok := r.p.ids.open(got[0].ObjectID); !ok || id != r.calPath("personal")+canary+"-quoted.ics" {
 		t.Errorf("ObjectID decodes to %q, %v; want the object", id, ok)
 	}
 	noCanary(t, "Skeleton", got[0].Skeleton.Text)
-	if out := r.logs.String(); strings.Contains(out, "unexpected character") || strings.Contains(out, "panic") {
-		t.Errorf("log carries the panic:\n%s", out)
-	}
+	noAfterQuote(t, got[0], r.logs.String())
 	noCanary(t, "log", r.logs.String())
 }
 
 // The same for an object read on its own, as a change reads it.
-func TestProblemDecoderPanicOnRead(t *testing.T) {
+func TestProblemQuotedThenTextOnRead(t *testing.T) {
 	t.Parallel()
 	r := newProblemRun(t)
 	objPath := r.putCanaryEvent(t, "personal", canary+"-obj.ics")
@@ -1433,7 +1460,7 @@ func TestProblemDecoderPanicOnRead(t *testing.T) {
 			return false
 		}
 		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = io.WriteString(w, panickingObject)
+		_, _ = io.WriteString(w, quotedThenTextObject)
 		return true
 	})
 
@@ -1443,13 +1470,14 @@ func TestProblemDecoderPanicOnRead(t *testing.T) {
 
 	mustErr(t, err, domain.ErrUpstream)
 	noCanary(t, "error", err.Error())
+	if strings.Contains(err.Error(), afterQuote) {
+		t.Errorf("error = %q; want one without %s", err, afterQuote)
+	}
 	got := r.problems()
-	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject || got[0].Reason != diag.Reason(errDecoderPanic) {
-		t.Fatalf("problems = %+v; want one unparsable_object with the fixed reason", got)
+	if len(got) != 1 || got[0].Kind != diag.ProblemUnparsableObject {
+		t.Fatalf("problems = %+v; want one unparsable_object", got)
 	}
-	if out := r.logs.String(); strings.Contains(out, "unexpected character") || strings.Contains(out, "panic") {
-		t.Errorf("log carries the panic:\n%s", out)
-	}
+	noAfterQuote(t, got[0], r.logs.String())
 	noCanary(t, "log", r.logs.String())
 }
 

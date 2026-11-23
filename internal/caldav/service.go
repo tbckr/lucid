@@ -316,19 +316,26 @@ func canWrite(ps *privilegeSet) bool {
 // It is fixed wording: the panic's value can carry a character of the data.
 var errDecoderPanic = errors.New("ical: decoder failed on malformed data")
 
-// decodeICal parses data as iCalendar. go-ical panics on some malformed input
-// (a quoted parameter value followed by more text, `CN="Bob"Smith`) instead of
-// returning an error; decodeICal turns that into errDecoderPanic, so the object
-// is one that does not parse like any other: skipped and recorded as a problem,
-// not a failed request whose panic, with its piece of the data, reaches the log
-// (FR-36, NFR-36).
-func decodeICal(data []byte) (cal *ical.Calendar, err error) {
+// decodeICal parses data as iCalendar, with the decoder's panics turned into
+// errDecoderPanic by guardDecode.
+func decodeICal(data []byte) (*ical.Calendar, error) {
+	return guardDecode(ical.NewDecoder(bytes.NewReader(data)).Decode)
+}
+
+// guardDecode returns what decode returns, or errDecoderPanic if it panics.
+// go-ical up to v0.0.0-20250609112844-439c63cef608 panics on some malformed
+// input (a quoted parameter value followed by more text, `CN="Bob"Smith`)
+// instead of returning an error; later versions return one, and the guard
+// stays for panics not known yet. So such an object is one that does not parse
+// like any other: skipped and recorded as a problem, not a failed request
+// whose panic, with its piece of the data, reaches the log (FR-36, NFR-36).
+func guardDecode(decode func() (*ical.Calendar, error)) (cal *ical.Calendar, err error) {
 	defer func() {
 		if recover() != nil {
 			cal, err = nil, errDecoderPanic
 		}
 	}()
-	return ical.NewDecoder(bytes.NewReader(data)).Decode()
+	return decode()
 }
 
 // getObject fetches and parses one object. It also returns the object's data
